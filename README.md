@@ -8,7 +8,7 @@
 
 <!-- TYPING ANIMATION -->
 <a href="https://github.com/Abhi-mishra998/aegis">
-  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;12+services.+330%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;12+services.+510%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
 </a>
 
 <br/>
@@ -66,7 +66,7 @@ and <strong>cryptographically proves</strong> what happened after.
 <p>
   <img src="https://img.shields.io/badge/services-12-1f2937?style=flat-square&labelColor=111827" alt="services"/>
   <img src="https://img.shields.io/badge/containers-25-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
-  <img src="https://img.shields.io/badge/tests-330%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
+  <img src="https://img.shields.io/badge/tests-510%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
   <img src="https://img.shields.io/badge/p95_latency-27ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
   <img src="https://img.shields.io/badge/attack_block_rate-100%25-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
   <img src="https://img.shields.io/badge/audit_chain-verified-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
@@ -183,7 +183,7 @@ Existing security tools — IAM, WAFs, SIEMs, API gateways — were built for hu
 **📦 What's in the box**
 
 - 12 microservices across 25 containers
-- ~330 pytest tests
+- 510+ pytest tests
 - 3 end-to-end demo scenarios
 - A working transparency log
 - Python, FastAPI, Postgres, Redis, OPA
@@ -1002,7 +1002,7 @@ I'm being explicit here because *"production-grade"* claims on side projects are
 - Slack escalation for critical incidents
 - Encrypted offsite backups (age + S3)
 - Audit-to-billing reconciliation
-- ~330 pytest tests
+- 510+ pytest tests
 - Three end-to-end demo packs
 
 </td>
@@ -1147,7 +1147,7 @@ aegis/
 ├── 📚 docs/             Architecture diagrams, runbooks, audit reports
 ├── 🔧 scripts/          Ops scripts (backup, reconcile, export, redact)
 ├── 🎭 demos/            Three reproducible demo packs
-├── 🧪 tests/            ~330 pytest tests (unit → integration → E2E)
+├── 🧪 tests/            510+ pytest tests (unit → integration → E2E)
 ├── 📜 LICENSE           MIT
 ├── ⚙️ pyproject.toml    Package + dependency management
 └── 📖 README.md         You are here
