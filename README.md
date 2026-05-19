@@ -23,6 +23,35 @@ and <strong>cryptographically proves</strong> what happened after.
 
 <br/>
 
+<!-- FEATURED LINKS — high visibility for recruiters -->
+<table>
+<tr>
+<td align="center" width="33%">
+  <a href="https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view">
+    <img src="https://img.shields.io/badge/▶%20WATCH%20THE%20DEMO-5%20minute%20walkthrough-ef4444?style=for-the-badge&logo=googledrive&logoColor=white" alt="Watch Demo"/>
+    <br/>
+    <sub><b>Kill switch · audit chain · blast-radius sim</b></sub>
+  </a>
+</td>
+<td align="center" width="33%">
+  <a href="https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents">
+    <img src="https://img.shields.io/badge/📝%20READ%20THE%20DEEP%20DIVE-12%20min%20engineering%20post-3b82f6?style=for-the-badge&logo=hashnode&logoColor=white" alt="Read Blog"/>
+    <br/>
+    <sub><b>Why ed25519 · OPA · Merkle log design</b></sub>
+  </a>
+</td>
+<td align="center" width="33%">
+  <a href="#-quick-start">
+    <img src="https://img.shields.io/badge/🚀%20QUICK%20START-docker%20compose%20up-00E5A0?style=for-the-badge&logo=docker&logoColor=white" alt="Quick Start"/>
+    <br/>
+    <sub><b>Full stack in one command</b></sub>
+  </a>
+</td>
+</tr>
+</table>
+
+<br/>
+
 <!-- BADGES ROW 1 — Tech Stack -->
 <p>
   <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
@@ -43,6 +72,7 @@ and <strong>cryptographically proves</strong> what happened after.
   <img src="https://img.shields.io/badge/attack_block_rate-100%25-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
   <img src="https://img.shields.io/badge/audit_chain-verified-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square&labelColor=111827" alt="license"/>
+  <a href="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml"><img src="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml/badge.svg" alt="Tests"/></a>
 </p>
 
 <!-- CTA ROW -->
@@ -1189,13 +1219,13 @@ Working on AI safety, platform security, or infrastructure? Below is the deepest
 
 Aegis is MIT-licensed and built in the open. PRs welcome:
 
-- 🐛 **Report bugs** via [issues](https://github.com/Abhi-mishra998/aegis/issues)
-- 💡 **Propose features** through discussions
-- 🔍 **Review the threat model** — see something I missed? Open an issue.
-- 📝 **Improve docs** — typos and clarifications are always welcome
-- 🧪 **Add tests** — see [`tests/`](tests/) for the existing patterns
+- 🐛 **Report bugs** — use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md)
+- 💡 **Propose features** — use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
+- 🔍 **Review the security model** — see something broken? Email before opening a public issue (see [`SECURITY.md`](SECURITY.md))
+- 📝 **Improve docs** — typos and clarifications always welcome
+- 🧪 **Add tests** — especially integration gaps; see [`tests/`](tests/) for existing patterns
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup instructions, branch naming, commit conventions, and PR guidelines.
 
 <br/>
 
