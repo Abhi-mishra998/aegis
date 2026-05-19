@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
 Status   = Literal["OPEN", "INVESTIGATING", "MITIGATED", "ESCALATED", "RESOLVED"]
 Trigger  = Literal["policy_deny", "kill", "escalate", "risk_threshold", "anomaly", "manual"]

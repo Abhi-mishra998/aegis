@@ -18,7 +18,6 @@ Usage (with ACP):
 """
 from __future__ import annotations
 
-import re
 import time
 from typing import Any
 
@@ -110,7 +109,7 @@ def _parse_args(cmd: str) -> dict:
             i += 1
         elif t.startswith("-l") or t.startswith("--selector"):
             # skip label selectors
-            i += 2 if not "=" in t else 1
+            i += 2 if "=" not in t else 1
         else:
             positional.append(t)
             i += 1
@@ -189,7 +188,7 @@ class KubectlWrapper:
         resource = parsed["resource"]
         name = parsed["name"]
         namespace = parsed["namespace"]
-        extra = parsed["args"]
+        parsed["args"]
 
         ts = time.monotonic()
 

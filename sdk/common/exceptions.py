@@ -101,7 +101,7 @@ class ACPConnectionError(ACPError):
 
 def setup_exception_handlers(app: FastAPI) -> None:
     """Register global exception handlers for a FastAPI application."""
-    
+
     from fastapi import HTTPException
 
     @app.exception_handler(HTTPException)

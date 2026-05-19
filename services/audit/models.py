@@ -3,7 +3,18 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Index, Integer, PrimaryKeyConstraint, SmallInteger, String, Text, UniqueConstraint, Float
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    PrimaryKeyConstraint,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -179,7 +190,7 @@ class PendingUsageEvent(Base, OrgMixin, TenantMixin, IdMixin):
 
 
 @event.listens_for(AuditLog, "before_insert")
-def enforce_org_id_invariant(mapper, connection, target):
+def enforce_org_id_invariant(mapper, connection, target) -> None:
     """
     Enforces the SaaS strict invariant: org_id MUST equal tenant_id.
     If org_id is missing, it auto-fills from tenant_id.
@@ -190,8 +201,7 @@ def enforce_org_id_invariant(mapper, connection, target):
 
     if org_id is None and tenant_id is not None:
         target.org_id = tenant_id
-    elif org_id is not None and tenant_id is not None:
-        if org_id != tenant_id:
-            raise ValueError(
-                f"SaaS Multi-tenant Violation: org_id ({org_id}) != tenant_id ({tenant_id})"
-            )
+    elif org_id is not None and tenant_id is not None and org_id != tenant_id:
+        raise ValueError(
+            f"SaaS Multi-tenant Violation: org_id ({org_id}) != tenant_id ({tenant_id})"
+        )

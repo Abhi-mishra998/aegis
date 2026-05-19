@@ -9,11 +9,8 @@ Run with:
 """
 from __future__ import annotations
 
-import hashlib
-import uuid
-
-import pytest
-from hypothesis import given, settings as hyp_settings
+from hypothesis import given
+from hypothesis import settings as hyp_settings
 from hypothesis import strategies as st
 
 from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash
@@ -80,8 +77,8 @@ def test_hash_output_is_64_char_hex(
 def test_hash_is_deterministic(
     prev_hash, tenant_id, agent_id, action, tool, decision, request_id,
 ):
-    kwargs = dict(prev_hash=prev_hash, tenant_id=tenant_id, agent_id=agent_id,
-                  action=action, tool=tool, decision=decision, request_id=request_id)
+    kwargs = {"prev_hash": prev_hash, "tenant_id": tenant_id, "agent_id": agent_id,
+                  "action": action, "tool": tool, "decision": decision, "request_id": request_id}
     assert compute_event_hash(**kwargs) == compute_event_hash(**kwargs)
 
 

@@ -7,20 +7,18 @@ from functools import partial
 from typing import Annotated, Any
 
 import bcrypt
+import structlog
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
+from sdk.common.audit_stream import push_audit_event
 from sdk.common.auth import extract_bearer_token, verify_internal_secret
 from sdk.common.config import settings
-from sdk.common.db import get_db, get_tenant_id
+from sdk.common.db import get_db
 from sdk.common.deadline import check_deadline
-from sdk.common.exceptions import (
-    ACPAuthError,
-)
 from sdk.common.invariants import assert_org_consistency
 from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
@@ -40,7 +38,6 @@ from services.identity.schemas import (
     UserResponse,
 )
 from services.identity.token_service import TokenService
-from sdk.common.audit_stream import push_audit_event
 
 router = APIRouter(tags=["identity"])
 logger = structlog.get_logger(__name__)
@@ -117,7 +114,7 @@ async def provision_credentials(
     )
     res_existing = await db.execute(stmt_existing)
     existing_cred = res_existing.scalar_one_or_none()
-    
+
     if existing_cred:
         # Update existing credentials (idempotent path)
         existing_cred.secret_hash = secret_hash
@@ -180,10 +177,10 @@ async def create_user(
     try:
         tenant_id = uuid.UUID(payload.tenant_id)
         org_id = uuid.UUID(payload.org_id) if payload.org_id else tenant_id
-        
+
         # HARDENED: Verify SaaS Strict Invariant before write
         assert_org_consistency(org_id, tenant_id, "user creation")
-        
+
         hashed_password = bcrypt.hashpw(
             payload.password.encode("utf-8"), bcrypt.gensalt()
         ).decode("utf-8")
@@ -599,8 +596,11 @@ async def refresh_token(
 # =========================
 
 
-from services.identity.models import DegradedModePolicy, Tenant, TenantTier  # noqa: E402 — avoids circular at module top
-
+from services.identity.models import (  # noqa: E402 — avoids circular at module top
+    DegradedModePolicy,
+    Tenant,
+    TenantTier,
+)
 
 _TIER_RPM_DEFAULTS: dict[str, int] = {
     "basic":      60,

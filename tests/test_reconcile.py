@@ -22,9 +22,6 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict
 
-import pytest
-
-
 # psycopg2 may not be installed locally — the reconcile script imports it at
 # module load and SystemExits on ImportError. Stub it conservatively. We do
 # NOT stub `redis` here because the real `redis` package is required for
@@ -44,7 +41,6 @@ sys.modules.setdefault("psycopg2", _FakePsycopg2())
 sys.modules.setdefault("psycopg2.extras", _FakePsycopg2.extras())
 
 from scripts.ops import reconcile  # noqa: E402
-
 
 # --------------------------------------------------------------------------- #
 # ReconciliationReport.finalize                                               #

@@ -1,13 +1,14 @@
 import asyncio
-import sys
 import os
-from unittest.mock import patch, AsyncMock
+import sys
+from unittest.mock import AsyncMock, patch
 
 # Add current dir to path
 sys.path.append(os.getcwd())
 
 # Set dummy environment variables to pass strict validation for testing
 import os
+
 os.environ["DATABASE_URL"] = "postgresql+asyncpg://user:pass@localhost/db"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 os.environ["INTERNAL_SECRET"] = "supersecret123"
@@ -23,12 +24,13 @@ os.environ["AUDIT_SERVICE_URL"] = "http://localhost:8000"
 os.environ["USAGE_SERVICE_URL"] = "http://localhost:8000"
 os.environ["FORENSICS_SERVICE_URL"] = "http://localhost:8000"
 
-from tests.harness import harness, create_test_token, TEST_TENANT_ID, TEST_AGENT_ID
+from tests.harness import TEST_AGENT_ID, TEST_TENANT_ID, create_test_token, harness
 
-async def run_audit():
+
+async def run_audit() -> None:
     print("🚀 Starting ACP Production Readiness Audit (Gatekeeper Mode)\n")
     results = []
-    
+
     # Common mock payload
     mock_payload = {
         "sub": str(TEST_AGENT_ID),
@@ -87,7 +89,7 @@ async def run_audit():
     # TC-4: Token Revoked
     print("TC-4: Security - Token Revoked", end="... ")
     token = create_test_token()
-    
+
     # We patch the 'redis' instance that was passed to the middleware during startup
     with patch("services.gateway.main.redis") as mock_redis:
         mock_redis.exists = AsyncMock(return_value=True) # Revoked

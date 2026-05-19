@@ -16,11 +16,9 @@ Prerequisites:
 from __future__ import annotations
 
 import os
-import sys
 import time
 
 import requests  # pip install requests
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG — change these to match your ACP deployment
@@ -213,7 +211,12 @@ def demo_sdk(token: str, agent_id: str) -> None:
     print("\n── WAY 2: SDK @acp.protect ──")
 
     try:
-        from sdk.acp_client import Client, DeniedError, RateLimitedError, EscalationRequiredError
+        from sdk.acp_client import (
+            Client,
+            DeniedError,
+            EscalationRequiredError,
+            RateLimitedError,
+        )
     except ImportError:
         print("  [skip] sdk not importable in this environment")
         return
@@ -278,6 +281,13 @@ def demo_sdk(token: str, agent_id: str) -> None:
 # call → agent completes the task → operator can observe everything in the UI.
 # ─────────────────────────────────────────────────────────────────────────────
 
+try:
+    from sdk.acp_client import RateLimitedError as RateLimitedError
+except ImportError:
+    class RateLimitedError(Exception):  # type: ignore[no-redef]
+        retry_after: int = 60
+
+
 class MyAgent:
     """
     A simple agent that accepts user tasks and executes them through ACP.
@@ -285,7 +295,7 @@ class MyAgent:
     Here we simulate the LLM deciding what tools to call.
     """
 
-    def __init__(self, token: str, agent_id: str):
+    def __init__(self, token: str, agent_id: str) -> None:
         self.token = token
         self.agent_id = agent_id
 
@@ -332,12 +342,11 @@ class MyAgent:
             result = self._call(tool, params)
             if result:
                 results.append(result["output"])
-                print(f"    → allowed, got output")
+                print("    → allowed, got output")
             else:
                 results.append(f"[{tool} was blocked by ACP]")
 
-        summary = f"Completed '{user_task}'. Steps: {len(steps)}, allowed: {len([r for r in results if 'blocked' not in r])}"
-        return summary
+        return f"Completed '{user_task}'. Steps: {len(steps)}, allowed: {len([r for r in results if 'blocked' not in r])}"
 
 
 def demo_full_agent_loop(token: str, agent_id: str) -> None:

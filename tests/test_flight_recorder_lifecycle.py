@@ -13,18 +13,16 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.flight_recorder import worker as fr_worker
-from services.flight_recorder.models import ExecutionStep, ExecutionTimeline
 from scripts.maintenance import backfill_flight_timelines as bf
-
+from services.flight_recorder import worker as fr_worker
+from services.flight_recorder.models import ExecutionTimeline
 
 # --------------------------------------------------------------------------- #
 # Backfill helpers — pure functions                                           #
@@ -92,7 +90,7 @@ async def test_process_timeline_recovers_stuck_row(monkeypatch):
     """_process_timeline should compute tool/decision/duration from steps and
     issue exactly one UPDATE bound to the row's id + status='in_progress'."""
     tl_id = uuid.uuid4()
-    started_at = datetime.now(tz=timezone.utc) - timedelta(minutes=10)
+    started_at = datetime.now(tz=UTC) - timedelta(minutes=10)
     timeline = SimpleNamespace(
         id=tl_id, tool=None, started_at=started_at, status="in_progress",
         request_id="req-stuck-1",
@@ -140,7 +138,7 @@ async def test_process_timeline_recovers_stuck_row(monkeypatch):
 async def test_process_timeline_dry_run_does_not_update():
     """--dry-run must compute the recovery shape without issuing UPDATE."""
     tl_id = uuid.uuid4()
-    started_at = datetime.now(tz=timezone.utc) - timedelta(minutes=8)
+    started_at = datetime.now(tz=UTC) - timedelta(minutes=8)
     timeline = SimpleNamespace(
         id=tl_id, tool=None, started_at=started_at, status="in_progress",
         request_id="req-dryrun-1",
@@ -276,12 +274,12 @@ async def test_worker_timeline_start_is_idempotent_when_row_already_has_tool():
 
 @pytest.mark.asyncio
 async def test_emit_timeline_start_end_increment_counters():
-    from services.gateway.trust_emitter import emit_timeline_end, emit_timeline_start
     from sdk.utils import (
         FLIGHT_TIMELINE_CLOSED_BY_STATUS_TOTAL,
         FLIGHT_TIMELINE_CLOSED_TOTAL,
         FLIGHT_TIMELINE_OPEN_TOTAL,
     )
+    from services.gateway.trust_emitter import emit_timeline_end, emit_timeline_start
 
     fake_redis = AsyncMock()
     fake_redis.xadd = AsyncMock(return_value=b"1-0")

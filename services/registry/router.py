@@ -2,16 +2,16 @@ import uuid
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Header, Query, Request, status, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sdk.common.audit_stream import push_audit_event
 from sdk.common.auth import verify_internal_secret
+from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.deadline import check_deadline
-from sdk.common.response import APIResponse
-from sdk.common.audit_stream import push_audit_event
 from sdk.common.redis import get_redis_client
-from sdk.common.config import settings
+from sdk.common.response import APIResponse
 from services.registry.repository import AgentRepository, PermissionRepository
 from services.registry.schemas import (
     AgentCreate,
@@ -61,15 +61,15 @@ async def create_agent(
     )
 
     response = await service.create_agent(tenant_id, payload)
-    
+
     # Enforce strict SaaS invariant: org_id == tenant_id
-    from sdk.common.invariants import assert_org_consistency, InvariantViolation
+    from sdk.common.invariants import InvariantViolation, assert_org_consistency
     try:
         assert_org_consistency(response.org_id, tenant_id, "registry agent creation")
     except InvariantViolation as e:
         # P1: Immediate abort and DB rollback if invariant violated
         raise HTTPException(status_code=500, detail=str(e))
-    
+
     # RULE 2: Every action is audited
     # P1-1 FIX: Removed __aenter__() anti-pattern; use client directly
     _redis = get_redis_client(settings.REDIS_URL)
@@ -144,7 +144,7 @@ async def update_agent(
     )
 
     response = await service.update_agent(tenant_id, agent_id, payload)
-    
+
     # RULE 2: Every action is audited
     # P1-1 FIX: Removed __aenter__() anti-pattern; use client directly
     _redis = get_redis_client(settings.REDIS_URL)
@@ -220,7 +220,7 @@ async def add_permission(
     )
 
     response = await service.add_permission(tenant_id, agent_id, payload)
-    
+
     # RULE 2: Every action is audited
     # P1-1 FIX: Removed __aenter__() anti-pattern; use client directly
     _redis = get_redis_client(settings.REDIS_URL)

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-
 # Single source of truth, mirrored from services/decision/findings.py.
 # Keeping this as a frozenset (not an enum) so customer code can compare
 # against the raw string returned by the gateway without a coercion step.

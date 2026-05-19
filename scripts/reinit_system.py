@@ -12,6 +12,7 @@ Ensures production-grade state after a database wipe:
 
 import asyncio
 import sys
+
 import httpx
 
 # Config
@@ -22,19 +23,19 @@ TENANT_ID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = "11111111-1111-1111-1111-111111111111"
 AGENT_SECRET = "test-agent-secret-very-long-123456"
 
-async def reinit():
+async def reinit() -> None:
     global AGENT_ID
     print("🚀 Initializing ACP System State...")
-    
+
     # 1. Run seed_admin.py first (direct DB access for bootstrap)
-    import subprocess
     import os
+    import subprocess
     print("Step 1: Bootstrapping Admin User...")
     try:
         # Resolve path to scripts/utils/seed_admin.py
         script_dir = os.path.dirname(os.path.abspath(__file__))
         seed_script = os.path.join(script_dir, "utils", "seed_admin.py")
-        
+
         subprocess.run([sys.executable, seed_script], check=True)
         print("  ✓ Admin user bootstrap complete")
     except Exception as e:
@@ -84,7 +85,7 @@ async def reinit():
         except Exception as e:
             if "409" not in str(e):
                 print(f"  Note: Agent registration step: {e}")
-            
+
         # If agent existed or ID didn't update, we need to fetch its true ID
         if AGENT_ID == "11111111-1111-1111-1111-111111111111":
             try:

@@ -6,6 +6,7 @@ layer — no method takes a `tenant_id=None` shortcut.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import desc, func, select
@@ -228,8 +229,8 @@ class GraphRepository:
     async def list_drift(
         self, tenant_id: uuid.UUID, since_minutes: int = 1440, limit: int = 200
     ) -> list[DriftSignal]:
-        from datetime import datetime, timedelta, timezone
-        since = datetime.now(tz=timezone.utc) - timedelta(minutes=since_minutes)
+        from datetime import datetime, timedelta
+        since = datetime.now(tz=UTC) - timedelta(minutes=since_minutes)
         stmt = (
             select(DriftSignal)
             .where(
@@ -286,8 +287,8 @@ class GraphRepository:
     async def edge_stats(
         self, tenant_id: uuid.UUID, node_id: uuid.UUID, since_minutes: int = 60
     ) -> dict[str, Any]:
-        from datetime import datetime, timedelta, timezone
-        since = datetime.now(tz=timezone.utc) - timedelta(minutes=since_minutes)
+        from datetime import datetime, timedelta
+        since = datetime.now(tz=UTC) - timedelta(minutes=since_minutes)
         stmt = (
             select(
                 GraphEdge.outcome,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import uuid
@@ -11,7 +12,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash
-from sdk.utils import AUDIT_DUPLICATES_DROPPED_TOTAL, BILLING_OUTBOX_COVERAGE_GAP_TOTAL, SLO_AUDIT_DURABILITY_TOTAL
+from sdk.utils import (
+    AUDIT_DUPLICATES_DROPPED_TOTAL,
+    BILLING_OUTBOX_COVERAGE_GAP_TOTAL,
+    SLO_AUDIT_DURABILITY_TOTAL,
+)
 from services.audit.models import AuditLog, PendingUsageEvent
 from services.audit.schemas import AuditLogCreate
 
@@ -144,10 +149,8 @@ class AuditWriter:
                 # never fires (see production_gaps Gap 3, 2026-05-15).
                 outbox_audit_id: uuid.UUID = audit_log.id
                 if payload.request_id:
-                    try:
+                    with contextlib.suppress(ValueError):
                         outbox_audit_id = uuid.UUID(payload.request_id)
-                    except ValueError:
-                        pass
 
                 outbox_stmt = (
                     insert(PendingUsageEvent)

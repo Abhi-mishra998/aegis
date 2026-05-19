@@ -177,21 +177,21 @@ async def get_risk_summary(
     critical_risk = _safe_int(await redis.get(f"acp:metrics:risk_distribution:{tid}:critical"))
 
     import datetime
-    
+
     # A-6 FIX: Generate dynamic time series based on recent risk profile instead of hardcoded values
     now = datetime.datetime.now()
     metrics = []
-    
+
     # Simple dynamic trend based on total threats blocked and high risk agents
     base_score = blocked / 10 + high_risk + critical_risk * 2
     for i in range(4, -1, -1):
         dt = now - datetime.timedelta(hours=i*4)
         hour_str = dt.strftime("%H:00")
-        
+
         # Add some variation based on the time and base score
         variance = (i % 3) * (high_risk or 1)
         score = max(0, int(base_score + variance)) if i != 0 else max(0, int(base_score))
-        
+
         metrics.append({"time": hour_str, "score": score})
 
     return APIResponse(

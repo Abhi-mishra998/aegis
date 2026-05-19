@@ -34,7 +34,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -236,7 +235,7 @@ async def _scenario_5_blast_radius(
     client: httpx.AsyncClient, creds: dict, user_token: str
 ) -> None:
     _hdr("Scenario 5 — BLAST RADIUS ANALYSIS")
-    print(f"\n  Querying identity graph for devops-agent compromise simulation…")
+    print("\n  Querying identity graph for devops-agent compromise simulation…")
 
     graph_url = creds.get("graph_url", "http://localhost:8013")
     headers = {
@@ -313,15 +312,15 @@ def _print_live_blast_radius(br: dict) -> None:
         print(f"    {ntype:<20} {name:<28} trust={trust:.2f} {marker}")
 
     print(f"\n  {_c(_MAG, 'Worst-case scenario')}: If devops-agent token is stolen,")
-    print(f"  attacker can reach production databases, secrets, and K8s control-plane.")
+    print("  attacker can reach production databases, secrets, and K8s control-plane.")
 
 
 def _print_static_blast_radius() -> None:
     """Pre-computed blast radius from seed topology for offline/demo mode."""
     print(f"\n  {'─'*48}")
     print(f"  Blast Radius: {_c(_RED, 'HIGH')}  score=0.847")
-    print(f"  Reachable nodes   : 12")
-    print(f"  Affected resources: 7 critical")
+    print("  Reachable nodes   : 12")
+    print("  Affected resources: 7 critical")
     print()
     print(f"  {'Node Type':<22} {'Name':<28} {'Trust'}")
     print(f"  {'─'*22} {'─'*28} {'─'*5}")
@@ -345,15 +344,15 @@ def _print_static_blast_radius() -> None:
         print(f"  {ntype:<22} {name:<28} {trust:.2f}{marker}")
 
     print(f"\n  {_c(_MAG, 'Worst-case path')}: devops-agent → cluster-admin binding")
-    print(f"  → kube-system → admin-kubeconfig → ALL namespaces + databases")
+    print("  → kube-system → admin-kubeconfig → ALL namespaces + databases")
 
 
 async def _scenario_6_autonomy_enforcement(
     cluster: MockK8sCluster, creds: dict, token: str
 ) -> None:
     _hdr("Scenario 6 — AUTONOMY CONTRACT ENFORCEMENT")
-    print(f"\n  Contract rule: k8s.delete.* requires human approval")
-    print(f"  Sending delete attempts — expect 403 approval_required on first…")
+    print("\n  Contract rule: k8s.delete.* requires human approval")
+    print("  Sending delete attempts — expect 403 approval_required on first…")
 
     w = _make_wrapper(cluster, creds, token)
     blocked_at: int | None = None
@@ -379,14 +378,14 @@ async def _scenario_6_autonomy_enforcement(
         print(f"\n  {_c(_YELLOW, 'DRY RUN')} — autonomy enforcement requires live ACP")
     else:
         print(f"\n  {_c(_YELLOW, '⚠ NOTE')} — 4 deletes sent without enforcement")
-        print(f"  (k8s.delete.* should require approval on first op — check autonomy service)")
+        print("  (k8s.delete.* should require approval on first op — check autonomy service)")
 
 
 async def _scenario_7_runaway_automation(
     cluster: MockK8sCluster, creds: dict, token: str
 ) -> None:
     _hdr("Scenario 7 — RUNAWAY AUTOMATION DEFENSE  (expect: rate-limited after storm)")
-    print(f"\n  Simulating high-frequency delete storm (10 ops, 0.1s apart)…")
+    print("\n  Simulating high-frequency delete storm (10 ops, 0.1s apart)…")
 
     signals = K8sSignalEngine()
     w = _make_wrapper(cluster, creds, token, signals)
@@ -413,7 +412,7 @@ async def _scenario_7_runaway_automation(
     if triggered:
         print(f"  Triggered detectors  : {_c(_RED, ', '.join(triggered))}")
     else:
-        print(f"  Triggered detectors  : none (behavioral warmup needed)")
+        print("  Triggered detectors  : none (behavioral warmup needed)")
 
     if blocked_at:
         print(f"\n  {_c(_GREEN, '✓ PASS')} — Runaway automation stopped at op {blocked_at} (HTTP 429)")
@@ -451,7 +450,7 @@ async def _scenario_8_kill_switch(
     await asyncio.sleep(0.5)
 
     # Step 2: Verify all agent calls blocked
-    print(f"\n  [2/5] Attempting innocent read — must be blocked…")
+    print("\n  [2/5] Attempting innocent read — must be blocked…")
     resp = await client.post(
         f"{GATEWAY}/execute",
         headers=agent_headers,
@@ -463,12 +462,12 @@ async def _scenario_8_kill_switch(
     print(f"        HTTP {status_2} — {'✓ BLOCKED' if status_2 == 403 else '✗ NOT BLOCKED'}")
 
     # Step 3: Simulate FLUSHDB (hard test of persistence beyond Redis cache)
-    print(f"\n  [3/5] Simulating Redis FLUSHDB… (kill switch must survive cache eviction)")
+    print("\n  [3/5] Simulating Redis FLUSHDB… (kill switch must survive cache eviction)")
     print(f"        {_c(_DIM, 'Note: In production, run redis-cli FLUSHDB against :6379')}")
     print(f"        {_c(_DIM, 'ACP kill switch is double-written to Postgres for persistence')}")
 
     # Step 4: Verify still blocked after FLUSHDB
-    print(f"\n  [4/5] Re-attempting read after cache eviction…")
+    print("\n  [4/5] Re-attempting read after cache eviction…")
     resp2 = await client.post(
         f"{GATEWAY}/execute",
         headers=agent_headers,
@@ -480,7 +479,7 @@ async def _scenario_8_kill_switch(
     print(f"        HTTP {status_4} — {'✓ STILL BLOCKED' if status_4 == 403 else '⚠ NOTE: not 403'}")
 
     # Step 5: Disengage
-    print(f"\n  [5/5] Disengaging kill switch…")
+    print("\n  [5/5] Disengaging kill switch…")
     dis_resp = await client.delete(
         f"{GATEWAY}/decision/kill-switch/{tenant_id}",
         headers=user_headers,
@@ -577,9 +576,9 @@ async def main() -> None:
             agent_token = "dry-run-agent-token"
         else:
             user_token  = await _user_token(client, creds)
-            print(f"  Admin    : authenticated ✓")
+            print("  Admin    : authenticated ✓")
             agent_token = await _fresh_token(client, creds)
-            print(f"  Agent    : token refreshed ✓")
+            print("  Agent    : token refreshed ✓")
 
         await _scenario_1_safe_reads(cluster, creds, agent_token)
         await asyncio.sleep(0.3)

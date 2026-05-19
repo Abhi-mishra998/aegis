@@ -16,24 +16,23 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
 import structlog
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-
 from redis.asyncio import Redis
+
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.gateway.auth import init_token_validator, token_validator
 from services.gateway.client import service_client
 from services.gateway.middleware import SecurityMiddleware
-
 
 redis: Redis = cast(Redis, get_redis_client(settings.REDIS_URL, decode_responses=False))
 logger = structlog.get_logger(__name__)
@@ -102,14 +101,10 @@ class PubSubManager:
                         data = data.decode("utf-8")
                     for q in list(queues):
                         if q.full():
-                            try:
+                            with suppress(asyncio.QueueEmpty):
                                 q.get_nowait()
-                            except asyncio.QueueEmpty:
-                                pass
-                        try:
+                        with suppress(asyncio.QueueFull):
                             q.put_nowait(data)
-                        except asyncio.QueueFull:
-                            pass
                 else:
                     await asyncio.sleep(0.01)
         except asyncio.CancelledError:
@@ -149,11 +144,11 @@ def _internal_headers(request: Request | None = None) -> dict[str, str]:
             val = request.headers.get(h)
             if val:
                 headers[h] = val
-        
+
         # P5 FIX: Ensure X-Tenant-ID and X-Agent-ID are forwarded from the authenticated state if missing in headers
         if "X-Tenant-ID" not in headers and hasattr(request.state, "tenant_id") and request.state.tenant_id is not None:
             headers["X-Tenant-ID"] = str(request.state.tenant_id)
-            
+
         if "X-Agent-ID" not in headers and hasattr(request.state, "agent_id") and request.state.agent_id is not None:
             headers["X-Agent-ID"] = str(request.state.agent_id)
 
@@ -196,8 +191,8 @@ def _passthrough(resp: httpx.Response) -> Response:
 
 
 async def _process_billing_queue(redis_client, s_client) -> None:
-    import json
     import asyncio
+    import json
 
     backoff_ms = 10
     while True:
@@ -413,9 +408,9 @@ async def proxy_auth_token(request: Request, payload: AuthRequest, response: Res
         headers = _internal_headers(request)
         if tenant_id:
             headers["X-Tenant-ID"] = tenant_id
-            
+
         resp = await client.post(
-            url, 
+            url,
             json={"email": payload.email, "password": payload.password},
             headers=headers
         )
@@ -423,7 +418,7 @@ async def proxy_auth_token(request: Request, payload: AuthRequest, response: Res
             try:
                 err_body = resp.json()
                 err_detail = err_body.get("error") or err_body.get("detail") or "Invalid email or password"
-                
+
                 # Special handling for validation errors showing missing X-Tenant-ID
                 if err_body.get("error") == "Validation failed":
                     for d in err_body.get("meta", {}).get("details", []):
@@ -431,13 +426,13 @@ async def proxy_auth_token(request: Request, payload: AuthRequest, response: Res
                             err_detail = "X-Tenant-ID required"
             except Exception:
                 err_detail = "Invalid email or password"
-            
+
             # Allow X-Tenant-ID missing 400s to return status 400
             if resp.status_code == 400 or resp.status_code == 422:
                 response.status_code = 400
             else:
                 response.status_code = 401
-                
+
             return {
                 "success": False,
                 "error": err_detail
@@ -614,8 +609,8 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
     tier   = getattr(request.state, "tier", "basic")
     rpm    = int(getattr(request.state, "rpm_limit", 0) or 0)
 
-    from sdk.common.ratelimit import TenantQuotaLimiter
     from sdk.common.inference_cost import InferenceCostLimiter
+    from sdk.common.ratelimit import TenantQuotaLimiter
     limiter = TenantQuotaLimiter(redis)
     usage = await limiter.usage_snapshot(
         tenant_id=str(tenant_id),
@@ -2061,7 +2056,9 @@ async def system_health(request: Request) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────
 
 
-from sdk.common.auth import verify_internal_secret as _verify_internal_secret  # noqa: E402
+from sdk.common.auth import (
+    verify_internal_secret as _verify_internal_secret,  # noqa: E402
+)
 from sdk.utils import (  # noqa: E402
     RECONCILE_AUDIT_WITHOUT_USAGE,
     RECONCILE_OUTBOX_OLDEST_AGE_SECONDS,
@@ -2220,10 +2217,8 @@ async def execute_tool(request: Request, tool_name: str | None = None) -> Any:
 
         # Extract tool from path or body
         body: dict[str, Any] = {}
-        try:
+        with suppress(Exception):
             body = await request.json()
-        except Exception:
-            pass
 
         tool = tool_name or body.get("tool", "") or request.headers.get("X-ACP-Tool", "unknown")
 
@@ -2387,7 +2382,7 @@ async def events_stream(request: Request) -> Response:
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=15.0)
                     yield f"data: {data}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield f"event: heartbeat\ndata: {json.dumps({'ts': int(time.time())})}\n\n"
         finally:
             await pubsub_manager.unsubscribe(channel, q)

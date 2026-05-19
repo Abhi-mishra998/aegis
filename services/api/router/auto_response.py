@@ -14,12 +14,12 @@ from services.api.are_worker import _check_condition
 from services.api.models.incident import Incident
 from services.api.repository.auto_response_rule import AutoResponseRuleRepository
 from services.api.schemas.auto_response_rule import (
+    ApprovalRequest,
     ARESimulateMatchItem,
     ARESimulateRequest,
     ARESimulateResponse,
     AREToggleRequest,
     AREToggleResponse,
-    ApprovalRequest,
     AutoResponseRuleCreate,
     AutoResponseRuleResponse,
     AutoResponseRuleUpdate,
@@ -328,6 +328,7 @@ async def simulate(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[ARESimulateResponse]:
     from datetime import timedelta
+
     from sqlalchemy import select as sa_select
 
     repo = AutoResponseRuleRepository(db)
@@ -441,9 +442,9 @@ async def are_latency(
         vals = sorted(float(score) for _, score in samples)
         n    = len(vals)
 
-        def _pct(p: float) -> float:
-            idx = int(n * p / 100)
-            return round(vals[min(idx, n - 1)], 2)
+        def _pct(p: float, _n: int = n, _vals: list = vals) -> float:
+            idx = int(_n * p / 100)
+            return round(_vals[min(idx, _n - 1)], 2)
 
         result[rule_id] = {
             "count": n,

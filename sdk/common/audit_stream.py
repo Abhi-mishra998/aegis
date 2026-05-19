@@ -1,13 +1,15 @@
 from __future__ import annotations
- 
+
 import json
 import uuid
 from typing import Any
- 
+
 from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
+
 from sdk.utils import SLO_AUDIT_DURABILITY_TOTAL
- 
+
+
 async def push_audit_event(
     redis: Redis | RedisCluster,
     tenant_id: str | uuid.UUID,
@@ -24,7 +26,7 @@ async def push_audit_event(
     """
     try:
         SLO_AUDIT_DURABILITY_TOTAL.labels(stage="produced").inc()
-        
+
         payload = {
             "tenant_id": str(tenant_id),
             "agent_id": str(agent_id) if agent_id else "",
@@ -35,7 +37,7 @@ async def push_audit_event(
             "metadata_json": json.dumps(metadata or {}),
             "request_id": request_id or str(uuid.uuid4()),
         }
-        
+
         await redis.xadd(
             "acp:audit_stream",
             payload,

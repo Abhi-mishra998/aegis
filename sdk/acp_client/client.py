@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import functools
 import os
-import time
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import httpx
 
@@ -32,7 +32,7 @@ class Client:
         base_url: str | None = None,
         token: str | None = None,
         timeout: float = 10.0,
-    ):
+    ) -> None:
         # Accept either an acp_* API key or a JWT bearer token — both are sent
         # as `Authorization: Bearer <value>` so the gateway treats them the same.
         # Env vars (in order): explicit arg → ACP_TOKEN → ACP_API_KEY. We also
@@ -206,7 +206,7 @@ class Client:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "Client":
+    def __enter__(self) -> Client:
         return self
 
     def __exit__(self, *exc: Any) -> None:

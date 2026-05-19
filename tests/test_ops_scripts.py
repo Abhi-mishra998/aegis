@@ -26,14 +26,12 @@ Covered:
 
 from __future__ import annotations
 
-import io
 import json
 import sys
 import tarfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -67,7 +65,7 @@ class TestExportManifest:
         }
         m = et.build_manifest(
             tenant_id="t1", exports=exports, file_hashes=hashes,
-            generated_at=datetime(2026, 5, 15, tzinfo=timezone.utc),
+            generated_at=datetime(2026, 5, 15, tzinfo=UTC),
         )
         assert m["version"] == 1
         assert m["kind"] == "acp_tenant_export"
@@ -96,7 +94,7 @@ class TestJsonBytes:
 
     def test_uuid_and_datetime_serialized_as_string(self):
         import uuid as _uuid
-        rows = [{"id": _uuid.UUID(int=1), "ts": datetime(2026, 5, 15, tzinfo=timezone.utc)}]
+        rows = [{"id": _uuid.UUID(int=1), "ts": datetime(2026, 5, 15, tzinfo=UTC)}]
         blob = et._json_bytes(rows)
         text = blob.decode()
         assert "00000000-0000-0000-0000-000000000001" in text
@@ -246,7 +244,6 @@ class TestRedactionRecord:
 class TestRunRedactionDryRun:
     def test_dry_run_does_not_call_db_or_write_record(self, monkeypatch, tmp_path: Path):
         # With audit_dsn=None and dry_run=True, no DB connection should occur.
-        calls = {"select": 0, "insert": 0}
         monkeypatch.setattr(rt, "_select_tenant_rows",
                             lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not query")))
         monkeypatch.setattr(rt, "_insert_redaction_marker",

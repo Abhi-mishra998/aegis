@@ -496,8 +496,7 @@ class ServiceClient:
             self._opa_cb.record_success()
 
             # Extract inner data (ACP envelope wraps in "data")
-            decision = result.get("data", result)
-            return decision
+            return result.get("data", result)
 
         except Exception as exc:
             self._opa_cb.record_failure()
@@ -526,7 +525,7 @@ class ServiceClient:
 
     async def evaluate_decision(self, req_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Final unified decision engine call. 
+        Final unified decision engine call.
         Enforces Rule 4: Must fail closed if the decision engine is unavailable.
         """
         client = await self.get_client()
@@ -534,18 +533,18 @@ class ServiceClient:
         try:
             # P4-1 FIX: Standardizing serialization (ensure strings for IDs)
             payload = {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in req_data.items()}
-            
+
             headers = self._get_headers()
             headers["X-Internal-Secret"] = str(settings.INTERNAL_SECRET or "")
-            
+
             # NOTE: timeout is handled by ResilientClient via SLA/deadline logic.
             # Passing it here leads to "multiple values for timeout" TypeError.
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
-            logger.error("decision_evaluation_failed", 
-                         error=str(exc), 
+            logger.error("decision_evaluation_failed",
+                         error=str(exc),
                          error_type=type(exc).__name__,
                          url=url)
             # RULE 4: Fail closed. Do NOT return None.
@@ -740,7 +739,11 @@ class ServiceClient:
             {"success": True} if billing was recorded
             {"success": False, "error": str} if billing failed after retries
         """
-        from sdk.utils import BILLING_EVENTS_TOTAL, BILLING_EVENTS_FAILED, BILLING_ZERO_TOKEN_CORRECTED
+        from sdk.utils import (
+            BILLING_EVENTS_FAILED,
+            BILLING_EVENTS_TOTAL,
+            BILLING_ZERO_TOKEN_CORRECTED,
+        )
 
         # Use audit_id as idempotency key (ensures same execution always uses same key)
         idempotency_key = idempotency_key or audit_id
@@ -828,7 +831,7 @@ class ServiceClient:
                 response.raise_for_status()
                 logger.info("usage_recorded", idempotency_key=idempotency_key, attempt=attempt+1)
                 return
-            except (asyncio.TimeoutError, httpx.TimeoutException, httpx.ConnectError):
+            except (TimeoutError, httpx.TimeoutException, httpx.ConnectError):
                 if attempt < max_retries - 1:
                     await asyncio.sleep(backoff_delays[attempt])
                     continue
@@ -897,7 +900,7 @@ class ServiceClient:
                     audit_id=audit_id,
                 )
                 return
-            except (asyncio.TimeoutError, httpx.TimeoutException, httpx.ConnectError):
+            except (TimeoutError, httpx.TimeoutException, httpx.ConnectError):
                 if attempt < max_retries - 1:
                     logger.warning(
                         "billing_retry_transient",

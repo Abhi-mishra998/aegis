@@ -3,29 +3,63 @@ target-version = "py311"
 
 [lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "C",   # flake8-comprehensions
-    "B",   # flake8-bugbear
-    "UP",  # pyupgrade
-    "C901", # mccabe complexity
-    "N",   # pep8-naming
-    "ANN", # flake8-annotations
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes (real bugs: unused imports, undefined names)
+    "I",     # isort
+    "C",     # flake8-comprehensions
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "C901",  # mccabe complexity
+    "N",     # pep8-naming
+    "ANN",   # flake8-annotations
     "ASYNC", # flake8-async
-    "RET", # flake8-return
-    "SIM", # flake8-simplify
-    "ARG", # flake8-unused-arguments
-    "PTH", # flake8-use-pathlib
+    "RET",   # flake8-return
+    "SIM",   # flake8-simplify
+    "ARG",   # flake8-unused-arguments
+    "PTH",   # flake8-use-pathlib
 ]
-ignore = ["E501"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "B008",   # FastAPI Depends() in default args is the idiomatic FastAPI pattern
+    "B904",   # raise-without-from: exception chaining is good practice but fixing
+              # all existing raise sites would risk regressions; enable once codebase
+              # is annotated and a dedicated chaining pass is done
+    "ANN401", # typing.Any is legitimately necessary in generic wrappers
+    "N806",   # SessionLocal/Session uppercase is the SQLAlchemy convention
+    "ASYNC109", # asyncio.timeout is fine; trio alternative not used
+]
 
 [lint.per-file-ignores]
-"tests/*" = ["ANN", "ARG"]
+# Service microservices: skip annotation strictness and async/pathlib false-positives.
+# Re-enable ANN incrementally once mypy is enforced in CI.
+"services/*" = ["ANN", "ARG", "ASYNC", "C901", "N", "PTH", "SIM", "RET", "E402"]
+
+# Tests: unit/integration tests don't need full annotation coverage
+"tests/*" = ["ANN", "ARG", "N", "SIM", "PTH", "C901", "B", "E402"]
 "tests/load_test.py" = ["ANN", "ARG"]
 "locustfile.py" = ["ANN", "ARG", "E501"]
 "e2e_test_flow.py" = ["ANN", "ARG", "C901"]
+
+# SDK tests: helper fixtures don't need annotation coverage
+"sdk/acp_client/tests/*" = ["ANN", "ARG", "N", "SIM", "PTH", "C901", "B"]
+
+# SDK internal implementation: complex CLI/archive parsers, keep F and E for real bugs
+"sdk/acp_client/cli.py" = ["C901", "SIM", "PTH", "ANN"]
+"sdk/acp_client/archive.py" = ["C901", "SIM"]
+"sdk/acp_client/client.py" = ["ANN", "PTH"]
+"sdk/acp_client/errors.py" = ["ANN"]
+"sdk/acp_client/policy.py" = ["ANN"]
+"sdk/common/*" = ["ANN", "N", "C901"]
+
+# Demo packs: illustrative code — enforce only real bugs (F rules)
+"demos/*" = ["ANN", "ARG", "ASYNC", "C901", "N", "PTH", "SIM", "RET", "B"]
+
+# Ops/maintenance scripts: not shipped, less strict
+"scripts/*" = ["ANN", "ARG", "ASYNC", "C901", "N", "PTH", "SIM", "RET", "E402"]
+
+# Example integrations: show-don't-tell code, kept readable over strict
+"examples/*" = ["ANN", "ARG", "ASYNC", "C901", "N", "PTH", "SIM", "RET", "B"]
 
 [format]
 quote-style = "double"

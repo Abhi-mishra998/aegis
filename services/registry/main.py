@@ -23,7 +23,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # 2. Initialize Redis for caching
     redis = get_redis_client(settings.REDIS_URL)
     set_registry_redis(redis)
-    
+
     yield
     # 2. Cleanup
     await redis.aclose()

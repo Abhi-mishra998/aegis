@@ -16,19 +16,15 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
-
 
 # --------------------------------------------------------------------------- #
 # LatencyWindow                                                               #
 # --------------------------------------------------------------------------- #
-
-
 from services.gateway.latency_window import (
     LatencyWindow,
     end_to_end_window,

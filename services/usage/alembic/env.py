@@ -23,7 +23,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-def run_migrations_offline():
+def run_migrations_offline() -> None:
     context.configure(
         url=settings.DATABASE_URL,
         target_metadata=target_metadata,
@@ -36,7 +36,7 @@ def run_migrations_offline():
     with context.begin_transaction():
         context.run_migrations()
 
-def do_run_migrations(connection: Connection):
+def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -47,7 +47,7 @@ def do_run_migrations(connection: Connection):
     with context.begin_transaction():
         context.run_migrations()
 
-async def run_async_migrations():
+async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = settings.DATABASE_URL
     connectable = async_engine_from_config(
@@ -59,7 +59,7 @@ async def run_async_migrations():
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
 
-def run_migrations_online():
+def run_migrations_online() -> None:
     asyncio.run(run_async_migrations())
 
 if context.is_offline_mode():

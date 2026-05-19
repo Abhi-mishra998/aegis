@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 import uuid
-
-import json
 
 import redis.exceptions
 import structlog
@@ -195,7 +194,10 @@ class _AuthMixin:
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             org_to_check = x_org_id or ((request.state.jwt_claims if hasattr(request.state, "jwt_claims") else {}).get("org_id"))
             if org_to_check:
-                from sdk.common.invariants import assert_org_consistency, InvariantViolation
+                from sdk.common.invariants import (
+                    InvariantViolation,
+                    assert_org_consistency,
+                )
                 try:
                     assert_org_consistency(uuid.UUID(org_to_check), tenant_id, "gateway write path")
                 except InvariantViolation as e:

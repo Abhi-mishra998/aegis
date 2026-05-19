@@ -19,7 +19,6 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -375,7 +374,7 @@ async def main() -> None:
     print(f"{_GREEN}✅  Setup complete.{_RESET} Credentials → {_CREDS_FILE}")
     print(f"\n  agent_id  : {agent_id}")
     print(f"  tenant_id : {TENANT_ID}")
-    print(f"\n  Run demo  : .venv/bin/python demos/devops_agent/scripted_demo.py\n")
+    print("\n  Run demo  : .venv/bin/python demos/devops_agent/scripted_demo.py\n")
 
 
 if __name__ == "__main__":

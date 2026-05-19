@@ -8,10 +8,9 @@ Run with:
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
-import pytest
-from hypothesis import assume, given, settings as hyp_settings
+from hypothesis import assume, given
+from hypothesis import settings as hyp_settings
 from hypothesis import strategies as st
 
 from services.decision.engine import DecisionEngine, _action_from_score

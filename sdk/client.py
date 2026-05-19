@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import httpx
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
+
+import httpx
 
 from sdk.common.exceptions import (
     ACPAuthError,
     ACPConnectionError,
-    ACPPolicyDeniedError,
     ACPError,
+    ACPPolicyDeniedError,
 )
 
 
@@ -46,8 +47,8 @@ class ACPClient:
         self.org_id      = org_id
         self.timeout     = timeout
 
-        self.token:     Optional[str] = None
-        self.tenant_id: Optional[str] = None
+        self.token:     str | None = None
+        self.tenant_id: str | None = None
         self._http_client = httpx.AsyncClient(timeout=timeout)
 
     async def authenticate(self, tenant_id: str) -> None:
@@ -78,9 +79,9 @@ class ACPClient:
     async def execute_tool(
         self,
         tool_name: str,
-        payload: Dict[str, Any],
-        idempotency_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
         """
         Execute a tool via the ACP Gateway.
         Enforces Rule 1 (No tool executes without policy) and Rule 2 (Every action audited).

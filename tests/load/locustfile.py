@@ -21,17 +21,13 @@ Usage:
 
 import base64
 import json
-import os
 import random
-import string
 import subprocess
 import time
 import uuid
-from typing import Any
 
 import httpx
 from locust import HttpUser, between, events, task
-
 
 # ------------------------------------------------------------------
 # HELPERS
@@ -301,7 +297,7 @@ class ACPGatewayUser(HttpUser):
         headers = self._headers(tool)
         # Use unique invalid token to avoid replay burst 429
         headers["Authorization"] = f"Bearer eyJhbGciOiJIUzI1NiJ9.{uuid.uuid4().hex}.BAD_SIG"
-        
+
         with self.client.post(
             f"/execute/{tool}",
             headers=headers,
@@ -345,9 +341,9 @@ def on_test_start(environment, **kwargs):
     """Allow test to start; token will be auto-generated if not provided."""
     token = environment.parsed_options.test_token
     if token:
-        print(f"\n✓ Using provided token for tenant validation")
+        print("\n✓ Using provided token for tenant validation")
     else:
-        print(f"\n⚠ No --test-token provided; will auto-generate fresh tokens per user\n")
+        print("\n⚠ No --test-token provided; will auto-generate fresh tokens per user\n")
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
@@ -355,17 +351,17 @@ def on_test_stop(environment, **kwargs):
     print("\n" + "═"*60)
     print(" ACP LOAD TEST — ENHANCED REPORT ")
     print("═"*60)
-    
+
     # 1. Summary Stats
     total = LoadTestStats.total_valid_executions or 1
     correct_pct = (LoadTestStats.correct_executions / total) * 100
-    
+
     print(f"Total Valid Executions:   {LoadTestStats.total_valid_executions}")
     print(f"Correctness Rate:         {correct_pct:.1f}%")
     print(f"Invalid Tool Responses:   {LoadTestStats.invalid_tool_responses}")
     print(f"Missing Agent IDs:        {LoadTestStats.missing_agent_id_responses}")
     print(f"Security Blocks:          {LoadTestStats.security_blocks}")
-    
+
     # 2. SQL Integrity Checks (Cross-DB validation)
     # 2026-05-13 (Run-3): drain raised 15s → 60s. At 47 req/s sustained the
     # billing retry worker needs longer than 15s to clear `acp:billing_retry_queue`,
@@ -465,9 +461,9 @@ def on_test_stop(environment, **kwargs):
     # which queries both physical databases. Non-zero exit code on any gap.
     # See docs/reconciliation.md for the billable definition.
     print("\n[RECONCILE] running symmetric audit↔usage diff …")
+    import os as _os
     import subprocess as _subp
     import sys as _sys
-    import os as _os
     _repo_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
     _env = _os.environ.copy()
     _env.setdefault("ACP_AUDIT_DB", "postgresql://postgres:postgres@localhost:5433/acp_audit")

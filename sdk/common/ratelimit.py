@@ -139,11 +139,10 @@ class RateLimiter:
 # Sprint 3.2 — TenantQuotaLimiter                                             #
 # --------------------------------------------------------------------------- #
 
+import json as _json  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta  # noqa: E402
 from typing import Any  # noqa: E402
-
-import json as _json  # noqa: E402
 
 
 @dataclass

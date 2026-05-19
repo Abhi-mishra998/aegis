@@ -31,7 +31,6 @@ import re
 import time
 from typing import Any
 
-
 # Redis Stream IDs look like `<millis>-<seq>`; the millis are the
 # server-epoch time at insert. We don't trust the ID format blindly —
 # malformed IDs return 0 age (caller's choice not to alert on noise).
@@ -108,7 +107,7 @@ async def list_oldest_age_and_depth(
     if not isinstance(ts, (int, float)):
         # Try to parse an ISO timestamp string.
         if isinstance(ts, str):
-            from datetime import datetime, timezone
+            from datetime import datetime
             try:
                 ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
             except Exception:

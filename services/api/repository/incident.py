@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -58,7 +58,7 @@ class IncidentRepository:
         *,
         dedup_key: str | None = None,
     ) -> Incident:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         number  = await self._next_number()
         timeline_entry = {
             "event":     "incident_opened",
@@ -109,7 +109,7 @@ class IncidentRepository:
         timeline = list(incident.timeline or [])
         timeline.append({
             "event":     "repeated_violation",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "detail":    f"Duplicate event suppressed. Total occurrences: {incident.violation_count}",
         })
         incident.timeline = timeline
@@ -154,7 +154,7 @@ class IncidentRepository:
         if not incident:
             return None
 
-        now     = datetime.now(timezone.utc)
+        now     = datetime.now(UTC)
         now_iso = now.isoformat()
         timeline = list(incident.timeline or [])
 
@@ -212,7 +212,7 @@ class IncidentRepository:
         if not incident:
             return None
 
-        now_iso  = datetime.now(timezone.utc).isoformat()
+        now_iso  = datetime.now(UTC).isoformat()
         action   = {"type": action_type, "by": by, "note": note, "timestamp": now_iso}
         actions  = list(incident.actions_taken or [])
         timeline = list(incident.timeline or [])
@@ -242,12 +242,12 @@ class IncidentRepository:
             by_severity[r.severity] = by_severity.get(r.severity, 0) + 1
 
             if r.status == "RESOLVED" and r.resolved_at and r.created_at:
-                created = r.created_at.replace(tzinfo=timezone.utc) if r.created_at.tzinfo is None else r.created_at
+                created = r.created_at.replace(tzinfo=UTC) if r.created_at.tzinfo is None else r.created_at
                 delta   = (r.resolved_at - created).total_seconds() / 3600
                 resolved_durations.append(delta)
 
             if r.acknowledged_at and r.created_at:
-                created = r.created_at.replace(tzinfo=timezone.utc) if r.created_at.tzinfo is None else r.created_at
+                created = r.created_at.replace(tzinfo=UTC) if r.created_at.tzinfo is None else r.created_at
                 ack_dur = (r.acknowledged_at - created).total_seconds() / 3600
                 ack_durations.append(ack_dur)
 

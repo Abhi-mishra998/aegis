@@ -21,7 +21,7 @@ import hashlib
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -31,7 +31,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from services.flight_recorder.models import (
-    ExecutionArtifact, ExecutionSnapshot, ExecutionStep, ExecutionTimeline,
+    ExecutionArtifact,
+    ExecutionSnapshot,
+    ExecutionStep,
+    ExecutionTimeline,
 )
 
 logger = structlog.get_logger(__name__)
@@ -163,7 +166,7 @@ async def _apply_event(db, ev: dict[str, Any]) -> None:
         await db.commit()
         return
     if kind == "timeline_end":
-        timeline.completed_at = datetime.now(tz=timezone.utc)
+        timeline.completed_at = datetime.now(tz=UTC)
         if timeline.started_at:
             timeline.duration_ms = int(
                 (timeline.completed_at - timeline.started_at).total_seconds() * 1000

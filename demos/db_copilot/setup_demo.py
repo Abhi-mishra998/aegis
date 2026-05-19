@@ -117,7 +117,7 @@ async def _create_demo_db() -> None:
             print(f"✓ Demo tables exist ({count} customers), skipping seed")
         else:
             rows = []
-            for i in range(500):
+            for _i in range(500):
                 fn = random.choice(_FIRST_NAMES)
                 ln = random.choice(_LAST_NAMES)
                 domain = random.choice(_DOMAINS)
@@ -235,7 +235,7 @@ async def main() -> None:
     print(f"\n    agent_id  : {agent_id}")
     print(f"    secret    : {secret}")
     print(f"    token[:40]: {agent_token[:40]}…")
-    print(f"\n    Run the demo: .venv/bin/python demos/db_copilot/scripted_demo.py")
+    print("\n    Run the demo: .venv/bin/python demos/db_copilot/scripted_demo.py")
 
 
 if __name__ == "__main__":

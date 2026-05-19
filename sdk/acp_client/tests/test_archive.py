@@ -8,17 +8,14 @@ the lot and writes the on-disk bundle layout; we then verify it.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 
 import httpx
 import pytest
 
-from sdk.acp_client import verify_inclusion, verify_receipt, leaf_hash_for_receipt
 from sdk.acp_client.archive import ArchiveError, build_archive
 from services.audit.merkle import build_root, inclusion_proof, leaf_hash
 from services.audit.signer import canonical_json, get_signer, reset_signer_for_tests
@@ -125,7 +122,7 @@ def _stub_client(handler, base_url="https://acp.test", token="test"):
     )
 
 
-def test_archive_writes_complete_bundle(tmp_path, isolated_signer):
+def test_archive_writes_complete_bundle(tmp_path, isolated_signer) -> None:
     _, payloads, _, _, day, _, handler = _build_in_memory_acp(isolated_signer, n=5)
     out = tmp_path / "bundle"
     counts = build_archive(
@@ -141,7 +138,7 @@ def test_archive_writes_complete_bundle(tmp_path, isolated_signer):
     assert (out / "roots" / f"{day.isoformat()}.json").exists()
 
 
-def test_archive_then_verify_roundtrip_via_cli(tmp_path, isolated_signer):
+def test_archive_then_verify_roundtrip_via_cli(tmp_path, isolated_signer) -> None:
     _, _, _, _, _, _, handler = _build_in_memory_acp(isolated_signer, n=4)
     out = tmp_path / "bundle"
     build_archive(
@@ -162,7 +159,7 @@ def test_archive_then_verify_roundtrip_via_cli(tmp_path, isolated_signer):
     assert payload["counts"]["root_matches"] == 4
 
 
-def test_archive_is_idempotent_skips_existing(tmp_path, isolated_signer):
+def test_archive_is_idempotent_skips_existing(tmp_path, isolated_signer) -> None:
     _, _, _, _, _, _, handler = _build_in_memory_acp(isolated_signer, n=3)
     out = tmp_path / "bundle"
     build_archive(
@@ -181,7 +178,7 @@ def test_archive_is_idempotent_skips_existing(tmp_path, isolated_signer):
     assert counts == {"receipts": 0, "inclusion": 0, "roots": 0}
 
 
-def test_archive_raises_on_auth_failure(tmp_path, isolated_signer):
+def test_archive_raises_on_auth_failure(tmp_path, isolated_signer) -> None:
     def bad_handler(_request):
         return httpx.Response(401, json={"error": "bad token"})
 
@@ -194,7 +191,7 @@ def test_archive_raises_on_auth_failure(tmp_path, isolated_signer):
         )
 
 
-def test_archive_tolerates_pending_inclusion(tmp_path, isolated_signer):
+def test_archive_tolerates_pending_inclusion(tmp_path, isolated_signer) -> None:
     """Inclusion proof returns pending=true → file is NOT written, archive succeeds."""
     rows, payloads, leaves, root_hex, day, tenant_id, _ = _build_in_memory_acp(isolated_signer, n=3)
 

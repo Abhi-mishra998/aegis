@@ -127,7 +127,6 @@ async def _create_agents(
     n: int,
     stats: PhaseStats,
 ) -> list[AgentRecord]:
-    records: list[AgentRecord] = []
     run_id = uuid.uuid4().hex[:8]
 
     async def _create(i: int) -> AgentRecord | None:
@@ -153,8 +152,7 @@ async def _create_agents(
         return rec
 
     results = await asyncio.gather(*[_create(i) for i in range(n)])
-    records = [r for r in results if r is not None]
-    return records
+    return [r for r in results if r is not None]
 
 
 async def _provision_credentials(
@@ -285,7 +283,7 @@ async def main(args: argparse.Namespace) -> None:
     rounds = args.rounds
 
     print(f"\n{'='*60}")
-    print(f"ACP 100-Agent Concurrent Stress Test")
+    print("ACP 100-Agent Concurrent Stress Test")
     print(f"  Host:    {host}")
     print(f"  Agents:  {n}")
     print(f"  Rounds:  {rounds}")

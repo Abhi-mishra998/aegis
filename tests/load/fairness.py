@@ -35,9 +35,7 @@ import os
 import shutil
 import subprocess
 import sys
-import time
-import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -121,10 +119,7 @@ def compute_degradation(
                 "error":      "missing_sample",
             })
             continue
-        if b <= 0:
-            pct = 0.0 if u <= 0 else float("inf")
-        else:
-            pct = (u - b) / b * 100.0
+        pct = (0.0 if u <= 0 else float("inf")) if b <= 0 else (u - b) / b * 100.0
         worst_pct = max(worst_pct, pct)
         per_tenant.append({
             "tenant":   lbl,
@@ -171,7 +166,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out_dir = _REPO_ROOT / args.reports_dir / f"{ts}-fairness"
     out_dir.mkdir(parents=True, exist_ok=True)
 

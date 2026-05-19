@@ -11,9 +11,8 @@ kubectl_wrapper before passing them as ACP execute metadata.
 from __future__ import annotations
 
 import time
-from collections import Counter, deque
-from dataclasses import dataclass, field
-from typing import Deque
+from collections import deque
+from dataclasses import dataclass
 
 
 @dataclass
@@ -55,7 +54,7 @@ class K8sSignalEngine:
 
     def __init__(self, window_s: float = _WINDOW_S) -> None:
         self._window_s = window_s
-        self._ops: Deque[K8sOp] = deque()
+        self._ops: deque[K8sOp] = deque()
 
     def observe(self, op: K8sOp) -> None:
         self._ops.append(op)

@@ -4,7 +4,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import httpx
 import structlog
@@ -15,15 +15,15 @@ from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
-from services.decision.engine import decision_engine
-from services.decision.router import router as decision_router
-from services.decision.schemas import Decision, DecisionContext, OrchestrationRequest
 from services.decision.behavior_consult import (
     DEFAULT_DEGRADED_MODE_POLICY,
     apply_degraded_mode_policy,
     classify_behavior_result,
 )
+from services.decision.engine import decision_engine
 from services.decision.intelligence import GroqSecurityBrain
+from services.decision.router import router as decision_router
+from services.decision.schemas import Decision, DecisionContext, OrchestrationRequest
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +68,11 @@ async def _rehydrate_kill_switches() -> None:
     """
     try:
         from sqlalchemy import text as _text
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
         engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as session:
@@ -118,10 +122,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _poll_task = asyncio.create_task(_kill_switch_poll_loop(), name="kill_switch_poll")
     yield
     _poll_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await _poll_task
-    except asyncio.CancelledError:
-        pass
     if groq_brain:
         await groq_brain.close()
     if _http_client:
@@ -244,7 +246,7 @@ async def evaluate_decision(
             ),
             timeout=_T_GATHER_TOTAL,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("decision_fanout_timeout", agent_id=str(req.agent_id))
         results = [None, None]
         fanout_timed_out = True
@@ -252,7 +254,6 @@ async def evaluate_decision(
     policy_res, behavior_res = results[0], results[1]
     behavior_latency_ms = int((time.monotonic() - behavior_started) * 1000)
 
-    cost_risk = 0.0
     # Cost risk calculation moved to Behavior service or calculated here if needed.
 
     policy_data: dict = {"allowed": False, "reason": "policy_timeout", "risk_adjustment": 0.0}
@@ -520,7 +521,7 @@ async def evaluate_decision(
             ai_decision = await asyncio.wait_for(groq_brain.evaluate(ctx, decision), timeout=0.5)
             if ai_decision:
                 decision = ai_decision
-        except (asyncio.TimeoutError, Exception) as exc:
+        except (TimeoutError, Exception) as exc:
             logger.warning("groq_brain_eval_failed", error=str(exc))
 
     # Async audit logging (non-blocking, best-effort) — wrapped to swallow

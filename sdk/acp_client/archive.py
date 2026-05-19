@@ -17,7 +17,7 @@ hourly or daily as a cron.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +47,12 @@ def build_archive(
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    receipts_dir = (out / "receipts"); receipts_dir.mkdir(exist_ok=True)
-    inclusion_dir = (out / "inclusion"); inclusion_dir.mkdir(exist_ok=True)
-    roots_dir = (out / "roots"); roots_dir.mkdir(exist_ok=True)
+    receipts_dir = out / "receipts"
+    receipts_dir.mkdir(exist_ok=True)
+    inclusion_dir = out / "inclusion"
+    inclusion_dir.mkdir(exist_ok=True)
+    roots_dir = out / "roots"
+    roots_dir.mkdir(exist_ok=True)
 
     owns_client = client is None
     http = client or httpx.Client(
@@ -134,8 +137,10 @@ def _stream_export(
     limit: int,
 ) -> Iterator[dict[str, Any]]:
     params: dict[str, Any] = {"limit": limit}
-    if since: params["since"] = since
-    if until: params["until"] = until
+    if since:
+        params["since"] = since
+    if until:
+        params["until"] = until
     with http.stream("GET", "/v1/audit/export", params=params) as resp:
         _raise_for_status(resp, "/v1/audit/export")
         if resp.status_code != 200:

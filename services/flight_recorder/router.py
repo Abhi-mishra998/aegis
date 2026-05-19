@@ -10,7 +10,7 @@ POST   /flight/timeline/{id}/export       — exportable JSON for offline review
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -51,7 +51,7 @@ async def list_timelines(
     status: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ) -> APIResponse[list[TimelineOut]]:
-    since = datetime.now(tz=timezone.utc) - timedelta(minutes=minutes)
+    since = datetime.now(tz=UTC) - timedelta(minutes=minutes)
     stmt = (
         select(ExecutionTimeline)
         .where(ExecutionTimeline.tenant_id == tenant_id, ExecutionTimeline.started_at >= since)

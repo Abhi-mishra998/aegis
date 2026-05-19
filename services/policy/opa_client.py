@@ -54,7 +54,7 @@ class OPAClient:
         """
         Evaluate policy against OPA.
         Returns (allow: bool, reason: str, risk_adjustment: float).
-        
+
         Failure Handling:
         If OPA is unreachable or returns non-200 -> DENY (system_unavailable)
         """

@@ -23,32 +23,31 @@ and <strong>cryptographically proves</strong> what happened after.
 
 <br/>
 
-<!-- FEATURED LINKS — high visibility for recruiters -->
-<table>
-<tr>
-<td align="center" width="33%">
-  <a href="https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view">
-    <img src="https://img.shields.io/badge/▶%20WATCH%20THE%20DEMO-5%20minute%20walkthrough-ef4444?style=for-the-badge&logo=googledrive&logoColor=white" alt="Watch Demo"/>
-    <br/>
-    <sub><b>Kill switch · audit chain · blast-radius sim</b></sub>
-  </a>
-</td>
-<td align="center" width="33%">
-  <a href="https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents">
-    <img src="https://img.shields.io/badge/📝%20READ%20THE%20DEEP%20DIVE-12%20min%20engineering%20post-3b82f6?style=for-the-badge&logo=hashnode&logoColor=white" alt="Read Blog"/>
-    <br/>
-    <sub><b>Why ed25519 · OPA · Merkle log design</b></sub>
-  </a>
-</td>
-<td align="center" width="33%">
-  <a href="#-quick-start">
-    <img src="https://img.shields.io/badge/🚀%20QUICK%20START-docker%20compose%20up-00E5A0?style=for-the-badge&logo=docker&logoColor=white" alt="Quick Start"/>
-    <br/>
-    <sub><b>Full stack in one command</b></sub>
-  </a>
-</td>
-</tr>
-</table>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- FEATURED LINKS — primary entry points for recruiters and new visitors -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&height=2&customColorList=12,20,24" width="100%" alt="separator"/>
+
+<br/>
+
+> **👇 New here? These two cover the full story in under 20 minutes.**
+
+<br/>
+
+<a href="https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view">
+  <img src="https://img.shields.io/badge/▶%20%20WATCH%20THE%205%20MIN%20DEMO-Kill%20switch%20%C2%B7%20audit%20chain%20%C2%B7%20blast--radius%20sim-ef4444?style=for-the-badge&logo=googledrive&logoColor=white" height="38" alt="Watch the 5-minute demo"/>
+</a>
+
+&nbsp;&nbsp;&nbsp;
+
+<a href="https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents">
+  <img src="https://img.shields.io/badge/📝%20%20READ%20THE%2012%20MIN%20DEEP%20DIVE-Why%20ed25519%20%C2%B7%20OPA%20%C2%B7%20Merkle%20log%20design-3b82f6?style=for-the-badge&logo=hashnode&logoColor=white" height="38" alt="Read the engineering deep-dive"/>
+</a>
+
+<br/><br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&height=2&customColorList=12,20,24" width="100%" alt="separator"/>
 
 <br/>
 
@@ -78,9 +77,8 @@ and <strong>cryptographically proves</strong> what happened after.
 <!-- CTA ROW -->
 <p>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/🚀_QUICK_START-1_min-00E5A0?style=for-the-badge&labelColor=000000" alt="Quick Start"/></a>
-  <a href="https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view"><img src="https://img.shields.io/badge/▶_WATCH_DEMO-5_min-ef4444?style=for-the-badge&labelColor=000000" alt="Demo"/></a>
-  <a href="https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents"><img src="https://img.shields.io/badge/📝_READ_THE_BLOG-12_min-3b82f6?style=for-the-badge&labelColor=000000" alt="Blog"/></a>
   <a href="#%EF%B8%8F-architecture-at-a-glance"><img src="https://img.shields.io/badge/🏗️_ARCHITECTURE-deep_dive-8b5cf6?style=for-the-badge&labelColor=000000" alt="Architecture"/></a>
+  <a href="#-10-layer-security-architecture"><img src="https://img.shields.io/badge/🛡️_SECURITY_LAYERS-10_layers-ef4444?style=for-the-badge&labelColor=000000" alt="Security"/></a>
 </p>
 
 <br/>

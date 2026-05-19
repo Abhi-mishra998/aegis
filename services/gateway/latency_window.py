@@ -44,7 +44,6 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-
 _DEFAULT_WINDOW_SECONDS = 60
 _DEFAULT_MAX_SAMPLES    = 100_000  # ~28h at 1 req/s, ~10 min at 100 req/s
 
@@ -69,7 +68,7 @@ class LatencyWindow:
             raise ValueError(f"invalid scope {scope!r}")
         self.scope = scope
         self.window_seconds = int(window_seconds)
-        self._samples: "deque[tuple[float, float]]" = deque(maxlen=int(max_samples))
+        self._samples: deque[tuple[float, float]] = deque(maxlen=int(max_samples))
         self._lock = threading.Lock()
 
     # ── Producer ──────────────────────────────────────────────────────

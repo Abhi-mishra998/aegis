@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
@@ -271,10 +271,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     are_task.cancel()
     audit_are_task.cancel()
     for t in (consumer_task, are_task, audit_are_task):
-        try:
+        with suppress(asyncio.CancelledError):
             await t
-        except asyncio.CancelledError:
-            pass
     await redis.aclose()
     await engine.dispose()
 

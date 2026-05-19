@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
@@ -26,10 +26,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("flight_recorder_started")
     yield
     consumer_task.cancel()
-    try:
+    with suppress(TimeoutError, asyncio.CancelledError):
         await asyncio.wait_for(consumer_task, timeout=5.0)
-    except (asyncio.TimeoutError, asyncio.CancelledError):
-        pass
     await redis.aclose()
     await engine.dispose()
 

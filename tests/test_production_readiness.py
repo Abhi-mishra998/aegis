@@ -1,8 +1,11 @@
 import hashlib
-import pytest
 from unittest.mock import patch
-from tests.harness import harness, create_test_token, TEST_AGENT_ID
+
+import pytest
+
 from sdk.common.constants import REDIS_REVOKE_PREFIX
+from tests.harness import TEST_AGENT_ID, create_test_token, harness
+
 
 @pytest.mark.asyncio
 async def test_tc1_governance_no_token():
@@ -113,8 +116,9 @@ async def test_tc7_audit_completeness():
 @pytest.mark.asyncio
 async def test_tc9_env_validation():
     """[Env] Strict config validation — empty INTERNAL_SECRET must raise ValidationError."""
-    from sdk.common.config import ACPSettings
     import os
+
+    from sdk.common.config import ACPSettings
 
     with patch.dict(os.environ, {"INTERNAL_SECRET": ""}):
         try:

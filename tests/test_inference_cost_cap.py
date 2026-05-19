@@ -22,11 +22,9 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
 
 import pytest
-
 
 # --------------------------------------------------------------------------- #
 # Fake Redis                                                                  #
@@ -70,7 +68,7 @@ def fake_redis() -> _FakeRedis:
 # --------------------------------------------------------------------------- #
 
 
-from sdk.common.inference_cost import InferenceCostLimiter, _DEFAULT_PRICE_TABLE
+from sdk.common.inference_cost import InferenceCostLimiter
 
 
 class TestEstimateCostUsd:

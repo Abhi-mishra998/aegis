@@ -17,8 +17,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -33,7 +31,6 @@ from services.decision.behavior_consult import (
     is_high_risk,
 )
 from services.decision.schemas import ExecutionAction, OrchestrationRequest
-
 
 # --------------------------------------------------------------------------- #
 # classify_behavior_result                                                    #
@@ -83,7 +80,7 @@ class TestClassifyBehaviorResult:
         assert data["behavior_risk"] == 0.5
 
     def test_asyncio_timeout_is_timeout(self):
-        status, data, score = classify_behavior_result(asyncio.TimeoutError())
+        status, data, score = classify_behavior_result(TimeoutError())
         assert status == "timeout"
         assert score is None
         assert "behavior_service_unavailable" in data["flags"]
@@ -248,7 +245,7 @@ def patched_evaluate(monkeypatch):
 
     async def _capture_push_audit_event(redis, **kwargs):
         captured["audit_events"].append(kwargs)
-        return None
+        return
 
     monkeypatch.setattr(decision_main, "redis", fake_redis)
     monkeypatch.setattr(decision_main, "push_audit_event", _capture_push_audit_event)
@@ -373,7 +370,7 @@ async def test_evaluate_block_high_risk_allows_low_risk_with_reason(patched_eval
 @pytest.mark.asyncio
 async def test_evaluate_block_high_risk_denies_high_risk_tool(patched_evaluate):
     decision_main, captured, behavior_holder = patched_evaluate
-    behavior_holder["exc"] = asyncio.TimeoutError()
+    behavior_holder["exc"] = TimeoutError()
 
     req = _make_request(
         tool="exec",

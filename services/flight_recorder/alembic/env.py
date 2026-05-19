@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sdk.common.config import settings
 from sdk.common.db import Base
 from services.flight_recorder.models import (  # noqa: F401
-    ExecutionArtifact, ExecutionSnapshot, ExecutionStep, ExecutionTimeline,
+    ExecutionArtifact,
+    ExecutionSnapshot,
+    ExecutionStep,
+    ExecutionTimeline,
 )
 
 target_metadata = Base.metadata
@@ -31,7 +34,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-def run_migrations_offline():
+def run_migrations_offline() -> None:
     context.configure(
         url=settings.DATABASE_URL,
         target_metadata=target_metadata,
@@ -42,7 +45,7 @@ def run_migrations_offline():
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection):
+def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection, target_metadata=target_metadata,
         version_table=VERSION_TABLE, include_object=include_object, compare_type=True,
@@ -51,7 +54,7 @@ def do_run_migrations(connection: Connection):
         context.run_migrations()
 
 
-async def run_async_migrations():
+async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = settings.DATABASE_URL
     connectable = async_engine_from_config(
@@ -62,7 +65,7 @@ async def run_async_migrations():
     await connectable.dispose()
 
 
-def run_migrations_online():
+def run_migrations_online() -> None:
     asyncio.run(run_async_migrations())
 
 

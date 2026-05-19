@@ -15,13 +15,12 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Annotated
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.db import get_db, get_tenant_id
@@ -411,17 +410,17 @@ async def verify_root(
     `transparency_historical_keys` and accepts the matching fingerprint —
     customers don't need to manually pick the key.
     """
+    import base64 as _b64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
     from services.audit.signer import (
         canonical_json,
         fingerprint_public_key,
         get_root_signer,
         load_historical_public_keys,
     )
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-    import base64 as _b64
-    from services.audit.merkle import build_root as _build_root
-    from services.audit.merkle import leaf_hash as _leaf_hash
 
     active_signer = get_root_signer()
     expected_fingerprint = active_signer._fingerprint  # noqa: SLF001

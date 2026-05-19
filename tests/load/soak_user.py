@@ -26,12 +26,10 @@ import json
 import os
 import random
 import secrets
-import time
 import uuid
 from typing import Any
 
 from locust import HttpUser, between, events, task
-
 
 # --------------------------------------------------------------------------- #
 # Tenant manifest                                                             #
@@ -144,9 +142,7 @@ class SoakMixUser(HttpUser):
             # not test failures (sprint 2.3 contract: 504 is the
             # decision_timeout fallback, 403 covers escalation +
             # security blocks). 202 is forbidden post-sprint 1.6.
-            if r.status_code == 200:
-                r.success()
-            elif r.status_code in (403, 429, 504):
+            if r.status_code == 200 or r.status_code in (403, 429, 504):
                 r.success()
             else:
                 r.failure(f"unexpected_status:{r.status_code}")

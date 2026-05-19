@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
-from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +61,7 @@ async def get_billing_summary(
     # 2026-05-13: enrich with a 7-day daily call-volume + cost trend pulled
     # from acp_usage. Without this the Billing UI's "API Call Volume Trend"
     # chart had nothing to plot.
-    since = datetime.now(tz=timezone.utc) - timedelta(days=7)
+    since = datetime.now(tz=UTC) - timedelta(days=7)
     stmt = (
         select(
             func.date_trunc("day", UsageRecord.timestamp).label("day"),
@@ -106,7 +105,7 @@ async def get_billing_invoices(
     The Redis-based engine summary is used to overlay current-month
     threats_blocked + money_saved (live ROI counters).
     """
-    six_months_ago = datetime.now(tz=timezone.utc) - timedelta(days=186)
+    six_months_ago = datetime.now(tz=UTC) - timedelta(days=186)
     # 2026-05-14: define the month expression once so both GROUP BY and ORDER BY
     # reference the SAME expression. Using `.group_by("month")` (label string)
     # while `.order_by(func.date_trunc(...))` introduces a fresh expression

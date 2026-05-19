@@ -50,8 +50,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Allow `python tests/load/soak.py` from the repo root.
@@ -60,7 +59,6 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from tests.load.post_run_checks import run_all_post_run_checks  # noqa: E402
-
 
 # --------------------------------------------------------------------------- #
 # Tenant provisioning                                                         #
@@ -330,7 +328,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out_dir = _REPO_ROOT / args.reports_dir / ts
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[soak] reports → {out_dir}")
@@ -351,7 +349,7 @@ def main() -> int:
     ))
 
     # Step 2: launch locust
-    run_started_at = datetime.now(timezone.utc)
+    run_started_at = datetime.now(UTC)
     locust_rc = _launch_locust(
         gateway_url=args.gateway_url,
         manifest_path=manifest_path,
@@ -359,7 +357,7 @@ def main() -> int:
         users=int(args.users), spawn_rate=int(args.spawn_rate),
         duration=args.duration,
     )
-    run_ended_at = datetime.now(timezone.utc)
+    run_ended_at = datetime.now(UTC)
     print(f"[soak] locust exit={locust_rc}, window={run_started_at.isoformat()} → {run_ended_at.isoformat()}")
 
     # Step 3: parse locust output for SLO checks

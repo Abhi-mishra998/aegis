@@ -21,14 +21,13 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
+from contextlib import asynccontextmanager, suppress
+from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends, FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing_extensions import Annotated
 
 from sdk.common.db import engine, get_db, get_session_factory
 from sdk.common.migrate import check_schema
@@ -36,7 +35,7 @@ from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.audit.database import SessionLocal, settings
 from services.audit.outbox_worker import run_outbox_worker
-from services.audit.router import router, pending_router
+from services.audit.router import pending_router, router
 from services.audit.schemas import AuditLogCreate
 from services.audit.writer import AuditWriter
 
@@ -330,10 +329,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         pass
 
     # Transparency scheduler is just a sleep loop — should exit immediately.
-    try:
+    with suppress(TimeoutError, asyncio.CancelledError):
         await asyncio.wait_for(transparency_task, timeout=5.0)
-    except (TimeoutError, asyncio.CancelledError):
-        pass
 
     # Final cleanup
     await redis.aclose()
@@ -356,6 +353,7 @@ app.include_router(pending_router)
 
 # Daily Merkle transparency log — root commitment over signed receipts.
 from services.audit.transparency import transparency_router  # noqa: E402
+
 app.include_router(transparency_router)
 
 

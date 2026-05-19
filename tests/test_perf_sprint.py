@@ -16,11 +16,9 @@ operator fills it in after running locust against the rebuilt stack.
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
 
 # --------------------------------------------------------------------------- #
 # In-process JWT LRU                                                          #
@@ -98,8 +96,8 @@ class TestLocalTokenLRU:
 
 def test_invalidate_local_token_routes_to_hash():
     from services.gateway.auth import (
-        LocalTokenValidator,
         _LOCAL_TOKEN_LRU,
+        LocalTokenValidator,
         invalidate_local_token,
     )
     token = "fake.jwt.token"

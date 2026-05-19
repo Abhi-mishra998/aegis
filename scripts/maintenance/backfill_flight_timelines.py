@@ -43,10 +43,10 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Allow `python scripts/maintenance/backfill_flight_timelines.py` from repo root.
@@ -134,7 +134,7 @@ async def _process_timeline(
     completed_at = (
         last_step.occurred_at
         if last_step and last_step.occurred_at is not None
-        else datetime.now(tz=timezone.utc)
+        else datetime.now(tz=UTC)
     )
     started = timeline.started_at or completed_at
     duration_ms = max(0, int((completed_at - started).total_seconds() * 1000))
@@ -181,7 +181,7 @@ async def backfill(
     engine = create_async_engine(database_url, echo=False, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=grace_minutes)
+    cutoff = datetime.now(tz=UTC) - timedelta(minutes=grace_minutes)
     counts = {"scanned": 0, "would_update": 0, "updated": 0}
 
     async with session_factory() as db:

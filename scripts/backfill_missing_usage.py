@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import structlog
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -109,6 +109,7 @@ async def backfill_missing_usage(dry_run: bool = True, hours_back: int = 24) -> 
         return result_dict
 
     await engine.dispose()
+    return None
 
 
 async def verify_audit_usage_consistency() -> dict[str, int]:
@@ -142,9 +143,10 @@ async def verify_audit_usage_consistency() -> dict[str, int]:
         return result_dict
 
     await engine.dispose()
+    return None
 
 
-async def main():
+async def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Backfill missing usage records")

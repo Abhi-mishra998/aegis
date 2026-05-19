@@ -26,13 +26,17 @@ import asyncio
 import json
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from services.behavior.schemas import BehaviorAnalysis
-from services.decision.schemas import Decision, DecisionContext, ExecutionAction, SignalEvaluation
-
+from services.decision.schemas import (
+    Decision,
+    DecisionContext,
+    ExecutionAction,
+    SignalEvaluation,
+)
 
 # ---------------------------------------------------------------------------
 # FIX-1: Behavior UUID string → uuid.UUID conversion
@@ -109,8 +113,8 @@ class TestBehaviorUUIDConversion:
 
         # Replicate the fix's error handling
         try:
-            tenant_id = uuid.UUID(payload.get("tenant_id") or "")
-            agent_id = uuid.UUID(payload.get("agent_id") or "")
+            uuid.UUID(payload.get("tenant_id") or "")
+            uuid.UUID(payload.get("agent_id") or "")
             result = {"success": True}
         except (ValueError, AttributeError) as exc:
             result = {"success": False, "error": f"invalid uuid: {exc}"}

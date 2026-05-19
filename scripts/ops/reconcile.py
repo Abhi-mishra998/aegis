@@ -48,6 +48,7 @@ Connection:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -113,7 +114,7 @@ class ReconciliationReport:
     error: str | None = None
     ts: int = 0
 
-    def finalize(self) -> "ReconciliationReport":
+    def finalize(self) -> ReconciliationReport:
         # An error from any of the data accessors means we cannot vouch for
         # integrity — force the bad path so the CLI exits non-zero and
         # operators can't mistake a failed probe for a clean state.
@@ -291,10 +292,8 @@ def _redis_dlq_lengths(redis_url: str) -> tuple[int, int]:
         audit = int(r.xlen(AUDIT_DLQ_KEY) or 0)
     except Exception:
         audit = 0
-    try:
+    with contextlib.suppress(Exception):
         r.close()
-    except Exception:
-        pass
     return billing, audit
 
 

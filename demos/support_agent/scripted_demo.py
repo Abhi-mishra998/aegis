@@ -32,7 +32,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -277,7 +276,7 @@ async def _scenario_6_runaway_burst(
 ) -> None:
     _hdr("Scenario 6 — Runaway Burst (Rate Limiter)")
     print("  Agent fires 35 rapid requests — exceeds 30/min tenant quota.")
-    print(f"  Expected: 429 Too Many Requests after ~30 calls\n")
+    print("  Expected: 429 Too Many Requests after ~30 calls\n")
 
     blocked_at: int | None = None
     async with httpx.AsyncClient(timeout=10) as client:
@@ -309,7 +308,7 @@ async def _scenario_7_receipts_chain(user_token: str, tenant_id: str) -> None:
 
     if DRY_RUN:
         print(f"  {_DIM}[offline] chain verify skipped{_RESET}")
-        return
+        return None
 
     # Give the async audit writer time to flush Redis stream events to DB
     # before verify-chain queries /audit/export.
@@ -331,7 +330,7 @@ async def _scenario_7_receipts_chain(user_token: str, tenant_id: str) -> None:
 
     if not audit_id:
         print(f"  {_YELLOW}No allow decision found yet — run more scenarios first{_RESET}")
-        return
+        return None
 
     async with httpx.AsyncClient(timeout=10) as client:
         receipt_resp = await client.get(
@@ -406,9 +405,9 @@ async def main() -> None:
     else:
         async with httpx.AsyncClient(timeout=20) as client:
             user_token  = await _user_token(client, creds)
-            print(f"  Admin    : authenticated ✓")
+            print("  Admin    : authenticated ✓")
             agent_token = await _fresh_agent_token(client, creds, user_token)
-            print(f"  Agent    : token refreshed ✓")
+            print("  Agent    : token refreshed ✓")
 
     failures: list[str] = []
 

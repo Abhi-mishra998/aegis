@@ -179,7 +179,7 @@ class BehaviorService:
         """
         from sdk.common.exceptions import ACPError
         class SecurityException(ACPError):
-            def __init__(self, message: str):
+            def __init__(self, message: str) -> None:
                 super().__init__(message=message, status_code=403)
 
         # Defense-in-depth: Global Blockade

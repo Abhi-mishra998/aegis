@@ -57,10 +57,11 @@ import json
 import os
 import sys
 import tarfile
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
     import psycopg2  # type: ignore
@@ -188,7 +189,7 @@ def build_manifest(
         "version":      1,
         "kind":         "acp_tenant_export",
         "tenant_id":    tenant_id,
-        "generated_at": (generated_at or datetime.now(timezone.utc)).isoformat(),
+        "generated_at": (generated_at or datetime.now(UTC)).isoformat(),
         "files": [
             {
                 "path":       e.archive_path,
@@ -249,7 +250,7 @@ def _emit_archive(
 def _add_member(tar: tarfile.TarFile, name: str, blob: bytes) -> None:
     info = tarfile.TarInfo(name=name)
     info.size = len(blob)
-    info.mtime = int(datetime.now(timezone.utc).timestamp())
+    info.mtime = int(datetime.now(UTC).timestamp())
     info.mode = 0o600
     tar.addfile(info, io.BytesIO(blob))
 
@@ -305,7 +306,7 @@ def _build_argparser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_argparser().parse_args()
     output = args.output or Path(
-        f"reports/exports/{args.tenant}_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.tar.gz"
+        f"reports/exports/{args.tenant}_{datetime.now(UTC):%Y%m%dT%H%M%SZ}.tar.gz"
     )
     manifest = run_export(
         tenant_id=args.tenant, output=output, dry_run=args.dry_run,

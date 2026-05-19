@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -249,7 +249,7 @@ class DecisionEngine:
                 "policy_risk_adj":     round(policy_adj, 4),
                 "policy_reason":       ctx.policy_reason,
                 "diagnostic_flags":    raw_diagnostic_flags,
-                "timestamp":           datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp":           datetime.now(tz=UTC).isoformat(),
             },
         )
 

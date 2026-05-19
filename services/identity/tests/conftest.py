@@ -3,12 +3,15 @@ from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sdk.common.config import settings
-from sdk.common.db import get_engine, Base
-from services.identity.models import User # noqa: F401 # Ensure models are imported for metadata
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# The identity service in Docker uses acp_identity. 
+from sdk.common.config import settings
+from sdk.common.db import Base, get_engine
+from services.identity.models import (
+    User,  # noqa: F401 # Ensure models are imported for metadata
+)
+
+# The identity service in Docker uses acp_identity.
 # We override the base DATABASE_URL to target the correct schema for these tests.
 IDENTITY_TEST_DB_URL = settings.DATABASE_URL.replace("/acp", "/acp_identity")
 
@@ -26,11 +29,11 @@ async def prepare_db():
     async with engine.begin() as conn:
         # Create all tables defined in identity models
         await conn.run_sync(Base.metadata.create_all)
-    
+
     # Also dispose any existing cached engine to ensure loop consistency
     cached_engine = get_engine()
     await cached_engine.dispose()
-    
+
     yield
     await engine.dispose()
     await cached_engine.dispose()

@@ -1,7 +1,7 @@
 """init identity
 
 Revision ID: 6acd0ad7aef5
-Revises: 
+Revises:
 Create Date: 2026-04-17 16:58:37.391852
 
 """

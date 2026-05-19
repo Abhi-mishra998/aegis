@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 _SEV_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
 
-def _extract_min_risk(rule: "AutoResponseRule") -> float:
+def _extract_min_risk(rule: AutoResponseRule) -> float:
     """Extract the minimum risk_score_gte from a rule's conditions."""
     cond = rule.conditions
     if isinstance(cond, list):
@@ -30,7 +30,7 @@ def _extract_min_risk(rule: "AutoResponseRule") -> float:
     return 0.0
 
 
-def _extract_severity_set(rule: "AutoResponseRule") -> set[str] | None:
+def _extract_severity_set(rule: AutoResponseRule) -> set[str] | None:
     """Extract allowed severity set from a rule's conditions. None = no filter."""
     cond = rule.conditions
     if isinstance(cond, list):
@@ -52,7 +52,7 @@ class AREIndex:
     Cheap O(n) pass — avoids calling _build_trace on non-candidates.
     """
 
-    def __init__(self, rules: list["AutoResponseRule"]) -> None:
+    def __init__(self, rules: list[AutoResponseRule]) -> None:
         self._rules = rules
         # Build index entries once per rule list
         self._index = [
@@ -64,7 +64,7 @@ class AREIndex:
             for r in rules
         ]
 
-    def candidates(self, incident: dict) -> list["AutoResponseRule"]:
+    def candidates(self, incident: dict) -> list[AutoResponseRule]:
         """Return rules that pass the cheap index pre-filter."""
         risk = float(incident.get("risk_score", 0))
         sev  = str(incident.get("severity", "LOW")).upper()

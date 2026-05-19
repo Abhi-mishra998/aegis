@@ -42,19 +42,19 @@ from services.decision.schemas import DecisionContext
 
 
 def _ctx(**overrides) -> DecisionContext:
-    defaults = dict(
-        tenant_id=uuid.uuid4(),
-        agent_id=uuid.uuid4(),
-        tool="read_file",
-        policy_allowed=True,
-        inference_risk=0.0,
-        behavior_risk=0.0,
-        anomaly_score=0.0,
-        cost_risk=0.0,
-        cross_agent_risk=0.0,
-        confidence=1.0,
-        false_positive_rate=0.0,
-    )
+    defaults = {
+        "tenant_id": uuid.uuid4(),
+        "agent_id": uuid.uuid4(),
+        "tool": "read_file",
+        "policy_allowed": True,
+        "inference_risk": 0.0,
+        "behavior_risk": 0.0,
+        "anomaly_score": 0.0,
+        "cost_risk": 0.0,
+        "cross_agent_risk": 0.0,
+        "confidence": 1.0,
+        "false_positive_rate": 0.0,
+    }
     defaults.update(overrides)
     return DecisionContext(**defaults)
 

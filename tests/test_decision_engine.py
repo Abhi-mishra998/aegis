@@ -21,12 +21,12 @@ from services.decision.schemas import DecisionContext, ExecutionAction
 
 def _ctx(**kwargs) -> DecisionContext:
     """Helper to create a minimal DecisionContext."""
-    defaults = dict(
-        tenant_id=uuid.uuid4(),
-        agent_id=uuid.uuid4(),
-        tool="test_tool",
-        policy_allowed=True,
-    )
+    defaults = {
+        "tenant_id": uuid.uuid4(),
+        "agent_id": uuid.uuid4(),
+        "tool": "test_tool",
+        "policy_allowed": True,
+    }
     defaults.update(kwargs)
     return DecisionContext(**defaults)
 

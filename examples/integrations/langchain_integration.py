@@ -11,21 +11,20 @@ Install:
 from __future__ import annotations
 
 import os
+from typing import Any
+
 import requests
-from typing import Any, Type
-from langchain.tools import BaseTool
-from langchain_core.tools import tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.tools import BaseTool
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ACP CLIENT — thin wrapper, no SDK needed
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ACPClient:
-    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str):
+    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str) -> None:
         self.base_url  = base_url.rstrip("/")
         self.tenant_id = tenant_id
         self.agent_id  = agent_id
@@ -73,7 +72,7 @@ class ACPTool(BaseTool):
         # 1. Ask ACP
         try:
             decision = self.acp.check(self.name, kwargs)
-            risk = decision.get("risk", 0.0)
+            decision.get("risk", 0.0)
         except PermissionError as e:
             return f"[BLOCKED by ACP policy: {e}]"
         except RuntimeError as e:
@@ -96,7 +95,7 @@ class ReadFileInput(BaseModel):
 class ReadFileTool(ACPTool):
     name: str = "read_file"
     description: str = "Read the contents of a file"
-    args_schema: Type[BaseModel] = ReadFileInput
+    args_schema: type[BaseModel] = ReadFileInput
 
     def _run_impl(self, path: str, **_) -> str:
         # REAL implementation — only runs if ACP allows
@@ -113,7 +112,7 @@ class QueryDBInput(BaseModel):
 class QueryDBTool(ACPTool):
     name: str = "db_query"
     description: str = "Run a SQL query against the database"
-    args_schema: Type[BaseModel] = QueryDBInput
+    args_schema: type[BaseModel] = QueryDBInput
 
     def _run_impl(self, sql: str, **_) -> str:
         # REAL implementation — only runs if ACP allows
@@ -127,7 +126,7 @@ class WebSearchInput(BaseModel):
 class WebSearchTool(ACPTool):
     name: str = "web_search"
     description: str = "Search the web for information"
-    args_schema: Type[BaseModel] = WebSearchInput
+    args_schema: type[BaseModel] = WebSearchInput
 
     def _run_impl(self, query: str, **_) -> str:
         # REAL implementation — only runs if ACP allows

@@ -45,9 +45,8 @@ def verify_root_chain(chain: list[dict[str, Any]]) -> bool:
     """
     prev_hash: str | None = None
     for i, link in enumerate(chain):
-        if i > 0:
-            if link.get("prev_root_hash") != prev_hash:
-                return False
+        if i > 0 and link.get("prev_root_hash") != prev_hash:
+            return False
         prev_hash = link.get("root_hash")
     return True
 
