@@ -38,7 +38,7 @@ def _row(i: int):
     }
 
 
-def test_sdk_verifies_inclusion_in_server_built_tree():
+def test_sdk_verifies_inclusion_in_server_built_tree() -> None:
     """The most important test in this sprint: customer-side verification works."""
     signer = get_signer()
     n = 7  # forces multiple odd-level duplications
@@ -53,7 +53,7 @@ def test_sdk_verifies_inclusion_in_server_built_tree():
 
     # Verify the SDK helper matches what the server would compute
     import hashlib
-    for p, leaf in zip(payloads, leaves):
+    for p, leaf in zip(payloads, leaves, strict=False):
         assert leaf == hashlib.sha256(canonical_json(p)).hexdigest()
 
     root = build_root(leaves)
@@ -64,7 +64,7 @@ def test_sdk_verifies_inclusion_in_server_built_tree():
         assert verify_inclusion(leaf, proof, root) is True
 
 
-def test_sdk_rejects_tampered_proof():
+def test_sdk_rejects_tampered_proof() -> None:
     leaves = [f"{i:064x}" for i in range(5)]
     root = build_root(leaves)
     proof = inclusion_proof(leaves, 2)
@@ -72,7 +72,7 @@ def test_sdk_rejects_tampered_proof():
     assert verify_inclusion(leaves[2], proof, root) is False
 
 
-def test_sdk_rejects_swapped_leaf():
+def test_sdk_rejects_swapped_leaf() -> None:
     leaves = [f"{i:064x}" for i in range(5)]
     root = build_root(leaves)
     proof = inclusion_proof(leaves, 2)
@@ -80,6 +80,6 @@ def test_sdk_rejects_swapped_leaf():
     assert verify_inclusion(leaves[3], proof, root) is False
 
 
-def test_sdk_raises_on_malformed_proof():
+def test_sdk_raises_on_malformed_proof() -> None:
     with pytest.raises(ValueError, match="missing field"):
         verify_inclusion("a" * 64, {"leaf": "a" * 64}, "b" * 64)

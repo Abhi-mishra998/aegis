@@ -21,8 +21,7 @@ See docs/risk_reasons.md for the operator-facing reference.
 
 from __future__ import annotations
 
-from typing import Iterable
-
+from collections.abc import Iterable
 
 # --------------------------------------------------------------------------- #
 # Canonical vocabulary                                                        #

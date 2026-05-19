@@ -1,4 +1,5 @@
-import os, sys
+import sys
+
 from sdk.common.auth import token_validator
 
 token = sys.argv[1]

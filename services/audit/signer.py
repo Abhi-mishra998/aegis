@@ -36,6 +36,7 @@ Key storage precedence:
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -56,8 +57,8 @@ _ALGORITHM = "ed25519"
 _RECEIPT_VERSION = 1
 
 _lock = threading.Lock()
-_signer: "ReceiptSigner | None" = None
-_root_signer: "ReceiptSigner | None" = None
+_signer: ReceiptSigner | None = None
+_root_signer: ReceiptSigner | None = None
 
 
 def _b64(b: bytes) -> str:
@@ -80,7 +81,7 @@ def fingerprint_public_key(pub_pem: bytes) -> str:
 
 
 class ReceiptSigner:
-    def __init__(self, private_key: ed25519.Ed25519PrivateKey, source: str):
+    def __init__(self, private_key: ed25519.Ed25519PrivateKey, source: str) -> None:
         self._priv = private_key
         self._pub = private_key.public_key()
         self._pub_pem = self._pub.public_bytes(
@@ -218,10 +219,8 @@ def _generate_and_persist(path: Path) -> tuple[ed25519.Ed25519PrivateKey, str]:
                 encryption_algorithm=serialization.NoEncryption(),
             )
         )
-        try:
+        with contextlib.suppress(OSError):
             path.chmod(0o600)
-        except OSError:
-            pass
         return priv, f"generated:{path}"
     except OSError:
         log.warning("receipt_signer_ephemeral", reason="cannot_persist", path=str(path))
@@ -316,6 +315,7 @@ async def load_historical_public_keys(db: Any) -> list[dict[str, str]]:
     test contexts where the audit DB isn't initialised.
     """
     from sqlalchemy import select  # local import — see module note
+
     from services.audit.models import TransparencyHistoricalKey  # noqa: WPS433
 
     rows = (

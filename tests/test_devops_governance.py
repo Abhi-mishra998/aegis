@@ -19,15 +19,12 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-from demos.devops_agent.mock_k8s import MockK8sCluster, _NAMESPACES
 from demos.devops_agent.k8s_signals import K8sOp, K8sSignalEngine
-from demos.devops_agent.kubectl_wrapper import KubectlWrapper, _parse_args, _classify_op
-
+from demos.devops_agent.kubectl_wrapper import KubectlWrapper, _classify_op, _parse_args
+from demos.devops_agent.mock_k8s import _NAMESPACES, MockK8sCluster
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Mock K8s Cluster Tests
@@ -231,7 +228,7 @@ class TestK8sSignalEngine:
 
     def test_automation_runaway_5_ops_not_triggered(self) -> None:
         engine = K8sSignalEngine()
-        for i in range(5):
+        for _i in range(5):
             engine.observe(self._op("get", "pod", "staging"))
         sig = engine.automation_runaway()
         assert not sig.triggered

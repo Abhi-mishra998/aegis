@@ -237,9 +237,8 @@ async def _scenario_4_ddl_kill(
         else:
             print(f"  {_c(_YELLOW, '⚠')} — expected 401/403 for revoked token, got {verify_status}")
         return None
-    else:
-        print(f"\n  {_c(_RED, 'FAIL')} — DROP TABLE was NOT blocked! (risk={risk:.3f}, action={action})")
-        return None
+    print(f"\n  {_c(_RED, 'FAIL')} — DROP TABLE was NOT blocked! (risk={risk:.3f}, action={action})")
+    return None
 
 
 async def _scenario_5_kill_switch(
@@ -281,7 +280,7 @@ async def _scenario_5_kill_switch(
         print(f"\n  {_c(_YELLOW, '⚠')} — expected HTTP 403, got {status}")
 
     # Disengage kill switch to leave stack clean
-    print(f"\n  Disengaging kill switch…")
+    print("\n  Disengaging kill switch…")
     dis_resp = await client.delete(
         f"{GATEWAY}/decision/kill-switch/{tenant_id}",
         headers=user_headers,
@@ -347,7 +346,7 @@ async def main() -> None:
         user_token = await _get_user_token(
             client, creds["admin_email"], creds["admin_password"]
         )
-        print(f"  Admin    : authenticated ✓")
+        print("  Admin    : authenticated ✓")
 
         await _scenario_1_safe_select(client, creds, user_token)
         await asyncio.sleep(0.5)

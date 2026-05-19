@@ -9,16 +9,15 @@ restart cannot clear active security blocks. Decision service re-hydrates
 Redis from this table on startup.
 """
 from collections.abc import Sequence
-from typing import Union
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "i4j5k6l7m8n9"
-down_revision: Union[str, None] = "h3i4j5k6l7m8"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "h3i4j5k6l7m8"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

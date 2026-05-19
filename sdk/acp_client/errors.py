@@ -11,7 +11,7 @@ class DeniedError(ACPError):
         decision_id: ID of the decision record in the audit log.
     """
 
-    def __init__(self, reason: str, detail: str, decision_id: str | None = None):
+    def __init__(self, reason: str, detail: str, decision_id: str | None = None) -> None:
         self.reason = reason
         self.detail = detail
         self.decision_id = decision_id
@@ -25,7 +25,7 @@ class PolicyError(ACPError):
 class RateLimitedError(ACPError):
     """Raised when the gateway returns 429."""
 
-    def __init__(self, retry_after: float | None = None):
+    def __init__(self, retry_after: float | None = None) -> None:
         self.retry_after = retry_after
         super().__init__(
             f"rate limited; retry after {retry_after}s" if retry_after else "rate limited"
@@ -46,7 +46,7 @@ class EscalationRequiredError(DeniedError):
     """
 
     def __init__(self, detail: str, decision_id: str | None = None,
-                 contract_id: str | None = None):
+                 contract_id: str | None = None) -> None:
         self.contract_id = contract_id
         super().__init__(
             reason="approval_required",
@@ -65,7 +65,7 @@ class DecisionTimeoutError(ACPError):
     transparency-chain audit row for the timed-out attempt.
     """
 
-    def __init__(self, detail: str, request_id: str | None = None):
+    def __init__(self, detail: str, request_id: str | None = None) -> None:
         self.detail = detail
         self.request_id = request_id
         super().__init__(f"decision_timeout: {detail}")

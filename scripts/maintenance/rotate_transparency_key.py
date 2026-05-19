@@ -45,7 +45,7 @@ import asyncio
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -58,6 +58,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+
+import contextlib
 
 from services.audit.models import TransparencyHistoricalKey  # noqa: E402
 from services.audit.signer import fingerprint_public_key  # noqa: E402
@@ -107,7 +109,7 @@ async def _record_historical_key(
             fingerprint=fingerprint,
             public_key_pem=public_key_pem.decode("ascii"),
             algorithm="ed25519",
-            rotated_at=datetime.now(tz=timezone.utc),
+            rotated_at=datetime.now(tz=UTC),
             retired_reason=retired_reason,
         )
         .on_conflict_do_nothing(index_elements=["fingerprint"])
@@ -118,13 +120,11 @@ async def _record_historical_key(
 
 
 def _backup_existing_key(key_path: Path) -> Path:
-    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = key_path.with_name(f"{key_path.stem}.{ts}.bak{key_path.suffix}")
     backup.write_bytes(key_path.read_bytes())
-    try:
+    with contextlib.suppress(OSError):
         backup.chmod(0o600)
-    except OSError:
-        pass
     return backup
 
 
@@ -179,10 +179,8 @@ async def rotate(
     summary["backup_path"] = str(backup)
 
     key_path.write_bytes(_private_pem(new_priv))
-    try:
+    with contextlib.suppress(OSError):
         key_path.chmod(0o600)
-    except OSError:
-        pass
 
     logger.info("rotation_complete", **summary)
     return summary

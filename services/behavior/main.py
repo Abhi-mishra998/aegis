@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import Depends, FastAPI
@@ -105,7 +105,5 @@ async def readiness() -> dict[str, object]:
             "detail": str(exc)[:120],
         }
     finally:
-        try:
+        with suppress(Exception):
             await redis.aclose()
-        except Exception:
-            pass

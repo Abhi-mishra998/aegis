@@ -35,10 +35,11 @@ async def pending_usage_worker() -> None:
     - Fail-safe retry with exponential backoff
     - Target: <100ms round-trip per 1000 events at 100 RPS
     """
+    from sqlalchemy import func, select, update
     from sqlalchemy.dialects.postgresql import insert as pg_insert
-    from sqlalchemy import select, update, and_, func
-    from services.usage.models.usage import UsageRecord
+
     from services.audit.models import PendingUsageEvent
+    from services.usage.models.usage import UsageRecord
 
     session_factory = get_session_factory()
 
@@ -101,10 +102,10 @@ async def pending_usage_worker() -> None:
                 for i in range(0, len(pending_events), 25):
                     batch = pending_events[i : i + 25]
                     results = await asyncio.gather(
-                        *[write_usage_record(e) for e in batch],
+                        *[write_usage_record(ev) for ev in batch],
                         return_exceptions=False
                     )
-                    for event, success in zip(batch, results):
+                    for event, success in zip(batch, results, strict=False):
                         if success:
                             processed_audit_ids.append(event.audit_id)
                         else:
@@ -181,6 +182,7 @@ async def billing_reconciliation_worker() -> None:
 
             # 2. Insert missing UsageRecords in acp_usage DB
             from sqlalchemy.dialects.postgresql import insert as pg_insert
+
             from services.usage.models.usage import UsageRecord
 
             healed_ids: list[str] = []

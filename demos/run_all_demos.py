@@ -102,7 +102,7 @@ async def _run_pack(label: str, module_path: str) -> tuple[bool, float, str]:
         await asyncio.wait_for(coro, timeout=_TIMEOUT_S)
         elapsed = time.perf_counter() - t0
         return True, elapsed, ""
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.perf_counter() - t0
         return False, elapsed, f"timed out after {_TIMEOUT_S}s"
     except SystemExit as exc:

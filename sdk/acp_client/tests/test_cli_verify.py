@@ -62,11 +62,11 @@ def _build_bundle(tmp_path: Path, signer, n: int = 5) -> Path:
     root_hex = build_root(leaves)
     day = rows[0]["timestamp"].date()
 
-    for r, payload in zip(rows, receipts):
+    for _r, payload in zip(rows, receipts, strict=False):
         exec_id = payload["receipt"]["execution_id"]
         (receipts_dir / f"{exec_id}.json").write_text(json.dumps(payload))
 
-    for i, r in enumerate(rows):
+    for i, _r in enumerate(rows):
         exec_id = receipts[i]["receipt"]["execution_id"]
         proof = inclusion_proof(leaves, i)
         (inclusion_dir / f"{exec_id}.json").write_text(json.dumps({
@@ -94,7 +94,7 @@ def _run_cli(*args, cwd=None):
     )
 
 
-def test_verify_bundle_happy_path(tmp_path, isolated_signer):
+def test_verify_bundle_happy_path(tmp_path, isolated_signer) -> None:
     bundle = _build_bundle(tmp_path, isolated_signer, n=5)
     result = _run_cli("verify-bundle", str(bundle), "--json")
     assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
@@ -108,7 +108,7 @@ def test_verify_bundle_happy_path(tmp_path, isolated_signer):
     assert payload["counts"]["root_matches"] == 5
 
 
-def test_verify_bundle_detects_tampered_receipt(tmp_path, isolated_signer):
+def test_verify_bundle_detects_tampered_receipt(tmp_path, isolated_signer) -> None:
     bundle = _build_bundle(tmp_path, isolated_signer, n=3)
 
     # Tamper the first receipt: flip 'decision' from allow → deny.
@@ -125,14 +125,14 @@ def test_verify_bundle_detects_tampered_receipt(tmp_path, isolated_signer):
     assert any("signature INVALID" in f for f in payload["failures"])
 
 
-def test_verify_bundle_detects_missing_public_key(tmp_path, isolated_signer):
+def test_verify_bundle_detects_missing_public_key(tmp_path, isolated_signer) -> None:
     bundle = _build_bundle(tmp_path, isolated_signer, n=2)
     (bundle / "public_key.pem").unlink()
     result = _run_cli("verify-bundle", str(bundle), "--json")
     assert result.returncode == 1
 
 
-def test_verify_bundle_human_readable_output(tmp_path, isolated_signer):
+def test_verify_bundle_human_readable_output(tmp_path, isolated_signer) -> None:
     bundle = _build_bundle(tmp_path, isolated_signer, n=2)
     result = _run_cli("verify-bundle", str(bundle))
     assert result.returncode == 0
@@ -140,7 +140,7 @@ def test_verify_bundle_human_readable_output(tmp_path, isolated_signer):
     assert "OK" in result.stdout.splitlines()[-1]
 
 
-def test_verify_receipt_subcommand(tmp_path, isolated_signer):
+def test_verify_receipt_subcommand(tmp_path, isolated_signer) -> None:
     bundle = _build_bundle(tmp_path, isolated_signer, n=1)
     receipt_file = next((bundle / "receipts").glob("*.json"))
     pubkey_file = bundle / "public_key.pem"
@@ -151,7 +151,7 @@ def test_verify_receipt_subcommand(tmp_path, isolated_signer):
     assert payload["ok"] is True
 
 
-def test_verify_inclusion_subcommand(tmp_path, isolated_signer):
+def test_verify_inclusion_subcommand(tmp_path, isolated_signer) -> None:
     bundle = _build_bundle(tmp_path, isolated_signer, n=3)
     inclusion_file = next((bundle / "inclusion").glob("*.json"))
 

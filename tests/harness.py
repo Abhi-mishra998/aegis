@@ -6,17 +6,18 @@ Uses ASGITransport to call services directly.
 Mocks Redis and SQLAlchemy to avoid infrastructure dependencies.
 """
 
-import uuid
 import datetime
+import uuid
 from unittest.mock import AsyncMock, MagicMock
+
 import httpx
 from jose import jwt
 
 from sdk.common.config import settings
 from services.gateway.main import app as gateway_app
 from services.identity.main import app as identity_app
-from services.registry.main import app as registry_app
 from services.policy.main import app as policy_app
+from services.registry.main import app as registry_app
 
 # --- Mock Data ---
 TEST_TENANT_ID = uuid.uuid4()
@@ -29,7 +30,7 @@ def create_test_token(agent_id=TEST_AGENT_ID, tenant_id=TEST_TENANT_ID, expired=
 
     # Use timezone-aware UTC so .timestamp() gives the correct Unix epoch value
     # regardless of the host machine's local timezone setting.
-    now_utc = datetime.datetime.now(tz=datetime.timezone.utc)
+    now_utc = datetime.datetime.now(tz=datetime.UTC)
     exp = now_utc + datetime.timedelta(minutes=15 if not expired else -15)
     payload = {
         "sub": str(agent_id),
@@ -157,10 +158,11 @@ class ProductionAuditHarness:
         fixture can patch it.
         """
         import json
+
         import services.gateway.main as gw_main
-        from services.gateway.middleware import SecurityMiddleware
-        from services.gateway.client import service_client
         from sdk.common.ratelimit import RateLimiter
+        from services.gateway.client import service_client
+        from services.gateway.middleware import SecurityMiddleware
 
         # Replace the module-level redis reference so lifespan callbacks use mock
         gw_main.redis = self.redis

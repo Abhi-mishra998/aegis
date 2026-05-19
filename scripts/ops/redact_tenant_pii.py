@@ -79,7 +79,7 @@ import os
 import sys
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -275,8 +275,8 @@ def run_redaction(
     record = RedactionRecord(
         redaction_id=str(uuid.uuid4()),
         tenant_id=str(tenant_id),
-        requested_at=(requested_at or datetime.now(timezone.utc)).isoformat(),
-        executed_at=datetime.now(timezone.utc).isoformat(),
+        requested_at=(requested_at or datetime.now(UTC)).isoformat(),
+        executed_at=datetime.now(UTC).isoformat(),
         legal_reason=legal_reason,
         actor=actor,
     )

@@ -22,16 +22,14 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import structlog
-
 from fastapi import APIRouter, Depends, HTTPException, Query
+from redis.asyncio import Redis as _Redis
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from redis.asyncio import Redis as _Redis
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.background import safe_bg as _safe_bg
@@ -56,11 +54,18 @@ async def _invalidate_autonomy_cache(tenant_id, agent_id) -> None:
     except Exception as exc:
         _logger.warning("autonomy_cache_invalidation_failed", error=str(exc))
 from services.autonomy.models import (
-    AutonomyContract, AutonomyViolation, HumanOverrideEvent,
+    AutonomyContract,
+    AutonomyViolation,
+    HumanOverrideEvent,
 )
 from services.autonomy.schemas import (
-    CheckRequest, CheckResult, ContractIn, ContractOut, OverrideIn,
-    OverrideOut, ViolationOut,
+    CheckRequest,
+    CheckResult,
+    ContractIn,
+    ContractOut,
+    OverrideIn,
+    OverrideOut,
+    ViolationOut,
 )
 
 router = APIRouter(
@@ -266,7 +271,7 @@ async def list_violations(
     minutes: int = Query(1440, ge=1, le=43200),
     limit: int = Query(200, ge=1, le=1000),
 ) -> APIResponse[list[ViolationOut]]:
-    since = datetime.now(tz=timezone.utc) - timedelta(minutes=minutes)
+    since = datetime.now(tz=UTC) - timedelta(minutes=minutes)
     stmt = (
         select(AutonomyViolation)
         .where(
@@ -292,7 +297,7 @@ async def list_overrides(
     target_id: str | None = Query(None),
     limit: int = Query(200, ge=1, le=1000),
 ) -> APIResponse[list[OverrideOut]]:
-    since = datetime.now(tz=timezone.utc) - timedelta(minutes=minutes)
+    since = datetime.now(tz=UTC) - timedelta(minutes=minutes)
     stmt = (
         select(HumanOverrideEvent)
         .where(

@@ -7,10 +7,8 @@ from __future__ import annotations
 import types
 import uuid
 
-
-from services.api.are_worker import _build_trace, _check_condition
 from services.api.are_index import AREIndex
-
+from services.api.are_worker import _build_trace, _check_condition
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -21,20 +19,20 @@ def inc(
     agent_id="agent-abc",
     violation_count=1,
 ):
-    return dict(severity=severity, risk_score=risk_score, tool=tool,
-                agent_id=agent_id, violation_count=violation_count)
+    return {"severity": severity, "risk_score": risk_score, "tool": tool,
+                "agent_id": agent_id, "violation_count": violation_count}
 
 
 def cond(**kwargs):
-    base = dict(
-        window="5m",
-        min_violations=1,
-        severity_in=[],
-        risk_score_gte=0.0,
-        tool_in=[],
-        agent_id="*",
-        repeat_offender=False,
-    )
+    base = {
+        "window": "5m",
+        "min_violations": 1,
+        "severity_in": [],
+        "risk_score_gte": 0.0,
+        "tool_in": [],
+        "agent_id": "*",
+        "repeat_offender": False,
+    }
     base.update(kwargs)
     return base
 
@@ -136,18 +134,21 @@ def test_one_failing_condition_blocks():
 # ─── Idempotency key uniqueness ───────────────────────────────────────────────
 
 def test_idemp_key_unique_per_rule():
-    tid, aid, req = "tenant-1", "agent-1", "req-abc"
-    key = lambda rule_id: f"acp:{tid}:are:idemp:{req}:{rule_id}"
+    tid, _aid, req = "tenant-1", "agent-1", "req-abc"
+    def key(rule_id):
+        return f"acp:{tid}:are:idemp:{req}:{rule_id}"
     assert key("rule-1") != key("rule-2")
 
 def test_idemp_key_unique_per_incident():
     tid, rule_id = "tenant-1", "rule-1"
-    key = lambda req: f"acp:{tid}:are:idemp:{req}:{rule_id}"
+    def key(req):
+        return f"acp:{tid}:are:idemp:{req}:{rule_id}"
     assert key("req-001") != key("req-002")
 
 def test_idemp_key_tenant_scoped():
     req, rule_id = "req-abc", "rule-1"
-    key = lambda tid: f"acp:{tid}:are:idemp:{req}:{rule_id}"
+    def key(tid):
+        return f"acp:{tid}:are:idemp:{req}:{rule_id}"
     assert key("tenant-A") != key("tenant-B")
 
 
@@ -155,7 +156,8 @@ def test_idemp_key_tenant_scoped():
 
 def test_cooldown_key_tenant_scoped():
     rule_id = "rule-1"
-    key = lambda tid, scope: f"acp:{tid}:are:cooldown:{rule_id}:{scope}"
+    def key(tid, scope):
+        return f"acp:{tid}:are:cooldown:{rule_id}:{scope}"
     assert key("t1", "global") != key("t2", "global")
     assert key("t1", "agent-x") != key("t1", "agent-y")
 
@@ -292,13 +294,15 @@ def test_index_multiple_rules_partial_match():
 # ─── Correlation & backpressure Redis key patterns ───────────────────────────
 
 def test_correlation_key_tenant_scoped():
-    key = lambda tid, aid: f"acp:{tid}:are:agent_corr:{aid}"
+    def key(tid, aid):
+        return f"acp:{tid}:are:agent_corr:{aid}"
     assert key("t1", "agent-a") != key("t2", "agent-a")
     assert key("t1", "agent-a") != key("t1", "agent-b")
 
 
 def test_latency_key_tenant_and_rule_scoped():
-    key = lambda tid, rid: f"acp:{tid}:are:latency:{rid}"
+    def key(tid, rid):
+        return f"acp:{tid}:are:latency:{rid}"
     assert key("t1", "rule-1") != key("t2", "rule-1")
     assert key("t1", "rule-1") != key("t1", "rule-2")
 
@@ -321,6 +325,6 @@ def test_admin_roles_are_correct():
 # ─── Audit events stream key ──────────────────────────────────────────────────
 
 def test_audit_stream_key():
-    from services.api.main import _AUDIT_STREAM, _AUDIT_ARE_GROUP
+    from services.api.main import _AUDIT_ARE_GROUP, _AUDIT_STREAM
     assert _AUDIT_STREAM == "acp:audit:events"
     assert _AUDIT_ARE_GROUP == "are-audit-workers"

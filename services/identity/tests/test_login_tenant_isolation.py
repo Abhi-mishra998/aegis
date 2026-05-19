@@ -36,20 +36,20 @@ async def http_client():
 @pytest.mark.asyncio
 async def test_login_without_tenant_id_header_returns_400(
     http_client: httpx.AsyncClient,
-):
+) -> None:
     """
     Test Case 1: Missing X-Tenant-ID Header
-    
+
     The system returns 400 Bad Request when X-Tenant-ID header is missing.
     """
     email = f"nonexistent-{uuid.uuid4().hex}@example.com"
     password = "SomePassword123!"
-    
+
     response = await http_client.post(
         f"{IDENTITY_URL}/auth/login",
         json={"email": email, "password": password},
     )
-    
+
     assert response.status_code == 400, (
         f"Expected 400 Bad Request when X-Tenant-ID header is missing, "
         f"but got {response.status_code}. "
@@ -61,19 +61,19 @@ async def test_login_without_tenant_id_header_returns_400(
 @pytest.mark.asyncio
 async def test_login_with_invalid_uuid_returns_400(
     http_client: httpx.AsyncClient,
-):
+) -> None:
     """
     Test Case 2: Invalid UUID in X-Tenant-ID Header
     """
     email = f"test-{uuid.uuid4().hex}@example.com"
     password = "SomePassword123!"
-    
+
     response = await http_client.post(
         f"{IDENTITY_URL}/auth/login",
         json={"email": email, "password": password},
         headers={"X-Tenant-ID": "not-a-valid-uuid"},
     )
-    
+
     assert response.status_code == 400, (
         f"Expected 400 Bad Request for invalid UUID, "
         f"but got {response.status_code}. "
@@ -85,23 +85,23 @@ async def test_login_with_invalid_uuid_returns_400(
 @pytest.mark.asyncio
 async def test_login_with_tenant_id_header_but_nonexistent_user(
     http_client: httpx.AsyncClient,
-):
+) -> None:
     """
     Test Case 3: With X-Tenant-ID Header but Non-Existent User
-    
+
     This test verifies that when X-Tenant-ID header IS provided,
     the endpoint should return 401 for non-existent users.
     """
     tenant_id = uuid.uuid4()
     email = f"nonexistent-{uuid.uuid4().hex}@example.com"
     password = "SomePassword123!"
-    
+
     response = await http_client.post(
         f"{IDENTITY_URL}/auth/login",
         json={"email": email, "password": password},
         headers={"X-Tenant-ID": str(tenant_id)},
     )
-    
+
     assert response.status_code == 401, (
         f"Expected 401 Unauthorized for non-existent user, "
         f"but got {response.status_code}. "
@@ -122,21 +122,21 @@ async def test_login_with_tenant_id_header_but_nonexistent_user(
 async def test_property_missing_tenant_header_always_returns_400(
     http_client: httpx.AsyncClient,
     tenant_count: int,
-):
+) -> None:
     """
     Property-Based Test: Missing X-Tenant-ID Header Always Returns 400
-    
+
     Property: For ANY login request without X-Tenant-ID header,
     the system SHALL return 400 Bad Request.
     """
     email = f"test-{uuid.uuid4().hex[:8]}@example.com"
     password = f"Password{uuid.uuid4().hex[:8]}!"
-    
+
     response = await http_client.post(
         f"{IDENTITY_URL}/auth/login",
         json={"email": email, "password": password},
     )
-    
+
     assert response.status_code == 400, (
         f"Property violated: Expected 400 Bad Request for missing X-Tenant-ID header, "
         f"but got {response.status_code}. "
@@ -149,28 +149,28 @@ async def test_property_missing_tenant_header_always_returns_400(
 @pytest.mark.asyncio
 async def test_email_normalization(
     http_client: httpx.AsyncClient,
-):
+) -> None:
     """
     Test Case 4: Email Normalization
-    
+
     Verifies that emails are normalized (trimmed and lowercased) before querying.
     """
     tenant_id = uuid.uuid4()
-    
+
     # Test with uppercase and whitespace
     email_variants = [
         "  Test@Example.com  ",
         "TEST@EXAMPLE.COM",
         "test@example.com",
     ]
-    
+
     for email in email_variants:
         response = await http_client.post(
             f"{IDENTITY_URL}/auth/login",
             json={"email": email, "password": "TestPassword123!"},
             headers={"X-Tenant-ID": str(tenant_id)},
         )
-        
+
         # All variants should be treated the same (401 for non-existent user)
         assert response.status_code == 401, (
             f"Email normalization failed for '{email}': "

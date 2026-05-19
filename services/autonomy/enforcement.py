@@ -8,8 +8,8 @@ operator is dry-running a contract in the UI.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 @dataclass

@@ -19,7 +19,7 @@ def upgrade() -> None:
     # 1. Backfill users
     op.execute("UPDATE users SET org_id = tenant_id WHERE org_id IS NULL")
     op.alter_column('users', 'org_id', nullable=False)
-    
+
     # 2. Backfill agent_credentials
     op.execute("UPDATE agent_credentials SET org_id = tenant_id WHERE org_id IS NULL")
     op.alter_column('agent_credentials', 'org_id', nullable=False)

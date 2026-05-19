@@ -47,16 +47,16 @@ async def http_client():
 @pytest.mark.asyncio
 async def test_preservation_nonexistent_user_returns_401(
     http_client: httpx.AsyncClient,
-):
+) -> None:
     """
     Preservation Test 1: Non-Existent User Returns 401 Unauthorized
-    
+
     This test observes that attempting to login with a non-existent
     email returns 401 Unauthorized with "Invalid credentials" message.
-    
+
     EXPECTED ON UNFIXED CODE: PASS (baseline behavior)
     EXPECTED ON FIXED CODE: PASS (behavior preserved)
-    
+
     Validates:
     - Error handling for invalid credentials continues to work (3.1)
     - Response format remains unchanged (3.6)
@@ -64,27 +64,27 @@ async def test_preservation_nonexistent_user_returns_401(
     email = f"nonexistent-{uuid.uuid4().hex}@example.com"
     password = "SomePassword123!"
     tenant_id = str(uuid.uuid4())  # Random tenant ID
-    
+
     # Attempt login with non-existent user (with X-Tenant-ID header after fix)
     response = await http_client.post(
         f"{IDENTITY_URL}/auth/login",
         json={"email": email, "password": password},
         headers={"X-Tenant-ID": tenant_id},
     )
-    
+
     # Should return 401 Unauthorized
     assert response.status_code == 401, (
         f"Expected 401 Unauthorized for non-existent user, but got {response.status_code}. "
         f"Response: {response.text}"
     )
-    
+
     # Verify error message format
     data = response.json()
     assert "error" in data, "Response should contain 'error' field"
     assert "Invalid credentials" in data["error"], (
         f"Error message should be 'Invalid credentials', but got: {data.get('error')}"
     )
-    
+
     # Verify response structure (APIResponse format)
     assert "success" in data, "Response should contain 'success' field"
     assert data["success"] is False, "Success should be False for error response"
@@ -105,17 +105,17 @@ async def test_property_nonexistent_user_always_returns_401(
     http_client: httpx.AsyncClient,
     email_prefix: str,
     password_length: int,
-):
+) -> None:
     """
     Property-Based Test: Non-Existent User Always Returns 401
-    
+
     Property: For ANY login attempt with a non-existent email,
     the system SHALL return 401 Unauthorized with "Invalid credentials"
     message, regardless of the email or password format.
-    
+
     EXPECTED ON UNFIXED CODE: PASS (baseline behavior)
     EXPECTED ON FIXED CODE: PASS (behavior preserved)
-    
+
     Validates:
     - Error handling for invalid credentials continues to work (3.1)
     - Response format remains unchanged (3.6)
@@ -124,14 +124,14 @@ async def test_property_nonexistent_user_always_returns_401(
     email = f"{email_prefix}-{uuid.uuid4().hex[:8]}@example.com"
     password = "P" * password_length
     tenant_id = str(uuid.uuid4())  # Random tenant ID
-    
+
     # Attempt login with non-existent user (with X-Tenant-ID header after fix)
     response = await http_client.post(
         f"{IDENTITY_URL}/auth/login",
         json={"email": email, "password": password},
         headers={"X-Tenant-ID": tenant_id},
     )
-    
+
     # Property: Should ALWAYS return 401 for non-existent user
     assert response.status_code == 401, (
         f"Property violated: Expected 401 Unauthorized for non-existent user, "
@@ -139,14 +139,14 @@ async def test_property_nonexistent_user_always_returns_401(
         f"Counterexample: email_prefix={email_prefix}, password_length={password_length}. "
         f"Response: {response.text}"
     )
-    
+
     # Verify error message format is preserved
     data = response.json()
     assert "error" in data, "Response should contain 'error' field"
     assert "Invalid credentials" in data["error"], (
         f"Error message should be 'Invalid credentials', but got: {data.get('error')}"
     )
-    
+
     # Verify response structure (APIResponse format)
     assert "success" in data, "Response should contain 'success' field"
     assert data["success"] is False, "Success should be False for error response"

@@ -1,7 +1,7 @@
 """init registry
 
 Revision ID: d0d5347eec1b
-Revises: 
+Revises:
 Create Date: 2026-04-17 16:58:40.567050
 
 """

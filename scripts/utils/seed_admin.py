@@ -68,7 +68,7 @@ async def seed_admin_user() -> bool:
             tenants_exists = has_tenants_res.scalar()
 
             # 4. Perform Seed queries
-            
+
             if tenants_exists:
                 # Check if default admin tenant already exists
                 t_res = await conn.execute(text(
@@ -83,7 +83,7 @@ async def seed_admin_user() -> bool:
                     ))
                 else:
                     print("✅ Default tenant already exists")
-            
+
             print("🌱 Seeding admin user...")
             if org_id_exists:
                 await conn.execute(text(
@@ -99,7 +99,7 @@ async def seed_admin_user() -> bool:
                     f"('{admin_id}', 'admin@acp.local', '{hashed_password}', "
                     f"'ADMIN', true, '{ADMIN_TENANT_ID}')"
                 ))
-            
+
             await conn.commit()
 
         await engine.dispose()

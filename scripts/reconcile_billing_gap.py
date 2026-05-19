@@ -53,7 +53,7 @@ def _fetch_billable_audits(hours: int) -> list[dict[str, Any]]:
                 (hours,),
             )
             cols = [c.name for c in cur.description]
-            return [dict(zip(cols, r)) for r in cur.fetchall()]
+            return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
     finally:
         conn.close()
 
@@ -78,7 +78,7 @@ def _fetch_present_audit_ids(audit_ids: list[str]) -> set[str]:
         conn.close()
 
 
-def _enqueue(rows: list[dict[str, Any]], r: "redis.Redis") -> int:
+def _enqueue(rows: list[dict[str, Any]], r: redis.Redis) -> int:
     pushed = 0
     for row in rows:
         audit_id = str(row["id"])

@@ -34,7 +34,7 @@ def _row():
     }
 
 
-def test_sdk_verifies_server_signed_receipt():
+def test_sdk_verifies_server_signed_receipt() -> None:
     """The most important test in this sprint."""
     signer = get_signer()
     payload = signer.sign(_row())
@@ -42,14 +42,14 @@ def test_sdk_verifies_server_signed_receipt():
     assert verify_receipt(payload, pub_pem) is True
 
 
-def test_sdk_rejects_tampered_payload():
+def test_sdk_rejects_tampered_payload() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
     payload["receipt"]["decision"] = "deny"
     assert verify_receipt(payload, signer.public_key_pem()) is False
 
 
-def test_sdk_rejects_unknown_algorithm():
+def test_sdk_rejects_unknown_algorithm() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
     payload["algorithm"] = "rsa"
@@ -57,7 +57,7 @@ def test_sdk_rejects_unknown_algorithm():
         verify_receipt(payload, signer.public_key_pem())
 
 
-def test_sdk_rejects_fingerprint_mismatch():
+def test_sdk_rejects_fingerprint_mismatch() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
     payload["public_key_fingerprint"] = "0" * 32

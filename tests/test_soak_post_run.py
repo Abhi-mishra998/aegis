@@ -23,13 +23,11 @@ Covered:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # --------------------------------------------------------------------------- #
 # Shared fixtures                                                             #
@@ -38,7 +36,7 @@ import pytest
 
 @pytest.fixture
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _stub_response(*, status_code: int = 200, body: dict | None = None,

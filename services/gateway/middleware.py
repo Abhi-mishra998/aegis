@@ -25,7 +25,6 @@ import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 import httpx
 import structlog
@@ -45,8 +44,13 @@ from services.gateway._mw_response import _ResponseMixin
 from services.gateway.client import service_client
 from services.gateway.inference_proxy import ProxyDecision, inference_proxy
 from services.gateway.trust_emitter import (
-    check_autonomy_contract, emit_graph_event, emit_snapshot, emit_step,
-    emit_timeline_end, emit_timeline_start, map_decision_to_outcome,
+    check_autonomy_contract,
+    emit_graph_event,
+    emit_snapshot,
+    emit_step,
+    emit_timeline_end,
+    emit_timeline_start,
+    map_decision_to_outcome,
 )
 
 logger = structlog.get_logger(__name__)
@@ -616,7 +620,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         t_id_str = t_id_hdr
                         try:
                             agent_id_hdr = request.headers.get("X-Agent-ID")
-                            if agent_id_hdr: agent_id = uuid.UUID(agent_id_hdr)
+                            if agent_id_hdr:
+                                agent_id = uuid.UUID(agent_id_hdr)
                         except (ValueError, TypeError):
                             pass
 

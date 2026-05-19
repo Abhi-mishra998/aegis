@@ -11,6 +11,7 @@ Architecture:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import uuid
@@ -54,14 +55,22 @@ def _eval_one(field: str, op: str, rule_val: object, incident: dict, window_coun
         return False, None
 
     try:
-        if op == "==":     return actual == rule_val,            actual
-        if op == "!=":     return actual != rule_val,            actual
-        if op == ">":      return float(actual) > float(rule_val),  actual
-        if op == ">=":     return float(actual) >= float(rule_val), actual
-        if op == "<":      return float(actual) < float(rule_val),  actual
-        if op == "<=":     return float(actual) <= float(rule_val), actual
-        if op == "in":     return actual in rule_val,            actual
-        if op == "not_in": return actual not in rule_val,        actual
+        if op == "==":
+            return actual == rule_val, actual
+        if op == "!=":
+            return actual != rule_val, actual
+        if op == ">":
+            return float(actual) > float(rule_val), actual
+        if op == ">=":
+            return float(actual) >= float(rule_val), actual
+        if op == "<":
+            return float(actual) < float(rule_val), actual
+        if op == "<=":
+            return float(actual) <= float(rule_val), actual
+        if op == "in":
+            return actual in rule_val, actual
+        if op == "not_in":
+            return actual not in rule_val, actual
     except Exception:
         pass
     return False, actual
@@ -98,9 +107,7 @@ def _check_condition(cond: dict, incident: dict, window_count: int) -> bool:
         return False
     if cond.get("repeat_offender") and viol_count < 2 and window_count < 2:
         return False
-    if window_count < int(cond.get("min_violations", 1)):
-        return False
-    return True
+    return not window_count < int(cond.get("min_violations", 1))
 
 
 def _build_trace(cond: dict, incident: dict, window_count: int) -> tuple[bool, list, list]:
@@ -166,8 +173,7 @@ async def _is_suppressed(rule, now: datetime) -> bool:
     if su is None:
         return False
     if su.tzinfo is None:
-        from datetime import timezone
-        su = su.replace(tzinfo=timezone.utc)
+        su = su.replace(tzinfo=UTC)
     return now < su
 
 
@@ -217,10 +223,8 @@ async def _check_correlation(redis, tenant_id: str, agent_id: str) -> bool:
 async def _mark_correlation(redis, tenant_id: str, agent_id: str) -> None:
     """Mark agent as currently being handled."""
     key = f"acp:{tenant_id}:are:agent_corr:{agent_id}"
-    try:
+    with contextlib.suppress(Exception):
         await redis.setex(key, _CORR_TTL, "1")
-    except Exception:
-        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

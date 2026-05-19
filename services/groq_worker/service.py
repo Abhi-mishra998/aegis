@@ -13,20 +13,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 import time
 import uuid
 from typing import Any
 
-import logging
 import structlog
 from groq import AsyncGroq
 
 from sdk.common.config import settings
 from sdk.common.groq_helpers import (
     MODEL_DEEP as _MODEL_DEEP,
+)
+from sdk.common.groq_helpers import (
     MODEL_FAST as _MODEL_FAST,
+)
+from sdk.common.groq_helpers import (
     build_signals_block as _build_signals_block,
+)
+from sdk.common.groq_helpers import (
     pick_model as _pick_model,
 )
 
@@ -46,7 +52,12 @@ GROQ_CONSUMER_NAME = "worker-1"
 
 _GROQ_CONCURRENCY = 5                    # max parallel Groq calls
 
-from sdk.common.groq_helpers import THREAT_INTEL_SYSTEM_PROMPT as _SYSTEM_PROMPT, THREAT_INTEL_USER_TEMPLATE as _USER_TEMPLATE  # noqa: E402
+import contextlib
+
+from sdk.common.groq_helpers import (  # noqa: E402
+    THREAT_INTEL_SYSTEM_PROMPT as _SYSTEM_PROMPT,
+)
+from sdk.common.groq_helpers import THREAT_INTEL_USER_TEMPLATE as _USER_TEMPLATE
 
 
 class GroqWorker:
@@ -124,10 +135,8 @@ class GroqWorker:
 
                     # Unwrap middleware-wrapped payload
                     if "data" in event and isinstance(event["data"], str):
-                        try:
+                        with contextlib.suppress(Exception):
                             event = {**event, **json.loads(event["data"])}
-                        except Exception:
-                            pass
 
                     try:
                         uuid.UUID(event.get("tenant_id", ""))
@@ -162,7 +171,7 @@ class GroqWorker:
 
                         # Notify frontend via SSE pub/sub
                         if tenant_id:
-                            try:
+                            with contextlib.suppress(Exception):
                                 await self.redis.publish(
                                     f"acp:events:{tenant_id}",
                                     json.dumps({
@@ -180,8 +189,6 @@ class GroqWorker:
                                         },
                                     }),
                                 )
-                            except Exception:
-                                pass
 
                         logger.info(
                             "groq_insight_stored",
@@ -228,20 +235,18 @@ async def get_recent_insights(redis, tenant_id: str, limit: int = 10) -> list[di
         event_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
         raw = await redis.get(f"acp:groq:insight:{event_id}")
         if raw:
-            try:
+            with contextlib.suppress(Exception):
                 results.append(json.loads(raw))
-            except Exception:
-                pass
     return results
 
 
-async def main():
+async def main() -> None:
     """Service entry point."""
     from sdk.common.redis import get_redis_client
-    
+
     redis_client = get_redis_client(settings.REDIS_URL, decode_responses=False)
     worker = GroqWorker(redis_client, settings.GROQ_API_KEY)
-    
+
     try:
         await worker.run()
     finally:

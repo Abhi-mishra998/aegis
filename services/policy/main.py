@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     if not ready:
         logger.critical("opa_not_ready", detail="OPA policy engine failed health check; shutting down")
         sys.exit(1)
-    
+
     # Initialize Registry & Audit clients
     init_policy_clients()
     yield

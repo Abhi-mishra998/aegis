@@ -10,11 +10,13 @@ Works with: LangChain, LlamaIndex, AutoGen, CrewAI, Haystack,
 
 from __future__ import annotations
 
+import functools
 import os
 import time
-import functools
+from collections.abc import Callable
+from typing import Any
+
 import requests
-from typing import Any, Callable
 
 
 class ACP:
@@ -29,7 +31,7 @@ class ACP:
         def read_file(path): ...
     """
 
-    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str):
+    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str) -> None:
         self.base_url  = base_url.rstrip("/")
         self.agent_id  = agent_id
         self._headers  = {
@@ -39,7 +41,7 @@ class ACP:
         }
 
     @classmethod
-    def from_env(cls) -> "ACP":
+    def from_env(cls) -> ACP:
         """Read config from environment variables."""
         return cls(
             base_url  = os.environ["ACP_BASE_URL"],

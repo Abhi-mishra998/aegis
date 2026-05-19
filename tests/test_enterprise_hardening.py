@@ -23,8 +23,11 @@ import pytest
 from jose import jwt
 
 from sdk.common.config import settings
-from services.policy.local_eval import evaluate, evaluate_from_jwt_claims, timed_evaluate
-
+from services.policy.local_eval import (
+    evaluate,
+    evaluate_from_jwt_claims,
+    timed_evaluate,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -47,7 +50,7 @@ def _make_token(
     permissions: list[dict] | None = None,
     expired: bool = False,
 ) -> str:
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    now = datetime.datetime.now(tz=datetime.UTC)
     exp = now + datetime.timedelta(minutes=-5 if expired else 15)
     payload = {
         "jti":          str(uuid.uuid4()),
@@ -345,8 +348,8 @@ class TestZeroRegistryCalls:
         Simulate a full gateway execute request. Registry must NOT be called
         when the JWT carries embedded agent_status + permissions.
         """
-        from tests.harness import harness, TEST_TENANT_ID, TEST_AGENT_ID
         from services.gateway.client import service_client
+        from tests.harness import TEST_AGENT_ID, TEST_TENANT_ID, harness
 
         perms = [
             {"tool_name": "unknown-tool", "action": "ALLOW"},

@@ -16,8 +16,11 @@ from sdk.common.deadline import check_deadline
 from sdk.common.response import APIResponse
 from services.policy.opa_client import opa_client
 from services.policy.schemas import (
-    EvaluationRequest, EvaluationResponse,
-    SimulateRequest, SimulateResponse, SimulateDiffItem,
+    EvaluationRequest,
+    EvaluationResponse,
+    SimulateDiffItem,
+    SimulateRequest,
+    SimulateResponse,
 )
 
 logger = structlog.get_logger(__name__)
@@ -138,7 +141,7 @@ def _build_opa_input(
     payload: EvaluationRequest
 ) -> dict[str, Any]:
     """
-    Central OPA input builder. 
+    Central OPA input builder.
     Ensures a consistent schema for all policy requests, including metadata.
     """
     permissions = []
@@ -321,10 +324,10 @@ async def simulate_policy(payload: SimulateRequest) -> APIResponse[SimulateRespo
     policy rules locally. Returns a diff of decisions that would change.
     No OPA call, no writes — pure read + evaluate.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
 
     hours     = _TIME_RANGE_HOURS.get(payload.time_range, 24)
-    since     = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
     try:
         client = get_audit_client()
@@ -383,7 +386,7 @@ async def execute_tool(
     _: Annotated[bool, Depends(check_deadline)] = True,
 ) -> dict[str, Any]:
     """
-    Final tool execution destination. 
+    Final tool execution destination.
     In this control plane, it records the execution and returns the decision context.
     The Gateway's SecurityMiddleware has already authorized this request.
     """
@@ -391,13 +394,13 @@ async def execute_tool(
     agent_id = request.headers.get("X-Agent-ID", "")
     tenant_id = request.headers.get("X-Tenant-ID", "")
     tool = payload.get("tool") or request.headers.get("X-ACP-Tool", "unknown")
-    
+
     # Extract decision metadata injected by the Gateway
     decision_meta = payload.get("_decision", {})
-    
+
     # RULE: All executions are recorded for auditing and forensic replay
     # In a real system, this is where the actual agent tool invocation happens.
-    
+
     return {
         "success": True,
         "request_id": request_id,

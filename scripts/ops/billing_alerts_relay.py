@@ -122,9 +122,11 @@ async def run() -> int:
     redis_url = os.environ.get("REDIS_URL")
     webhook   = os.environ.get("ACP_SLACK_WEBHOOK")
     if not redis_url:
-        print("ERROR: REDIS_URL required", file=sys.stderr); return 2
+        print("ERROR: REDIS_URL required", file=sys.stderr)
+        return 2
     if not webhook:
-        print("ERROR: ACP_SLACK_WEBHOOK required", file=sys.stderr); return 2
+        print("ERROR: ACP_SLACK_WEBHOOK required", file=sys.stderr)
+        return 2
 
     redis = Redis.from_url(redis_url, decode_responses=False)
     await _ensure_group(redis)

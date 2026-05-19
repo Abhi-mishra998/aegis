@@ -32,7 +32,6 @@ from .policy import load_policy
 from .receipts import verify_receipt
 from .transparency import leaf_hash_for_receipt, verify_inclusion
 
-
 # ─── Existing commands ────────────────────────────────────────────────────
 
 
@@ -348,7 +347,9 @@ def _cmd_verify_chain(args: argparse.Namespace) -> int:
     Either way the chain is broken and the operator must investigate.
     """
     import json as _json
+
     import httpx
+
     from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash
 
     base = args.base_url.rstrip("/")
@@ -356,8 +357,10 @@ def _cmd_verify_chain(args: argparse.Namespace) -> int:
     if args.tenant:
         headers["X-Tenant-ID"] = args.tenant
     params: dict[str, object] = {"limit": args.limit}
-    if args.since: params["since"] = args.since
-    if args.until: params["until"] = args.until
+    if args.since:
+        params["since"] = args.since
+    if args.until:
+        params["until"] = args.until
 
     # /audit/export is newest-first NDJSON. To verify the chain we need
     # oldest-first; collect rows, sort, then walk per shard.
@@ -464,7 +467,8 @@ def _cmd_verify_root(args: argparse.Namespace) -> int:
         return _emit({"valid": False, "reason": "missing_args",
                       "detail": "supply --root OR (--base-url --from --to)"}, args.json)
     headers = {"Authorization": f"Bearer {args.token or ''}"}
-    if args.tenant: headers["X-Tenant-ID"] = args.tenant
+    if args.tenant:
+        headers["X-Tenant-ID"] = args.tenant
     with httpx.Client(base_url=args.base_url.rstrip("/"), timeout=args.timeout, headers=headers) as http:
         resp = http.get("/transparency/consistency",
                         params={"from_date": args.from_date, "to_date": args.to_date})

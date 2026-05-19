@@ -28,9 +28,9 @@ from tenacity import (
 
 from sdk.common.config import settings
 from sdk.common.groq_helpers import (
-    MODEL_DEEP as _MODEL_DEEP,
-    MODEL_FAST as _MODEL_FAST,
     build_signals_block as _build_signals_block,
+)
+from sdk.common.groq_helpers import (
     pick_model as _pick_model,
 )
 from sdk.common.redis import get_redis_client
@@ -53,7 +53,12 @@ _TIMELINE_KEY = "acp:groq:insights:timeline"
 _INSIGHT_TTL = 86400          # 24 hours — security insights need to outlast the shift
 _TIMELINE_MAX = 500           # keep at most 500 entries in the sorted set
 
-from sdk.common.groq_helpers import THREAT_INTEL_SYSTEM_PROMPT as _SYSTEM_PROMPT, THREAT_INTEL_USER_TEMPLATE as _USER_TEMPLATE  # noqa: E402
+import contextlib
+
+from sdk.common.groq_helpers import (  # noqa: E402
+    THREAT_INTEL_SYSTEM_PROMPT as _SYSTEM_PROMPT,
+)
+from sdk.common.groq_helpers import THREAT_INTEL_USER_TEMPLATE as _USER_TEMPLATE
 
 
 class InsightResponse(BaseModel):
@@ -156,10 +161,8 @@ async def process_groq_queue() -> None:
 
                     # Events from middleware wrap payload under a "data" key
                     if "data" in event and isinstance(event["data"], str):
-                        try:
+                        with contextlib.suppress(Exception):
                             event = {**event, **json.loads(event["data"])}
-                        except Exception:
-                            pass
 
                     event_id = event.get("event_id") or str(uuid.uuid4())
 
@@ -186,7 +189,7 @@ async def process_groq_queue() -> None:
                         # Notify frontend via SSE pub/sub
                         tenant_id = event.get("tenant_id", "")
                         if tenant_id:
-                            try:
+                            with contextlib.suppress(Exception):
                                 await redis.publish(
                                     f"acp:events:{tenant_id}",
                                     json.dumps({
@@ -204,8 +207,6 @@ async def process_groq_queue() -> None:
                                         },
                                     }),
                                 )
-                            except Exception:
-                                pass
 
                         await redis.xack(_STREAM_KEY, _CONSUMER_GROUP, msg_id)
                     except Exception as err:

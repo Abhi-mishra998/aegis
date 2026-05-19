@@ -11,16 +11,16 @@ Install:
 from __future__ import annotations
 
 import os
-import requests
-import anthropic
 
+import anthropic
+import requests
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ACP CLIENT
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ACPClient:
-    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str):
+    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.headers  = {
             "Authorization": f"Bearer {token}",
@@ -133,7 +133,7 @@ class ClaudeACPAgent:
       → Claude returns tool_use or final text
     """
 
-    def __init__(self, acp: ACPClient, model: str = "claude-sonnet-4-6"):
+    def __init__(self, acp: ACPClient, model: str = "claude-sonnet-4-6") -> None:
         self.acp    = acp
         self.model  = model
         self.client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])

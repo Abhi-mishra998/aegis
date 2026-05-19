@@ -19,7 +19,10 @@ _MODEL_DEEP = settings.GROQ_MODEL           # llama-3.3-70b-versatile
 # Risk threshold above which we invoke the larger model for a second opinion
 _DEEP_ANALYSIS_THRESHOLD = 0.75
 
-from sdk.common.groq_helpers import ENFORCEMENT_SYSTEM_PROMPT as _SYSTEM_PROMPT, ENFORCEMENT_USER_TEMPLATE as _USER_TEMPLATE  # noqa: E402
+from sdk.common.groq_helpers import (  # noqa: E402
+    ENFORCEMENT_SYSTEM_PROMPT as _SYSTEM_PROMPT,
+)
+from sdk.common.groq_helpers import ENFORCEMENT_USER_TEMPLATE as _USER_TEMPLATE
 
 
 class GroqSecurityBrain:

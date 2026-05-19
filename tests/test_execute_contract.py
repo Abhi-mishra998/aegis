@@ -19,12 +19,10 @@ We mock the HTTP layer; no live gateway is needed.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
 
 # --------------------------------------------------------------------------- #
 # Gateway-side: middleware helpers                                            #

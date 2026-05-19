@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status, Request
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
@@ -42,7 +42,7 @@ async def record_usage(
                 repo.mark_audit_billing_complete(payload.audit_id),
                 timeout=1.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Don't fail the usage write; log a critical so monitoring can detect drift.
             # The audit row remains in default 'completed' state (writer.py default),
             # so this is consistency-only, not correctness-breaking.
@@ -96,7 +96,7 @@ async def get_revenue_dashboard(
 ) -> APIResponse[dict]:
     repo = UsageRepository(db)
     data = await repo.get_revenue_dashboard(tenant_id)
-    
+
     import structlog as _sl
     _log = _sl.get_logger(__name__)
     redis = getattr(request.app.state, "billing_engine", None)

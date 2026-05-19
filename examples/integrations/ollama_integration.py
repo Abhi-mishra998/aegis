@@ -14,18 +14,17 @@ Install:
 
 from __future__ import annotations
 
-import json
 import os
-import requests
-from typing import Any, Callable
+from collections.abc import Callable
 
+import requests
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ACP CLIENT
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ACPClient:
-    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str):
+    def __init__(self, base_url: str, token: str, tenant_id: str, agent_id: str) -> None:
         self.base_url  = base_url.rstrip("/")
         self.headers   = {
             "Authorization": f"Bearer {token}",
@@ -141,7 +140,7 @@ class OllamaACPAgent:
       6. Repeat until Ollama gives a final text answer
     """
 
-    def __init__(self, acp: ACPClient, model: str = "llama3.2"):
+    def __init__(self, acp: ACPClient, model: str = "llama3.2") -> None:
         self.acp   = acp
         self.model = model
         try:
@@ -157,7 +156,7 @@ class OllamaACPAgent:
         # ACP check
         allowed = self.acp.check(tool_name, args)
         if not allowed:
-            return f"[This action was blocked by ACP security policy]"
+            return "[This action was blocked by ACP security policy]"
 
         # Run real implementation
         fn = TOOL_IMPLEMENTATIONS.get(tool_name)

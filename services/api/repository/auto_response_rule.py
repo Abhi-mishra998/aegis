@@ -7,7 +7,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.api.models.auto_response_rule import AutoResponseRule
-from services.api.schemas.auto_response_rule import AutoResponseRuleCreate, AutoResponseRuleUpdate
+from services.api.schemas.auto_response_rule import (
+    AutoResponseRuleCreate,
+    AutoResponseRuleUpdate,
+)
 
 _SNAPSHOT_FIELDS = (
     "name", "is_active", "priority", "conditions", "actions",

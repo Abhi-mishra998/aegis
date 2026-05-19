@@ -12,14 +12,11 @@ Resources: Namespace, Deployment, Pod, Service, ConfigMap, Secret,
 """
 from __future__ import annotations
 
-import copy
 import random
-import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
-_BOOT_TS = datetime.now(timezone.utc).isoformat()
+_BOOT_TS = datetime.now(UTC).isoformat()
 _RV_COUNTER: dict[str, int] = {}
 
 
@@ -29,7 +26,7 @@ def _rv(kind: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _meta(name: str, namespace: str | None, kind: str, labels: dict | None = None) -> dict:
@@ -171,7 +168,7 @@ def _build_deployment(ns: str, name: str, replicas: int, image: str) -> dict:
 
 def _build_pods(ns: str, deploy_name: str, replicas: int, image: str) -> list[dict]:
     pods = []
-    for i in range(replicas):
+    for _i in range(replicas):
         suffix = uuid.uuid4().hex[:5]
         pname = f"{deploy_name}-{uuid.uuid4().hex[:8]}-{suffix}"
         pods.append({
@@ -331,17 +328,17 @@ class MockK8sCluster:
         if pod and pod["metadata"]["namespace"] == namespace:
             app = pod["metadata"]["labels"].get("app", pod_name)
             logs = []
-            for i in range(lines):
+            for _i in range(lines):
                 ts = _now()
                 levels = ["INFO", "INFO", "INFO", "WARN", "DEBUG"]
                 level = random.choice(levels)
                 msgs = [
                     f"Handling request POST /api/v1/checkout id={uuid.uuid4().hex[:8]}",
-                    f"DB query latency=12ms rows=1",
+                    "DB query latency=12ms rows=1",
                     f"Cache HIT key=session:{uuid.uuid4().hex[:8]}",
-                    f"Health check /healthz → 200 OK",
+                    "Health check /healthz → 200 OK",
                     f"Rate limit check tenant={uuid.uuid4().hex[:8]} → ok",
-                    f"Payment processed amount=99.99 currency=USD",
+                    "Payment processed amount=99.99 currency=USD",
                 ]
                 logs.append(f"{ts} [{level}] {app}: {random.choice(msgs)}")
             return "\n".join(logs)

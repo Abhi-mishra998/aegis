@@ -30,7 +30,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -180,8 +180,9 @@ async def _trust_score_loop(session_factory: async_sessionmaker) -> None:
                 repo = GraphRepository(db)
                 # Score agents active in the last 24 h.
                 from sqlalchemy import distinct, select
-                from services.identity_graph.models import GraphEdge, GraphNode
-                since = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+
+                from services.identity_graph.models import GraphEdge
+                since = datetime.now(tz=UTC) - timedelta(hours=24)
                 stmt = (
                     select(distinct(GraphEdge.src_node_id), GraphEdge.tenant_id)
                     .where(GraphEdge.occurred_at >= since)
@@ -208,8 +209,9 @@ async def _drift_loop(session_factory: async_sessionmaker) -> None:
             async with session_factory() as db:
                 repo = GraphRepository(db)
                 from sqlalchemy import distinct, select
+
                 from services.identity_graph.models import GraphEdge
-                since = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+                since = datetime.now(tz=UTC) - timedelta(hours=24)
                 rows = (await db.execute(
                     select(distinct(GraphEdge.src_node_id), GraphEdge.tenant_id)
                     .where(GraphEdge.occurred_at >= since)
@@ -231,7 +233,7 @@ async def _drift_loop(session_factory: async_sessionmaker) -> None:
                         )
                     b = _vec(baseline)
                     r = _vec(recent)
-                    delta = sum(abs(a - c) for a, c in zip(b, r))
+                    delta = sum(abs(a - c) for a, c in zip(b, r, strict=False))
                     if delta >= DRIFT_THRESHOLD:
                         severity = "critical" if delta >= 1.0 else "warn" if delta >= 0.6 else "info"
                         await repo.add_drift(

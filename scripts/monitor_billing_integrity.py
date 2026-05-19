@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -97,7 +97,7 @@ async def check_billing_integrity() -> dict[str, Any]:
         await engine.dispose()
 
 
-async def monitor_loop(check_interval: int = 60):
+async def monitor_loop(check_interval: int = 60) -> None:
     """
     Run continuous integrity checks every N seconds.
 
@@ -231,7 +231,7 @@ def _get_recommendations(audit_count: int, usage_count: int, orphan_count: int) 
     return recommendations
 
 
-async def main():
+async def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Monitor billing integrity")

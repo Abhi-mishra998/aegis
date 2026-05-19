@@ -18,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-
 POLICY_TEMPLATE = """\
 # ACP policy file — committed to your repo, validated in CI.
 #

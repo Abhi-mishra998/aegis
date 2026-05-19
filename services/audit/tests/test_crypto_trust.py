@@ -16,12 +16,12 @@ scheduler is covered separately in `test_transparency_scheduler.py`.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from sdk.acp_client.transparency import verify_root_chain, verify_root_signature
 from services.audit.merkle import (
     EMPTY_ROOT,
     build_root,
@@ -35,8 +35,6 @@ from services.audit.signer import (
     reset_signer_for_tests,
     verify_receipt,
 )
-from sdk.acp_client.transparency import verify_root_chain, verify_root_signature
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -70,13 +68,13 @@ def _fake_audit_row():
 # ── canonical JSON is order-stable ─────────────────────────────────────────
 
 
-def test_canonical_json_is_order_independent():
+def test_canonical_json_is_order_independent() -> None:
     a = canonical_json({"b": 2, "a": 1, "c": {"y": 4, "x": 3}})
     b = canonical_json({"a": 1, "c": {"x": 3, "y": 4}, "b": 2})
     assert a == b
 
 
-def test_canonical_json_separators_are_compact():
+def test_canonical_json_separators_are_compact() -> None:
     # No whitespace between key/value or array items — critical for
     # cross-language verifiers to agree byte-for-byte.
     s = canonical_json({"k": [1, 2, 3]}).decode()
@@ -87,19 +85,19 @@ def test_canonical_json_separators_are_compact():
 # ── Receipt: sign → verify round-trip + tamper detection ───────────────────
 
 
-def test_receipt_round_trip_verifies(signer):
+def test_receipt_round_trip_verifies(signer) -> None:
     payload = signer.sign(_fake_audit_row())
     assert verify_receipt(payload, signer.public_key_pem()) is True
 
 
-def test_receipt_tamper_body_fails_verify(signer):
+def test_receipt_tamper_body_fails_verify(signer) -> None:
     payload = signer.sign(_fake_audit_row())
     # Mutate the body — any byte change MUST break the signature.
     payload["receipt"]["decision"] = "deny"
     assert verify_receipt(payload, signer.public_key_pem()) is False
 
 
-def test_receipt_tamper_signature_fails_verify(signer):
+def test_receipt_tamper_signature_fails_verify(signer) -> None:
     payload = signer.sign(_fake_audit_row())
     sig = list(payload["signature"])
     sig[0] = "A" if sig[0] != "A" else "B"
@@ -107,7 +105,7 @@ def test_receipt_tamper_signature_fails_verify(signer):
     assert verify_receipt(payload, signer.public_key_pem()) is False
 
 
-def test_receipt_wrong_pubkey_fails_verify(signer):
+def test_receipt_wrong_pubkey_fails_verify(signer) -> None:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ed25519
     other = ed25519.Ed25519PrivateKey.generate()
@@ -120,7 +118,7 @@ def test_receipt_wrong_pubkey_fails_verify(signer):
     assert verify_receipt(payload, other_pem) is False
 
 
-def test_receipt_missing_field_raises(signer):
+def test_receipt_missing_field_raises(signer) -> None:
     payload = signer.sign(_fake_audit_row())
     del payload["signature"]
     with pytest.raises(ValueError):
@@ -130,14 +128,14 @@ def test_receipt_missing_field_raises(signer):
 # ── Merkle: inclusion proof + tamper detection ─────────────────────────────
 
 
-def test_merkle_inclusion_round_trip():
+def test_merkle_inclusion_round_trip() -> None:
     leaves = [leaf_hash(f"leaf-{i}".encode()) for i in range(5)]
     root = build_root(leaves)
     proof = inclusion_proof(leaves, 2)
     assert verify_inclusion(leaves[2], proof, root) is True
 
 
-def test_merkle_tampered_leaf_fails_verify():
+def test_merkle_tampered_leaf_fails_verify() -> None:
     leaves = [leaf_hash(f"leaf-{i}".encode()) for i in range(5)]
     root = build_root(leaves)
     proof = inclusion_proof(leaves, 2)
@@ -146,7 +144,7 @@ def test_merkle_tampered_leaf_fails_verify():
     assert verify_inclusion(tampered_leaf, proof, root) is False
 
 
-def test_merkle_tampered_root_fails_verify():
+def test_merkle_tampered_root_fails_verify() -> None:
     leaves = [leaf_hash(f"leaf-{i}".encode()) for i in range(5)]
     root = build_root(leaves)
     proof = inclusion_proof(leaves, 2)
@@ -154,12 +152,12 @@ def test_merkle_tampered_root_fails_verify():
     assert verify_inclusion(leaves[2], proof, flipped_root) is False
 
 
-def test_merkle_empty_root_is_sha256_of_empty():
+def test_merkle_empty_root_is_sha256_of_empty() -> None:
     import hashlib
     assert build_root([]) == EMPTY_ROOT == hashlib.sha256(b"").hexdigest()
 
 
-def test_merkle_singleton_root_equals_leaf():
+def test_merkle_singleton_root_equals_leaf() -> None:
     only = leaf_hash(b"sole")
     assert build_root([only]) == only
 
@@ -190,14 +188,14 @@ def _signed_root(signer, *, tenant, day, root_hash, leaf_count, prev_hash=None):
     }
 
 
-def test_root_signature_round_trip(signer):
+def test_root_signature_round_trip(signer) -> None:
     tenant = uuid.uuid4()
     today = datetime.now(UTC).date()
     payload = _signed_root(signer, tenant=tenant, day=today, root_hash="ab" * 32, leaf_count=42)
     assert verify_root_signature(payload, signer.public_key_pem()) is True
 
 
-def test_root_chain_three_day_consistent_passes(signer):
+def test_root_chain_three_day_consistent_passes(signer) -> None:
     tenant = uuid.uuid4()
     d0 = datetime.now(UTC).date()
     chain = []
@@ -212,12 +210,12 @@ def test_root_chain_three_day_consistent_passes(signer):
     assert verify_root_chain(chain) is True
 
 
-def test_root_chain_broken_pointer_fails(signer):
-    tenant = uuid.uuid4()
-    d0 = datetime.now(UTC).date()
+def test_root_chain_broken_pointer_fails(signer) -> None:
+    uuid.uuid4()
+    datetime.now(UTC).date()
     chain = []
     prev = None
-    for i, h in enumerate(["aa" * 32, "bb" * 32, "cc" * 32]):
+    for _i, h in enumerate(["aa" * 32, "bb" * 32, "cc" * 32]):
         chain.append({"root_hash": h, "prev_root_hash": prev})
         prev = h
     # Adversary edits the middle root's stored content but forgets to
@@ -226,7 +224,7 @@ def test_root_chain_broken_pointer_fails(signer):
     assert verify_root_chain(chain) is False
 
 
-def test_root_payload_tamper_breaks_signature(signer):
+def test_root_payload_tamper_breaks_signature(signer) -> None:
     tenant = uuid.uuid4()
     today = datetime.now(UTC).date()
     payload = _signed_root(signer, tenant=tenant, day=today, root_hash="ab" * 32, leaf_count=42)
@@ -236,6 +234,6 @@ def test_root_payload_tamper_breaks_signature(signer):
     assert verify_root_signature(payload, signer.public_key_pem()) is False
 
 
-def test_empty_chain_is_consistent_by_definition():
+def test_empty_chain_is_consistent_by_definition() -> None:
     assert verify_root_chain([]) is True
     assert verify_root_chain([{"root_hash": "aa" * 32, "prev_root_hash": None}]) is True

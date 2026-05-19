@@ -113,6 +113,19 @@ yarn-error.log*
 out/
 
 # ==========================================
+# Demo credentials (never commit these)
+# ==========================================
+**/.demo_creds.json
+acp-demo.md
+
+# ==========================================
+# Sensitive docs (threat model, secrets)
+# ==========================================
+docs/SECRETS.md
+docs/THREAT_MODEL.md
+docs/runbooks/
+
+# ==========================================
 # Scratch & Debug
 # ==========================================
 scratch/

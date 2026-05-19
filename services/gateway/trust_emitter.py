@@ -14,7 +14,7 @@ own DLQs handled by their respective worker services.
 """
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import json
 import os
 import time
@@ -270,10 +270,8 @@ async def check_autonomy_contract(
             and not result.get("requires_approval")
             and result.get("reason") == "no_contract"
         ):
-            try:
+            with contextlib.suppress(Exception):
                 await redis.setex(cache_key, 60, "ok")
-            except Exception:
-                pass
         return result
     except Exception as exc:
         logger.warning("autonomy_check_unreachable", error=str(exc), request_id=request_id)
@@ -283,7 +281,10 @@ async def check_autonomy_contract(
 def map_decision_to_outcome(action: str) -> str:
     """Project decision-engine actions to graph edge outcomes."""
     a = (action or "").lower()
-    if a in ("allow", "monitor"):    return "allow"
-    if a in ("deny", "block", "kill", "escalate"): return "deny"
-    if a in ("throttle",):           return "deny"
+    if a in ("allow", "monitor"):
+        return "allow"
+    if a in ("deny", "block", "kill", "escalate"):
+        return "deny"
+    if a in ("throttle",):
+        return "deny"
     return "error"

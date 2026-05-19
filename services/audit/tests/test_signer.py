@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 import pytest
 
 from services.audit.signer import (
-    ReceiptSigner,
     canonical_json,
     fingerprint_public_key,
     get_signer,
@@ -39,26 +38,27 @@ def _row():
     }
 
 
-def test_sign_then_verify_roundtrip():
+def test_sign_then_verify_roundtrip() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
     assert verify_receipt(payload, signer.public_key_pem()) is True
 
 
-def test_verify_rejects_tampered_receipt():
+def test_verify_rejects_tampered_receipt() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
     payload["receipt"]["decision"] = "deny"
     assert verify_receipt(payload, signer.public_key_pem()) is False
 
 
-def test_verify_rejects_wrong_public_key():
+def test_verify_rejects_wrong_public_key() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
 
     # Build a second signer with a fresh key
     reset_signer_for_tests()
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.TemporaryDirectory() as td:
         os.environ["RECEIPT_SIGNING_KEY_PATH"] = os.path.join(td, "other.pem")
         other = get_signer()
@@ -68,33 +68,33 @@ def test_verify_rejects_wrong_public_key():
     assert verify_receipt(payload, other.public_key_pem()) is False
 
 
-def test_canonical_json_is_stable():
+def test_canonical_json_is_stable() -> None:
     a = canonical_json({"b": 1, "a": 2})
     b = canonical_json({"a": 2, "b": 1})
     assert a == b
     assert a == b'{"a":2,"b":1}'
 
 
-def test_fingerprint_length_and_hex():
+def test_fingerprint_length_and_hex() -> None:
     signer = get_signer()
     fp = fingerprint_public_key(signer.public_key_pem().encode("ascii"))
     assert len(fp) == 32
     int(fp, 16)  # must be valid hex
 
 
-def test_singleton_returns_same_instance():
+def test_singleton_returns_same_instance() -> None:
     a = get_signer()
     b = get_signer()
     assert a is b
 
 
-def test_verify_raises_on_missing_field():
+def test_verify_raises_on_missing_field() -> None:
     signer = get_signer()
     with pytest.raises(ValueError, match="missing field"):
         verify_receipt({"receipt": {}, "signature": "x"}, signer.public_key_pem())
 
 
-def test_verify_raises_on_wrong_algorithm():
+def test_verify_raises_on_wrong_algorithm() -> None:
     signer = get_signer()
     payload = signer.sign(_row())
     payload["algorithm"] = "rsa"

@@ -21,7 +21,7 @@ class UsageRecord(Base, TenantMixin, IdMixin):
     )
 
     tool: Mapped[str] = mapped_column(String(255), nullable=False)
-    
+
     audit_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), unique=True, index=True, nullable=True
     )

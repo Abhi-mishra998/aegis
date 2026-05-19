@@ -15,6 +15,7 @@ GET    /graph/compromise/history    — past simulations
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -164,6 +165,7 @@ async def risky_paths(
     limit: int = Query(50, ge=1, le=500),
 ) -> APIResponse[list[EdgeOut]]:
     from sqlalchemy import desc, select
+
     from services.identity_graph.models import GraphEdge
     stmt = (
         select(GraphEdge)
@@ -206,10 +208,12 @@ async def runtime_relationships(
     minutes: int = Query(60, ge=1, le=2880),
     limit: int = Query(500, ge=1, le=5000),
 ) -> APIResponse[list[EdgeOut]]:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
+
     from sqlalchemy import desc, select
+
     from services.identity_graph.models import GraphEdge
-    since = datetime.now(tz=timezone.utc) - timedelta(minutes=minutes)
+    since = datetime.now(tz=UTC) - timedelta(minutes=minutes)
     stmt = (
         select(GraphEdge)
         .where(GraphEdge.tenant_id == tenant_id, GraphEdge.occurred_at >= since)

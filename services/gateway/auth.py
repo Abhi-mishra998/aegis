@@ -28,7 +28,6 @@ from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX, REDIS_TOKEN_PREFIX
 from sdk.common.exceptions import ACPAuthError
 
-
 REDIS_TOKEN_VALIDATION_PREFIX = "acp:token_validation:"
 
 # In-process LRU cache for validated JWT payloads. Sits in front of the
@@ -51,7 +50,7 @@ class _LocalTokenLRU:
     def __init__(self, *, max_entries: int, ttl_seconds: float) -> None:
         self._max = max_entries
         self._ttl = ttl_seconds
-        self._store: "OrderedDict[str, tuple[float, dict[str, Any]]]" = OrderedDict()
+        self._store: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
         self._lock = threading.Lock()
         # Hit/miss counters — surfaced via /metrics through metric_snapshot()
         # so dashboards can prove the cache is actually hot.
@@ -211,7 +210,11 @@ class LocalTokenValidator:
             tenant_id_str = payload.get("tenant_id")
             if org_id_str and tenant_id_str:
                 import uuid
-                from sdk.common.invariants import assert_org_consistency, InvariantViolation
+
+                from sdk.common.invariants import (
+                    InvariantViolation,
+                    assert_org_consistency,
+                )
                 try:
                     assert_org_consistency(uuid.UUID(org_id_str), uuid.UUID(tenant_id_str), "gateway token validation")
                 except InvariantViolation as e:

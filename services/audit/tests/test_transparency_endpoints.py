@@ -22,7 +22,6 @@ Covers:
 from __future__ import annotations
 
 import base64
-import json
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -45,7 +44,6 @@ from services.audit.transparency import (
     empty_epoch_root_hash,
     verify_root,
 )
-
 
 # --------------------------------------------------------------------------- #
 # Test fixtures                                                               #
@@ -109,21 +107,21 @@ def fake_db():
 
 
 class TestEmptyEpochRootHash:
-    def test_deterministic(self):
+    def test_deterministic(self) -> None:
         prev = "a" * 64
         assert empty_epoch_root_hash(prev) == empty_epoch_root_hash(prev)
 
-    def test_changes_with_prev(self):
+    def test_changes_with_prev(self) -> None:
         assert empty_epoch_root_hash("a" * 64) != empty_epoch_root_hash("b" * 64)
 
-    def test_distinct_from_empty_merkle_root(self):
+    def test_distinct_from_empty_merkle_root(self) -> None:
         # The empty-epoch marker must not collide with sha256(b"") which is
         # the genuine "no leaves" Merkle sentinel.
         import hashlib
         empty_merkle = hashlib.sha256(b"").hexdigest()
         assert empty_epoch_root_hash(None) != empty_merkle
 
-    def test_none_prev_is_well_defined(self):
+    def test_none_prev_is_well_defined(self) -> None:
         v = empty_epoch_root_hash(None)
         assert isinstance(v, str) and len(v) == 64
 
@@ -135,7 +133,7 @@ class TestEmptyEpochRootHash:
 
 @pytest.mark.asyncio
 class TestVerifyRootContract:
-    async def test_valid_payload_returns_ok(self, fake_db):
+    async def test_valid_payload_returns_ok(self, fake_db) -> None:
         payload = _make_signed_payload()
         resp = await verify_root(db=fake_db, payload=payload)
         body = resp.data
@@ -148,7 +146,7 @@ class TestVerifyRootContract:
         assert body["algorithm"] is not None
         assert body["expected_fingerprint"] is not None
 
-    async def test_missing_top_level_field_is_400(self, fake_db):
+    async def test_missing_top_level_field_is_400(self, fake_db) -> None:
         bad = _make_signed_payload()
         bad.pop("signature")
         with pytest.raises(HTTPException) as exc:
@@ -160,25 +158,25 @@ class TestVerifyRootContract:
         assert body["expected_fingerprint"] is not None  # active signer
         assert body["errors"] == ["malformed_payload"]
 
-    async def test_empty_payload_is_400(self, fake_db):
+    async def test_empty_payload_is_400(self, fake_db) -> None:
         with pytest.raises(HTTPException) as exc:
             await verify_root(db=fake_db, payload={})
         assert exc.value.status_code == 400
         assert exc.value.detail["errors"] == ["malformed_payload"]
 
-    async def test_none_payload_is_400(self, fake_db):
+    async def test_none_payload_is_400(self, fake_db) -> None:
         with pytest.raises(HTTPException) as exc:
             await verify_root(db=fake_db, payload=None)
         assert exc.value.status_code == 400
 
-    async def test_missing_receipt_subfield_is_400(self, fake_db):
+    async def test_missing_receipt_subfield_is_400(self, fake_db) -> None:
         payload = _make_signed_payload()
         payload["receipt"].pop("root_hash")
         with pytest.raises(HTTPException) as exc:
             await verify_root(db=fake_db, payload=payload)
         assert exc.value.status_code == 400
 
-    async def test_unknown_fingerprint_returns_200_with_error_code(self, fake_db):
+    async def test_unknown_fingerprint_returns_200_with_error_code(self, fake_db) -> None:
         payload = _make_signed_payload()
         payload["public_key_fingerprint"] = "0" * 32
         resp = await verify_root(db=fake_db, payload=payload)
@@ -188,7 +186,7 @@ class TestVerifyRootContract:
         assert body["algorithm"] == "ed25519"
         assert body["expected_fingerprint"] is not None
 
-    async def test_tampered_signature_returns_signature_mismatch(self, fake_db):
+    async def test_tampered_signature_returns_signature_mismatch(self, fake_db) -> None:
         payload = _make_signed_payload()
         # Flip one byte of the receipt — the signature won't validate anymore.
         payload["receipt"]["leaf_count"] += 1
@@ -198,7 +196,7 @@ class TestVerifyRootContract:
         assert body["errors"] == ["signature_mismatch"]
         assert body["expected_fingerprint"] == payload["public_key_fingerprint"]
 
-    async def test_corrupt_signature_bytes_returns_400(self, fake_db):
+    async def test_corrupt_signature_bytes_returns_400(self, fake_db) -> None:
         payload = _make_signed_payload()
         payload["signature"] = "@@@@not-base64@@@@"
         with pytest.raises(HTTPException) as exc:
@@ -229,7 +227,7 @@ def _row():
 
 
 @pytest.mark.asyncio
-async def test_verify_receipt_against_known_keys_active_path(fake_db):
+async def test_verify_receipt_against_known_keys_active_path(fake_db) -> None:
     """The default path: signature was made by the currently-active key."""
     from services.audit.signer import verify_receipt_against_known_keys
     active = get_signer()
@@ -240,7 +238,7 @@ async def test_verify_receipt_against_known_keys_active_path(fake_db):
 
 
 @pytest.mark.asyncio
-async def test_verify_receipt_against_known_keys_historical_path(monkeypatch):
+async def test_verify_receipt_against_known_keys_historical_path(monkeypatch) -> None:
     """After rotation, a payload signed by the old key still verifies via
     the historical-key fallback."""
     from services.audit.signer import (
@@ -278,7 +276,7 @@ async def test_verify_receipt_against_known_keys_historical_path(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_verify_receipt_against_known_keys_unknown_key(fake_db):
+async def test_verify_receipt_against_known_keys_unknown_key(fake_db) -> None:
     """Unknown-fingerprint payload returns False, not an exception."""
     from services.audit.signer import verify_receipt_against_known_keys
     stranger = ed25519.Ed25519PrivateKey.generate()
@@ -291,7 +289,7 @@ async def test_verify_receipt_against_known_keys_unknown_key(fake_db):
 
 
 @pytest.mark.asyncio
-async def test_verify_receipt_against_known_keys_malformed_raises(fake_db):
+async def test_verify_receipt_against_known_keys_malformed_raises(fake_db) -> None:
     """Malformed payload (missing field) raises ValueError so callers can
     convert to a 400 with errors=["malformed_payload"]."""
     from services.audit.signer import verify_receipt_against_known_keys
@@ -305,7 +303,7 @@ async def test_verify_receipt_against_known_keys_malformed_raises(fake_db):
 
 
 @pytest.mark.asyncio
-async def test_record_historical_key_idempotent():
+async def test_record_historical_key_idempotent() -> None:
     """ON CONFLICT DO NOTHING semantics — first call inserts, second is a no-op."""
     from scripts.maintenance.rotate_transparency_key import _record_historical_key
 
@@ -336,7 +334,7 @@ async def test_record_historical_key_idempotent():
     assert db.commit.await_count == 2
 
 
-def test_rotation_helpers_pem_roundtrip(tmp_path: Path):
+def test_rotation_helpers_pem_roundtrip(tmp_path: Path) -> None:
     """_load_private_pem reads what _private_pem wrote."""
     from scripts.maintenance.rotate_transparency_key import (
         _load_private_pem,

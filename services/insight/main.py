@@ -2,12 +2,12 @@ import json
 
 import httpx
 import structlog
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import Depends, FastAPI, Header, HTTPException
 
+from sdk.common.auth import verify_internal_secret
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
-from sdk.common.auth import verify_internal_secret
 
 logger = structlog.get_logger(__name__)
 

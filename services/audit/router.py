@@ -13,10 +13,10 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
-import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -331,9 +331,12 @@ async def soc_timeline(
 
     def _type(row: AuditLog) -> str:
         dec = (row.decision or "").lower()
-        if dec == "kill":       return "agent_kill"
-        if dec == "escalate":   return "escalation"
-        if dec == "deny":       return "policy_deny"
+        if dec == "kill":
+            return "agent_kill"
+        if dec == "escalate":
+            return "escalation"
+        if dec == "deny":
+            return "policy_deny"
         return "high_risk"
 
     def _msg(row: AuditLog) -> str:
@@ -344,7 +347,7 @@ async def soc_timeline(
         return f"{dec} — {tool} (risk {risk:.0%}){f': {reason}' if reason else ''}"
 
     tid = str(tenant_id)
-    auth_failures = int(await redis.get(f"acp:metrics:total_denials:{tid}") or 0)
+    int(await redis.get(f"acp:metrics:total_denials:{tid}") or 0)
 
     events = [
         {
@@ -454,6 +457,7 @@ async def export_chain(
     Content-Type: `application/x-ndjson`
     """
     from datetime import datetime as _dt
+
     from fastapi.responses import StreamingResponse
 
     query = select(AuditLog).where(AuditLog.tenant_id == tenant_id)

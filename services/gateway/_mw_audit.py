@@ -120,11 +120,10 @@ class _AuditMixin:
                 if result.get("success", False):
                     logger.info("billing_recorded", audit_id=audit_id, attempt=attempt+1)
                     return True
-                else:
-                    error_msg = result.get("error", "Unknown billing error")
-                    logger.error("billing_failed", audit_id=audit_id, error=error_msg)
-                    await self._persist_billing_dlq(tenant_id, action, agent_id, tokens, audit_id, error_msg)
-                    return False
+                error_msg = result.get("error", "Unknown billing error")
+                logger.error("billing_failed", audit_id=audit_id, error=error_msg)
+                await self._persist_billing_dlq(tenant_id, action, agent_id, tokens, audit_id, error_msg)
+                return False
 
             except Exception as exc:
                 logger.warning(
@@ -327,7 +326,7 @@ class _AuditMixin:
                 ),
                 timeout=0.25,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("audit_timeout", request_id=request_id)
         except Exception as e:
             logger.error("audit_log_failed", error=str(e), request_id=request_id)

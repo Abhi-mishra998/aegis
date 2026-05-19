@@ -16,8 +16,9 @@ from opentelemetry.semconv.resource import ResourceAttributes
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from sdk.common.exceptions import setup_exception_handlers
 from sdk.common.config import settings
+from sdk.common.exceptions import setup_exception_handlers
+
 # Custom Metrics for ACP Hardening & Hyperscale
 CIRCUIT_BREAKER_STATE_TOTAL = Counter(
     "acp_sdk_circuit_breaker_state_total",
@@ -317,7 +318,7 @@ _LOGGING_INITIALIZED = False
 def setup_logging(service_name: str) -> None:
     """Configures structured JSON logging using structlog."""
     global _LOGGING_INITIALIZED
-    
+
     # P3-1 FIX: Prevent double-registration of structlog in fastAPI uvicorn hot-reload loops
     if _LOGGING_INITIALIZED:
         return

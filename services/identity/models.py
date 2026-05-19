@@ -11,7 +11,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from sdk.common.db import Base, IdMixin, OrgMixin, TenantMixin, TimestampMixin
 
-
 # =========================
 # ENUMS
 # =========================
@@ -179,16 +178,17 @@ class User(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
 
 from sqlalchemy import event
 
+
 @event.listens_for(User, "before_insert")
 @event.listens_for(AgentCredential, "before_insert")
 @event.listens_for(Tenant, "before_insert")
-def enforce_org_id_invariant(mapper, connection, target):
+def enforce_org_id_invariant(mapper, connection, target) -> None:
     """
     Final defensive check before flush:
     If org_id is missing, it MUST default to tenant_id.
     """
-    if hasattr(target, "org_id") and getattr(target, "org_id") is None:
-        if hasattr(target, "tenant_id") and getattr(target, "tenant_id") is not None:
+    if hasattr(target, "org_id") and target.org_id is None:
+        if hasattr(target, "tenant_id") and target.tenant_id is not None:
             target.org_id = target.tenant_id
         elif isinstance(target, Tenant):
             # For Tenant model, org_id must match its own tenant_id
