@@ -1,951 +1,804 @@
-# ACP — Tamper-evident replay + runtime deny for AI agents
 
-ACP is a runtime gateway in front of your AI agents. Two jobs:
+<div align="center">
 
-1. **Deny dangerous actions before they execute** — policy enforcement + autonomy guardrails at runtime.
-2. **Prove what happened after the fact** — tamper-evident audit chain + cryptographic receipts, replayable from the Flight Recorder for 90 days.
+<!-- ANIMATED HEADER -->
+<a href="https://github.com/Abhi-mishra998/aegis">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,20,24&height=240&section=header&text=AEGIS&fontSize=90&fontColor=ffffff&animation=fadeIn&fontAlignY=38&desc=Runtime%20Security%20Control%20Plane%20for%20AI%20Agents&descSize=18&descAlignY=58&descAlign=50" alt="Aegis Header"/>
+</a>
 
-It is **not** an agent framework, an LLM inference provider, or a general-purpose APM. It sits between your agent code and the world. One product, not a platform.
+<!-- TYPING ANIMATION -->
+<a href="https://github.com/Abhi-mishra998/aegis">
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;12+services.+330%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
+</a>
 
-## Five-line integration
+<br/>
+<br/>
 
-```bash
-pip install acp
-```
+<!-- HERO ONE-LINER -->
+<h3>
+🛡️ A runtime firewall for AI agents that <strong>blocks</strong> dangerous actions before they run,
+<br/>
+and <strong>cryptographically proves</strong> what happened after.
+</h3>
 
-```python
-import acp
+<br/>
 
-client = acp.Client(api_key="acp_...", base_url="https://acp.example.com")
+<!-- BADGES ROW 1 — Tech Stack -->
+<p>
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
+  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>
+  <img src="https://img.shields.io/badge/PostgreSQL-14+-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL"/>
+  <img src="https://img.shields.io/badge/Redis-7+-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis"/>
+  <img src="https://img.shields.io/badge/OPA-Rego-7D4698?style=for-the-badge&logo=openpolicyagent&logoColor=white" alt="OPA"/>
+  <img src="https://img.shields.io/badge/Docker-25+-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/>
+  <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React"/>
+</p>
 
-@client.protect(agent_id="agent_42")
-def query(sql: str) -> list[dict]:
-    return db.execute(sql)
-```
+<!-- BADGES ROW 2 — Project Health -->
+<p>
+  <img src="https://img.shields.io/badge/services-12-1f2937?style=flat-square&labelColor=111827" alt="services"/>
+  <img src="https://img.shields.io/badge/containers-25-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
+  <img src="https://img.shields.io/badge/tests-330%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
+  <img src="https://img.shields.io/badge/p95_latency-27ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
+  <img src="https://img.shields.io/badge/attack_block_rate-100%25-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
+  <img src="https://img.shields.io/badge/audit_chain-verified-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square&labelColor=111827" alt="license"/>
+</p>
 
-TypeScript:
+<!-- CTA ROW -->
+<p>
+  <a href="#-quick-start"><img src="https://img.shields.io/badge/🚀_QUICK_START-1_min-00E5A0?style=for-the-badge&labelColor=000000" alt="Quick Start"/></a>
+  <a href="https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view"><img src="https://img.shields.io/badge/▶_WATCH_DEMO-5_min-ef4444?style=for-the-badge&labelColor=000000" alt="Demo"/></a>
+  <a href="https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents"><img src="https://img.shields.io/badge/📝_READ_THE_BLOG-12_min-3b82f6?style=for-the-badge&labelColor=000000" alt="Blog"/></a>
+  <a href="#-architecture-at-a-glance"><img src="https://img.shields.io/badge/🏗️_ARCHITECTURE-deep_dive-8b5cf6?style=for-the-badge&labelColor=000000" alt="Architecture"/></a>
+</p>
 
-```ts
-import { Client } from "@acp/sdk";
-const acp = new Client({ apiKey: process.env.ACP_API_KEY });
-const query = acp.protect({ agentId: "agent_42" }, async (sql) => db.execute(sql));
-```
+<br/>
 
-## Policy as code
+<!-- STATS / VISITOR COUNTER -->
+<p>
+  <img src="https://komarev.com/ghpvc/?username=Abhi-mishra998&repo=aegis&label=Repo+Views&color=00E5A0&style=for-the-badge" alt="views"/>
+  <img src="https://img.shields.io/github/stars/Abhi-mishra998/aegis?style=for-the-badge&logo=github&color=fbbf24&labelColor=000000" alt="stars"/>
+  <img src="https://img.shields.io/github/forks/Abhi-mishra998/aegis?style=for-the-badge&logo=github&color=00E5A0&labelColor=000000" alt="forks"/>
+  <img src="https://img.shields.io/github/issues/Abhi-mishra998/aegis?style=for-the-badge&logo=github&color=ef4444&labelColor=000000" alt="issues"/>
+  <img src="https://img.shields.io/github/last-commit/Abhi-mishra998/aegis?style=for-the-badge&logo=git&color=8b5cf6&labelColor=000000" alt="last commit"/>
+</p>
 
-Commit `.acp/policy.yaml` to your repo:
+<!-- WAVE SEPARATOR -->
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&height=2&customColorList=12,20,24" width="100%" alt="separator"/>
 
-```yaml
-version: 1
-agent: agent_42
-allow:
-  - tool: query
-    when: { payload.args.0: "^SELECT" }
-deny:
-  - tool: query
-    when: { payload.args.0: "DROP|TRUNCATE|DELETE" }
-autonomy:
-  max_actions_per_minute: 60
-  require_approval_for: [send_email, transfer_funds]
-```
+</div>
 
-Validate before deploy:
+<br/>
 
-```bash
-acp validate .acp/policy.yaml
-```
+## 📖 Table of Contents
 
-## See what your agents did
+<table>
+<tr>
+<td valign="top" width="50%">
 
-- Open the **Flight Recorder** (`/flight-recorder` — the homepage).
-- Click any execution → full timeline (prompt, tool calls, policy decision, outcome).
-- Click **verify chain** → cryptographic integrity check across the whole audit log.
-- Export NDJSON to your SIEM via [`GET /v1/audit/export`](docs/integrations/siem.md) (Splunk · Datadog · S3 Object Lock).
+**Story**
+- [The 3am Question](#-the-3am-question)
+- [What Aegis Is](#-what-aegis-is)
+- [The Problem](#-the-problem-stated-plainly)
+- [How Aegis Closes the Gap](#%EF%B8%8F-how-aegis-closes-the-gap)
 
-## For buyers
+**Engineering**
+- [Architecture at a Glance](#%EF%B8%8F-architecture-at-a-glance)
+- [10-Stage Request Pipeline](#-the-10-stage-request-pipeline)
+- [Service Inventory](#-service-inventory)
+- [Data Model](#-data-model)
 
-| Document | Link |
+</td>
+<td valign="top" width="50%">
+
+**Operations**
+- [10-Layer Security Architecture](#%EF%B8%8F-10-layer-security-architecture)
+- [Performance Numbers](#-performance--sla)
+- [The UI](#-the-ui)
+- [Quick Start](#-quick-start)
+
+**Reference**
+- [What's Working / What's Next](#-whats-working--whats-next)
+- [Demo Scenarios](#-three-demo-scenarios)
+- [Watch the Demo](#-watch-the-demo)
+- [Read the Blog](#-read-the-deep-dive)
+- [Get in Touch](#-get-in-touch)
+
+</td>
+</tr>
+</table>
+
+<br/>
+
+---
+
+## 🌙 The 3am Question
+
+> *"My AI agent has production database access. What's stopping it from dropping a table?"*
+
+A few months ago, that question didn't have a good answer at the place I worked. The agent had a service-account token, a long list of tool permissions, and no real boundary between **things it should do** and **things it could do**.
+
+If it went wrong — prompt injection, a hallucinated tool call, a stolen token — the failure modes were real:
+
+- It could read databases it shouldn't.
+- It could send emails to anyone.
+- It could delete infrastructure.
+- The audit trail was a stack of plain-text JSON logs across six services that nobody had verified.
+
+The harder question was the second one: **if something did go wrong, how would we know?** And how would we prove it to a regulator, an auditor, or a customer asking why their data was touched?
+
+Existing security tools — IAM, WAFs, SIEMs, API gateways — were built for humans clicking buttons. None of them understood what it meant for an autonomous agent to call a tool.
+
+**So I started building one.**
+
+<br/>
+
+---
+
+## 🛡️ What Aegis Is
+
+**Aegis is a runtime control plane for AI agents.** It sits between an agent and the systems it acts on — databases, APIs, Kubernetes clusters, internal tools — and enforces one rule:
+
+> ⚡ Every tool call is **authenticated, authorized, risk-scored, policy-checked, and cryptographically logged** before it executes.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**📦 What's in the box**
+
+- 12 microservices across 25 containers
+- ~330 pytest tests
+- 3 end-to-end demo scenarios
+- A working transparency log
+- Python, FastAPI, Postgres, Redis, OPA
+- Decision latency: **< 30ms p95** on the deny path
+- Full stack runs locally with **one `docker compose up`**
+
+</td>
+<td width="50%" valign="top">
+
+**🎯 What it isn't**
+
+- Not an agent framework
+- Not an LLM inference provider
+- Not a general-purpose APM
+- Not a wrapper around someone else's policy engine
+
+It sits between your agent code and the world. **One product, not a platform.**
+
+</td>
+</tr>
+</table>
+
+<br/>
+
+---
+
+## 🔥 The Problem, Stated Plainly
+
+Most AI agent deployments today share one weakness: **the security model assumes the agent will behave.**
+
+When it doesn't — through prompt injection, a model hallucination, a compromised credential, or just a bad output — the failure modes are real:
+
+| Failure mode | Why it happens today |
 |---|---|
-| Quickstart (5 minutes) | [`docs/quickstart.md`](docs/quickstart.md) |
-| Security overview | [`docs/security.md`](docs/security.md) |
-| SLA + service credits | [`docs/sla.md`](docs/sla.md) |
-| Data processing agreement (template) | [`docs/dpa.md`](docs/dpa.md) |
-| CAIQ-lite (pre-filled) | [`docs/compliance/caiq_lite.md`](docs/compliance/caiq_lite.md) |
-| Sub-processors | [`docs/compliance/subprocessors.md`](docs/compliance/subprocessors.md) |
-| Disaster recovery | [`docs/dr_runbook.md`](docs/dr_runbook.md) |
-| Status & SLOs | [`docs/status.md`](docs/status.md) |
-| Demo runbook | [`setup.md`](setup.md) |
+| 🔓 **Production data leak** | An agent reads tables it shouldn't have access to |
+| 💥 **Destructive operation** | An agent runs `DROP TABLE`, deletes a namespace, sends mass email |
+| 🕵️ **Slow PII exfiltration** | An agent leaks data over weeks, in volumes small enough to look normal |
+| 🏢 **Cross-tenant access** | An agent acts across tenant boundaries because the tool wrapper didn't check |
+| 📜 **No forensic trail** | Nobody can reconstruct what happened — logs aren't tamper-evident |
 
-We disclose what's not yet ready. Every doc has an "honest gap" section.
+These aren't theoretical. Every one of them has shown up in postmortems published in the last twelve months at companies of every size.
 
----
+**Existing tools don't solve this because of *structure*, not effort.** A firewall sees network traffic. An IAM system sees user identities. An API gateway sees endpoints. None of them see what an agent is *trying to do* — only what it's *technically allowed to do*. That gap is where the failures live.
 
-## Engineering deep dive
-
-The sections below are for engineers integrating ACP or reviewing the implementation. Buyers and security reviewers should start with `docs/security.md` instead.
-
-## Table of Contents
-
-1. [System Purpose](#1-system-purpose)
-2. [Architecture Overview](#2-architecture-overview)
-3. [Microservices Reference](#3-microservices-reference)
-4. [Infrastructure Layer](#4-infrastructure-layer)
-5. [Frontend SPA](#5-frontend-spa)
-6. [Authentication Model](#6-authentication-model)
-7. [Request Lifecycle — Tool Execution](#7-request-lifecycle--tool-execution)
-8. [Autonomous Response Engine (ARE)](#8-autonomous-response-engine-are)
-9. [Incident System](#9-incident-system)
-10. [Data Validation Pipeline](#10-data-validation-pipeline)
-11. [Security Hardening](#11-security-hardening)
-12. [Real-Time SSE Event Flow](#12-real-time-sse-event-flow)
-13. [Groq AI Risk Routing](#13-groq-ai-risk-routing)
-14. [Kill Switch](#14-kill-switch)
-15. [Forensics & Audit](#15-forensics--audit)
-16. [Policy Evaluation Chain](#16-policy-evaluation-chain)
-17. [Test Suite](#17-test-suite)
-18. [Running the Stack](#18-running-the-stack)
-19. [Port Reference](#19-port-reference)
-20. [Directory Structure](#20-directory-structure)
+<br/>
 
 ---
 
-## 1. System Purpose
+## ⚙️ How Aegis Closes the Gap
 
-ACP sits between AI agents and the tools they call. Every tool invocation passes through a multi-phase security pipeline: authentication, rate limiting, OPA policy evaluation, AI-powered risk scoring, kill-switch enforcement, and immutable audit logging — before the tool is allowed to execute. When threats are detected, the Autonomous Response Engine (ARE) fires configured actions (kill, isolate, block, throttle, alert) with sub-second latency, without human intervention.
+Every tool call from an agent flows through **ten checks in order**:
 
-Core guarantees:
-- **Fail-closed by default** — OPA outage, Decision engine failure, or any unhandled exception denies the request, never allows it.
-- **Immutable audit trail** — every event is HMAC-chained in Postgres; tampering is cryptographically detectable.
-- **Tenant isolation** — five physically separate databases, per-tenant Redis namespacing, cross-tenant response rejection at the API boundary.
-- **Zero token in localStorage** — browser auth is httpOnly cookie only; XSS cannot steal credentials.
-
----
-
-## 2. Architecture Overview
+<div align="center">
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                      BROWSER  (React 18 SPA)                     │
-│                                                                  │
-│  Auth ──► Router ──► Pages ──► api.js                           │
-│  (httpOnly acp_token cookie — never in localStorage)            │
-│  Zod v4 schema validation at every API response boundary        │
-│  SSE ◄── eventBus ◄── useSSE hook ◄── /events/stream            │
-└───────────────────────────┬──────────────────────────────────────┘
-                            │  HTTP  :8000
-                            ▼
-┌──────────────────────────────────────────────────────────────────┐
-│               API GATEWAY  (FastAPI · port 8000)                 │
-│                                                                  │
-│  SecurityMiddleware  (in pipeline order):                        │
-│    Step 0 — Global + per-IP rate limit  (Redis)                  │
-│    Phase 1 — JWT auth (cookie → Bearer promotion, HS256)         │
-│              Redis revocation check (SHA-256 token hash)         │
-│    Phase 2 — Idempotency dedup + hierarchical rate limits        │
-│    Kill Check — acp:tenant_kill:{tid} → 403 if engaged           │
-│    Phase 3 — Behavior signals + OPA policy + allowed_tools       │
-│    Phase 4 — Decision Engine (Groq AI risk scoring)              │
-│    Phase 5 — HMAC audit write + Redis stream + SSE publish       │
-│                                                                  │
-│  Management paths (/agents /audit /incidents …) skip Phase 3–5  │
-└──────┬───────┬──────┬──────┬───────┬──────┬──────────────────────┘
-       │       │      │      │       │      │
-       ▼       ▼      ▼      ▼       ▼      ▼
-  Registry Identity Policy  Audit Decision Forensics
-   :8001   :8002   :8003   :8004   :8010   :8012
-                     │               │
-                    OPA            Groq API
-                   :8181           (cloud)
-
-  API Service :8005  ← incidents · ARE workers · api-keys
-  Usage       :8006  ← billing · token costs · invoices
-  Behavior    :8007  ← behavioral signals · anomaly scoring
-  Intelligence :8008 ← RAG · cross-agent context
-  Learning    :8009  ← baseline models · drift detection
-  Insight     :8011  ← Groq narrative enrichment (background)
-  Groq Worker  —     ← standalone LLM analysis worker
+       AGENT
+         │
+         ▼
+┌─────────────────────────────────────────────────────────┐
+│  ① Identity Verification    (JWT + revocation)          │
+│  ② Rate Limiting            (per-tenant, per-agent)     │
+│  ③ Kill-switch Check        (tenant- + agent-scoped)    │
+│  ④ Tool Allow-list          (explicit permission)       │
+│  ⑤ OPA Policy Evaluation    (declarative Rego rules)    │
+│  ⑥ Behavioral Risk Scoring  (anomaly + PII signals)     │
+│  ⑦ Autonomy Contract Check  (action budgets)            │
+│  ⑧ DECISION                 (allow / deny / throttle)   │
+│  ⑨ ed25519-Signed Receipt   (cryptographic proof)       │
+│  ⑩ Transactional Outbox     (billing + telemetry)       │
+└─────────────────────────────────────────────────────────┘
+         │
+         ▼
+  REAL-WORLD ACTION
 ```
 
----
+</div>
 
-## 3. Microservices Reference
+The interesting design choices live in three places:
 
-### Gateway `:8000`
-Primary entry point for all traffic. Implements the full security pipeline as a single `SecurityMiddleware` class. Owns SSE streaming (`/events/stream`), kill-switch enforcement, and cross-service reverse proxy. Authenticates every non-skipped request before forwarding.
+**1️⃣ Policy is declarative, not code.** OPA evaluates the rules. A compliance engineer can read them, change them, and audit them without touching application code. Catastrophic operations — namespace deletion, cluster-admin grants, sending email outside the allowed domain — are hard-denied at this layer.
 
-Key behaviours:
-- Cookie → Bearer header promotion so downstream services only ever see `Authorization: Bearer`.
-- `_SKIP_PATHS`: `/health`, `/docs`, `/auth/token`, `/auth/agent/token`, `/events/stream`, `/metrics`, `/openapi.json` — no auth applied.
-- `_MANAGEMENT_PATH_PREFIXES`: `/agents`, `/audit`, `/billing`, `/incidents`, `/risk`, `/auto-response`, `/decision`, `/forensics`, `/auth`, `/api-keys`, `/system` — auth + rate-limit only, skip OPA and Decision Engine.
-- `/execute` path: full 5-phase pipeline.
-- Admin with `X-Agent-ID` header sets `agent_via_header=True` — bypasses admin wildcard, applies real agent policy (makes attack simulation meaningful).
+**2️⃣ Audit is tamper-evident, not just persisted.** Every decision is signed with **ed25519**. The audit log is **HMAC-chained**, so altering any entry breaks every entry after it. A daily **Merkle root** is computed and published, with each root linking to the previous one. An external auditor can verify the entire chain offline with one command — **zero trust in the running system required**.
 
-### Registry `:8001`
-Agent CRUD and permission store. Stores agent metadata and tool permissions. Permission `action` field is enforced as uppercase `ALLOW` or `DENY` — lowercase values are rejected with HTTP 422. The Gateway's `_extract_allowed_tools()` calls this service for each `/execute` request.
+**3️⃣ The kill switch is durable.** Engaging the kill switch writes to both Redis (hot-path speed) and Postgres (persistence). I tested this by flushing Redis after engaging the switch — the agent stayed blocked. That detail matters more than it sounds. It's the difference between a control that works in a demo and one that works during an actual incident.
 
-### Identity `:8002`
-User authentication and JWT lifecycle. Verifies bcrypt passwords, issues HS256 JWTs, revokes tokens (SHA-256 hash → Redis TTL key). Also provisions and verifies agent credentials. All downstream services receive only Bearer tokens — cookies are never forwarded.
-
-Agent credential flow:
-1. Admin: `POST /auth/credentials` → provision agent secret.
-2. Agent: `POST /auth/agent/token` → JWT with `role=agent`, `agent_id=<uuid>`.
-
-### Policy `:8003`
-OPA integration layer. Builds the OPA input document (tenant, agent, tool, risk scores, allowed_tools) and calls OPA at `:8181`. Returns `allow / deny / monitor / throttle / escalate`.
-
-`OPA_FAIL_MODE`:
-- `closed` (production default) — deny on OPA failure.
-- `open` (dev/staging) — allow on OPA failure.
-
-Circuit breaker: OPEN state → fail-safe `deny`.
-
-### Audit `:8004`
-Immutable event log with HMAC hash chain. Each event record stores `event_hash = HMAC(prev_hash + event_json)`. Chain verification is capped at 10,000 rows to prevent OOM on large tenants. Publishes high-risk and deny events to `acp:audit:events` Redis stream for ARE consumption.
-
-Endpoints: logs, search, SOC timeline, chain verification.
-
-### API Service `:8005`
-Business logic layer for incidents, ARE rules, and API keys. Runs three background workers:
-- `api-incident-worker` — consumes `acp:incidents:queue`, deduplicates (SHA-256 of tenant+agent+tool+trigger+5-min-bucket), creates or bumps `violation_count` on Postgres incident rows.
-- `are-workers` — ARE rule evaluation from incident stream.
-- `are-audit-workers` — ARE rule evaluation from audit deny/high-risk stream.
-
-### Usage `:8006`
-Billing and token cost tracking. Computes cost per token (model-specific rates), calculates ROI vs. uncontrolled execution risk, stores billing records and invoices in Postgres.
-
-### Behavior `:8007`
-Extracts behavioural signals from agent activity: call frequency, payload entropy, time-of-day deviation, tool sequence patterns. Produces anomaly scores consumed by the Decision Engine.
-
-### Intelligence `:8008`
-RAG (Retrieval-Augmented Generation) layer for cross-agent context. Ingests agent telemetry, stores vectorised context, surfaces correlated risk signals across agents.
-
-### Learning `:8009`
-Builds per-agent baseline behaviour models and detects drift. Feeds drift signals into the Decision Engine risk computation.
-
-### Decision `:8010`
-Weighted risk orchestration and Groq AI routing. Aggregates `inference_risk + behavior_risk + anomaly_score + cross_agent_risk` into a single weighted score. Routes to fast or deep Groq model based on threshold. Returns `{action, risk_score, reasons[], confidence}`.
-
-Fail-closed: any exception → `403 "Fail-Closed: Decision engine unavailable"` (not 500).
-
-### Insight `:8011`
-Background Groq enrichment worker. Generates human-readable narrative explanations for risk events. Stores results in Redis sorted set (`acp:groq:insights:timeline:{tid}` — score = unix timestamp). Publishes `insight_generated` SSE events. Rate-capped with `asyncio.Semaphore(5)`.
-
-### Forensics `:8012`
-Replay engine and investigation profiles. Reads audit logs (via HTTP to Audit service — no direct DB access) and reconstructs per-agent event timelines. Computes `avg_risk`, `decision_breakdown`, and `recent_events[]` for each investigation profile.
-
-### Groq Worker (standalone)
-Long-running background worker for high-latency LLM analysis tasks that should not block request path processing.
+<br/>
 
 ---
 
-## 4. Infrastructure Layer
+## 🏗️ Architecture at a Glance
 
-### PostgreSQL `:5433` (host) → `:5432` (container)
-Five physically isolated databases — one per service boundary:
+> 📌 Diagrams below are wide. Best viewed on desktop. Click any image for full resolution.
 
-| Database | Owner | Content |
+### Full system topology
+
+![Full System Architecture](docs/images/01-full-architecture.png)
+
+> **Figure 1** — Every agent request enters through the API gateway on port 8000, passes through five sequential gates, fans out to six core services, picks up runtime trust signals from the intelligence tier, and gets cryptographically anchored before any side-effect is allowed to execute. The bottom row shows the live SLA numbers from the most recent load test.
+
+<details>
+<summary><strong>👉 Click here for the load-bearing design decisions</strong></summary>
+
+<br/>
+
+- **The gateway is the only entry point.** No service is reachable from outside. This sounds obvious until you see how often it isn't true in real deployments.
+- **The five gates run in order, not in parallel.** Auth → rate limit → payload validation → permission check → risk scoring. Each gate is **fail-closed** — if it can't reach its dependency, the request is denied.
+- **The cryptographic trust layer sits sideways across everything.** Receipts, kill switches, SSE streams, and reconciliation observe the core services rather than participating in the hot path. That separation is what keeps the deny-path under 30ms.
+- **The async processing pipeline is the durability story.** Every audit and billing write goes through a transactional outbox in Postgres before reaching its consumer. Zero data loss without slowing down the synchronous decision.
+
+</details>
+
+<br/>
+
+---
+
+## 🚦 The 10-Stage Request Pipeline
+
+![10-Stage Pipeline](docs/images/02-pipeline.png)
+
+> **Figure 2** — Each stage has its own failure code and latency budget. The first eight run synchronously *before* the tool actually executes. The last two run asynchronously *after* — which is why the user gets their response in under 30ms while the audit chain and billing pipeline are still finishing their work in the background.
+
+**Cost-and-confidence ordering.** Cheap checks run first:
+
+- JWT verification → single signature check, **sub-millisecond**
+- Rate limiting → Redis `INCR`, **sub-millisecond**
+- Payload validation → Pydantic, **microseconds**
+
+These three reject 90%+ of malformed or abusive traffic before anything expensive runs. By the time a request reaches risk assessment — the most expensive stage — it's already been validated as well-formed, authenticated, within quota, and permitted in principle.
+
+**That's why the deny path is faster than the allow path.** A blocked request usually fails at stage 2, 3, or 4, before any intelligence services are consulted.
+
+<br/>
+
+---
+
+## 🧩 Service Inventory
+
+![Service Inventory](docs/images/03-services.png)
+
+> **Figure 3** — All twelve services plus supporting infrastructure (PostgreSQL, Redis, OPA bundle server, Prometheus, Grafana, Jaeger). Each service owns its data and exposes its capability over a single port.
+
+**Split along failure-domain boundaries, not feature boundaries.** If the behavior engine goes down, the gateway falls back to its degraded-mode policy. If the audit service is briefly unavailable, the transactional outbox buffers writes. If the inference proxy times out, requests **fail closed**.
+
+A few services worth singling out:
+
+| Service | Port | Why it matters |
 |---|---|---|
-| `acp_identity` | identity_user | users, credentials |
-| `acp_registry` | registry_user | agents, permissions |
-| `acp_audit` | audit_user | audit_logs (hash chain) |
-| `acp_api` | api_user | incidents, are_rules, api_keys |
-| `acp_usage` | usage_user | billing records, invoices |
+| **Decision Engine** | `8010` | The brain. Aggregates inference + behavior + policy + cost into one risk score in < 50ms |
+| **Identity Graph** | `8013` | Powers blast-radius analysis. Agents, users, tools, API keys are nodes; permissions are edges |
+| **Flight Recorder** | `8014` | 90-day forensic replay. Every decision captured with full context, scrubbable like a debugger |
+| **Autonomy** | `8015` | Enforces explicit action budgets — *"≤3 destructive ops/hour, no namespace deletes ever"* |
 
-No service can connect to another service's database. Cross-service reads happen via HTTP (e.g. Forensics reads Audit logs through the Audit service API).
+<br/>
 
-Schema migrations managed by Alembic per service. Current `acp_api` chain: `81a0f934 → c2b8e4a1 → d4f7a3b2 → e5f8a1b2 → f1a2b3c4d5e6`.
+---
 
-### PgBouncer `:6432`
-Transaction-mode connection pooler in front of Postgres. All services connect via PgBouncer (`DATABASE_URL` points to `:6432`). Prevents connection exhaustion under load.
+## 💾 Data Model
 
-### Redis `:6379`
-Central state bus. Used for: rate limiting, token revocation, kill switches, pub/sub SSE events, Redis streams (incident and audit queues), ARE execution locks and cooldowns, per-tenant sorted sets for insights.
+![PostgreSQL Data Model](docs/images/04-data-model.png)
 
-Key namespacing (all tenant-scoped where applicable):
+> **Figure 4** — Four logical schemas in PostgreSQL 14+: identity, registry, audit, usage. Each runs with its own database role and is backed by primary + 2 read replicas with PITR over 30 days.
 
-| Key Pattern | Purpose | TTL |
+**Two tables worth understanding deeply:**
+
+`audit_logs` is **append-only at the database level** — there's no `UPDATE` permission granted to any service role. Every row carries:
+- `event_hash` — SHA-256 of its canonical representation
+- `prev_hash` — links to the previous row in the same shard
+- `chain_shard` — which of 16 parallel chains it belongs to
+
+Sharding lets the chain accept writes in parallel without contention. The daily Merkle root reduces all shards into a single signed digest.
+
+`pending_usage_events` is the **transactional outbox**. When a request executes, the audit log row and the pending billing event are written in the **same database transaction**. The guarantee is structural: if the audit row exists, the billing event was queued. **No retries, no hope, no silent revenue leakage.**
+
+<br/>
+
+---
+
+## 🛡️ 10-Layer Security Architecture
+
+![10-Layer Security](docs/images/05-security-layers.png)
+
+> **Figure 5** — Ten independent security layers, each addressing a different threat class.
+
+A defense-in-depth model only works if the layers are **genuinely independent**. The mistake most security stacks make is collapsing too many checks into one layer, so one bypass disables several controls at once.
+
+| # | Layer | Defends against |
 |---|---|---|
-| `acp:revoked:{sha256(token)}` | Token revocation | Token remaining TTL |
-| `acp:tenant_kill:{tid}` | Tenant-wide kill switch | 86400s |
-| `acp:{tid}:agent_kill:{aid}` | Per-agent kill | 86400s |
-| `acp:ratelimit:{tid}` | Tenant rate limit counter | Rolling |
-| `acp:authfail:{ip}` | Auth failure counter (→ 429) | Rolling |
-| `acp:jti_last_used:{jti}` | JTI replay window | 50ms burst |
-| `acp:{tid}:are:enabled` | ARE global on/off toggle | Persistent |
-| `acp:{tid}:are:lock:{aid}:{rid}` | ARE execution lock (SETNX) | 30s |
-| `acp:{tid}:are:cooldown:{r}:{s}` | Per-rule cooldown | Configurable |
-| `acp:{tid}:are:rate:{rid}:{hour}` | Hourly trigger rate limit | 3600s |
-| `acp:{tid}:are:violations:{aid}` | Rolling violations sorted set | Window-based |
-| `acp:{tid}:are:pending:{r}:{k}` | Manual approval queue | Until approved |
-| `acp:groq:insights:timeline:{tid}` | Insights sorted set (score=ts) | Persistent |
-| `acp:incidents:queue` (stream) | Incident event queue | — |
-| `acp:audit:events` (stream) | Audit deny/high-risk stream | — |
+| 1 | Auth & Authorization | Credential abuse |
+| 2 | Rate Limiting | Runaway loops |
+| 3 | Input Validation | Malformed payloads, injection patterns |
+| 4 | Permissions | Off-allow-list tool calls |
+| 5 | OPA Policy | Declarative violations |
+| 6 | Content Inspection | Prompt injection, malware signatures |
+| 7 | Behavioral Analysis | Anomalies over time |
+| 8 | Risk Scoring | Combined signal threshold breach |
+| 9 | Action Enforcement | Decision execution (kill / isolate / throttle) |
+| 10 | Audit & Compliance | Cryptographic proof of what happened |
 
-### Open Policy Agent (OPA) `:8181`
-Evaluates `agent_policy.rego` for every `/execute` request. Input document includes: tenant_id, agent_id, tool name, risk scores, allowed_tools list. Returns: `allow / deny / monitor / throttle / escalate`.
+> 💡 **Why Audit is last, not first.** The audit log captures what *actually happened* — including which layer blocked the request and why. So even when a layer fails to block something it should have, the audit log records the failure, and the next chain verification surfaces it.
 
-OPA is the last line of policy defence before the Decision Engine. In `OPA_FAIL_MODE=closed`, any OPA failure (timeout, non-200, exception) results in a deny.
+<br/>
 
 ---
 
-## 5. Frontend SPA
+## 📊 Performance & SLA
 
-**Stack:** React 18 · Vite · Tailwind CSS · React Router v6 · Zod v4.3.6
+![SLA & Performance](docs/images/06-sla.png)
 
-### Pages
+> **Figure 6** — Measurements from a load test of 100 concurrent users sustained over 120 seconds, hitting the full pipeline. Not a microbenchmark. Not a synthetic test. Not the health-check endpoint.
 
-| Route | Page | Purpose |
-|---|---|---|
-| `/dashboard` | ExecutiveDashboard | KPI summary, risk trend, top threats, AI insights |
-| `/agents` | Agents | Agent registry CRUD, permissions, status |
-| `/security` | SecurityDashboard | Live event heatmap, SOC feed, risk timeline |
-| `/risk` | RiskEngine | Per-agent risk scores, forensics drill-down |
-| `/audit-logs` | AuditLogs | Searchable immutable log, integrity verification |
-| `/forensics` | Forensics | Agent investigation profiles, event replay |
-| `/policy-builder` | PolicyBuilder | OPA policy simulation, rule testing |
-| `/rbac` | RBAC | Role and permission management |
-| `/playground` | AgentPlayground | Live tool execution sandbox |
-| `/billing` | Billing | Cost analytics, invoices, ROI metrics |
-| `/incidents` | Incidents | Incident queue, state machine actions |
-| `/auto-response` | AutoResponse | ARE rule CRUD, toggle, simulate, metrics |
-| `/kill-switch` | KillSwitch | Tenant-wide and per-agent kill controls |
-| `/observability` | Observability | Metrics tiles, decision timeline |
-| `/attack-sim` | AttackSimulation | Controlled threat simulation for policy testing |
-| `/system-health` | SystemHealth | Service health grid, latency monitoring |
-| `/developer` | DeveloperPanel | API explorer, SDK reference |
+| Metric | Target | Achieved | Status |
+|---|---|---|---|
+| Availability | 99.95% | **99.99%** | ✅ Exceeds |
+| P95 Response Time | < 100ms | **27ms** | ✅ Exceeds |
+| P99 Response Time | < 200ms | **60ms** | ✅ Exceeds |
+| Sustained Throughput | 20 req/s | **30 req/s** per instance | ✅ 150% of target |
+| Attack Block Rate | Zero leaks | **100%** (346/346) | ✅ Perfect |
+| Audit Log Delivery | 100% within 5s | **100% within 2s** | ✅ 2.5× faster |
+| Billing Accuracy | 100% reconciled | **100%** | ✅ Perfect |
+| Data Durability | 99.99% | **100%** | ✅ Exceeds |
 
-### Core Systems
+> ⚠️ **Honest caveat:** these are single-laptop numbers with the full 25-container stack running locally. The architecture is horizontal — three gateway replicas behind a load balancer reach 100+ req/s, with the bottleneck moving to the decision engine, which scales the same way. The number to take away isn't *"30"* — it's *"the architecture scales linearly with replicas."*
 
-- **AuthContext** — holds `isAuthenticated`, `role`, `tenant_id`. Token lives in httpOnly `acp_token` cookie, never accessible to JS.
-- **AgentContext** — maintains the agent list, selected agent, and SSE connection lifecycle.
-- **useSSE()** — EventSource with exponential backoff reconnect (1s → 2s → 4s … 32s max).
-- **eventBus.js** — in-process pub/sub. SSE events from the backend are translated here and re-emitted to page subscribers.
-- **authEvents.js** — typed auth failure event emitter. Fires `acp:auth:failure` CustomEvent consumed by App.jsx → IncidentOverlay.
-- **IncidentOverlay** — SOC-style alert panel with 12-second countdown to `/login` redirect on auth failure.
-- **ErrorBoundary** — catches React render crashes, renders fallback instead of blank screen.
-
-### Real-Time Update Strategy
-Every page combines two update mechanisms:
-1. **SSE subscription** via `eventBus.on()` — immediate push on backend events.
-2. **30-second polling** via `setInterval` — catches missed events and keeps data fresh if SSE reconnects.
-
-Both are cleaned up on component unmount via `useEffect` return function (`clearInterval` + `eventBus.off`).
+<br/>
 
 ---
 
-## 6. Authentication Model
+## 🖥️ The UI
 
-### Browser Flow
-```
-Browser                    Gateway :8000             Identity :8002
-   │                            │                          │
-   ├── POST /auth/token ────────►│── forward ──────────────►│
-   │   {email, password}         │                 bcrypt verify
-   │                            │◄── JWT (HS256) ───────────│
-   │◄── 200 {tenant_id, role,   │
-   │         expires_in}         │
-   │    Set-Cookie: acp_token    │  (httpOnly · Secure · SameSite=Lax)
-   │
-   │  localStorage stores ONLY:
-   │  • tenant_id   (non-sensitive identifier)
-   │  • user_role
-   │  • acp_token_expiry  (epoch ms — for proactive expiry timer)
-   │  NEVER: the JWT itself
-   │
-   ├── GET /agents ─────────────►│
-   │   Cookie: acp_token          │  SecurityMiddleware:
-   │   X-Tenant-ID: {tid}         │  • extract JWT from cookie
-   │   X-Request-ID: <uuid>       │  • promote to Authorization: Bearer
-   │   X-Timestamp: <epoch>       │  • verify + revocation check
-   │◄── agents[] ────────────────│
-```
+<div align="center">
 
-### SDK / CLI / curl Flow
-```
-1. POST http://localhost:8002/auth/login  →  {data: {access_token: "..."}}
-2. All requests: Authorization: Bearer <token>
-                 X-Tenant-ID: <uuid>
-   No cookies, no CSRF tokens.
-```
+### System Health
+![System Health Dashboard](docs/images/ui-01-health.png)
 
-### Agent Credential Flow
-```
-1. Admin: POST /auth/credentials   →  provision agent secret
-2. Agent: POST /auth/agent/token   →  JWT {role: "agent", agent_id: <uuid>}
-3. Agent: POST /execute
-          Authorization: Bearer <agent_jwt>
-          X-Tenant-ID: <uuid>
-          X-Agent-ID:  <agent_uuid>
-          X-ACP-Tool:  <tool_name>
-```
+*Live status of all 12 services. Each card shows current latency (17–20ms range, well under the 100ms SLA target). Operational queues panel at the bottom shows audit stream depth and DLQ counts — critical signals that the async pipeline isn't backing up.*
 
-### Token Revocation
-On logout or admin revoke: `SHA-256(bare_token)` → `SET acp:revoked:{hash}` in Redis with `TTL = token_remaining_seconds`. Every request middleware hashes the incoming token and checks Redis. `extract_bearer_token()` always strips the `"Bearer "` prefix before hashing to prevent bypass.
+<br/>
 
-### Proactive Expiry
-`App.jsx` reads `acp_token_expiry` from localStorage on mount, schedules a `setTimeout` for the remaining milliseconds, and fires `emitAuthFailure('session_expired')` when it fires — catches tabs left open past JWT expiry without waiting for a 401 response.
+### Audit Logs (Immutable Chain)
+![Audit Logs](docs/images/ui-02-audit.png)
+
+*Every row is an immutable record carrying its own event hash and a link to the previous event's hash. Expanding a row reveals actor ID, HTTP status, trace ID, risk score, and the canonical event hash signed with ed25519. **"Verify Integrity"** runs the offline chain verifier against every record in view.*
+
+<br/>
+
+### Identity Graph + Blast-Radius Simulation
+![Identity Graph](docs/images/ui-03-graph.png)
+
+*Node-and-edge view of agents, tools, customers, and resources. Selecting the DevOps Agent and running a stolen-token compromise simulation at depth 3 produces a quantified blast radius: **8 reachable nodes, 1 affected resource, risk 0.075**. Red edges are denied paths. Answers "if this token were stolen, what could the attacker reach?" — before the question becomes urgent.*
+
+<br/>
+
+### Autonomy Contracts
+![Autonomy Contracts](docs/images/ui-04-autonomy.png)
+
+*Each contract binds to an agent and declares its budget (max_runtime, max_cost) plus deny-list and approval-required action lists. The K8s DevOps contract hard-denies namespace and node deletion, denies cluster-role binding creation, and requires human approval for secret and cluster-role patches. The **Recent Violations** panel shows real-time enforcement.*
+
+<br/>
+
+### Emergency Kill Switch
+![Kill Switch](docs/images/ui-05-killswitch.png)
+
+*One click engages a tenant-wide isolation persisted to both Redis (speed) and PostgreSQL (durability). The protocol integrity panel shows that the toggle event itself is signed and added to the audit chain — **the act of pulling the kill switch is provably part of the incident record**.*
+
+<br/>
+
+### Slack Critical Incident Alert
+![Slack Alert](docs/images/ui-06-slack.png)
+
+*A real Slack alert from the auto-response engine when an agent attempted a hard-denied operation (`k8s.delete.namespace`) with a risk score of 97%. The incident includes agent ID, tool, trigger reason, and the specific violation. The full forensic trail lives in the audit log.*
+
+</div>
+
+<br/>
 
 ---
 
-## 7. Request Lifecycle — Tool Execution
+## 🚀 Quick Start
 
-```
-POST /execute
-Headers: Authorization: Bearer <jwt>  (or Cookie: acp_token)
-         X-Tenant-ID:  <uuid>
-         X-Agent-ID:   <agent_uuid>
-         X-ACP-Tool:   <tool_name>          ← preferred
-         (fallback: /execute/<tool_name> path segment)
-         (fallback: "unknown-tool" — NOT read from JSON body)
+Get the full stack running in one terminal:
 
-  Step 0. Early Defence
-    • Global rate limit counter (Redis INCR)
-    • Per-IP rate limit → 429 if exceeded
-
-  Phase 1. Authentication
-    • httpOnly cookie → extract JWT → Bearer header promotion
-    • JWT HS256 verify + expiry
-    • Redis revocation check: GET acp:revoked:{sha256(tok)}
-    • Auth failure counter: repeated 401s → 429 after threshold
-    • agent_id extracted from JWT claims
-    • Admin JWT (agent_id=UUID(0)) + X-Agent-ID header present
-        → override agent_id, set agent_via_header=True
-
-  Phase 2. Input Protections
-    • Idempotency: X-Idempotency-Key dedup (tier-based TTL)
-    • JTI replay window: SETNX acp:jti_last_used:{jti}  (50ms burst, /execute only)
-    • Hierarchical rate limits: global → per-IP → per-tenant → per-agent → per-token
-
-  Kill Switch Check
-    • GET acp:tenant_kill:{tid} → 403 if set
-    • GET acp:{tid}:agent_kill:{aid} → 403 if set
-
-  RBAC Check
-    • "execute_agent" permission required in token
-    • role="agent" JWT → allowed on /execute only
-    • role="admin"/"security" on /execute → needs execute_agent permission (unless agent_via_header)
-
-  Phase 3. Security Signal Collection
-    • Behavior signals from Behavior service (:8007)
-    • allowed_tools = GET /agents/{id}/permissions → filter action.upper()=="ALLOW"
-    • If agent_via_header=False AND admin → allowed_tools=["*"]
-    • OPA evaluation via Policy service → allow/deny/monitor/throttle/escalate
-    • InferenceProxy: payload hashing + inference_risk pre-score
-
-  Phase 4. Decision Engine
-    • POST Decision service (:8010)
-    • Weighted risk = inference_risk + behavior_risk + anomaly_score + cross_agent_risk
-    • Groq routing: risk < 0.75 → llama-3.1-8b-instant (~200ms)
-                    risk ≥ 0.75 → llama-3.3-70b-versatile (~1–2s)
-    • Returns: {action, risk_score, reasons[], confidence}
-    • Exception → 403 "Fail-Closed" (never 500)
-
-  Phase 5. Audit + Publish
-    • Write AuditLog with HMAC hash chain → Postgres (via Audit service)
-    • XADD acp:audit:events if deny OR risk ≥ 0.7  → triggers ARE
-    • PUBLISH acp:events:{tid} → SSE → browser
-        eventBus.emit('tool_executed')
-        eventBus.emit('policy_decision')
-
-Response: { action, risk_score, reasons[], request_id }
-```
-
----
-
-## 8. Autonomous Response Engine (ARE)
-
-The ARE runs inside the API Service (:8005) as background workers consuming two independent Redis streams.
-
-### Ingestion Paths
-```
-acp:incidents:queue   ← new incident created (gateway middleware XADD)
-  consumer group: are-workers
-
-acp:audit:events      ← audit deny or risk ≥ 0.7 (Audit service XADD)
-  consumer group: are-audit-workers
-
-Both converge → process_incident()
-```
-
-### Evaluation Pipeline
-```
-1.  ARE enabled?         GET acp:{tid}:are:enabled
-2.  Backpressure         XLEN stream > 10,000 → pause 5s, skip cycle
-3.  Correlation dedup    acp:{tid}:are:agent_corr:{aid} — skip if same agent within 30s
-4.  Load active rules    Postgres ORDER BY priority DESC
-5.  AREIndex pre-filter  severity_set + min_risk O(n) check
-    (60–80% rules skipped on high-risk flood — avoids full trace overhead)
-
-Per-rule evaluation:
-  6.  Suppression?     suppressed_until > now → skip
-  7.  Idempotency?     acp:{tid}:are:idemp:{req}:{rid} (TTL 1h)
-  8.  Cooldown?        acp:{tid}:are:cooldown:{r}:{scope}
-  9.  Rate limit?      acp:{tid}:are:rate:{rid}:{hour} (max_triggers_per_hour)
-  10. Window count     ZRANGEBYSCORE violations sorted set within window
-  11. _build_trace()   evaluate each condition, record matched/failed
-  12. Record latency   ZADD acp:{tid}:are:latency:{rid}
-```
-
-### Action Mode Routing
-| Mode | Behaviour |
-|---|---|
-| `auto` | Execute immediately — AREExecutor dispatches all actions |
-| `manual` | Store in Redis pending queue + SSE notification; no execution until human approves |
-| `suggest` | SSE event only, nothing executed |
-
-### AREExecutor Actions
-| Action | Effect |
-|---|---|
-| `KILL_AGENT` | `SET acp:{tid}:agent_kill:{aid} EX 86400` — blocks all future executions |
-| `ISOLATE_AGENT` | `PATCH /agents/{id}` `{status: "suspended"}` via Registry |
-| `BLOCK_TOOL` | `POST /agents/{id}/permissions` with `action: "DENY"` |
-| `THROTTLE` | `SET acp:{tid}:throttle:{aid} EX 3600` |
-| `ALERT` | Slack Block Kit webhook (CRITICAL/HIGH) or generic webhook |
-
-Safety guards:
-- `_policy_gate()` calls OPA before any KILL or ISOLATE — fail-closed on exception.
-- `SETNX acp:{tid}:are:lock:{aid}:{rid} EX 30s` prevents double-fire from concurrent workers.
-- Max 1 KILL/ISOLATE per evaluation cycle (destructive cap).
-- `stop_on_match=True` (default) breaks the rule loop after first match.
-
-### ARE Condition DSL
-
-Two formats accepted — both normalised by Pydantic `model_validator` before validation:
-
-**Dict format (canonical):**
-```json
-{
-  "severity_in": ["HIGH", "CRITICAL"],
-  "risk_score_gte": 0.75,
-  "tool_in": ["payments.write"],
-  "agent_id": "*",
-  "repeat_offender": true,
-  "min_violations": 2,
-  "window": "5m"
-}
-```
-
-**List DSL format (backward-compatible):**
-```json
-[
-  { "field": "severity",   "op": "in",  "value": ["HIGH", "CRITICAL"] },
-  { "field": "risk_score", "op": ">=",  "value": 0.75 },
-  { "field": "tool",       "op": "in",  "value": ["payments.write"] }
-]
-```
-
-Supported ops: `==` `!=` `>` `>=` `<` `<=` `in` `not_in`  
-Supported fields: `severity` `risk_score` `tool` `agent_id` `violation_count` `violations` `risk_level`
-
-### ARE API Endpoints
-
-```
-POST   /auto-response/rules                  create rule (ADMIN+)
-GET    /auto-response/rules                  list active rules
-GET    /auto-response/rules/{id}             get rule
-PATCH  /auto-response/rules/{id}             update rule (creates version snapshot)
-DELETE /auto-response/rules/{id}             delete rule (ADMIN+)
-
-GET    /auto-response/rules/{id}/history     version snapshot list
-POST   /auto-response/rules/{id}/rollback/{v} restore to version v
-POST   /auto-response/rules/{id}/feedback    mark false-positive + optional suppress window
-
-GET    /auto-response/toggle                 get ARE enabled status
-POST   /auto-response/toggle                 enable / disable (ADMIN+)
-
-POST   /auto-response/simulate               dry-run against last 24h incidents
-POST   /auto-response/replay                 dry-run against historical audit logs
-GET    /auto-response/pending                list awaiting manual approval
-POST   /auto-response/pending/{key}/approve  approve or reject pending action
-
-GET    /auto-response/metrics                Redis counter roll-ups
-GET    /auto-response/latency                p50/p95/p99 per rule
-```
-
----
-
-## 9. Incident System
-
-### Creation Flow
-```
-Gateway middleware → XADD acp:incidents:queue
-    │
-    ├── api-incident-worker
-    │   sha256(tenant+agent+tool+trigger+5min_bucket) → dedup key
-    │   duplicate? → bump violation_count on existing row
-    │   new?       → INSERT incidents table
-    │
-    └── are-workers
-        ARE rule evaluation on same event
-```
-
-### State Machine
-```
-OPEN → INVESTIGATING → MITIGATED → RESOLVED
-OPEN → INVESTIGATING → ESCALATED → RESOLVED
-Invalid transition → HTTP 422 StateTransitionError
-```
-
-### Action Types (`POST /incidents/{id}/actions`)
-| Type | Effect |
-|---|---|
-| `KILL_AGENT` | `SET acp:agent_kill:{id}` in Redis (86400s) |
-| `BLOCK_AGENT` | Wildcard DENY permission in Registry |
-| `ISOLATE` | `PATCH agent status=suspended` in Registry |
-| `ESCALATE` | `SET acp:agent_escalated:{id}` Redis flag |
-| `REASSIGN` | Updates `assigned_to` field |
-| `NOTE` | Appends to timeline, no system effect |
-
-Fields: `type` + `by` (required). `note` is optional.
-
-### Alerting
-- `SLACK_WEBHOOK_URL` env var → Slack Block Kit messages for CRITICAL/HIGH incidents.
-- `ALERT_WEBHOOK_URL` env var → generic POST webhook.
-
----
-
-## 10. Data Validation Pipeline
-
-ACP applies three independent validation layers to prevent malformed data from reaching the UI:
-
-```
-[Postgres DB]
-      │
-      ▼
-[Pydantic v2 — write-time]            services/api/schemas/auto_response_rule.py
-  • AREConditions model:
-    - extra="ignore"                  unknown fields silently dropped
-    - model_validator(mode="before")  DSL list [] → dict {} normalisation
-    - field_validator(mode="before")  null/non-string → empty list
-      [123, None, "HIGH"] → ["HIGH"]  isinstance(x, str) filter (not str(x))
-  • All list fields: Field(default_factory=list)
-  • Incident schema: actions_taken and timeline default to []
-
-      │
-      ▼
-[Pydantic v2 — read-time]             same schemas applied on every GET response
-
-      │   HTTP response
-      ▼
-[Zod v4.3.6 — API boundary]           ui/src/lib/schemas.js
-  • safeStringList: preprocess → filter(typeof x === 'string')
-  • safeObjectList: preprocess → filter(plain objects only)
-  • AutoResponseRuleSchema.safeParse(raw)
-    on failure: log contract violation, return blankRule(id)
-    blankRule: { is_active: false, name: "⚠ contract error", ... }
-    never returns raw unvalidated data
-
-      │
-      ▼
-[normalizeRule() — render-time]       ui/src/pages/AutoResponse.jsx
-  • Called inside useState initialiser
-  • Merges with makeBlankRule() defaults
-  • Guarantees severity_in and tool_in are always arrays before .map()
-```
-
-Why three layers instead of one:
-- Pydantic write-time: prevents bad data entering the DB.
-- Pydantic read-time: catches bad legacy rows already in the DB.
-- Zod: catches any contract drift between backend and frontend independently.
-- `normalizeRule`: last-resort UI safety so a Zod library bug never causes a render crash.
-
----
-
-## 11. Security Hardening
-
-| Control | Implementation |
-|---|---|
-| **XSS token theft prevention** | JWT in httpOnly cookie — JS has zero access |
-| **CSRF** | Not applicable — JWT-only model, SameSite=Lax cookie, no form submissions to CSRF |
-| **Token revocation** | SHA-256(bare_token) → Redis key, TTL = remaining token life |
-| **Auth brute force** | `acp:authfail:{ip}` counter → 429 after threshold |
-| **JTI replay** | SETNX 50ms window on `/execute` path — prevents burst replay attacks |
-| **Permission casing** | Registry enforces uppercase `ALLOW`/`DENY` — lowercase → 422 |
-| **Fail-closed OPA** | `OPA_FAIL_MODE=closed` — deny on any OPA failure |
-| **Fail-closed Decision** | Exception → 403 (not 500) |
-| **ARE execution lock** | SETNX per agent+rule EX 30s — no double-fire |
-| **ARE destructive cap** | Max 1 KILL/ISOLATE per evaluation cycle |
-| **Unknown fields** | `extra="ignore"` on AREConditions — unknown keys cannot influence downstream |
-| **Audit OOM guard** | Chain verification capped at 10,000 rows |
-| **DB isolation** | 5 separate DB users, cross-service access via HTTP only |
-| **Container hardening** | All 14 services run as `user: "999:999"` (non-root) |
-| **Redis auth (K8s)** | `requirepass` via `secretKeyRef` |
-| **JWT key rotation** | Placeholder in K8s Secret — rotate with `openssl rand -base64 32` |
-| **Groq concurrency cap** | `asyncio.Semaphore(5)` — prevents 429 cascade |
-| **Background task safety** | `_safe_bg(coro)` wraps all `asyncio.create_task()` — exceptions logged, never raised |
-| **Input clamping** | `_clamp_int()` on all limit/offset/days query params |
-| **Tenant isolation** | Cross-tenant response rejected in `api.js` (`responseTenant !== sessionTenant`) |
-
----
-
-## 12. Real-Time SSE Event Flow
-
-```
-Backend event (tool exec / ARE trigger / kill / insight)
-      │
-      ▼
-Redis PUBLISH acp:events:{tid}  OR  acp:tenant:{tid}:events
-      │
-      ▼
-Gateway /events/stream  (per-tenant subscription)
-Auth enforced inline in route handler (not in _SKIP_PATHS middleware)
-      │
-      ▼
-useSSE() hook in browser
-  Exponential backoff: 1s → 2s → 4s → … 32s max
-      │
-      ▼
-AgentContext.handleSSEMessage()
-      │
-      ├── agent_created / updated / deleted  → fetchAgents() + eventBus.emit('agent_changed')
-      ├── tool_executed                       → eventBus.emit('tool_executed')
-      ├── risk_updated                        → eventBus.emit('risk_updated')
-      ├── policy_decision                     → eventBus.emit('policy_decision')
-      ├── insight_generated                   → eventBus.emit('insight_generated')
-      ├── auto_response_executed              → eventBus.emit('alert') + ARE panel refresh
-      └── alert                               → eventBus.emit('alert')
-
-Subscribers (eventBus.on):
-  SecurityDashboard  — live risk heatmap + deny feed
-  Observability      — metric tiles + decision timeline
-  AutoResponse       — pending approval panel + metrics
-  AuditLogs          — fetch latest page (if no active search)
-  Billing            — refresh summary on tool_executed / policy_decision
-  NotificationCenter — badge count + dropdown entries
-```
-
----
-
-## 13. Groq AI Risk Routing
-
-```
-Decision Engine aggregates:
-  inference_risk   — payload sensitivity (InferenceProxy hash analysis)
-  behavior_risk    — agent deviation from baseline (Behavior :8007)
-  anomaly_score    — statistical deviation (Learning :8009)
-  cross_agent_risk — multi-agent correlation (Intelligence :8008)
-
-  weighted_risk = sum(w_i × signal_i)
-
-  risk < 0.75  →  llama-3.1-8b-instant     ~200ms   (fast triage)
-  risk ≥ 0.75  →  llama-3.3-70b-versatile  ~1–2s    (deep analysis)
-
-Background Enrichment (Insight Worker :8011):
-  risk < 0.65  →  fast model  (brief narrative)
-  risk ≥ 0.65  →  deep model  (detailed risk explanation)
-  asyncio.Semaphore(5) — max 5 parallel Groq calls
-  Output: Redis sorted set acp:groq:insights:timeline:{tid}
-  Event:  insight_generated → SSE → NotificationCenter bell
-```
-
----
-
-## 14. Kill Switch
-
-```
-Engage (tenant-wide):
-  POST /decision/kill-switch/{tenant_id}  { "action": "engage" }
-  → SET acp:tenant_kill:{tid} = "manual_admin_lockdown"  TTL 86400s
-  → ALL /execute requests for this tenant → 403
-
-Engage (per-agent):
-  Post incident action KILL_AGENT on /incidents/{id}/actions
-  → SET acp:{tid}:agent_kill:{aid}  EX 86400
-  → Only that agent's executions blocked
-
-Disengage:
-  DELETE /decision/kill-switch/{tenant_id}
-  → DEL acp:tenant_kill:{tid}
-  → Executions resume
-
-Management paths (/agents, /audit, /incidents …) remain accessible
-during kill switch — operators can investigate and resolve.
-```
-
----
-
-## 15. Forensics & Audit
-
-### Audit Chain
-Every `AuditLog` row: `event_hash = HMAC-SHA256(previous_event_hash + current_event_json)`. Breaking the chain is detectable. `GET /audit/logs/verify` walks the chain and reports the first broken link (capped at 10,000 rows).
-
-### Forensics Drill-Down
-From any page with an agent row (AuditLogs, RiskEngine, SecurityDashboard):
-1. Click "Investigate" → `navigate('/forensics?agent=<id>')`.
-2. Forensics page calls `GET /forensics/investigation/{agent_id}`.
-3. Forensics service (:8012) reads last 20 events from Audit via HTTP (not direct DB).
-4. Returns: `avg_risk`, `decision_breakdown`, `recent_events[]`.
-5. UI renders vertical timeline — DENY/KILL events glow red.
-
----
-
-## 16. Policy Evaluation Chain
-
-```
-Gateway SecurityMiddleware
-      │
-      ├── _extract_allowed_tools(agent_id)
-      │     GET /agents/{id}/permissions  →  Registry (:8001)
-      │     filter: permission.action.upper() == "ALLOW"
-      │
-      └── Policy Service (:8003)
-              │
-              ├── OPA input document:
-              │   { tenant_id, agent_id, tool, risk_score,
-              │     inference_risk, behavior_risk, anomaly_score,
-              │     policy_allowed, cross_agent_risk,
-              │     allowed_tools: ["read_data", ...] }
-              │
-              └── POST /v1/data/acp/agent  →  OPA (:8181)
-                    agent_policy.rego:
-                      • tool in allowed_tools OR wildcard *
-                      • risk_score ceiling (> 0.85 → DENY)
-                      • tool-specific rules
-                      • cross-agent correlation risk
-                    →  allow / deny / monitor / throttle / escalate
-
-ARE also calls OPA before KILL/ISOLATE:
-  AREExecutor._policy_gate() — fail-closed on exception
-```
-
----
-
-## 17. Test Suite
-
-| File | Tests | What it covers |
-|---|---|---|
-| `tests/test_are.py` | 46 | ARE DSL evaluation, AREIndex pre-filter, `_build_trace`, correlation/backpressure keys, RBAC roles, stream constants |
-| `tests/test_audit_fixes.py` | 20 | Token extraction, revocation hash, JSONB cast, `_clamp_int` |
-| `tests/test_decision_engine.py` | 24 | Risk clamping, Groq routing thresholds, billing savings, output format |
-| `tests/test_production_readiness.py` | 7 | Auth 401/403, tenant isolation, token revocation, fail-closed, env validation |
-| `tests/chaos/test_resilience.py` | 2 | Circuit breaker, identity service fallback |
-| **Subtotal (no stack required)** | **99** | **All pass: `.venv/bin/python3 -m pytest tests/ -x -q`** |
-| `tests/test_system_flow.py` | 1 | Full lifecycle: registry → identity → gateway → decision → audit |
-| `tests/e2e/test_full_loop.py` | 2 | E2E security workflow + unauthorized access |
-| `tests/e2e/test_security_scenarios.py` | 1 | Multi-scenario threat simulation flows |
-| **Total (with stack running)** | **103** | All passing |
-
-Key invariants enforced by the test suite:
-- Permission `action` must be uppercase `ALLOW` — registry returns 422 on lowercase.
-- `execute_agent` (not `execute_tool`) is the required permission for `/execute`.
-- Auth failure rate limiter: tests that hit invalid-token paths accept both `401` and `429`.
-- JTI replay: each execute-path test step uses a freshly-issued JWT (fresh login per step).
-- Admin agent bypass: attack simulation tests send `X-Agent-ID` header to exercise real agent policy.
-
----
-
-## 18. Running the Stack
-
-### Prerequisites
-- Docker + Docker Compose v2
-- Python 3.11+ (unit tests without Docker)
-
-### Start Infrastructure + All Services
 ```bash
-cd acp/infra
-docker compose up --build -d
+# Clone
+git clone https://github.com/Abhi-mishra998/aegis.git
+cd aegis
+
+# Boot the 25-container stack
+cd infra && docker compose up --build -d
+sleep 90
+
+# Seed the admin user
+cd .. && python3 -m venv .venv && source .venv/bin/activate
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python scripts/utils/seed_admin.py
+
+# Run all 3 demo packs in dry-run mode (~10 seconds)
+ACP_DRY_RUN=1 .venv/bin/python demos/run_all_demos.py
+
+# Open the UI
+open http://localhost:5173      # macOS
+# xdg-open http://localhost:5173  # Linux
+# Login: admin@acp.local / password
 ```
 
-### Verify All Services Healthy
-```bash
-docker compose ps
-curl -s http://localhost:8000/health | python3 -m json.tool
-```
+📘 **Full setup guide** with environment variables, backups, Slack integration, and troubleshooting: [`setup.md`](setup.md)
 
-### Run UI (Development)
-```bash
-cd acp/ui
-npm install
-npm run dev
-# → http://localhost:5173
-```
-
-### Run Unit Tests (No Stack)
-```bash
-cd acp
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-.venv/bin/python3 -m pytest tests/test_are.py tests/test_audit_fixes.py \
-  tests/test_decision_engine.py tests/test_production_readiness.py \
-  tests/chaos/test_resilience.py -v
-```
-
-### Critical Config: JWT Key Synchronisation
-The `JWT_SECRET_KEY` in `acp/.env` and `acp/infra/.env` must be identical:
-```bash
-grep JWT_SECRET_KEY .env infra/.env   # both lines must match
-# Generate new: python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-### Stop and Clean
-```bash
-docker compose down          # stop, preserve volumes
-docker compose down -v       # stop + delete all data volumes
-```
+<br/>
 
 ---
 
-## 19. Port Reference
+## ✅ What's Working / What's Next
 
-| Component | Port | Protocol |
-|---|---|---|
-| React UI (Vite dev) | 5173 | HTTP |
-| Gateway | 8000 | HTTP |
-| Registry | 8001 | HTTP |
-| Identity | 8002 | HTTP |
-| Policy | 8003 | HTTP |
-| Audit | 8004 | HTTP |
-| API (incidents · ARE · api-keys) | 8005 | HTTP |
-| Usage / Billing | 8006 | HTTP |
-| Behavior | 8007 | HTTP |
-| Intelligence | 8008 | HTTP |
-| Learning | 8009 | HTTP |
-| Decision | 8010 | HTTP |
-| Insight | 8011 | HTTP |
-| Forensics | 8012 | HTTP |
-| OPA | 8181 | HTTP |
-| OPA Bundle Server | 8182 | HTTP |
-| Redis | 6379 | TCP |
-| PgBouncer | 6432 | TCP |
-| PostgreSQL | 5433 (host) → 5432 | TCP |
-| Locust (load test UI) | 8089 | HTTP |
-| Groq API | cloud | HTTPS |
+I'm being explicit here because *"production-grade"* claims on side projects are easy to make and hard to verify.
 
-All API traffic goes through the Gateway (:8000). Never call internal service ports directly from tests or external tooling except when running integration tests that require identity (:8002) for JWT issuance.
+<table>
+<tr>
+<td valign="top" width="50%">
+
+### ✅ Shipped & Tested
+
+- JWT issuance, revocation, replay protection
+- Per-tool allow-list enforcement
+- OPA-evaluated policy bundles
+- Behavioral risk scoring with PII density signals
+- Autonomy contracts with action budgets
+- Auto-response engine (KILL, ISOLATE, THROTTLE, ALERT)
+- Tenant- and agent-scoped kill switches with Postgres persistence
+- ed25519 receipts + HMAC chain + daily Merkle root
+- Offline chain verifier (`acp verify-chain`)
+- Blast-radius graph analysis
+- Slack escalation for critical incidents
+- Encrypted offsite backups (age + S3)
+- Audit-to-billing reconciliation
+- ~330 pytest tests
+- Three end-to-end demo packs
+
+</td>
+<td valign="top" width="50%">
+
+### 🚧 Actively in Progress
+
+- Full Jaeger distributed tracing across all 12 services
+- Published threat model (STRIDE per service)
+- Sustained 1,000+ RPS load test
+- Helm charts + production deployment guide
+- Multi-region replication for the audit chain
+- HashiCorp Vault integration for secret management
+- TypeScript SDK with first-class type safety
+- Expanded web UI dashboards (currently CLI + Grafana-only)
+- External security review
+
+</td>
+</tr>
+</table>
+
+> 🔓 **I work on this in the open.** The roadmap is in the repo. Open an issue if you'd like to argue about priorities.
+
+<br/>
 
 ---
 
-## 20. Performance
+## 🎬 Three Demo Scenarios
 
-Measured on a single MacBook Air (M2, 16 GB) with all 26 services running locally via Docker Compose. Load tool: `hey` v0.1.5, concurrency=20.
+Each one is a single command, produces signed audit receipts, and is reproducible from a clean clone.
 
-| Path | Tool | Decision | p50 | p95 | p99 | RPS |
-|------|------|----------|-----|-----|-----|-----|
-| ALLOW — read | `k8s.get.pods` | JWT + OPA + rate-limit | 20ms | 593ms | 649ms | 193 |
-| DENY — hard deny | `k8s.delete.namespace` | JWT + OPA + behavior score | 616ms | 844ms | 1004ms | 16 |
-| FULL — inference | `db.query` | JWT + OPA + LLM risk score + audit sign | 443ms | 697ms | 855ms | 23 |
+<table>
+<tr>
+<td valign="top" width="33%">
 
-**Allow path** is fast because OPA returns immediately and no LLM call is needed.
-**Deny path** is slower because the behavior engine and full signal pipeline run before rejection.
-**Full inference path** (db.query) adds the Groq LLM call and Ed25519 audit-chain signing.
+### 🤖 DevOps Agent
 
-Cloud deployment numbers (ECS, 2× gateway, RDS Postgres): p99 allow ≈ 80ms, deny ≈ 350ms.
+A Kubernetes operator demo.
+
+Demonstrates:
+- ✅ Safe reads allowed
+- ✅ Non-prod scaling allowed
+- ❌ Namespace deletion hard-denied
+- ❌ Privilege escalation blocked
+- ❌ Delete storms throttled
+- ⛔ Kill switch persists through Redis flush
+- 🔐 240+ events chain-verified
+
+```bash
+.venv/bin/python demos/devops_agent/scripted_demo.py
+```
+
+</td>
+<td valign="top" width="33%">
+
+### 🗄️ Database Copilot
+
+An analyst-facing SQL assistant.
+
+Demonstrates:
+- ✅ Allowed SELECTs
+- ⚠️ Behavior-scored bulk queries
+- ❌ PII column exfiltration blocked
+- ❌ DDL destruction (DROP) blocked + token revoked
+- ⛔ Tenant-wide kill switch
+
+```bash
+.venv/bin/python demos/db_copilot/scripted_demo.py
+```
+
+</td>
+<td valign="top" width="33%">
+
+### 🎧 Support Agent
+
+A customer-service automation.
+
+Demonstrates:
+- ✅ Ticket lookups allowed
+- 👁️ Single-customer PII monitored
+- ❌ Cross-tenant access denied
+- ❌ Bulk PII export blocked
+- ❌ Email exfiltration denied (OPA hard-rule)
+- 🐢 Runaway bursts rate-limited
+
+```bash
+.venv/bin/python demos/support_agent/scripted_demo.py
+```
+
+</td>
+</tr>
+</table>
+
+The output isn't slides. It's the actual system making actual decisions, in milliseconds, with signed receipts you can verify after.
+
+<br/>
 
 ---
 
-## 21. Directory Structure
+## 🎥 Watch the Demo
 
+<div align="center">
+
+[![Watch the Aegis demo](https://img.shields.io/badge/▶_FULL_WALKTHROUGH-5_minutes-ef4444?style=for-the-badge&labelColor=000000)](https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view)
+
+</div>
+
+The video covers:
+- 🛡️ Runtime policy enforcement (block before execute)
+- 🔐 Cryptographic audit chain verification
+- 💥 Blast-radius simulation in the identity graph
+- 📜 Autonomy contracts (budget enforcement)
+- ⛔ Live kill-switch activation + Redis-flush persistence test
+- ✍️ ed25519-signed audit receipt verification
+
+<br/>
+
+---
+
+## 📝 Read the Deep Dive
+
+If you want the engineering story behind every design decision — why ed25519 over RSA, why a Merkle log instead of just a hash chain, why OPA, what tried to break it during development — the full blog post is here:
+
+<div align="center">
+
+[![Read the blog](https://img.shields.io/badge/📝_READ_THE_DEEP_DIVE-12_minutes-3b82f6?style=for-the-badge&labelColor=000000)](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
+
+</div>
+
+<br/>
+
+---
+
+## 📂 Repository Layout
+
+```text
+aegis/
+├── 🚪 services/         12 FastAPI microservices (gateway, audit, identity, ...)
+├── 🐳 infra/            Docker Compose + Kubernetes orchestration
+├── 🎨 ui/               React 18 SPA — SOC visibility dashboards
+├── 📦 sdk/              Python SDK for 5-line agent integration
+├── 📚 docs/             Architecture diagrams, runbooks, audit reports
+├── 🔧 scripts/          Ops scripts (backup, reconcile, export, redact)
+├── 🎭 demos/            Three reproducible demo packs
+├── 🧪 tests/            ~330 pytest tests (unit → integration → E2E)
+├── 📜 LICENSE           MIT
+├── ⚙️ pyproject.toml    Package + dependency management
+└── 📖 README.md         You are here
 ```
-acp/
-├── .github/          Issue and PR templates for professional collaboration
-├── services/         14 FastAPI microservices (Gateway, Audit, Identity...)
-├── infra/            Docker Compose & Kubernetes (K8s) orchestration
-├── ui/               React 18 SPA with SOC visibility dashboards
-├── sdk/              Python SDK for seamless agent integration
-├── docs/             Architectural diagrams, setup guides, and audit reports
-├── scripts/          Utility scripts for system initialization and testing
-├── tests/            Pytest suite (100+ tests covering unit to E2E)
-├── LICENSE           MIT License for open-source distribution
-├── pyproject.toml    Python package & dependency management
-└── README.md         Core documentation and system reference
+
+<br/>
+
+---
+
+## 🛠️ Tech Stack
+
+<div align="center">
+
+**Runtime**
+
+<img src="https://skillicons.dev/icons?i=python,fastapi,postgres,redis,docker,kubernetes&theme=dark" alt="Runtime stack"/>
+
+**Frontend**
+
+<img src="https://skillicons.dev/icons?i=react,vite,tailwind,typescript&theme=dark" alt="Frontend stack"/>
+
+**Observability**
+
+<img src="https://skillicons.dev/icons?i=prometheus,grafana&theme=dark" alt="Observability stack"/>
+<img src="https://img.shields.io/badge/Jaeger-66CFE3?style=for-the-badge&logo=jaeger&logoColor=white" alt="Jaeger"/>
+<img src="https://img.shields.io/badge/OPA-7D4698?style=for-the-badge&logo=openpolicyagent&logoColor=white" alt="OPA"/>
+
+</div>
+
+<br/>
+
+---
+
+## 👥 Who This Is For
+
+<table>
+<tr>
+<td valign="top" width="33%">
+
+### 👷 Engineers building agents
+
+You've felt the discomfort of giving an LLM real-world write access. This is the substrate I wish I'd had.
+
+</td>
+<td valign="top" width="33%">
+
+### 🏢 Security architects
+
+You're being asked *"how do we govern our AI?"* by your CISO, board, or auditor. This is one concrete answer.
+
+</td>
+<td valign="top" width="33%">
+
+### 🎯 Hiring managers
+
+Working on AI safety, platform security, or infrastructure? Below is the deepest look you'll get into how I think about systems.
+
+</td>
+</tr>
+</table>
+
+<br/>
+
+---
+
+## 🤝 Contributing
+
+Aegis is MIT-licensed and built in the open. PRs welcome:
+
+- 🐛 **Report bugs** via [issues](https://github.com/Abhi-mishra998/aegis/issues)
+- 💡 **Propose features** through discussions
+- 🔍 **Review the threat model** — see something I missed? Open an issue.
+- 📝 **Improve docs** — typos and clarifications are always welcome
+- 🧪 **Add tests** — see [`tests/`](tests/) for the existing patterns
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide.
+
+<br/>
+
+---
+
+## 📬 Get in Touch
+
+If you're working on agent infrastructure, AI safety, or platform security — or if you're hiring in this space — I'd love to talk.
+
+<div align="center">
+
+[![Email](https://img.shields.io/badge/Email-abhishekmishra09896@gmail.com-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:abhishekmishra09896@gmail.com)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-abhishek--mishra--eng-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/abhishek-mishra-eng)
+[![Blog](https://img.shields.io/badge/Blog-blog.abhimishra.dev-FF6154?style=for-the-badge&logo=hashnode&logoColor=white)](https://blog.abhimishra.dev)
+[![Portfolio](https://img.shields.io/badge/Portfolio-abhimishra.dev-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://abhimishra.dev)
+
+</div>
+
+<br/>
+
+---
+
+## 📜 License
+
+[MIT](LICENSE) — use it, fork it, build on it. If it ends up saving you from an incident, drop me a note. I'd love to hear the story.
+
+<br/>
+
+---
+
+<div align="center">
+
+### ⭐ If Aegis is useful to you, star the repo — it helps others find it.
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,20,24&height=140&section=footer&text=Every%20action%20governed.%20Every%20decision%20proved.&fontSize=20&fontColor=ffffff&animation=fadeIn&fontAlignY=70" alt="footer"/>
+
+</div>
 ```
+
+---
+## 📬 Connect
+
+If you're working on agent infrastructure, AI safety, or platform security — or if you're hiring in this space — I'd love to talk.
+
+<table align="center">
+<tr>
+<td align="center" width="20%">
+  <a href="https://portfolio-self-seven-1zphd40voq.vercel.app">
+    <img src="https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/vercel.svg" width="32" height="32" alt="Portfolio"/>
+    <br/>
+    <strong>Portfolio</strong>
+  </a>
+  <br/>
+  <sub>Live site</sub>
+</td>
+<td align="center" width="20%">
+  <a href="https://github.com/Abhi-mishra998">
+    <img src="https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/github.svg" width="32" height="32" alt="GitHub"/>
+    <br/>
+    <strong>GitHub</strong>
+  </a>
+  <br/>
+  <sub>@Abhi-mishra998</sub>
+</td>
+<td align="center" width="20%">
+  <a href="https://www.linkedin.com/in/abhishek-mishra-eng/">
+    <img src="https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/linkedin.svg" width="32" height="32" alt="LinkedIn"/>
+    <br/>
+    <strong>LinkedIn</strong>
+  </a>
+  <br/>
+  <sub>Connect</sub>
+</td>
+<td align="center" width="20%">
+  <a href="https://dev.to/abhishek_mishra_01">
+    <img src="https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/devdotto.svg" width="32" height="32" alt="Dev.to"/>
+    <br/>
+    <strong>Dev.to</strong>
+  </a>
+  <br/>
+  <sub>Technical writing</sub>
+</td>
+<td align="center" width="20%">
+  <a href="mailto:abhishekmishra09896@gmail.com">
+    <img src="https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/gmail.svg" width="32" height="32" alt="Email"/>
+    <br/>
+    <strong>Email</strong>
+  </a>
+  <br/>
+  <sub>Direct contact</sub>
+</td>
+</tr>
+</table>
+
+
