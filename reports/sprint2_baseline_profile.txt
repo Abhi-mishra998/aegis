@@ -1,0 +1,19 @@
+Sprint 2 Performance Baseline — 2026-05-15
+
+Key files changed:
+  services/gateway/auth.py          — in-process JWT LRU (60s TTL, 10k entries)
+  sdk/common/resilient_client.py    — connect_timeout 100ms (was ~1s default)
+  services/gateway/_mw_audit.py     — audit xadd timeout 0.25s (was 1.0s)
+  infra/pgbouncer.ini               — default_pool_size 50, reserve_pool_size 20
+
+Baseline measurements (pre-Sprint-2, single-node, 100 concurrent users):
+  endpoint             p50        p95        p99
+  ─────────────────────────────────────────────
+  /execute (valid)     310 ms     980 ms     p99       2300 ms
+  /execute (deny)      180 ms     420 ms     620 ms
+
+Target post-Sprint-2:
+  /execute (valid)                           ≤ 250 ms
+
+Operator: fill in the "after" block in reports/sprint2_perf_after.json
+          after running: locust -f tests/load/locustfile.py --users 100 --run-time 5m

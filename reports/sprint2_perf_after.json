@@ -1,0 +1,23 @@
+{
+  "targets": {
+    "execute_valid": {
+      "p99_ms": 250
+    }
+  },
+  "before": {
+    "execute_valid": {
+      "p99_ms": 2300
+    }
+  },
+  "after": {
+    "execute_valid": {
+      "p99_ms": null
+    }
+  },
+  "invariant_checks": {
+    "audit_chain_integrous": null,
+    "reconciliation_status": null,
+    "behavior_consult_skipped_rate": null,
+    "no_unexpected_status_202": null
+  }
+}
