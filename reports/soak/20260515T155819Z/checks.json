@@ -1,0 +1,38 @@
+[
+  {
+    "name": "chain_verify",
+    "passed": false,
+    "detail": {
+      "error": "non_200",
+      "status_code": 401,
+      "body": "{\"success\":false,\"error\":\"Authentication required\",\"meta\":{\"code\":401}}"
+    }
+  },
+  {
+    "name": "reconciliation",
+    "passed": false,
+    "detail": {
+      "status": "ERROR",
+      "audit_without_usage_count": 0,
+      "usage_without_audit_count": 0,
+      "billing_dlq_length": 0,
+      "exit_code": 1
+    }
+  },
+  {
+    "name": "flight_timelines_closed",
+    "passed": false,
+    "detail": {
+      "error": "non_200",
+      "status_code": 401
+    }
+  },
+  {
+    "name": "transparency_roots",
+    "passed": false,
+    "detail": {
+      "error": "non_200_list",
+      "status_code": 401
+    }
+  }
+]

@@ -1,0 +1,71 @@
+{
+  "title": "ACP Queues",
+  "uid": "acp-queues",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "tags": ["acp", "sprint3.5"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Audit stream — length + dropped",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "max(acp_audit_stream_length)", "legendFormat": "stream length" },
+        { "expr": "rate(acp_audit_stream_dropped_total[1m])", "legendFormat": "dropped/s" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Audit DLQ oldest-age (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "max(acp_audit_dlq_oldest_age_seconds)", "legendFormat": "audit DLQ" },
+        { "expr": "max(acp_billing_dlq_oldest_age_seconds)", "legendFormat": "billing DLQ" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 60, "color": "red" }] } } }
+    },
+    {
+      "id": 3,
+      "title": "Outbox pending — depth + oldest age",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "max(acp_outbox_pending_count)", "legendFormat": "pending count" },
+        { "expr": "max(acp_outbox_oldest_pending_age_seconds) by (outbox_name)", "legendFormat": "{{outbox_name}} age (s)" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Insight / Groq queue",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "max(acp_insight_queue_depth)", "legendFormat": "depth" },
+        { "expr": "max(acp_insight_queue_oldest_age_seconds)", "legendFormat": "oldest age (s)" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Flight Recorder leaked timelines (in_progress > 60s)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "max(acp_flight_timeline_in_progress_count)" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 1, "color": "yellow" }, { "value": 10, "color": "red" }] } } }
+    },
+    {
+      "id": 6,
+      "title": "Reconciliation outbox-age (s, by tenant)",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "max(acp_reconcile_outbox_oldest_age_seconds) by (tenant)", "legendFormat": "{{tenant}}" }
+      ]
+    }
+  ]
+}

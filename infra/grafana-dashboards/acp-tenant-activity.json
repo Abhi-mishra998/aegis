@@ -1,0 +1,69 @@
+{
+  "title": "ACP Tenant Activity",
+  "uid": "acp-tenant-activity",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["acp", "sprint3.5"],
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(acp_tenant_rate_limited_total, tenant)",
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Per-tenant request rate (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(acp_slo_availability_total{service=\"gateway\"}[1m])) by (tenant)", "legendFormat": "{{tenant}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Per-tenant rate-limited (req/s, by limit_type)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(acp_tenant_rate_limited_total{tenant=~\"$tenant\"}[1m])) by (tenant, limit_type)", "legendFormat": "{{tenant}}/{{limit_type}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Per-tenant daily inference $ used",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "sum(acp_inference_cost_usd_total{scope=\"tenant\",key=~\"$tenant\"}) by (key)", "legendFormat": "{{key}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 4,
+      "title": "Inference cost blocked (per tenant/agent)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "sum(rate(acp_inference_cost_blocked_total[5m])) by (scope, key)", "legendFormat": "{{scope}}={{key}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Per-tenant quota warning fires (monthly 80%)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "sum(acp_tenant_quota_warning_total) by (tenant)", "legendFormat": "{{tenant}}" }
+      ]
+    }
+  ]
+}

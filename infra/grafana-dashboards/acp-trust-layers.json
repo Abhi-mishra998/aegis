@@ -1,0 +1,78 @@
+{
+  "title": "ACP Trust Layers",
+  "uid": "acp-trust-layers",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["acp", "sprint3.5"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Chain integrity (violations — must stay at 0)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "max(acp_audit_chain_violations_total)" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 1, "color": "red" }]}}}
+    },
+    {
+      "id": 2,
+      "title": "Reconciliation gap (audit↔usage)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "max(acp_reconcile_audit_without_usage + acp_reconcile_usage_without_audit) by (tenant)" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 1, "color": "red" }]}}}
+    },
+    {
+      "id": 3,
+      "title": "Behavior firewall consult outcomes (rate/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(acp_behavior_firewall_consult_total[1m])) by (result)", "legendFormat": "{{result}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Transparency-root seal lag (s since last successful pass)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 5 },
+      "targets": [
+        { "expr": "time() - max(acp_transparency_scheduler_last_success)" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 3600, "color": "yellow" }, { "value": 7200, "color": "red" }]}}}
+    },
+    {
+      "id": 5,
+      "title": "Transparency roots committed (total)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 5 },
+      "targets": [
+        { "expr": "max(acp_transparency_roots_committed_total)" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Flight timeline close lag — open_total - closed_total",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "expr": "max(acp_flight_timeline_open_total) - max(acp_flight_timeline_closed_total)", "legendFormat": "leaked timelines" },
+        { "expr": "max(acp_flight_timeline_in_progress_count)", "legendFormat": "in_progress > 60s" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Behavior consult skipped/timeout/error rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "expr": "sum(rate(acp_behavior_firewall_consult_total{result=~\"skipped|timeout|error\"}[5m])) by (result)", "legendFormat": "{{result}}" }
+      ]
+    }
+  ]
+}

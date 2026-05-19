@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acp"
+version = "0.2.0"
+description = "Tamper-evident replay + runtime deny for AI agents."
+readme = "README.md"
+license = {text = "Commercial"}
+requires-python = ">=3.11"
+authors = [
+    {name = "ACP"},
+]
+keywords = ["ai", "agents", "audit", "policy", "security", "compliance", "ed25519", "merkle"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+# Runtime dependencies for the customer-facing SDK only. Three small libs.
+# Anything heavier (FastAPI, SQLAlchemy, Redis, etc.) lives under the
+# `[server]` extras for self-hosting the full ACP stack.
+dependencies = [
+    "httpx>=0.25",
+    "cryptography>=42",
+    "PyYAML>=6",
+]
+
+[project.urls]
+Homepage      = "https://acp.example.com"
+Documentation = "https://acp.example.com/docs"
+Repository    = "https://github.com/acp/acp"
+Issues        = "https://github.com/acp/acp/issues"
+Changelog     = "https://github.com/acp/acp/releases"
+
+[project.scripts]
+acp         = "acp.cli:main"
+acp-archive = "acp.cli:archive_entry"
+
+[project.optional-dependencies]
+# Full ACP server stack — only needed when self-hosting the gateway + services.
+# `pip install acp[server]` brings everything required to run uvicorn + the
+# microservices in services/. Customers using only the SDK skip this entirely.
+server = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "redis>=4.2.0",
+    "pydantic[email]",
+    "pydantic-settings",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "structlog",
+    "prometheus-fastapi-instrumentator",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-exporter-otlp",
+    "opentelemetry-semantic-conventions",
+    "alembic",
+    "tenacity",
+    "bcrypt",
+    "prometheus-client",
+    "groq",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "PyJWT",
+    "locust",
+]
+
+# Customer wheel ships only the public SDK surface. Server-side modules
+# (`services/`, `sdk.common`, `sdk.client`, `sdk.utils`) are excluded — they
+# are bundled by the self-hosted server install which runs from source.
+[tool.setuptools]
+packages = ["acp", "sdk", "sdk.acp_client"]
+
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services", "sdk", "tests"]

@@ -1,0 +1,61 @@
+{
+  "title": "ACP Platform SLO",
+  "uid": "acp-platform-slo",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "tags": ["acp", "sprint3.5"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "/execute p50 / p95 / p99 (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\",route=~\"/execute.*\"}[1m])) by (le)) * 1000", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\",route=~\"/execute.*\"}[1m])) by (le)) * 1000", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\",route=~\"/execute.*\"}[1m])) by (le)) * 1000", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "id": 2,
+      "title": "Request rate (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(acp_slo_availability_total{service=\"gateway\"}[1m])) by (status)", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Error rate (% of requests)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "100 * sum(rate(acp_slo_availability_total{service=\"gateway\",status=\"error\"}[5m])) / sum(rate(acp_slo_availability_total{service=\"gateway\"}[5m]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 1, "color": "yellow" }, { "value": 5, "color": "red" }]}}}
+    },
+    {
+      "id": 4,
+      "title": "Rate-limited (per tenant, by limit_type)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 8 },
+      "targets": [
+        { "expr": "sum(rate(acp_tenant_rate_limited_total[1m])) by (tenant, limit_type)", "legendFormat": "{{tenant}}/{{limit_type}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Decision pipeline p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(acp_behavior_firewall_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "behavior consult p95 (ms)" },
+        { "expr": "histogram_quantile(0.99, sum(rate(acp_behavior_firewall_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "behavior consult p99 (ms)" }
+      ]
+    }
+  ]
+}

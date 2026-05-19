@@ -1,0 +1,23 @@
+{
+  "payload": {
+    "receipt": {
+      "version": 1,
+      "execution_id": "00000000-0000-0000-0000-000000000001",
+      "tenant_id": "00000000-0000-0000-0000-000000000002",
+      "agent_id": "00000000-0000-0000-0000-000000000003",
+      "tool": "db.query",
+      "action": "execute",
+      "decision": "allow",
+      "reason": null,
+      "request_id": "req_abc",
+      "timestamp": "2026-05-14T12:00:00+00:00",
+      "event_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "chain_shard": 0
+    },
+    "signature": "RbAv6doCuurzr5eNFGjnrG3Vy4C8Z9Djt2I--FjnU8HReE_KtNLNy83KRz7XRTOOa9jIHszbypDGuoTQzfrdDA",
+    "algorithm": "ed25519",
+    "public_key_fingerprint": "645acb6323d30f589db6377cd5585398"
+  },
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAWPbkek/iLXDTLeJQ7ibfLKeKuqKLOnawVXyJfziw0gg=\n-----END PUBLIC KEY-----\n"
+}

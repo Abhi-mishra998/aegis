@@ -1,0 +1,70 @@
+{
+  "checks": [
+    {
+      "detail": {
+        "is_integrous": true,
+        "processed_count": 121,
+        "violations": 0
+      },
+      "name": "chain_verify",
+      "passed": true
+    },
+    {
+      "detail": {
+        "audit_without_usage_count": 0,
+        "billing_dlq_length": 0,
+        "exit_code": 1,
+        "status": "GAP_DETECTED",
+        "usage_without_audit_count": 118
+      },
+      "name": "reconciliation",
+      "passed": false
+    },
+    {
+      "detail": {
+        "leaked_count": 0,
+        "leaked_sample": []
+      },
+      "name": "flight_timelines_closed",
+      "passed": true
+    },
+    {
+      "detail": {
+        "roots_in_window": 1,
+        "verifications": [
+          {
+            "errors": [],
+            "root_date": "2026-05-15",
+            "valid": true
+          }
+        ]
+      },
+      "name": "transparency_roots",
+      "passed": true
+    }
+  ],
+  "duration": "10s",
+  "gateway_url": "http://localhost:8000",
+  "locust_exit": 0,
+  "locust_stats": {
+    "agg_failure_count": 0,
+    "agg_failure_rate": 0.0,
+    "agg_request_count": 52,
+    "execute_valid_p50_ms": 46.0,
+    "execute_valid_p95_ms": 170.0,
+    "execute_valid_p99_ms": 180.0
+  },
+  "passed": false,
+  "run_ended_at": "2026-05-15T16:02:21.385445+00:00",
+  "run_started_at": "2026-05-15T16:02:10.942404+00:00",
+  "slo": {
+    "execute_valid_p99_ms": 180.0,
+    "failure_rate": 0.0,
+    "max_failure_rate": 0.95,
+    "max_p99_ms": 5000.0,
+    "passed": true
+  },
+  "tenants": 1,
+  "timestamp": "20260515T160209Z",
+  "users": 5
+}

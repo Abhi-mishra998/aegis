@@ -1,0 +1,8 @@
+{
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "agent_id": "d3599438-78b8-4e15-9e6e-1635aa1d03b2",
+  "agent_secret": "demo-secret-4fbe0d8eae2a43ea",
+  "gateway_url": "http://localhost:8000",
+  "admin_email": "admin@acp.local",
+  "admin_password": "password"
+}

@@ -1,0 +1,177 @@
+# AlertManager rules for ACP (2026-05-14)
+# These map 1:1 to the production_hardening_spec alerting requirements.
+groups:
+  - name: acp-reliability
+    interval: 30s
+    rules:
+      - alert: ServiceUnavailable
+        expr: up{job="acp-services"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ACP service {{ $labels.instance }} unreachable >2m"
+          description: "Prometheus failed to scrape /metrics from {{ $labels.instance }} for over 2 minutes."
+
+      - alert: OutboxPoisonGrowing
+        expr: increase(acp_outbox_poison_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox poison count growing — billing data at risk"
+          description: "acp_outbox_poison_total increased in the last 5m. Investigate /usage/record terminal failures."
+
+      - alert: BillingDLQNonZero
+        expr: max_over_time(acp_audit_stream_length[1m]) > 45000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audit stream approaching MAXLEN trim threshold"
+
+      - alert: BehaviorFailClosedSustained
+        expr: increase(acp_behavior_fail_closed_total[5m]) / (rate(acp_behavior_fail_closed_total[5m]) + 1) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Behavior service fail-CLOSED rate > 5%"
+
+      - alert: P95LatencyBudgetBreach
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="acp-services"}[5m])) by (le, handler)) > 0.4
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency >400ms on {{ $labels.handler }}"
+
+      - alert: AuthFailureSpike
+        expr: rate(acp_audit_duplicates_dropped_total[5m]) > 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audit duplicate rate elevated — possible replay or retry storm"
+
+      # Billing reconciliation SLI (2026-05-15).
+      # Source: scripts/ops/reconcile.py runs every 5m (--watch 300) and
+      # POSTs to the gateway's /internal/reconciliation-report endpoint,
+      # which writes the gauges below. Any non-zero count for >5 minutes is
+      # a real gap (60s grace already applied at the script's query level).
+      - alert: ReconciliationAuditWithoutUsage
+        expr: max(acp_reconcile_audit_without_usage) by (tenant) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Billable audits with no matching usage record (tenant {{ $labels.tenant }})"
+          description: "Reconciliation has detected {{ $value }} billable audit_logs row(s) with no usage_records row for >5m. Money is being left on the table or the outbox worker is stuck. Run: scripts/ops/reconcile.py --tenant {{ $labels.tenant }} --json."
+
+      - alert: ReconciliationUsageWithoutAudit
+        expr: max(acp_reconcile_usage_without_audit) by (tenant) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Usage records without an audit row (tenant {{ $labels.tenant }})"
+          description: "{{ $value }} usage_records row(s) reference an audit_id that does not exist in audit_logs. Possible manual insert, race, or billing pipeline bug. Inspect scripts/ops/reconcile.py output."
+
+      - alert: ReconciliationOutboxAgeHigh
+        expr: max(acp_reconcile_outbox_oldest_age_seconds) by (tenant) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox draining slowly (tenant {{ $labels.tenant }})"
+          description: "Oldest pending_usage_events row is >5 minutes old. The audit→usage worker may be stuck."
+
+      # ── Sprint 3.5: queue / DLQ age SLIs ──────────────────────────
+      # Source: a refresh loop in the gateway main lifespan ticks the
+      # gauges every 30s using `sdk/common/queue_age.py`. A constant
+      # depth combined with a growing age means "stuck head"; depth
+      # alone can't tell you that.
+      - alert: OutboxOldestPendingAgeHigh
+        expr: max(acp_outbox_oldest_pending_age_seconds) by (outbox_name) > 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox {{ $labels.outbox_name }} oldest pending row >60s for 5m"
+          description: "The audit→usage outbox has a row that hasn't been processed in over a minute. The drainer worker is likely stuck. Inspect `pending_usage_events WHERE status='pending' ORDER BY created_at ASC LIMIT 5`."
+
+      - alert: AuditDLQGrowing
+        expr: max(acp_audit_dlq_oldest_age_seconds) > 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Audit DLQ has events older than 60s"
+          description: "acp:audit_stream:dlq is non-empty and the head event is >60s old. Run scripts/replay_audit_dlq.py after investigating the failure mode."
+
+      - alert: BillingDLQGrowing
+        expr: max(acp_billing_dlq_oldest_age_seconds) > 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Billing DLQ has events older than 60s"
+          description: "acp:billing_dlq is draining slowly. Customer billing data is at risk; check the usage service health + scripts/ops/reconcile.py output."
+
+      - alert: InsightQueueAgeHigh
+        expr: max(acp_insight_queue_oldest_age_seconds) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Insight/Groq queue head >60s old"
+          description: "Insight worker is falling behind. Not customer-impacting but enriched analytics will lag."
+
+      - alert: FlightTimelineLeak
+        # Sprint 1.2 promised every timeline closes after the request
+        # finishes; an open-count above 10 means the gateway's finally
+        # clause is not firing somewhere.
+        expr: acp_flight_timeline_in_progress_count > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Flight Recorder has {{ $value }} timelines stuck in_progress"
+          description: "Run docs/runbooks/restore_drill.md → 'Flight timeline leak' section, or grep gateway logs for missing emit_timeline_end."
+
+      # ── Sprint 3.5: inference cost cap ────────────────────────────
+      - alert: InferenceCostCapBlocking
+        expr: rate(acp_inference_cost_blocked_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inference cost cap is blocking traffic ({{ $labels.scope }}={{ $labels.key }})"
+          description: "One or more tenants/agents have crossed their daily inference USD cap. Investigate via /tenant/quota + audit_logs WHERE action='inference_cost_cap_exceeded'."
+
+      # ── Sprint 1.4: reconciliation gap (paging escalation) ────────
+      # The non-paging warnings already exist above
+      # (ReconciliationAuditWithoutUsage / ReconciliationUsageWithoutAudit
+      # at severity=critical). This rule is a second-tier escalation
+      # if those have been firing for >15m — likely indicates an
+      # operator hasn't acked the page.
+      - alert: ReconciliationGapSustained
+        expr: max(acp_reconcile_audit_without_usage + acp_reconcile_usage_without_audit) by (tenant) > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reconciliation gap unresolved for 15m (tenant {{ $labels.tenant }})"
+          description: "audit↔usage diff hasn't returned to 0 after the initial 5m page. Escalate to the on-call manager."
+
+      # ── Chain violation: page IMMEDIATELY (no 5-min window) ───────
+      # Source: a metric the audit service emits each time
+      # /audit/logs/verify runs and finds violations>0. Wiring TBD —
+      # for now the rule is in place so the moment the metric appears
+      # the page fires. See docs/runbooks/audit_chain_violation.md.
+      - alert: ChainViolationImmediate
+        expr: acp_audit_chain_violations_total > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "AUDIT CHAIN VIOLATION DETECTED — engage kill switch"
+          description: "violations>0 means the audit chain integrity check failed. Follow docs/runbooks/audit_chain_violation.md Phase 1 IMMEDIATELY — kill switch, forensic snapshot, page security + legal. Do not skip Phase 1."

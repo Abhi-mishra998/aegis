@@ -1,0 +1,8 @@
+{
+  "timestamp":   "20260515T133023Z",
+  "project":     "acp_drill_20260515T133023Z",
+  "status":      "DRY_RUN",
+  "checks":      {},
+  "databases":   ["acp_registry","acp_identity","acp_audit","acp_api","acp_usage","acp_identity_graph","acp_flight_recorder","acp_autonomy"],
+  "kept":        0
+}

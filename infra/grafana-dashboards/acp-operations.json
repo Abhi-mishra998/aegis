@@ -1,0 +1,95 @@
+{
+  "title": "ACP Operations",
+  "uid": "acp-ops",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request throughput (req/s by service)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"acp-services\"}[1m])) by (instance)",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "p95 latency (per service)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"acp-services\"}[1m])) by (le, instance))",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.4 }, { "color": "red", "value": 0.8 } ] } }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Outbox depth (pending vs failed)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "acp_outbox_pending_count", "legendFormat": "pending" },
+        { "expr": "acp_outbox_poison_total",  "legendFormat": "poison total" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Audit stream length",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "acp_audit_stream_length", "legendFormat": "stream depth" },
+        { "expr": "rate(acp_audit_stream_dropped_total[1m])", "legendFormat": "drop rate" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Billing pipeline",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 15 },
+      "targets": [
+        { "expr": "rate(acp_billing_events_total[1m])",  "legendFormat": "events/s" },
+        { "expr": "rate(acp_billing_events_failed[1m])", "legendFormat": "failed/s" },
+        { "expr": "rate(acp_outbox_processed_total[1m])", "legendFormat": "outbox processed/s" },
+        { "expr": "rate(acp_outbox_retry_total[1m])",     "legendFormat": "outbox retry/s" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Behavior fail-CLOSED rate",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        { "expr": "rate(acp_behavior_fail_closed_total[1m])", "legendFormat": "fail-closed/s" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Gateway latency: /status (gateway_internal) vs /system/health (end_to_end)",
+      "description": "/status reports the gateway process's own request-received → response-sent percentiles (scope=gateway_internal). /system/health reports the gateway → downstream /health probe RTT percentiles (scope=end_to_end). They are intentionally distinct — read the scope label, not the URL.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\"}[1m])) by (le)) * 1000",
+          "legendFormat": "gateway_internal p95 (ms)"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\"}[1m])) by (le)) * 1000",
+          "legendFormat": "gateway_internal p99 (ms)"
+        }
+      ]
+    }
+  ]
+}

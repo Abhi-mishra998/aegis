@@ -1,0 +1,44 @@
+# Alertmanager configuration for ACP
+# Routes Prometheus alerts to operator channels.
+#
+# Default receiver is a webhook that logs to stdout — replace with Slack /
+# PagerDuty / Opsgenie before production. Webhook URL comes from the
+# ALERT_WEBHOOK_URL or SLACK_WEBHOOK_URL env var; if both are empty, alerts
+# are visible only in the Alertmanager UI at :9093.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: default
+
+  routes:
+    # Critical alerts: short batching window, shorter repeat
+    - matchers:
+        - severity = "critical"
+      receiver: default
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+
+receivers:
+  - name: default
+    # No webhook configured by default — alerts are visible in the Alertmanager UI
+    # at http://localhost:9093 only. To push to Slack / PagerDuty / Opsgenie,
+    # uncomment and replace the URL below before redeploying alertmanager.
+    #
+    # webhook_configs:
+    #   - url: "https://hooks.slack.com/services/T0/B0/REPLACE"
+    #     send_resolved: true
+
+inhibit_rules:
+  # If the whole service is down, suppress its noisy downstream alerts.
+  - source_matchers:
+      - alertname = "ServiceUnavailable"
+    target_matchers:
+      - severity =~ "warning|critical"
+    equal: ["service"]
