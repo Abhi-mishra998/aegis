@@ -85,11 +85,16 @@ def _patch_data(monkeypatch, *, audit_ids: set[str], usage_ids: set[str],
                 outbox_age: int = 0,
                 raise_audit: Exception | None = None,
                 raise_usage: Exception | None = None) -> None:
-    """Patch the three module-level helpers run_reconciliation depends on."""
+    """Patch the four module-level helpers run_reconciliation depends on."""
     def _aud(*_a, **_k):
         if raise_audit:
             raise raise_audit
         return set(audit_ids), int(audit_total if audit_total is not None else len(audit_ids))
+
+    def _all_audit(*_a, **_k):
+        if raise_audit:
+            raise raise_audit
+        return set(audit_ids)
 
     def _use(*_a, **_k):
         if raise_usage:
@@ -103,6 +108,7 @@ def _patch_data(monkeypatch, *, audit_ids: set[str], usage_ids: set[str],
         return dlq_billing, dlq_audit
 
     monkeypatch.setattr(reconcile, "_fetch_audit_ids", _aud)
+    monkeypatch.setattr(reconcile, "_fetch_all_audit_request_ids", _all_audit)
     monkeypatch.setattr(reconcile, "_fetch_usage_ids", _use)
     monkeypatch.setattr(reconcile, "_outbox_pending_age_seconds", _outbox)
     monkeypatch.setattr(reconcile, "_redis_dlq_lengths", _dlq)

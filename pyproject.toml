@@ -93,11 +93,3 @@ packages = ["acp", "sdk", "sdk.acp_client"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["services", "sdk", "tests"]
-# Exclude locust/soak load tests — they import gevent which calls
-# monkey.patch_all() at collection time, breaking asyncio for the whole run.
-# Run load tests separately: locust -f tests/load/locustfile.py
-collect_ignore_glob = [
-    "tests/load/*",
-    "tests/load_test.py",
-    "tests/e2e_test_flow.py",
-]
