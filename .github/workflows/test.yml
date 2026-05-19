@@ -11,6 +11,16 @@ jobs:
     name: Unit Tests (no stack required)
     runs-on: ubuntu-latest
 
+    # Pydantic-settings validates required fields at import time, so pytest
+    # collection fails without these env vars even for pure unit tests.
+    # Values are stubs — no real services are contacted in the unit suite.
+    env:
+      DATABASE_URL: "postgresql+asyncpg://test:test@localhost:5432/acp_test"
+      REDIS_URL: "redis://localhost:6379"
+      JWT_SECRET_KEY: "ci-unit-test-jwt-secret-not-for-production"
+      GROQ_API_KEY: "ci-unit-test-groq-key-placeholder"
+      INTERNAL_SECRET: "ci-unit-test-internal-secret-placeholder"
+
     steps:
       - uses: actions/checkout@v4
 
