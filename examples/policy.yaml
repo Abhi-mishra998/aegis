@@ -1,0 +1,37 @@
+# Example policy file. Place at .acp/policy.yaml in your project root.
+# Validate locally with:  acp validate .acp/policy.yaml
+#
+# Schema reference: sdk/acp_client/policy.py (Policy + Rule + Autonomy)
+
+version: 1
+agent: agent_42
+
+# Whitelist: agent may only invoke these tools, and only when `when` matches.
+# An empty `when` means "any payload."
+allow:
+  - tool: db.query
+    when:
+      payload.args.0: "^SELECT"
+
+  - tool: http.get
+    when:
+      payload.args.0: "^https://api\\.internal\\."
+
+  - tool: search
+
+# Blacklist evaluated AFTER allow. A matching deny rule always wins.
+deny:
+  - tool: db.query
+    when:
+      payload.args.0: "DROP|TRUNCATE|DELETE|ALTER"
+
+  - tool: shell.exec
+
+# Autonomy guardrails — global limits on the agent, independent of tools.
+autonomy:
+  max_actions_per_minute: 60
+  max_blast_radius: 10
+  require_approval_for:
+    - send_email
+    - transfer_funds
+    - delete_user
