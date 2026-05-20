@@ -1238,7 +1238,7 @@ If you're working on agent infrastructure, AI safety, or platform security — o
 [![Email](https://img.shields.io/badge/Email-abhishekmishra09896@gmail.com-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:abhishekmishra09896@gmail.com)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-abhishek--mishra--eng-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/abhishek-mishra-eng)
 [![Blog](https://img.shields.io/badge/Blog-projectsphere.hashnode.dev-FF6154?style=for-the-badge&logo=hashnode&logoColor=white)](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
-[![Portfolio](https://img.shields.io/badge/Portfolio-abhimishra.dev-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://abhimishra.dev)
+[![Portfolio](https://img.shields.io/badge/Portfolio-abhimishra.dev-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://portfolio-self-seven-1zphd40voq.vercel.app)
 
 </div>
 
