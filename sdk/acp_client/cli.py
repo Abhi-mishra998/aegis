@@ -491,7 +491,8 @@ def _cmd_verify_inclusion_offline(args: argparse.Namespace) -> int:
     The receipt signature is NOT re-checked here; use ``acp verify receipt``
     for that.  This command checks only Merkle membership.
     """
-    from .verifier import leaf_hash, verify_inclusion as _vi
+    from .verifier import leaf_hash
+    from .verifier import verify_inclusion as _vi
 
     receipt_path = Path(args.receipt)
     proof_path = Path(args.proof)

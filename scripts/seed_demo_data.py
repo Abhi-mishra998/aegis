@@ -265,8 +265,8 @@ def generate_audit_rows() -> list[dict]:
     schedule.sort()  # chronological order
 
     # Track per-shard sequence numbers
-    shard_seq: dict[int, int] = {i: 0 for i in range(AUDIT_CHAIN_SHARD_COUNT)}
-    shard_prev: dict[int, str | None] = {i: None for i in range(AUDIT_CHAIN_SHARD_COUNT)}
+    shard_seq: dict[int, int] = dict.fromkeys(range(AUDIT_CHAIN_SHARD_COUNT), 0)
+    shard_prev: dict[int, str | None] = dict.fromkeys(range(AUDIT_CHAIN_SHARD_COUNT))
 
     actions = list(ACTION_WEIGHTS.keys())
     action_weights = list(ACTION_WEIGHTS.values())
