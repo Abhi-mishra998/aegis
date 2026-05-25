@@ -62,40 +62,74 @@ jobs:
             aws s3 cp s3://acp-backups-prod-am/config/pgbouncer.aws.ini ~/aegis/infra/pgbouncer.aws.ini
             aws s3 cp s3://acp-backups-prod-am/config/userlist.txt ~/aegis/infra/userlist.txt
 
-            echo "=== Rebuilding containers ==="
-            cd ~/aegis/infra
-            # || true: prevent deploy failure if a service health-check races during
-            # alembic migrations. The wait loop below is the real pass/fail gate.
+            echo "=== Building images ==="
+            # Hard fail on build errors — no || true here
             docker-compose \
               -f docker-compose.yml \
               -f docker-compose.aws.yml \
-              up -d --build || true
+              build
 
-            echo "=== Waiting for services (up to 5 min) ==="
-            SECONDS_WAITED=0
-            REQUIRED_HEALTHY=20
-            until [ "$(docker ps --format '{{.Status}}' | grep -c '(healthy)')" -ge $REQUIRED_HEALTHY ] \
-                  || [ $SECONDS_WAITED -ge 300 ]; do
+            echo "=== Starting containers ==="
+            # || true is intentional and scoped: docker-compose up can exit non-zero
+            # if a container's health check hasn't passed by the time a dependent
+            # service tries to start (a startup race, not a build failure).
+            # The named-service gate below is the real pass/fail signal.
+            docker-compose \
+              -f docker-compose.yml \
+              -f docker-compose.aws.yml \
+              up -d --no-build || true
+
+            echo "=== Waiting for required services (up to 5 min) ==="
+            # These are the services that must be healthy for the platform to work.
+            # audit is listed first — it is the security-critical service.
+            REQUIRED="acp_audit acp_gateway acp_identity acp_registry acp_api acp_usage acp_decision acp_pgbouncer acp_opa"
+            WAITED=0
+            while [ $WAITED -lt 300 ]; do
+              STILL_WAITING=""
+              for svc in $REQUIRED; do
+                STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "missing")
+                if [ "$STATUS" != "healthy" ]; then
+                  STILL_WAITING="$STILL_WAITING $svc[$STATUS]"
+                fi
+              done
+              if [ -z "$STILL_WAITING" ]; then
+                echo "  All required services healthy after ${WAITED}s"
+                break
+              fi
               sleep 10
-              SECONDS_WAITED=$((SECONDS_WAITED + 10))
-              HEALTHY=$(docker ps --format '{{.Status}}' | grep -c '(healthy)' || echo 0)
-              echo "  ${HEALTHY} containers healthy (${SECONDS_WAITED}s elapsed)"
+              WAITED=$((WAITED + 10))
+              echo "  ${WAITED}s — still waiting:$STILL_WAITING"
             done
 
             echo "=== Final container states ==="
             docker ps --format "{{.Names}}\t{{.Status}}" | sort
 
-            HEALTHY=$(docker ps --format '{{.Status}}' | grep -c '(healthy)' || echo 0)
-            TOTAL=$(docker ps -q | wc -l)
-            echo "Result: ${HEALTHY}/${TOTAL} containers healthy"
+            echo "=== Health gate: checking required services ==="
+            FAILED=""
+            for svc in $REQUIRED; do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "missing")
+              if [ "$STATUS" = "healthy" ]; then
+                echo "  PASS  $svc"
+              else
+                echo "  FAIL  $svc [$STATUS]"
+                FAILED="$FAILED $svc"
+              fi
+            done
 
-            if [ "$HEALTHY" -lt "$REQUIRED_HEALTHY" ]; then
-              echo "ERROR: Only ${HEALTHY}/${TOTAL} healthy after 5 minutes"
-              docker ps --format "{{.Names}}\t{{.Status}}" | grep -v "(healthy)"
+            if [ -n "$FAILED" ]; then
+              echo ""
+              echo "=== Logs from failed services ==="
+              for svc in $FAILED; do
+                echo "--- $svc (last 30 lines) ---"
+                docker logs --tail 30 "$svc" 2>&1 || true
+                echo ""
+              done
+              echo "DEPLOY FAILED: required services not healthy:$FAILED"
               exit 1
             fi
 
             echo "=== Cleaning up old images ==="
             docker image prune -f
 
-            echo "=== Deploy complete: ${HEALTHY}/${TOTAL} healthy ==="
+            TOTAL=$(docker ps --format '{{.Status}}' | grep -c '(healthy)' || echo 0)
+            echo "=== Deploy complete — all required services healthy, ${TOTAL} total containers healthy ==="
