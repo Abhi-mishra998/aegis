@@ -1,25 +1,25 @@
 # infra/docker-compose.aws.yml
 # AWS production override — removes local postgres/redis, uses RDS + ElastiCache
-# Usage: docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.aws.yml up -d
 
 services:
   # ── Remove local postgres (RDS replaces it) ──────────────────────────────
   postgres:
-    profiles: ["local-only"]   # never starts in production
+    profiles: ["local-only"]
 
   postgres_replica:
-    profiles: ["local-only"]   # never starts in production
+    profiles: ["local-only"]
 
   # ── Remove local redis (ElastiCache replaces it) ──────────────────────────
   redis:
-    profiles: ["local-only"]   # never starts in production
+    profiles: ["local-only"]
 
   # ── PgBouncer: use AWS config pointing to RDS ─────────────────────────────
   pgbouncer:
     volumes:
       - ./pgbouncer.aws.ini:/etc/pgbouncer/pgbouncer.ini:ro
       - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
-    depends_on: []   # no local postgres dependency
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -30,8 +30,9 @@ services:
           cpus: "0.10"
           memory: 32M
 
-  # ── Gateway: entry point, highest-traffic ────────────────────────────────
+  # ── Gateway ────────────────────────────────────────────────────────────────
   gateway:
+    depends_on: []
     environment:
       - ENVIRONMENT=production
       - LOG_LEVEL=WARNING
@@ -45,8 +46,9 @@ services:
           cpus: "0.25"
           memory: 128M
 
-  # ── All services: production restart policy + resource limits ─────────────
+  # ── All services: depends_on cleared (no local redis/postgres in prod) ─────
   identity:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -58,6 +60,7 @@ services:
           memory: 64M
 
   registry:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -69,6 +72,7 @@ services:
           memory: 48M
 
   policy:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -80,6 +84,7 @@ services:
           memory: 64M
 
   audit:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -91,6 +96,7 @@ services:
           memory: 64M
 
   decision:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -102,6 +108,7 @@ services:
           memory: 96M
 
   behavior:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -113,6 +120,7 @@ services:
           memory: 96M
 
   usage:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -124,6 +132,7 @@ services:
           memory: 64M
 
   api:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -135,6 +144,7 @@ services:
           memory: 64M
 
   insight:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -146,6 +156,7 @@ services:
           memory: 64M
 
   insight_worker:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -157,6 +168,7 @@ services:
           memory: 64M
 
   forensics:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -168,6 +180,7 @@ services:
           memory: 48M
 
   identity_graph:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -179,6 +192,7 @@ services:
           memory: 64M
 
   flight_recorder:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -190,6 +204,7 @@ services:
           memory: 48M
 
   autonomy:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -201,6 +216,7 @@ services:
           memory: 48M
 
   groq_worker:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -212,6 +228,7 @@ services:
           memory: 64M
 
   opa:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -223,6 +240,7 @@ services:
           memory: 64M
 
   bundle-server:
+    depends_on: []
     restart: always
     deploy:
       resources:
@@ -234,6 +252,7 @@ services:
           memory: 32M
 
   ui:
+    depends_on: []
     restart: always
     deploy:
       resources:
