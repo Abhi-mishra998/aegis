@@ -64,13 +64,38 @@ jobs:
 
             echo "=== Rebuilding containers ==="
             cd ~/aegis/infra
+            # || true: prevent deploy failure if a service health-check races during
+            # alembic migrations. The wait loop below is the real pass/fail gate.
             docker-compose \
               -f docker-compose.yml \
               -f docker-compose.aws.yml \
-              up -d --build
+              up -d --build || true
+
+            echo "=== Waiting for services (up to 5 min) ==="
+            SECONDS_WAITED=0
+            REQUIRED_HEALTHY=20
+            until [ "$(docker ps --format '{{.Status}}' | grep -c '(healthy)')" -ge $REQUIRED_HEALTHY ] \
+                  || [ $SECONDS_WAITED -ge 300 ]; do
+              sleep 10
+              SECONDS_WAITED=$((SECONDS_WAITED + 10))
+              HEALTHY=$(docker ps --format '{{.Status}}' | grep -c '(healthy)' || echo 0)
+              echo "  ${HEALTHY} containers healthy (${SECONDS_WAITED}s elapsed)"
+            done
+
+            echo "=== Final container states ==="
+            docker ps --format "{{.Names}}\t{{.Status}}" | sort
+
+            HEALTHY=$(docker ps --format '{{.Status}}' | grep -c '(healthy)' || echo 0)
+            TOTAL=$(docker ps -q | wc -l)
+            echo "Result: ${HEALTHY}/${TOTAL} containers healthy"
+
+            if [ "$HEALTHY" -lt "$REQUIRED_HEALTHY" ]; then
+              echo "ERROR: Only ${HEALTHY}/${TOTAL} healthy after 5 minutes"
+              docker ps --format "{{.Names}}\t{{.Status}}" | grep -v "(healthy)"
+              exit 1
+            fi
 
             echo "=== Cleaning up old images ==="
             docker image prune -f
 
-            echo "=== Deploy complete ==="
-            docker ps --format "{{.Names}}\t{{.Status}}" | sort
+            echo "=== Deploy complete: ${HEALTHY}/${TOTAL} healthy ==="
