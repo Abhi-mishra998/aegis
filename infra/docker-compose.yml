@@ -64,9 +64,6 @@ services:
       - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
     ports:
       - "6432:6432"
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       # nc -z is more reliable for pgbouncer health checks
