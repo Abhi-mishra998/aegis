@@ -339,19 +339,6 @@ async def login_user(
     _: Annotated[bool, Depends(check_deadline)] = True,
 ) -> APIResponse[TokenResponse]:
     async with _get_auth_semaphore():
-        if x_tenant_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="X-Tenant-ID header is required for multi-tenant authentication",
-            )
-        try:
-            tenant_uuid = uuid.UUID(x_tenant_id)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid Tenant UUID"
-            )
-
         email = payload.email.strip().lower()
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
@@ -362,11 +349,21 @@ async def login_user(
                 detail="Invalid credentials"
             )
 
-        if user.tenant_id != tenant_uuid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials or tenant mismatch"
-            )
+        # If X-Tenant-ID is provided, validate it matches the user's tenant.
+        # If absent (browser UI login), auto-resolve from the user's own tenant_id.
+        if x_tenant_id is not None:
+            try:
+                tenant_uuid = uuid.UUID(x_tenant_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid Tenant UUID"
+                )
+            if user.tenant_id != tenant_uuid:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
 
         # PE-5: bcrypt is CPU-bound, run in thread pool
         pw_bytes = payload.password.encode("utf-8")
