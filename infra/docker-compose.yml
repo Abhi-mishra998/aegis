@@ -301,9 +301,7 @@ services:
       - AUDIT_SERVICE_URL=http://audit:8000
       # DU-6 FIX: no weak fallback
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
-    # 2026-05-14: Policy is stateless (OPA client + DB reads). Safe to scale
-    # horizontally — no consumer-group / leader-election concerns.
-    command: uvicorn services.policy.main:app --host 0.0.0.0 --port 8000 --workers 4
+    command: uvicorn services.policy.main:app --host 0.0.0.0 --port 8000 --workers 2
     depends_on:
       opa:
         condition: service_healthy
@@ -487,8 +485,6 @@ services:
       - USAGE_SERVICE_URL=http://usage:8000
       - REDIS_CLUSTER_ENABLED=false
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
-    # 2026-05-14: Decision is stateless — circuit-breaker state lives in Redis,
-    # not in-process. Multi-worker safe and high-leverage for hot path.
     command: uvicorn services.decision.main:app --host 0.0.0.0 --port 8000 --workers 4
     depends_on:
       pgbouncer:
@@ -517,7 +513,6 @@ services:
       - DATABASE_URL=postgresql+asyncpg://audit_user:${AUDIT_DB_PASSWORD:-audit_prod_pwd}@pgbouncer:6432/acp_audit
       - REDIS_CLUSTER_ENABLED=false
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
-    # 2026-05-14: Forensics is read-heavy, stateless. Safe to scale.
     command: uvicorn services.forensics.main:app --host 0.0.0.0 --port 8000 --workers 2
     depends_on:
       pgbouncer:

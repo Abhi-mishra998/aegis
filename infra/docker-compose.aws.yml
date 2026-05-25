@@ -41,10 +41,10 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512M
+          memory: 768M
         reservations:
           cpus: "0.25"
-          memory: 128M
+          memory: 192M
 
   # ── All services: depends_on cleared (no local redis/postgres in prod) ─────
   identity:
@@ -77,11 +77,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 256M
+          cpus: "0.50"
+          memory: 384M
         reservations:
-          cpus: "0.05"
-          memory: 64M
+          cpus: "0.10"
+          memory: 96M
 
   audit:
     depends_on: []
@@ -101,11 +101,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
-          memory: 384M
+          cpus: "0.75"
+          memory: 512M
         reservations:
-          cpus: "0.10"
-          memory: 96M
+          cpus: "0.20"
+          memory: 128M
 
   behavior:
     depends_on: []
@@ -113,11 +113,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
-          memory: 384M
+          cpus: "0.75"
+          memory: 512M
         reservations:
-          cpus: "0.10"
-          memory: 96M
+          cpus: "0.20"
+          memory: 128M
 
   usage:
     depends_on: []
@@ -173,11 +173,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 192M
+          cpus: "0.50"
+          memory: 384M
         reservations:
-          cpus: "0.05"
-          memory: 48M
+          cpus: "0.10"
+          memory: 96M
 
   identity_graph:
     depends_on: []
