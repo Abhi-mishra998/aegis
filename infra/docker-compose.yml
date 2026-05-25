@@ -232,7 +232,7 @@ services:
       - "8001:8000"
     command: >
       sh -c "cd /app/services/registry && alembic upgrade head &&
-             cd /app && uvicorn services.registry.main:app --host 0.0.0.0 --port 8000"
+             cd /app && uvicorn services.registry.main:app --host 0.0.0.0 --port 8000 --workers 2"
     volumes:
       - ../services:/app/services:ro
       - ../sdk:/app/sdk:ro
@@ -265,7 +265,7 @@ services:
       - REGISTRY_SERVICE_URL=http://registry:8000
     command: >
       sh -c "cd /app/services/identity && alembic upgrade head &&
-             cd /app && uvicorn services.identity.main:app --host 0.0.0.0 --port 8000"
+             cd /app && uvicorn services.identity.main:app --host 0.0.0.0 --port 8000 --workers 2"
     volumes:
       - ../services:/app/services:ro
       - ../sdk:/app/sdk:ro

@@ -53,11 +53,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
-          memory: 256M
+          cpus: "1.00"
+          memory: 512M
         reservations:
-          cpus: "0.10"
-          memory: 64M
+          cpus: "0.25"
+          memory: 128M
 
   registry:
     depends_on: []
@@ -65,11 +65,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 192M
+          cpus: "0.50"
+          memory: 384M
         reservations:
-          cpus: "0.05"
-          memory: 48M
+          cpus: "0.10"
+          memory: 96M
 
   policy:
     depends_on: []
