@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.response import APIResponse
+from sdk.utils import TENANT_DAILY_COST_USD, TOTAL_COST_USD_TOTAL
 from services.usage.repository.usage import UsageRepository
 from services.usage.schemas.usage import UsageCreate, UsageResponse, UsageSummary
 
 # NOTE: /usage/billing/invoices is served by billing_router mounted at /usage prefix
 # in usage/main.py — do not duplicate it here.
+
+logger = structlog.get_logger(__name__)
+
+# 1 million tokens = $0.05 compute cost
+_USD_PER_TOKEN = 0.05 / 1_000_000
 
 router = APIRouter(prefix="/usage", tags=["usage"], dependencies=[Depends(verify_internal_secret)])
 
@@ -46,11 +54,31 @@ async def record_usage(
             # Don't fail the usage write; log a critical so monitoring can detect drift.
             # The audit row remains in default 'completed' state (writer.py default),
             # so this is consistency-only, not correctness-breaking.
-            import structlog as _sl
-            _sl.get_logger(__name__).critical(
+            logger.critical(
                 "audit_billing_status_timeout",
                 audit_id=str(payload.audit_id),
             )
+
+    # ── Cost Prometheus metrics ────────────────────────────────────────────────
+    # Compute event-level cost: use the stored cost field if non-zero,
+    # otherwise derive from token units at $0.05 / 1M tokens.
+    event_cost_usd: float = float(record.cost) if record.cost else payload.units * _USD_PER_TOKEN
+    tenant_str = str(payload.tenant_id)
+
+    # Monotonic running-total counter across all tenants.
+    TOTAL_COST_USD_TOTAL.inc(event_cost_usd)
+
+    # Per-tenant daily cost gauge: fetch the current-day aggregate from the
+    # DB so the gauge is accurate even after service restarts.
+    try:
+        summary = await repo.get_summary(payload.tenant_id)
+        daily_cost = float(summary.total_cost) if summary.total_cost else event_cost_usd
+        TENANT_DAILY_COST_USD.labels(tenant_id=tenant_str).set(daily_cost)
+    except Exception as _exc:
+        # Fallback: increment by this event's cost so the gauge is never stale.
+        logger.warning("tenant_daily_cost_gauge_update_failed", tenant_id=tenant_str, error=str(_exc))
+        TENANT_DAILY_COST_USD.labels(tenant_id=tenant_str).inc(event_cost_usd)
+
     return APIResponse(data=UsageResponse.model_validate(record))
 
 

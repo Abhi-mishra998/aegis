@@ -335,7 +335,8 @@ async def main() -> None:
         # 1. Admin authentication
         _section("Admin Authentication")
         resp = await client.post(f"{GATEWAY}/auth/token",
-                                  json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+                                  json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+                                  headers={"X-Tenant-ID": TENANT_ID})
         user_token = (resp.json().get("data") or resp.json())["access_token"]
         _ok(f"Authenticated as {ADMIN_EMAIL}")
 

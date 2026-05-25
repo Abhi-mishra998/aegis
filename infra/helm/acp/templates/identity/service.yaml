@@ -1,0 +1,22 @@
+{{- if .Values.identity.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-identity
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "identity" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.identity.service.type }}
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "identity" "ctx" $) | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.identity.service.port }}
+      targetPort: {{ .Values.identity.service.targetPort }}
+{{- end }}

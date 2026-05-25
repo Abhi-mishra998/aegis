@@ -8,7 +8,7 @@
 
 <!-- TYPING ANIMATION -->
 <a href="https://github.com/Abhi-mishra998/aegis">
-  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed26519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;14+services.+510%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;16+services.+530%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
 </a>
 
 <br/>
@@ -64,9 +64,9 @@ and <strong>cryptographically proves</strong> what happened after.
 
 <!-- BADGES ROW 2 — Project Health -->
 <p>
-  <img src="https://img.shields.io/badge/services-14-1f2937?style=flat-square&labelColor=111827" alt="services"/>
-  <img src="https://img.shields.io/badge/containers-26-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
-  <img src="https://img.shields.io/badge/tests-510%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
+  <img src="https://img.shields.io/badge/services-16-1f2937?style=flat-square&labelColor=111827" alt="services"/>
+  <img src="https://img.shields.io/badge/containers-28-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
+  <img src="https://img.shields.io/badge/tests-530%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
   <img src="https://img.shields.io/badge/p95_latency-27ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
   <img src="https://img.shields.io/badge/attack_block_rate-100%26-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
   <img src="https://img.shields.io/badge/audit_chain-verified-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
@@ -182,10 +182,18 @@ Existing security tools — IAM, WAFs, SIEMs, API gateways — were built for hu
 
 **📦 What's in the box**
 
-- 14 microservices across 26 containers
-- 510+ pytest tests
+- 16 microservices across 28 containers (incl. Postgres streaming replica)
+- 530+ pytest tests (44 adversarial crypto tests)
 - 3 end-to-end demo scenarios
-- A working transparency log
+- Offline chain verifier — no trust in running system required
+- Prompt injection classifier (17 patterns, F1=0.84) + Isolation Forest anomaly detector
+- Per-service mesh JWT auth — no single shared secret across services
+- Durable billing outbox — `pending_billing_events` DB table + 60s recovery worker
+- Forensics service — 6 real endpoints: timeline, blast-radius, cross-source replay, export
+- Multi-LLM router (Groq / OpenAI / Anthropic / Azure)
+- Compliance evidence export (EU AI Act / NIST AI RMF / SOC 2)
+- SIEM integration (Splunk, Elastic, Sentinel, Chronicle)
+- Complete Helm charts for all 16 services (behavior HPA, Redis StatefulSet)
 - Python, FastAPI, Postgres, Redis, OPA
 - Decision latency: **< 30ms p95** on the deny path
 - Full stack runs locally with **one `docker compose up`**
@@ -281,7 +289,7 @@ The interesting design choices live in three places:
 
 [![Aegis Full System Architecture](screenshot/architecture-diagram.png)](screenshot/architecture-diagram.png)
 
-*14 services · 26 containers · single entry point · fail-closed at every gate*
+*16 services · 28 containers · single entry point · fail-closed at every gate*
 
 </div>
 
@@ -414,7 +422,7 @@ These three reject 90%+ of malformed or abusive traffic before anything expensiv
 | **Identity Graph** | `8013` | Neo4j-style graph in Postgres. Nodes: agents, users, tools, resources, API keys. Edges: permissions, ownership, delegation. Compromise simulation (BFS at depth=3) returns blast radius with quantified risk. |
 | **Flight Recorder** | `8014` | Captures step-by-step gateway pipeline state: pre-gate snapshot, per-gate outcome, post-gate snapshot. 2/5/15/60-min replay windows. Debuggable like a profiler, not a log file. |
 | **Autonomy** | `8015` | Bounded contracts with `max_runtime`, `max_cost`, `max_destructive_ops_per_hour`. Deny-list (hard-deny specific tools). Approval-required list (pause for human sign-off). Real-time violation feed. |
-| **Forensics** | `8014` | Incident investigation: timeline reconstruction, attack attribution, cross-session correlation. Used for post-incident review. |
+| **Forensics** | `8012` | Incident investigation: timeline reconstruction (`/forensics/timeline`), blast-radius analysis (`/forensics/blast-radius`), cross-source replay, full JSON export. All data aggregated from audit, flight recorder, and identity graph. |
 | **ARE** | `8005` | Auto-Response Engine. IF (condition window + severity + risk threshold + tool filter) THEN (KILL / ISOLATE / THROTTLE / ALERT in order). Cooldown + max-triggers-per-hour prevent alert storms. |
 
 <br/>
@@ -553,17 +561,24 @@ This creates an **append-only chain of chains**. Even if an attacker compromises
 ### Offline verification
 
 ```bash
-# Verify the entire audit chain — no trust in the running system required
+# Verify a single signed receipt (offline — reads only the file and public key)
+acp verify receipt receipt.json --pubkey ./aegis_public.pem
+
+# Verify a complete export directory (receipts + Merkle roots together)
+acp verify export ./audit_export/
+
+# Verify the root chain (consecutive prev_root_hash linkage across daily roots)
+acp verify chain ./roots_dir/
+
+# Verify a specific Merkle inclusion proof
+acp verify inclusion receipt.json proof.json
+
+# Legacy commands also still supported:
 acp verify-chain --from 2026-05-01 --to 2026-05-19
-
-# Verify a specific daily root
 acp verify-root --date 2026-05-19
-
-# Verify a specific receipt
-acp verify-receipt --id <execution_id> --public-key ./aegis_public.pem
 ```
 
-All three commands are **pure functions** — they read from the audit database and the public key file. They do not call any Aegis API endpoint. A customer can run them on a cold backup with zero network access.
+All commands are **pure functions** — they read from exported files and the public key. They do not call any Aegis API endpoint. A customer can run them on a cold backup with zero network access. All four `acp verify` subcommands exit 0 on success and 1 on any signature, hash, or linkage failure; pass `--json` for machine-readable output.
 
 <br/>
 
@@ -645,7 +660,7 @@ The response on allow includes the full risk breakdown so your observability pip
 
 </div>
 
-**Live status of all 14 services.** Every card shows current latency (15–19ms, well under the 100ms SLA). The **Operational Queues** panel at the bottom exposes audit stream depth and DLQ counts — the earliest signal that the async pipeline is backing up before it becomes a user-facing problem.
+**Live status of all 16 services.** Every card shows current latency (15–19ms, well under the 100ms SLA). The **Operational Queues** panel at the bottom exposes audit stream depth and DLQ counts — the earliest signal that the async pipeline is backing up before it becomes a user-facing problem.
 
 <br/>
 
@@ -827,7 +842,7 @@ The response on allow includes the full risk breakdown so your observability pip
 
 </div>
 
-**End-to-end trace topology across all 14 services.** Gateway fans out to usage (936 calls), identity (13), decision (97), and registry (3) in a single request path. Jaeger's DAG view makes bottlenecks immediately visible — the usage service is the highest-volume downstream, which is expected given the transactional outbox pattern. Every span carries the full trace ID so you can correlate with the audit log.
+**End-to-end trace topology across all 16 services.** Gateway fans out to usage (936 calls), identity (13), decision (97), and registry (3) in a single request path. Jaeger's DAG view makes bottlenecks immediately visible — the usage service is the highest-volume downstream, which is expected given the transactional outbox pattern. Every span carries the full trace ID so you can correlate with the audit log.
 
 <br/>
 
@@ -844,8 +859,8 @@ A defense-in-depth model only works if the layers are **genuinely independent**.
 | 3 | **Input Validation** | Malformed payloads, SQL injection in parameters, path traversal (`../../etc/passwd`), oversized bodies | Pydantic schema + regex pattern scan + 10 KB body cap |
 | 4 | **Permissions** | Agent calls a tool it was never authorized to use | Exact-match allow-list per agent; wildcard not supported; unknown tool = deny |
 | 5 | **OPA Policy** | Catastrophic tool calls that are always denied regardless of score | Declarative Rego hard-rules: `DROP TABLE`, `k8s.delete.namespace`, `cluster-admin` grant, email to non-allow-listed domains |
-| 6 | **Content Inspection** | Prompt injection embedded in tool parameters, PII in outputs | Parameter content scanning; PII density signal fed to behavioral layer |
-| 7 | **Behavioral Analysis** | Slow exfiltration (small volumes over time), anomalous call patterns, time-of-day anomaly | 7+ detectors: call-rate spike, PII density, cross-agent correlation, bulk operation detection |
+| 6 | **Content Inspection** | Prompt injection embedded in tool parameters, PII in outputs | Regex injection classifier (17 patterns, F1=0.84, Recall=0.74 — single source of truth in `sdk/common/injection_patterns.py`; optional OpenAI moderation tier for toxicity); PII density signal fed to behavioral layer |
+| 7 | **Behavioral Analysis** | Slow exfiltration (small volumes over time), anomalous call patterns, time-of-day anomaly | 7+ detectors: call-rate spike, PII density, cross-agent correlation, bulk operation detection; Isolation Forest anomaly scoring (F1=0.71, heuristic fallback F1=0.75) |
 | 8 | **Risk Scoring** | Any attack that gets past individual layers but produces an elevated combined signal | Weighted aggregation of 5 signals; threshold 0.85 → deny; 0.6–0.85 → monitor or throttle |
 | 9 | **Action Enforcement** | Active threats that need an immediate runtime response, not just a logged denial | ARE rules: KILL (cut all traffic), ISOLATE (quarantine agent), THROTTLE (slow rate), ALERT (Slack/PagerDuty) |
 | 10 | **Audit & Compliance** | Cover-up of past events; inability to prove what happened to auditors | ed26519 receipts + HMAC chain + daily Merkle root — tamper-evident and verifiable offline |
@@ -920,11 +935,11 @@ Get the full stack running in one terminal:
 git clone https://github.com/Abhi-mishra998/aegis.git
 cd aegis
 
-# Boot the 26-container stack (first boot ~3–5 min for image pulls)
+# Boot the 28-container stack (first boot ~3–5 min for image pulls)
 cd infra && docker compose up --build -d
 sleep 90
 
-# Verify all 26 containers are healthy
+# Verify all 28 containers are healthy (incl. Postgres streaming replica)
 docker compose ps --format "table {{.Name}}\t{{.Status}}"
 
 # Seed the admin user and demo agents
@@ -959,7 +974,7 @@ open http://localhost:5173      # macOS
 ✅ Flight Recorder :8014 — healthy (19ms)
 ✅ Autonomy      :8015  — healthy (17ms)
 
-All 14/14 services operational. Audit stream: 0 depth. DLQ: 0.
+All 16/16 services operational. Audit stream: 0 depth. DLQ: 0.
 ```
 
 ### Dry-run demo output (no containers required)
@@ -996,29 +1011,43 @@ I'm being explicit here because *"production-grade"* claims on side projects are
 - Autonomy contracts with action budgets
 - Auto-response engine (KILL, ISOLATE, THROTTLE, ALERT)
 - Tenant- and agent-scoped kill switches with Postgres persistence
-- ed26519 receipts + HMAC chain + daily Merkle root
-- Offline chain verifier (`acp verify-chain`)
+- ed25519 receipts + HMAC chain + daily Merkle root (44 adversarial crypto tests)
+- Offline chain verifier (`acp verify receipt/chain/export/inclusion`)
 - Blast-radius graph analysis
 - Slack escalation for critical incidents
 - Encrypted offsite backups (age + S3)
 - Audit-to-billing reconciliation
-- 510+ pytest tests
-- Three end-to-end demo packs
+- Injection classifier — 17 patterns, F1=0.84, Recall=0.74 (single source in `sdk/common/injection_patterns.py`; was 11 duplicated across 2 files)
+- Isolation Forest anomaly detector (F1=0.71; reproducible eval harness)
+- Per-service mesh JWT auth — `MESH_JWT_SECRET` config; `X-Mesh-Token` alongside `X-Internal-Secret`; `mesh_jwt_auth_total` counter; no single shared secret
+- Durable billing outbox — `pending_billing_events` DB table, Alembic migration, `POST /internal/billing-dlq`, 60s recovery worker; Redis kept as secondary
+- Forensics full implementation — 6 real endpoints: investigation list, replay, agent profile, blast-radius, cross-source timeline, JSON export (Redis-cached 1h)
+- Complete Helm charts — all 16 services (27 templates, behavior HPA 2-10 replicas, Redis StatefulSet, OPA deployment)
+- PostgreSQL streaming replica — WAL config, `hot_standby=on`, `replica-setup.sh`, read-only PgBouncer pools for audit + identity
+- GROQ_API_KEY now optional — empty default, only required for insight/groq_worker services
+- Multi-LLM router — Groq / OpenAI / Anthropic / Azure (library; 19 passing tests)
+- Compliance evidence export — EU AI Act / NIST AI RMF / SOC 2 structured bundles
+- SIEM integration — Splunk, Elastic, Microsoft Sentinel, Chronicle (6 passing tests)
+- 7 security hardening fixes (C1–C5, H1–H2, Rego dead code) with regression suite
+- UI/API proxy parity — 22 pages, all backend-connected, SSE nginx block fixed
+- 530+ pytest tests
+- Three end-to-end demo packs (all auth fixed for multi-tenant X-Tenant-ID requirement)
 
 </td>
 <td valign="top" width="50%">
 
 ### 🚧 Actively in Progress
 
-- Full Jaeger distributed tracing across all 14 services
+- Full Jaeger distributed tracing across all 16 services
 - Published threat model (STRIDE per service)
 - Sustained 1,000+ RPS load test
-- Helm charts + production deployment guide
 - Multi-region replication for the audit chain
-- HashiCorp Vault integration for secret management
+- HashiCorp Vault integration for secret management (replace shared `INTERNAL_SECRET` with Vault-issued per-service credentials)
 - TypeScript SDK with first-class type safety
-- Expanded web UI dashboards (currently CLI + Grafana-only)
-- External security review
+- External security review (SOC 2 Type II audit)
+- Wire multi-LLM router into gateway hot path (router library complete, hot-path integration pending)
+- Replace synthetic `metrics` time-series in `GET /decision/summary` with real per-interval DB data
+- Patroni/pg_auto_failover for automatic Postgres primary failover (currently warm standby only)
 
 </td>
 </tr>
@@ -1140,14 +1169,14 @@ If you want the engineering story behind every design decision — why ed26519 o
 
 ```text
 aegis/
-├── 🚪 services/         14 FastAPI microservices (gateway, audit, identity, ...)
+├── 🚪 services/         16 FastAPI microservices (gateway, audit, identity, ...)
 ├── 🐳 infra/            Docker Compose + Kubernetes orchestration
 ├── 🎨 ui/               React 18 SPA — SOC visibility dashboards
 ├── 📦 sdk/              Python SDK for 5-line agent integration
 ├── 📚 docs/             Architecture diagrams, runbooks, audit reports
 ├── 🔧 scripts/          Ops scripts (backup, reconcile, export, redact)
 ├── 🎭 demos/            Three reproducible demo packs
-├── 🧪 tests/            510+ pytest tests (unit → integration → E2E)
+├── 🧪 tests/            530+ pytest tests (unit → integration → E2E)
 ├── 📜 LICENSE           MIT
 ├── ⚙️ pyproject.toml    Package + dependency management
 └── 📖 README.md         You are here

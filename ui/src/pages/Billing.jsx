@@ -562,7 +562,11 @@ export default function Billing() {
           <span className="text-sm font-bold text-white">${fmt$(currentCost)}</span>
         </div>
         <div className="h-1 bg-white/[0.05] rounded-full overflow-hidden">
-          <div className="h-full bg-white/40 w-3/5 rounded-full" aria-label="60% of budget" />
+          <div
+            className="h-full bg-white/40 rounded-full transition-all duration-700"
+            style={{ width: `${Math.min(100, totalSaved > 0 ? Math.round((currentCost / totalSaved) * 100) : (currentCost > 0 ? 100 : 0))}%` }}
+            aria-label={`${currentCost > 0 ? Math.round((currentCost / Math.max(currentCost, totalSaved)) * 100) : 0}% of budget`}
+          />
         </div>
       </div>
 

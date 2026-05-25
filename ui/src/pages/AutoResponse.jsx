@@ -383,7 +383,7 @@ function SimulateModal({ rule, onClose }) {
             <div>
               <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-2">Actions that would execute</p>
               <div className="flex gap-2 flex-wrap">
-                {result.actions_preview.map((a, i) => (
+                {(result.actions_preview || []).map((a, i) => (
                   <span key={i} className={`text-xs px-2 py-0.5 rounded border border-white/[0.08] ${ACTION_COLOR[a.type] || 'text-neutral-400'}`}>
                     {a.type}{a.tool ? `:${a.tool}` : ''}{a.rate ? `:${a.rate}` : ''}
                   </span>
@@ -413,9 +413,9 @@ function SimulateModal({ rule, onClose }) {
                   {result.sample_matches.map(m => (
                     <div key={m.incident_id} className="flex items-center gap-2 text-[10px] p-1.5 rounded bg-white/[0.02] border border-white/[0.04]">
                       <span className={`font-medium ${m.severity === 'CRITICAL' ? 'text-red-400' : m.severity === 'HIGH' ? 'text-orange-400' : 'text-amber-400'}`}>{m.severity}</span>
-                      <span className="text-neutral-600 font-mono">{m.agent_id.slice(0,8)}</span>
+                      <span className="text-neutral-600 font-mono">{m.agent_id?.slice(0,8)}</span>
                       <span className="text-neutral-500">{m.tool || 'N/A'}</span>
-                      <span className="ml-auto text-neutral-700 font-mono">{(m.risk_score * 100).toFixed(0)}%</span>
+                      <span className="ml-auto text-neutral-700 font-mono">{((m.risk_score ?? 0) * 100).toFixed(0)}%</span>
                     </div>
                   ))}
                 </div>

@@ -1,0 +1,143 @@
+# ACP Helm Chart — Production Overrides
+# Apply on top of values.yaml:
+#   helm upgrade --install acp ./infra/helm/acp \
+#     -f infra/helm/acp/values.yaml \
+#     -f infra/helm/acp/values.prod.yaml \
+#     --namespace acp --create-namespace
+
+global:
+  image:
+    # Pin to a specific digest in production — never use 'latest'
+    registry: ghcr.io/acp
+    pullPolicy: Always
+    tag: "0.2.0"
+  env:
+    ENVIRONMENT: production
+    LOG_LEVEL: WARNING
+    OPA_FAIL_MODE: closed
+    MAX_CONCURRENT_EXECUTION: "500"
+    MAX_PAYLOAD_BYTES: "10000"
+    DECISION_GATHER_TOTAL_TIMEOUT: "1.5"
+    RESILIENT_CONNECT_TIMEOUT_MS: "100"
+
+gateway:
+  replicas: 5
+  hpa:
+    enabled: true
+    minReplicas: 5
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 65
+    targetMemoryUtilizationPercentage: 75
+  resources:
+    requests:
+      cpu: "1"
+      memory: "1Gi"
+    limits:
+      cpu: "4"
+      memory: "2Gi"
+  pdb:
+    enabled: true
+    minAvailable: 3
+
+audit:
+  replicas: 3
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+  pdb:
+    enabled: true
+    minAvailable: 2
+
+decision:
+  replicas: 4
+  resources:
+    requests:
+      cpu: "1"
+      memory: "1Gi"
+    limits:
+      cpu: "4"
+      memory: "2Gi"
+  pdb:
+    enabled: true
+    minAvailable: 2
+
+identity:
+  replicas: 3
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+  pdb:
+    enabled: true
+    minAvailable: 2
+
+policy:
+  replicas: 3
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "512Mi"
+  pdb:
+    enabled: true
+    minAvailable: 2
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # Production: enforce HTTPS only
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # cert-manager auto-provision
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  # Set your actual production hostname
+  host: acp.yourdomain.com
+  tls:
+    enabled: true
+    secretName: acp-tls-prod
+
+postgresql:
+  external: true
+  # Hostname of managed PostgreSQL (RDS, CloudSQL, etc.)
+  host: your-rds-endpoint.region.rds.amazonaws.com
+  port: 5432
+  database: acp_prod
+  existingSecret: acp-db-credentials
+
+redis:
+  external: true
+  # Hostname of managed Redis (ElastiCache, MemoryStore, etc.)
+  host: your-elasticache-endpoint.region.cache.amazonaws.com
+  port: 6379
+  database: 0
+  existingSecret: acp-redis-credentials
+
+externalSecrets:
+  # Enable External Secrets Operator for automated secret rotation
+  enabled: true
+  secretStoreName: acp-vault-store
+  secretStoreKind: ClusterSecretStore
+  remoteRefPrefix: secret/acp/prod
+  refreshInterval: 1h
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    # Set true if Prometheus Operator is installed
+    enabled: true
+    interval: 15s
+    namespace: monitoring

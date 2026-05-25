@@ -110,6 +110,7 @@ async def _user_token(client: httpx.AsyncClient, creds: dict) -> str:
     resp = await client.post(
         f"{GATEWAY}/auth/token",
         json={"email": creds["admin_email"], "password": creds["admin_password"]},
+        headers={"X-Tenant-ID": creds.get("tenant_id", "00000000-0000-0000-0000-000000000001")},
     )
     return (resp.json().get("data") or resp.json())["access_token"]
 

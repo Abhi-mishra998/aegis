@@ -1,0 +1,277 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $fullname := include "acp.fullname" . }}
+{{- $ns := include "acp.namespace" . }}
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Gateway NetworkPolicy
+# Accepts: ingress from ingress-nginx namespace + any external traffic
+#          (the ingress controller handles external TLS termination)
+# Egress:  all services in namespace (decision, audit, identity, policy),
+#          PostgreSQL, Redis, OPA, and DNS
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-gateway
+  namespace: {{ $ns }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "gateway" "ctx" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "gateway" "ctx" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress controller (nginx) to reach gateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.gateway.containerPort }}
+    # Allow intra-namespace traffic (health checks from other services, etc.)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.gateway.containerPort }}
+  egress:
+    # DNS resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Internal services (audit, decision, identity, policy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.audit.containerPort }}
+        - protocol: TCP
+          port: {{ .Values.decision.containerPort }}
+        - protocol: TCP
+          port: {{ .Values.identity.containerPort }}
+        - protocol: TCP
+          port: {{ .Values.policy.containerPort }}
+    # PostgreSQL (direct or via PgBouncer on 6432)
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6432
+    # Redis
+    - ports:
+        - protocol: TCP
+          port: 6379
+    # OPA
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.opa.port }}
+    # External HTTPS (Groq, OpenAI, etc.)
+    - ports:
+        - protocol: TCP
+          port: 443
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit NetworkPolicy
+# Accepts: only from gateway and other ACP services (service mesh)
+# Egress:  PostgreSQL, Redis, DNS
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-audit
+  namespace: {{ $ns }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "audit" "ctx" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "audit" "ctx" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only accept from ACP service pods in same namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "acp.name" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.audit.containerPort }}
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6432
+        - protocol: TCP
+          port: 6379
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Decision NetworkPolicy
+# Accepts: only from gateway and other ACP services
+# Egress:  PostgreSQL, Redis, OPA, policy service (fan-out), DNS
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-decision
+  namespace: {{ $ns }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "decision" "ctx" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "decision" "ctx" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "acp.name" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.decision.containerPort }}
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6432
+        - protocol: TCP
+          port: 6379
+    # OPA
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.opa.port }}
+    # Policy and Identity service (fan-out for risk evaluation)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.policy.containerPort }}
+        - protocol: TCP
+          port: {{ .Values.identity.containerPort }}
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Identity NetworkPolicy
+# Accepts: only from ACP services
+# Egress:  PostgreSQL, Redis, DNS
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-identity
+  namespace: {{ $ns }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "identity" "ctx" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "identity" "ctx" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "acp.name" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.identity.containerPort }}
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6432
+        - protocol: TCP
+          port: 6379
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Policy NetworkPolicy
+# Accepts: only from ACP services
+# Egress:  OPA, PostgreSQL, Redis, DNS
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-policy
+  namespace: {{ $ns }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "policy" "ctx" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "policy" "ctx" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "acp.name" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.policy.containerPort }}
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6432
+        - protocol: TCP
+          port: 6379
+    # OPA
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.opa.port }}
+{{- end }}

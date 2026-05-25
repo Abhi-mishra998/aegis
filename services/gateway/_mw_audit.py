@@ -159,7 +159,56 @@ class _AuditMixin:
         retries, and at 47 r/s the retry path was the dominant source of the
         593-record integrity gap (retries silently dropped at the unique audit_id
         constraint on usage_records, never reaching billing).
+
+        2026-05-24 (GAP B): Primary path now POSTs to usage service's durable
+        /internal/billing-dlq endpoint (writes to PostgreSQL pending_billing_events
+        table). Redis remains as a secondary belt-and-suspenders write so the
+        existing billing retry worker continues to function unchanged.
         """
+        from sdk.common.config import settings as _settings
+
+        # --- Primary path: durable DB write via usage service ---
+        try:
+            client = await service_client.get_client()
+            db_payload = {
+                "tenant_id": tenant_id,
+                "agent_id": str(agent_id),
+                "action": action,
+                "tokens": max(tokens, 1),
+                "audit_id": audit_id,
+                "error": reason,
+            }
+            from sdk.common.auth import mint_service_token as _mint
+            dlq_headers = {
+                "X-Mesh-Token": _mint("gateway"),
+                "X-Internal-Secret": _settings.INTERNAL_SECRET,
+                "Content-Type": "application/json",
+            }
+            resp = await client.post(
+                f"{_settings.USAGE_SERVICE_URL.rstrip('/')}/internal/billing-dlq",
+                json=db_payload,
+                headers=dlq_headers,
+            )
+            if resp.status_code == 201:
+                logger.info(
+                    "billing_dlq_db_written",
+                    audit_id=audit_id,
+                    tenant_id=tenant_id,
+                )
+            else:
+                logger.warning(
+                    "billing_dlq_db_non_201",
+                    audit_id=audit_id,
+                    status=resp.status_code,
+                )
+        except Exception as exc:
+            logger.error(
+                "billing_dlq_db_write_failed",
+                audit_id=audit_id,
+                error=str(exc),
+            )
+
+        # --- Secondary path: Redis DLQ (belt-and-suspenders) ---
         try:
             payload = {
                 "tenant_id": tenant_id,
@@ -173,7 +222,7 @@ class _AuditMixin:
             retry_payload = {"payload": payload, "action": action, "retry_count": 0, "reason": reason}
             await self.redis.lpush("acp:billing_retry_queue", json.dumps(retry_payload))
         except Exception as exc:
-            logger.critical("billing_dlq_write_failed", audit_id=audit_id, error=str(exc))
+            logger.critical("billing_dlq_redis_write_failed", audit_id=audit_id, error=str(exc))
 
     async def _finalize_request(
         self,

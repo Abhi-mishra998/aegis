@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import os
@@ -12,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash
+from sdk.common.background import safe_bg as _safe_bg
 from sdk.utils import (
     AUDIT_DUPLICATES_DROPPED_TOTAL,
     BILLING_OUTBOX_COVERAGE_GAP_TOTAL,
@@ -182,6 +184,15 @@ class AuditWriter:
             await db.commit()
 
             SLO_AUDIT_DURABILITY_TOTAL.labels(stage="persisted").inc()
+
+            # Fire-and-forget SIEM forward — never blocks the audit write path.
+            # Import is deferred to avoid a circular dependency at module load.
+            try:
+                from services.audit.siem import siem_forward
+                asyncio.create_task(_safe_bg(siem_forward(audit_log)))
+            except Exception:
+                pass  # SIEM forward failure must never affect audit durability
+
             return audit_log, pending_event
 
         except Exception as exc:

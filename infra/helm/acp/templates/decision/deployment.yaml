@@ -1,0 +1,69 @@
+{{- if .Values.decision.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-decision
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "decision" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.decision.replicas }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "decision" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "decision" "ctx" $) | nindent 8 }}
+      {{- with .Values.decision.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        {{- include "acp.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.decision.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: decision
+          image: {{ include "acp.image" (dict "component" .Values.decision "ctx" $) }}
+          imagePullPolicy: {{ include "acp.imagePullPolicy" . }}
+          securityContext:
+            {{- include "acp.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.decision.containerPort }}
+              protocol: TCP
+          {{- with .Values.decision.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.decision.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.decision.resources | nindent 12 }}
+          env:
+            {{- include "acp.globalEnv" . | nindent 12 }}
+            {{- include "acp.secretEnvRefs" . | nindent 12 }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: {{ include "acp.fullname" . }}-config
+          volumeMounts:
+            {{- include "acp.tmpVolumeMount" . | nindent 12 }}
+      volumes:
+        {{- include "acp.tmpVolume" . | nindent 8 }}
+{{- end }}

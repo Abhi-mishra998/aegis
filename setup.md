@@ -30,7 +30,7 @@ You need the following installed on your host machine before starting:
 
 | Tool | Minimum version | Purpose |
 |---|---|---|
-| Docker | 24.x | Container runtime for all 25 containers |
+| Docker | 24.x | Container runtime for all 27 containers |
 | Docker Compose | v2 | Stack orchestration |
 | Python | 3.11+ | Ops scripts, demo runners, SDK |
 | Node.js | 20+ | UI build (optional — UI ships in a container too) |
@@ -94,9 +94,9 @@ Expected output: `host deps ok`
 
 ## Environment Configuration
 
-### Generate the internal secret
+### Generate the internal secret and required credentials
 
-The internal secret is used for service-to-service authentication. Generate it once and place it in `infra/.env`:
+The internal secret is used for service-to-service authentication. Generate it once and place it in `infra/.env`. The Grafana admin password is also required — docker-compose refuses to start without it.
 
 ```bash
 cd infra
@@ -106,8 +106,13 @@ cp .env.example .env
 INTERNAL_SECRET=$(openssl rand -hex 32)
 echo "INTERNAL_SECRET=$INTERNAL_SECRET" >> .env
 
+# Set the required Grafana admin password (any strong password; no default)
+echo "GRAFANA_ADMIN_PASSWORD=CHANGE_ME_$(openssl rand -hex 8)" >> .env
+
 cd ..
 ```
+
+> **Required:** `GRAFANA_ADMIN_PASSWORD` must be set before running `docker compose up`. The compose file uses `${GRAFANA_ADMIN_PASSWORD:?}` which causes the compose command to exit with an error message if the variable is empty or unset.
 
 ### Configure host-side environment variables
 
@@ -189,7 +194,7 @@ The first build takes 4–8 minutes depending on your machine. Subsequent boots 
 
 ### Wait for health checks
 
-The stack runs 25 containers across edge, core services, intelligence, cryptographic trust, data, and observability tiers. Wait about 90 seconds for all health checks to pass:
+The stack runs 27 containers across edge, core services, intelligence, cryptographic trust, data, and observability tiers. Wait about 90 seconds for all health checks to pass:
 
 ```bash
 sleep 90
@@ -555,6 +560,99 @@ Note: kill switches are double-written to Postgres for durability. The `TRUNCATE
 
 ---
 
+## End-to-End System Verification
+
+Run this after every significant change or new service addition to confirm the full stack is wired correctly. Does not require a live Docker stack — uses the offline test suite.
+
+### Unit + integration tests (no containers required)
+
+```bash
+# Core test suites — security fixes, crypto chain, decision engine, gateway proxy
+python3 -m pytest \
+  tests/test_security_fixes.py \
+  tests/test_findings_vocabulary.py \
+  tests/test_decision_engine.py \
+  tests/test_verifier.py \
+  services/audit/tests/ \
+  services/gateway/tests/ \
+  sdk/ \
+  -v --tb=short
+
+# Expected: 170+ tests passing, 0 failures
+# Note: sdk/acp_client/tests/test_init_project.py requires PyYAML.
+#   Install with: pip install pyyaml   — or skip: add --ignore=sdk/acp_client/tests/test_init_project.py
+# Note: tests/test_audit_chain_properties.py and test_decision_engine_properties.py
+#   require hypothesis: pip install hypothesis
+```
+
+### Anomaly detector eval (optional — requires scikit-learn)
+
+```bash
+# Reproducible evaluation harness — deterministic seed(42)
+python3 tests/eval/anomaly_eval.py
+
+# Expected output:
+#   Isolation Forest:   Precision=0.71, Recall=0.70, F1=0.71
+#   Heuristic fallback: Precision=1.00, Recall=0.60, F1=0.75
+```
+
+### Demo dry-run (no containers, ~10 seconds)
+
+```bash
+ACP_DRY_RUN=1 .venv/bin/python demos/run_all_demos.py
+
+# Expected: all 3 packs print PASS
+```
+
+### Live stack verification (requires running containers)
+
+```bash
+# 1. All containers healthy
+docker ps --format "{{.Names}}\t{{.Status}}" | grep "(healthy)" | wc -l
+# Expected: 22+
+
+# 2. Gateway health
+curl -s http://localhost:8000/system/health | jq '{status, healthy, total}'
+# Expected: {"status": "operational", "healthy": 12, "total": 12}
+
+# 3. Authenticate
+export TOKEN=$(curl -s -X POST "http://localhost:8000/auth/token" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@acp.local","password":"password"}' \
+  | jq -r '.data.access_token')
+
+# 4. Audit chain integrity
+.venv/bin/acp verify-chain \
+  --base-url http://localhost:8000 \
+  --token "$TOKEN" \
+  --tenant "00000000-0000-0000-0000-000000000001" \
+  --json | jq '{valid: .ok, processed, errors: .total_violations}'
+# Expected: {"valid": true, "errors": 0}
+
+# 5. Billing reconciliation
+.venv/bin/python scripts/ops/reconcile.py \
+  --tenant "00000000-0000-0000-0000-000000000001" \
+  --json | jq '{status, audit_without_usage_count, usage_without_audit_count}'
+# Expected: {"status": "VERIFIED", ...}
+
+# 6. UI build (no browser required — catches import/proxy errors)
+cd ui && npm run build 2>&1 | tail -5
+# Expected: "built in Xs" with no errors
+```
+
+### Offline chain verifier (new subcommands)
+
+```bash
+# If you have an exported audit bundle:
+acp verify receipt receipt.json --pubkey ./aegis_public.pem   # single receipt
+acp verify export ./audit_export/                              # full bundle
+acp verify chain ./roots_dir/                                  # root chain
+acp verify inclusion receipt.json proof.json                   # Merkle proof
+# All commands: exit 0 = valid, exit 1 = tamper detected; --json for machine output
+```
+
+---
+
 ## Service Map
 
 | Tier | Service | Port | Container |
@@ -585,7 +683,7 @@ Note: kill switches are double-written to Postgres for durability. The `TRUNCATE
 
 Default credentials for observability tools:
 
-- Grafana: `admin` / `admin` (anonymous viewer enabled)
+- Grafana: `admin` / `$GRAFANA_ADMIN_PASSWORD` — **must be set in `infra/.env` before boot** (docker-compose will refuse to start without it)
 - UI dashboard: `admin@acp.local` / `password`
 
 ---
@@ -713,7 +811,7 @@ Three checks: stack is up, billing reconciliation is clean, audit chain is crypt
 - **Explore the UI:** Open [http://localhost:5173](http://localhost:5173) and walk through Flight Recorder, Identity Graph, Audit Trail, and Autonomy Contracts.
 - **Read the architecture docs:** Detailed diagrams and design rationale live in `docs/architecture/`.
 - **Integrate the SDK:** Follow the [Python SDK Quickstart](#python-sdk-quickstart) to protect your own agent code in five lines.
-- **Run a load test:** `tests/load/locustfile.py` simulates concurrent users against the full pipeline.
+- **Run a load test:** `tests/load/locustfile.py` simulates concurrent users against the full pipeline. Launch with the Locust web UI on port 8090: `.venv/bin/locust -f tests/load/locustfile.py --host http://localhost:8000 --web-port 8090`
 - **Review the demo scripts:** Each `demos/<pack>/scripted_demo.py` is a readable end-to-end scenario you can adapt to your own threat model.
 
 ---

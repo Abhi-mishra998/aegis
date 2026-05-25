@@ -15,6 +15,7 @@ from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.billing.router import router as billing_router
+from services.usage.router.billing_dlq import router as billing_dlq_router
 from services.usage.router.usage import router as usage_router
 
 logger = structlog.get_logger(__name__)
@@ -235,6 +236,146 @@ async def billing_reconciliation_worker() -> None:
         await asyncio.sleep(10)
 
 
+async def pending_billing_recovery_worker() -> None:
+    """
+    GAP B recovery worker: retries failed billing events stored in the
+    pending_billing_events table (written by the gateway's _persist_billing_dlq
+    when the usage service was unavailable).
+
+    Runs every 60 seconds.  Each row is retried up to MAX_RETRIES times;
+    after that it is left untouched and a CRITICAL log is emitted for
+    manual review.  On success, processed_at is set to the current time.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import and_, select, update
+
+    from services.usage.models.pending_billing import PendingBillingEvent
+
+    MAX_RETRIES = 5
+    POLL_INTERVAL = 60  # seconds
+
+    session_factory = get_session_factory()
+
+    while True:
+        try:
+            async with session_factory() as db:
+                stmt = (
+                    select(PendingBillingEvent)
+                    .where(
+                        and_(
+                            PendingBillingEvent.processed_at.is_(None),
+                            PendingBillingEvent.retry_count < MAX_RETRIES,
+                        )
+                    )
+                    .order_by(PendingBillingEvent.created_at)
+                    .limit(100)
+                )
+                result = await db.execute(stmt)
+                rows = result.scalars().all()
+
+            if not rows:
+                await asyncio.sleep(POLL_INTERVAL)
+                continue
+
+            logger.info("pending_billing_recovery_found", count=len(rows))
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                for row in rows:
+                    try:
+                        # Retry by calling the billing/events endpoint directly
+                        # (same path as the normal gateway billing write)
+                        billing_payload = {
+                            "tenant_id": row.tenant_id,
+                            "action": row.action,
+                            "agent_id": row.agent_id,
+                            "audit_id": row.audit_id,
+                            "idempotency_key": row.audit_id,
+                        }
+                        billing_resp = await client.post(
+                            f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/events",
+                            json=billing_payload,
+                            headers={
+                                "X-Internal-Secret": settings.INTERNAL_SECRET,
+                                "X-Tenant-ID": row.tenant_id,
+                                "Content-Type": "application/json",
+                            },
+                        )
+
+                        # Also ensure the usage record exists
+                        usage_payload = {
+                            "tenant_id": row.tenant_id,
+                            "agent_id": row.agent_id,
+                            "tool": "unknown",
+                            "units": max(row.tokens, 1),
+                            "cost": max(row.tokens, 1) * 0.001,
+                            "audit_id": row.audit_id,
+                        }
+                        await client.post(
+                            f"{settings.USAGE_SERVICE_URL.rstrip('/')}/usage/record",
+                            json=usage_payload,
+                            headers={
+                                "X-Internal-Secret": settings.INTERNAL_SECRET,
+                                "Content-Type": "application/json",
+                            },
+                        )
+
+                        if billing_resp.status_code in (200, 201):
+                            async with session_factory() as db:
+                                await db.execute(
+                                    update(PendingBillingEvent)
+                                    .where(PendingBillingEvent.id == row.id)
+                                    .values(processed_at=datetime.now(tz=UTC))
+                                )
+                                await db.commit()
+                            logger.info(
+                                "pending_billing_recovered",
+                                audit_id=row.audit_id,
+                                tenant_id=row.tenant_id,
+                            )
+                        else:
+                            raise RuntimeError(
+                                f"billing/events returned {billing_resp.status_code}: {billing_resp.text[:200]}"
+                            )
+
+                    except Exception as exc:
+                        new_count = row.retry_count + 1
+                        async with session_factory() as db:
+                            await db.execute(
+                                update(PendingBillingEvent)
+                                .where(PendingBillingEvent.id == row.id)
+                                .values(
+                                    retry_count=new_count,
+                                    last_error=str(exc)[:1000],
+                                )
+                            )
+                            await db.commit()
+
+                        if new_count >= MAX_RETRIES:
+                            logger.critical(
+                                "pending_billing_max_retries_exceeded",
+                                audit_id=row.audit_id,
+                                tenant_id=row.tenant_id,
+                                retry_count=new_count,
+                                last_error=str(exc)[:500],
+                            )
+                        else:
+                            logger.warning(
+                                "pending_billing_retry_failed",
+                                audit_id=row.audit_id,
+                                retry_count=new_count,
+                                error=str(exc),
+                            )
+
+        except asyncio.CancelledError:
+            logger.info("pending_billing_recovery_worker_stopped")
+            break
+        except Exception as exc:
+            logger.error("pending_billing_recovery_worker_error", error=str(exc))
+
+        await asyncio.sleep(POLL_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     async with get_session_factory()() as db:
@@ -244,10 +385,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.billing_engine = BillingValueEngine(redis)
 
     reconciliation_task = asyncio.create_task(billing_reconciliation_worker())
+    pending_billing_task = asyncio.create_task(pending_billing_recovery_worker())
 
     yield
 
     reconciliation_task.cancel()
+    pending_billing_task.cancel()
     await redis.aclose()
     await engine.dispose()
 
@@ -267,3 +410,6 @@ app.include_router(usage_router)
 
 # billing_router has prefix="/billing"; mount directly to match Gateway calls
 app.include_router(billing_router)
+
+# Internal endpoint for durable billing DLQ (prefix="/internal")
+app.include_router(billing_dlq_router)

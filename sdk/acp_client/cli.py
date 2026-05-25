@@ -335,6 +335,212 @@ def _cmd_verify_bundle(args: argparse.Namespace) -> int:
 # ─── argparse wiring ──────────────────────────────────────────────────────
 
 
+# ─── New `verify` sub-group (offline, export-dir based) ──────────────────
+
+
+def _cmd_verify_receipt_offline(args: argparse.Namespace) -> int:
+    """acp verify receipt <file> [--pubkey <pem>]
+
+    Verify a single signed receipt JSON file offline.
+    If --pubkey is not given, looks for active.pem in the same directory.
+    """
+    from .verifier import AuditVerifier
+
+    receipt_path = Path(args.file)
+    payload = _load_json(receipt_path)
+
+    if args.pubkey:
+        try:
+            pub_pem = Path(args.pubkey).read_text()
+        except FileNotFoundError:
+            raise SystemExit(f"error: {args.pubkey}: public key file not found")
+        verifier = AuditVerifier(public_keys=[pub_pem])
+    else:
+        return _emit(
+            {"ok": False, "lines": ["error: --pubkey is required"]},
+            getattr(args, "json", False),
+        )
+
+    rv = verifier.verify_receipt(payload)
+    icon = "✓" if rv.ok else "✗"
+    result = {
+        "ok": rv.ok,
+        "execution_id": rv.execution_id,
+        "error": rv.error,
+        "lines": [
+            f"  {icon}  receipt  {rv.execution_id}" + (f"  ({rv.error})" if rv.error else ""),
+            "",
+            "OK" if rv.ok else "FAIL",
+        ],
+    }
+    return _emit(result, getattr(args, "json", False))
+
+
+def _cmd_verify_chain_offline(args: argparse.Namespace) -> int:
+    """acp verify chain <roots-dir>
+
+    Verify that every JSON file in ``<roots-dir>`` forms a consistent
+    append-only chain of daily Merkle roots.  No network access required.
+    """
+    from .verifier import verify_root_chain as _verify_root_chain
+
+    roots_dir = Path(args.roots_dir)
+    if not roots_dir.is_dir():
+        return _emit(
+            {"ok": False, "lines": [f"error: {roots_dir}: not a directory"]},
+            getattr(args, "json", False),
+        )
+
+    root_files = sorted(roots_dir.glob("*.json"))
+    if not root_files:
+        return _emit(
+            {"ok": False, "lines": [f"error: no .json files found under {roots_dir}"]},
+            getattr(args, "json", False),
+        )
+
+    roots: list[Any] = []
+    for rp in root_files:
+        try:
+            roots.append(_load_json(rp))
+        except SystemExit as exc:
+            return _emit(
+                {"ok": False, "lines": [str(exc)]},
+                getattr(args, "json", False),
+            )
+
+    chain_ok, chain_error = _verify_root_chain(roots)
+    icon = "✓" if chain_ok else "✗"
+    lines = [
+        f"roots directory: {roots_dir}",
+        f"  roots loaded:  {len(roots)}",
+        f"  {icon}  chain consistent: {'yes' if chain_ok else 'no'}",
+    ]
+    if chain_error:
+        lines.append(f"     {chain_error}")
+    lines += ["", "OK" if chain_ok else "FAIL"]
+    return _emit(
+        {"ok": chain_ok, "roots": len(roots), "chain_error": chain_error, "lines": lines},
+        getattr(args, "json", False),
+    )
+
+
+def _cmd_verify_export(args: argparse.Namespace) -> int:
+    """acp verify export <export-dir>
+
+    Verify a full tenant export bundle: receipt signatures, Merkle inclusion
+    proofs, and root-chain consistency.  The bundle must follow the layout
+    created by ``acp archive``.
+    """
+    from .verifier import AuditVerifier
+
+    export_dir = Path(args.export_dir)
+    if not export_dir.is_dir():
+        return _emit(
+            {"ok": False, "lines": [f"error: {export_dir}: not a directory"]},
+            getattr(args, "json", False),
+        )
+
+    try:
+        verifier = AuditVerifier.from_export_dir(export_dir)
+    except FileNotFoundError as exc:
+        return _emit(
+            {"ok": False, "lines": [f"error: {exc}"]},
+            getattr(args, "json", False),
+        )
+
+    ev = verifier.verify_export(export_dir)
+    ok_icon = "✓"
+    fail_icon = "✗"
+
+    lines = [
+        f"export: {export_dir}",
+        f"  {ok_icon if ev.valid_receipts == ev.total_receipts else fail_icon}  receipts:    {ev.valid_receipts}/{ev.total_receipts} valid",
+        f"  {ok_icon if ev.valid_inclusions == ev.total_inclusions else fail_icon}  inclusions:  {ev.valid_inclusions}/{ev.total_inclusions} valid",
+        f"  {ok_icon if ev.chain_ok else fail_icon}  root chain:  {'consistent' if ev.chain_ok else ev.chain_error}",
+    ]
+    if ev.errors:
+        lines.append("")
+        lines.append("FAILURES:")
+        lines += [f"  - {e}" for e in ev.errors]
+    lines += ["", "OK" if ev.ok else "FAIL"]
+
+    return _emit(
+        {
+            "ok": ev.ok,
+            "total_receipts": ev.total_receipts,
+            "valid_receipts": ev.valid_receipts,
+            "total_inclusions": ev.total_inclusions,
+            "valid_inclusions": ev.valid_inclusions,
+            "chain_ok": ev.chain_ok,
+            "chain_error": ev.chain_error,
+            "errors": ev.errors,
+            "lines": lines,
+        },
+        getattr(args, "json", False),
+    )
+
+
+def _cmd_verify_inclusion_offline(args: argparse.Namespace) -> int:
+    """acp verify inclusion <receipt.json> <proof.json> [--pubkey <pem>]
+
+    Verify that a receipt is included in the Merkle tree described by a proof
+    file.  The proof file may be:
+      - a bare inclusion proof dict (leaf, siblings, root, index, size)
+      - a combined dict with {proof: {...}, signed_root: {...}}
+
+    The receipt signature is NOT re-checked here; use ``acp verify receipt``
+    for that.  This command checks only Merkle membership.
+    """
+    from .verifier import leaf_hash, verify_inclusion as _vi
+
+    receipt_path = Path(args.receipt)
+    proof_path = Path(args.proof)
+
+    receipt_payload = _load_json(receipt_path)
+    proof_data = _load_json(proof_path)
+
+    exec_id = receipt_payload.get("receipt", {}).get("execution_id", receipt_path.stem)
+
+    if "proof" in proof_data and "signed_root" in proof_data:
+        proof = proof_data["proof"]
+        expected_root = (
+            proof_data["signed_root"].get("receipt", {}).get("root_hash")
+            or proof_data["signed_root"].get("root_hash")
+            or ""
+        )
+    else:
+        proof = proof_data
+        expected_root = proof_data.get("root", "")
+
+    if not expected_root:
+        return _emit(
+            {"ok": False, "lines": ["error: could not determine expected root from proof"]},
+            getattr(args, "json", False),
+        )
+
+    lh = leaf_hash(receipt_payload)
+    try:
+        ok = _vi(lh, proof, expected_root)
+    except ValueError as exc:
+        return _emit(
+            {"ok": False, "lines": [f"error: malformed proof: {exc}"]},
+            getattr(args, "json", False),
+        )
+
+    icon = "✓" if ok else "✗"
+    lines = [
+        f"  {icon}  inclusion  {exec_id}",
+        f"     leaf:  {lh[:16]}...",
+        f"     root:  {expected_root[:16]}...",
+        "",
+        "OK" if ok else "FAIL",
+    ]
+    return _emit(
+        {"ok": ok, "execution_id": exec_id, "leaf": lh, "root": expected_root, "lines": lines},
+        getattr(args, "json", False),
+    )
+
+
 def _cmd_verify_chain(args: argparse.Namespace) -> int:
     """Pull /audit/export NDJSON and re-derive every event_hash. Reports any
     tampering as a non-zero exit code so CI / cron can alert on drift.
@@ -549,6 +755,58 @@ def main(argv: list[str] | None = None) -> int:
     p_vrt.add_argument("--timeout",   type=float, default=30.0)
     p_vrt.add_argument("--json",      action="store_true")
     p_vrt.set_defaults(func=_cmd_verify_root)
+
+    # ── verify sub-group ────────────────────────────────────────────────────
+    # acp verify receipt <file>
+    # acp verify chain  <roots-dir>
+    # acp verify export <export-dir>
+    # acp verify inclusion <receipt> <proof>
+
+    p_verify = sub.add_parser(
+        "verify",
+        help=(
+            "offline audit verifier: "
+            "receipt | chain | export | inclusion"
+        ),
+    )
+    vsub = p_verify.add_subparsers(dest="verify_cmd", required=True)
+
+    p_vreceipt = vsub.add_parser("receipt", help="verify a single signed receipt file")
+    p_vreceipt.add_argument("file", help="path to receipt JSON (e.g. receipts/abc123.json)")
+    p_vreceipt.add_argument("--pubkey", required=True, help="path to ed25519 public key PEM")
+    p_vreceipt.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p_vreceipt.set_defaults(func=_cmd_verify_receipt_offline)
+
+    p_vchain = vsub.add_parser(
+        "chain",
+        help="verify a directory of daily root JSON files form an append-only chain",
+    )
+    p_vchain.add_argument("roots_dir", metavar="roots-dir", help="directory containing YYYY-MM-DD.json root files")
+    p_vchain.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p_vchain.set_defaults(func=_cmd_verify_chain_offline)
+
+    p_vexport = vsub.add_parser(
+        "export",
+        help="verify a full tenant export bundle (receipts + roots + proofs)",
+    )
+    p_vexport.add_argument(
+        "export_dir",
+        metavar="export-dir",
+        help=(
+            "export directory with keys/, receipts/, proofs/, roots/ sub-directories"
+        ),
+    )
+    p_vexport.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p_vexport.set_defaults(func=_cmd_verify_export)
+
+    p_vinclusion = vsub.add_parser(
+        "inclusion",
+        help="verify a single Merkle inclusion proof for one receipt",
+    )
+    p_vinclusion.add_argument("receipt", help="path to signed receipt JSON")
+    p_vinclusion.add_argument("proof", help="path to inclusion proof JSON")
+    p_vinclusion.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    p_vinclusion.set_defaults(func=_cmd_verify_inclusion_offline)
 
     args = parser.parse_args(argv)
     return args.func(args)

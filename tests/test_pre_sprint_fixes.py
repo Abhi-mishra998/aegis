@@ -162,7 +162,7 @@ class TestGroqBrainFindingsPreservation:
     """
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def _make_ctx(self) -> DecisionContext:
         return DecisionContext(
@@ -327,7 +327,7 @@ class TestPolicyExecuteFindings:
         return req
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_findings_present_in_response(self):
         """findings key must be in the execute_tool response dict."""

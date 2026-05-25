@@ -270,6 +270,7 @@ class TestInferenceProxy:
     proxy = InferenceProxy()
     tenant_a = uuid.uuid4()
     tenant_b = uuid.uuid4()
+    agent_id = uuid.uuid4()
 
     def _make_body(self, text: str) -> bytes:
         return json.dumps({"input": text}).encode()
@@ -282,6 +283,7 @@ class TestInferenceProxy:
             allowed_tools=["disk_cleanup", "log_rotate"],
             request_tenant_id=self.tenant_a,
             token_tenant_id=self.tenant_a,
+            agent_id=self.agent_id,
         )
         assert result.allowed is True
 
@@ -293,6 +295,7 @@ class TestInferenceProxy:
             allowed_tools=None,
             request_tenant_id=self.tenant_a,
             token_tenant_id=self.tenant_a,
+            agent_id=self.agent_id,
         )
         assert result.allowed is False
         assert "too large" in result.reason.lower()
@@ -307,6 +310,7 @@ class TestInferenceProxy:
             allowed_tools=None,
             request_tenant_id=self.tenant_a,
             token_tenant_id=self.tenant_a,
+            agent_id=self.agent_id,
         )
         assert result.allowed is False
         assert "injection" in result.reason.lower()
@@ -319,6 +323,7 @@ class TestInferenceProxy:
             allowed_tools=["disk_cleanup"],
             request_tenant_id=self.tenant_a,
             token_tenant_id=self.tenant_a,
+            agent_id=self.agent_id,
         )
         assert result.allowed is False
         assert "restart_server" in result.reason
@@ -336,6 +341,7 @@ class TestInferenceProxy:
             allowed_tools=None,
             request_tenant_id=self.tenant_a,
             token_tenant_id=self.tenant_b,
+            agent_id=self.agent_id,
         )
         assert result.allowed is False
         assert "cross-tenant" in result.reason.lower()
@@ -352,6 +358,7 @@ class TestInferenceProxy:
             allowed_tools=None,
             request_tenant_id=self.tenant_a,
             token_tenant_id=self.tenant_a,
+            agent_id=self.agent_id,
         )
         assert result.allowed is False
         assert result.risk_score >= _RISK_THRESHOLD

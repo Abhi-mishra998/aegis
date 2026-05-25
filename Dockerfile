@@ -5,6 +5,11 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=100
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
@@ -29,7 +34,9 @@ FROM python:3.11-slim AS final
 
 WORKDIR /app
 
-# Staff Engineer Fix: Install curl for robust health checks
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     curl \
@@ -43,8 +50,16 @@ RUN groupadd -g 999 appuser && \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
+# Bake all source into the image — volume mounts shadow this in local dev
+# but ECS/EKS/standalone pulls work without any host checkout.
 COPY --chown=appuser:appuser services/ ./services/
 COPY --chown=appuser:appuser sdk/ ./sdk/
 COPY --chown=appuser:appuser scripts/utils/seed_admin.py .
 
 USER appuser
+
+# Default health probe — each service overrides CMD but the health check
+# assumes the service binds :8000 (uvicorn default). docker-compose services
+# override this per-container.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1

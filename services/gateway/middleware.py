@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import time
+import urllib.parse
 import uuid
 from collections.abc import Awaitable, Callable
 
@@ -260,7 +261,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 _flight_final["status"]   = "failed"
                 return proxy_res
 
-            tokens = proxy_res.metadata.get("tokens", 1)
+            _raw_tokens = proxy_res.metadata.get("tokens")
+            if _raw_tokens is None:
+                logger.warning("inference_tokens_missing", request_id=request_id, tenant_id=t_id_str, agent_id=str(agent_id))
+                _raw_tokens = 1
+            tokens = int(_raw_tokens)
             risk_score = proxy_res.risk_score
 
             # Sprint 3.5 — inference dollar cap. Token estimate comes from
@@ -269,7 +274,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             # limit_type="inference_cost" + audit row
             # action="inference_cost_cap_exceeded".
             cost_resp = await self._enforce_inference_cost_cap(
-                request, t_id_str, agent_id, request_id, tokens=int(tokens or 1),
+                request, t_id_str, agent_id, request_id, tokens=tokens,
             )
             if cost_resp is not None:
                 _flight_final["decision"] = "block"
@@ -304,7 +309,24 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             looks_path = _k.lower() in _PATH_FIELDS or _v.startswith("/") or "../" in _v
                             if not looks_path:
                                 continue
-                            if "../" in _v or _v.startswith("/etc") or _v.startswith("/root") or _v.startswith("/proc") or _v.startswith("/sys"):
+                            _decoded_v = urllib.parse.unquote(_v).replace("\\", "/")
+                            _vl = _v.lower()
+                            _path_attack = (
+                                "../" in _v
+                                or "../" in _decoded_v
+                                or "..%2f" in _vl
+                                or "..%5c" in _vl
+                                or "\x00" in _v
+                                or _decoded_v.startswith("/etc")
+                                or _decoded_v.startswith("/root")
+                                or _decoded_v.startswith("/proc")
+                                or _decoded_v.startswith("/sys")
+                                or _v.startswith("/etc")
+                                or _v.startswith("/root")
+                                or _v.startswith("/proc")
+                                or _v.startswith("/sys")
+                            )
+                            if _path_attack:
                                 logger.warning(
                                     "path_traversal_blocked",
                                     tool=tool_name, field=_k, path=_v[:100], request_id=request_id,
@@ -313,7 +335,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                                 import re as _re
                                 _m = _re.match(r"((?:\.\./)+)", _v)
                                 _pt = _m.group(1) if _m else (_v[:20] if _v.startswith("/") else "../")
-                                resp = self._deny(f"Security: Prompt injection detected: '{_pt}'", 403)
+                                resp = self._deny(f"Security: Path traversal detected: '{_pt}'", 403)
                                 await self._log_audit(
                                     t_id_str, agent_id, "execute_tool", tool_name, "block",
                                     "path_traversal_detected", request_id,
@@ -842,7 +864,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                     tool_name = body.get("tool_name") or body.get("tool")
             except Exception:
                 pass
-        return tool_name or "unknown-tool"
+        if not tool_name:
+            raise HTTPException(status_code=400, detail="Tool name is required (provide via X-ACP-Tool header, path, or request body)")
+        return tool_name
 
     def _extract_allowed_tools(self, agent_meta: dict | None) -> list[str] | None:
         """Extract allowed tool list from agent metadata."""
@@ -876,7 +900,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         # Agents sometimes pass tenant_id/target_tenant in the payload (or
         # nested under a "parameters" key) to reference another tenant's
         # resources; treat any mismatch as an isolation violation.
-        if raw_body and request_tenant_id == tenant_id:
+        if raw_body:
             try:
                 body_json = json.loads(raw_body)
                 if isinstance(body_json, dict):

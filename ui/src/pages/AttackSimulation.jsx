@@ -1,7 +1,7 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useRef, useEffect } from 'react';
 import {
   Zap, Play, CheckCircle2, XCircle, Clock, AlertTriangle,
-  Shield, RefreshCw, Terminal, ChevronRight, Info,
+  Shield, RefreshCw, Terminal, ChevronRight, Info, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
@@ -136,6 +136,73 @@ function ResultBadge({ decision, expected }) {
   );
 }
 
+// ── Live governance log ───────────────────────────────────────────────────────
+
+function LiveLog({ entries, running }) {
+  const bottomRef = useRef(null);
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (!collapsed) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [entries, collapsed]);
+
+  if (entries.length === 0 && !running) return null;
+
+  return (
+    <div className="rounded-xl border border-white/[0.07] bg-[#080808] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setCollapsed(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/[0.02] transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Terminal size={13} className="text-green-500" />
+          <span className="text-xs font-mono font-semibold text-green-400">Live Governance Log</span>
+          {running && (
+            <span className="flex items-center gap-1 text-[10px] text-green-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              ACTIVE
+            </span>
+          )}
+          {!running && entries.length > 0 && (
+            <span className="text-[10px] text-neutral-600">{entries.length} decisions</span>
+          )}
+        </div>
+        {collapsed ? <ChevronDown size={13} className="text-neutral-600" /> : <ChevronUp size={13} className="text-neutral-600" />}
+      </button>
+
+      {!collapsed && (
+        <div className="border-t border-white/[0.05] max-h-64 overflow-y-auto font-mono text-[11px] p-3 space-y-1">
+          {entries.length === 0 && (
+            <p className="text-neutral-700">Waiting for first scenario result…</p>
+          )}
+          {entries.map((e, i) => (
+            <div key={i} className="flex items-start gap-2 leading-relaxed">
+              <span className="text-neutral-700 shrink-0 w-16">{e.time}</span>
+              <span className={`shrink-0 w-8 font-bold ${e.allowed ? 'text-green-500' : 'text-red-500'}`}>
+                {e.allowed ? 'ALLOW' : 'DENY'}
+              </span>
+              <span className="text-neutral-400 shrink-0">{e.tool}</span>
+              {e.risk != null && (
+                <span className={`shrink-0 ${e.risk > 0.7 ? 'text-red-400' : e.risk > 0.4 ? 'text-amber-400' : 'text-neutral-600'}`}>
+                  risk={Math.round(e.risk * 100)}%
+                </span>
+              )}
+              {e.latency != null && (
+                <span className="text-neutral-700 shrink-0">{e.latency}ms</span>
+              )}
+              {e.findings?.length > 0 && (
+                <span className="text-neutral-600 truncate">[{e.findings.slice(0, 2).join(', ')}]</span>
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function AttackSimulation() {
@@ -144,9 +211,22 @@ export default function AttackSimulation() {
   const [results,  setResults]  = useState({});
   const [running,  setRunning]  = useState({});
   const [runAll,   setRunAll]   = useState(false);
+  const [liveLog,  setLiveLog]  = useState([]);
 
-  // Use the selected agent from context, or fall back to the first available agent
   const agentId = selectedAgentId || agents[0]?.id || '';
+
+  const appendLog = (scenario, data, latency) => {
+    const action = (data?.action || '').toLowerCase();
+    const allowed = action === 'allow';
+    setLiveLog(prev => [...prev, {
+      time:     new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      tool:     scenario.tool,
+      allowed,
+      risk:     data?.risk ?? data?.risk_score ?? null,
+      latency,
+      findings: data?.findings ?? data?.reasons ?? [],
+    }]);
+  };
 
   const runScenario = async (scenario) => {
     setRunning(r => ({ ...r, [scenario.id]: true }));
@@ -157,8 +237,11 @@ export default function AttackSimulation() {
       });
       const latency = Date.now() - start;
       setResults(r => ({ ...r, [scenario.id]: { ...data, latency, httpStatus: 200, ts: new Date() } }));
+      appendLog(scenario, data, latency);
     } catch (err) {
-      setResults(r => ({ ...r, [scenario.id]: { error: err.message, latency: Date.now() - start, ts: new Date() } }));
+      const latency = Date.now() - start;
+      setResults(r => ({ ...r, [scenario.id]: { error: err.message, latency, ts: new Date() } }));
+      appendLog(scenario, { action: 'deny', risk: null }, latency);
     } finally {
       setRunning(r => ({ ...r, [scenario.id]: false }));
     }
@@ -166,15 +249,16 @@ export default function AttackSimulation() {
 
   const runAllScenarios = async () => {
     setRunAll(true);
+    setLiveLog([]);
     for (const s of SCENARIOS) {
       await runScenario(s);
-      await new Promise(res => setTimeout(res, 300));
+      await new Promise(res => setTimeout(res, 400));
     }
     setRunAll(false);
     addToast('All scenarios completed', 'success');
   };
 
-  const clearAll = () => setResults({});
+  const clearAll = () => { setResults({}); setLiveLog([]); };
 
   const passed  = SCENARIOS.filter(s => {
     const r = results[s.id];
@@ -183,8 +267,8 @@ export default function AttackSimulation() {
     return s.expectedDecision === 'allow' ? act === 'allow' : act !== 'allow';
   }).length;
 
-  const total     = Object.keys(results).length;
-  const coverage  = total > 0 ? Math.round((passed / total) * 100) : null;
+  const total    = Object.keys(results).length;
+  const coverage = total > 0 ? Math.round((passed / total) * 100) : null;
 
   return (
     <div className="space-y-6">
@@ -240,6 +324,9 @@ export default function AttackSimulation() {
           </div>
         </div>
       )}
+
+      {/* Live governance log — appears as soon as Run All starts */}
+      <LiveLog entries={liveLog} running={runAll} />
 
       {/* Scenario grid */}
       <div className="grid gap-3">
@@ -297,7 +384,7 @@ export default function AttackSimulation() {
                     </span>
                     {result.risk !== undefined && (
                       <span className="text-neutral-500">
-                        Risk: <span className="text-amber-400 font-mono">{(result.risk * 100).toFixed(0)}%</span>
+                        Risk: <span className="text-amber-400 font-mono">{((result.risk ?? 0) * 100).toFixed(0)}%</span>
                       </span>
                     )}
                     <span className="text-neutral-600 font-mono">{result.latency}ms</span>

@@ -1,0 +1,22 @@
+{{- if .Values.behavior.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-behavior
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "behavior" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.behavior.service.type }}
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "behavior" "ctx" $) | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.behavior.service.port }}
+      targetPort: {{ .Values.behavior.service.targetPort }}
+{{- end }}

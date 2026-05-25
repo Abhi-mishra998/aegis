@@ -1,0 +1,22 @@
+{{- if .Values.usage.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-usage
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "usage" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.usage.service.type }}
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "usage" "ctx" $) | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.usage.service.port }}
+      targetPort: {{ .Values.usage.service.targetPort }}
+{{- end }}

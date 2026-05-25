@@ -1,0 +1,97 @@
+{{- if .Values.audit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-audit
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "audit" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # NOTE: The audit service has a single Redis stream consumer group.
+  # Running > 2 replicas requires each pod to have a distinct consumer
+  # name to avoid duplicate-processing. AUDIT_CONSUMER_INSTANCE_ID is
+  # set to metadata.name (pod name) via the Downward API so each pod
+  # registers as a distinct consumer in the "acp-audit" consumer group.
+  replicas: {{ .Values.audit.replicas }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "audit" "ctx" $) | nindent 6 }}
+  # Recreate strategy is safe here because:
+  # 1. PDB guarantees minAvailable=1 so rolling is also fine.
+  # 2. RollingUpdate is the default and preferred for zero-downtime.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "audit" "ctx" $) | nindent 8 }}
+      {{- with .Values.audit.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        {{- include "acp.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.audit.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: audit
+          image: {{ include "acp.image" (dict "component" .Values.audit "ctx" $) }}
+          imagePullPolicy: {{ include "acp.imagePullPolicy" . }}
+          securityContext:
+            {{- include "acp.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.audit.containerPort }}
+              protocol: TCP
+          {{- with .Values.audit.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.audit.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.audit.resources | nindent 12 }}
+          env:
+            # ── Global config (non-secret) ──────────────────────
+            {{- include "acp.globalEnv" . | nindent 12 }}
+            # ── Secrets (injected from K8s secrets) ────────────
+            {{- include "acp.secretEnvRefs" . | nindent 12 }}
+            # ── Per-pod consumer ID from Downward API ──────────
+            # This ensures each replica registers as a distinct consumer
+            # in the Redis stream consumer group, preventing duplicate
+            # message processing across replicas.
+            - name: AUDIT_CONSUMER_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # ── Pod identity (useful for log correlation) ───────
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: {{ include "acp.fullname" . }}-config
+          volumeMounts:
+            {{- include "acp.tmpVolumeMount" . | nindent 12 }}
+      volumes:
+        {{- include "acp.tmpVolume" . | nindent 8 }}
+{{- end }}

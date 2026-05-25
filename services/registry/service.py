@@ -1,6 +1,7 @@
 import contextlib
 import uuid
 
+import structlog
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
@@ -18,6 +19,7 @@ from services.registry.schemas import (
 
 #: Set during application lifespan by the registry main.py startup handler.
 _registry_redis: Redis | RedisCluster | None = None
+_log = structlog.get_logger(__name__)
 
 
 def set_registry_redis(redis: Redis | RedisCluster) -> None:
@@ -37,8 +39,8 @@ async def _invalidate_agent_caches(agent_id: uuid.UUID) -> None:
         # PE-1 FIX: use SCAN instead of KEYS (non-blocking)
         async for key in _registry_redis.scan_iter(match=policy_pattern, count=100):
             await _registry_redis.delete(key)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.error("cache_invalidation_failed", agent_id=str(agent_id), error=str(exc))
 
 
 class AgentService:

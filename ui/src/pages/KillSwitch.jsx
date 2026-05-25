@@ -36,6 +36,7 @@ export default function KillSwitch() {
   const [loading,       setLoading]       = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [isActive,      setIsActive]      = useState(false)
+  const [redisSynced,   setRedisSynced]   = useState(null)
   const [error,         setError]         = useState('')
   const [confirmOpen,   setConfirmOpen]   = useState(false)
 
@@ -44,8 +45,10 @@ export default function KillSwitch() {
     try {
       const res = await killSwitchService.getStatus(tenant_id)
       setIsActive(res.data?.status === 'engaged' || res.data?.is_active === true)
+      setRedisSynced(true)
       setError('')
     } catch (err) {
+      setRedisSynced(false)
       setError(err.message || 'Could not reach kill switch service.')
     } finally {
       setLoading(false)
@@ -220,8 +223,14 @@ export default function KillSwitch() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-neutral-500">Redis State Sync</span>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden="true" />
-                    <span className="text-xs font-bold text-green-400">SYNCHRONIZED</span>
+                    {redisSynced === null ? (
+                      <div className="w-1.5 h-1.5 rounded-full bg-neutral-500 animate-pulse" aria-hidden="true" />
+                    ) : (
+                      <div className={`w-1.5 h-1.5 rounded-full ${redisSynced ? 'bg-green-500' : 'bg-red-500'}`} aria-hidden="true" />
+                    )}
+                    <span className={`text-xs font-bold ${redisSynced === null ? 'text-neutral-500' : redisSynced ? 'text-green-400' : 'text-red-400'}`}>
+                      {redisSynced === null ? 'CHECKING…' : redisSynced ? 'SYNCHRONIZED' : 'UNREACHABLE'}
+                    </span>
                   </div>
                 </div>
               </div>

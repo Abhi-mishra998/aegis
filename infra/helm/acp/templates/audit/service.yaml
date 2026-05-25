@@ -1,0 +1,22 @@
+{{- if .Values.audit.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-audit
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "audit" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.audit.service.type }}
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "audit" "ctx" $) | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.audit.service.port }}
+      targetPort: {{ .Values.audit.service.targetPort }}
+{{- end }}

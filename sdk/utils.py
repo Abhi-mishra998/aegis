@@ -312,6 +312,33 @@ BILLING_OUTBOX_COVERAGE_GAP_TOTAL = Counter(
     "Billable execute_tool events where the outbox row was silently dropped (duplicate audit_id on_conflict_do_nothing)",
 )
 
+# ── MTTR metrics (incident resolution timing) ─────────────────────────────────
+# The per-severity histogram acp_incident_resolution_seconds is defined in
+# services/api/router/incident.py (where it is observed on resolution).
+# This gauge exposes the rolling 7-day average in seconds so Prometheus
+# alerting rules can threshold directly on it without PromQL functions.
+INCIDENT_MTTR_SECONDS = Gauge(
+    "acp_incident_mttr_seconds",
+    "Rolling 7-day mean time to resolution for incidents (seconds).",
+)
+INCIDENT_MTTR_SECONDS.set(0)
+
+# ── Cost metrics ──────────────────────────────────────────────────────────────
+# Gauge: per-tenant current-day cost in USD.  Set (not incremented) each time
+# the usage router records a billable event so Prometheus always sees the
+# running total for the day.  Label: tenant_id (string).
+TENANT_DAILY_COST_USD = Gauge(
+    "acp_tenant_daily_cost_usd",
+    "Current calendar-day cost in USD for a tenant (1M tokens = $0.05).",
+    ["tenant_id"],
+)
+
+# Counter: monotonically increasing total cost across all tenants.
+TOTAL_COST_USD_TOTAL = Counter(
+    "acp_total_cost_usd_total",
+    "Running total cost in USD across all tenants since service start.",
+)
+
 
 _LOGGING_INITIALIZED = False
 

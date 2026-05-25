@@ -5,11 +5,16 @@ const BACKEND = 'http://localhost:8000'
 
 // All paths served by the gateway — proxied same-origin so cookies and CORS
 // are never an issue in dev. In production the nginx container handles routing.
+// Keep this list in sync with the regex in ui/nginx.conf.
 const API_PATHS = [
   '/auth', '/agents', '/dashboard', '/audit', '/billing', '/risk',
   '/decision', '/forensics', '/incidents', '/api-keys', '/auto-response',
   '/insights', '/system', '/execute', '/events', '/health', '/policy',
   '/usage', '/logs', '/stream',
+  // Paths added 2026-05-24 — were in nginx but missing from vite proxy,
+  // breaking IdentityGraph, FlightRecorder, AutonomyContracts, receipts,
+  // transparency, and tenant quota in dev mode.
+  '/graph', '/flight', '/autonomy', '/tenant', '/receipts', '/transparency',
 ]
 
 export default defineConfig({

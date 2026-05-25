@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "acp.fullname" . }}
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.global.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # All traffic routes to the gateway, which handles:
+          # - Authentication / JWT validation
+          # - 12-phase security pipeline
+          # - Proxying to downstream services (audit, decision, identity, policy)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "acp.fullname" . }}-gateway
+                port:
+                  number: {{ .Values.gateway.service.port }}
+{{- end }}

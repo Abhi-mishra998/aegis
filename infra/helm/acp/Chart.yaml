@@ -1,0 +1,24 @@
+apiVersion: v2
+name: acp
+description: Agent Control Plane — runtime governance for AI agents
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+keywords:
+  - ai
+  - agents
+  - governance
+  - security
+  - compliance
+  - audit
+home: https://github.com/acp-platform/acp
+sources:
+  - https://github.com/acp-platform/acp
+maintainers:
+  - name: ACP Platform Team
+    email: platform@acp.io
+annotations:
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial Helm chart for ACP v0.2.0
+  artifacthub.io/license: Apache-2.0

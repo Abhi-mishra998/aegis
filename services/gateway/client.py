@@ -23,6 +23,7 @@ import structlog
 from jose import JWTError, jwt
 from redis.asyncio import Redis
 
+from sdk.common.auth import mint_service_token
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX
@@ -344,6 +345,10 @@ class ServiceClient:
             headers["X-Trace-ID"] = str(ctx["trace_id"])
         if ctx.get("deadline"):
             headers["X-ACP-Deadline"] = str(ctx["deadline"])
+        # Dual-header: X-Mesh-Token (new) + X-Internal-Secret (legacy fallback).
+        # Services that have been updated to verify_internal_secret() accept both;
+        # old services that only check X-Internal-Secret continue to work.
+        headers["X-Mesh-Token"] = mint_service_token("gateway")
         headers["X-Internal-Secret"] = settings.INTERNAL_SECRET
         return headers
 
