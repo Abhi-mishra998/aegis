@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -638,8 +638,8 @@ async def get_investigation_profile(
         raise HTTPException(status_code=404, detail="No data found for this agent.")
 
     # Apply window filter
-    now = datetime.now(tz=timezone.utc)
-    window_start = now.replace(tzinfo=timezone.utc)
+    now = datetime.now(tz=UTC)
+    now.replace(tzinfo=UTC)
     from datetime import timedelta
     cutoff = now - timedelta(hours=window_hours)
 
@@ -649,7 +649,7 @@ async def get_investigation_profile(
         try:
             ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             if ts_dt.tzinfo is None:
-                ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+                ts_dt = ts_dt.replace(tzinfo=UTC)
             if ts_dt >= cutoff:
                 windowed.append(entry)
         except (ValueError, TypeError):
@@ -953,7 +953,7 @@ async def export_investigation(
 
     agent_str = str(agent_id)
     source_errors: list[str] = []
-    generated_at = datetime.now(tz=timezone.utc).isoformat()
+    generated_at = datetime.now(tz=UTC).isoformat()
 
     # exported_by: use caller identity from auth header (service name or secret prefix)
     exported_by = "service"

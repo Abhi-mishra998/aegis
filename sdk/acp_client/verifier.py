@@ -37,7 +37,6 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-
 # ── Canonical JSON (must match server exactly) ────────────────────────────
 
 
@@ -337,7 +336,7 @@ class AuditVerifier:
     # ── Constructors ──────────────────────────────────────────────────────
 
     @classmethod
-    def from_export_dir(cls, export_dir: Path) -> "AuditVerifier":
+    def from_export_dir(cls, export_dir: Path) -> AuditVerifier:
         """Create an AuditVerifier by reading keys from ``<export_dir>/keys/``.
 
         Expected layout::
@@ -447,7 +446,7 @@ class AuditVerifier:
 
     # ── Full-export verification ──────────────────────────────────────────
 
-    def verify_export(self, export_dir: Path) -> ExportVerification:
+    def verify_export(self, export_dir: Path) -> ExportVerification:  # noqa: C901
         """Verify a full audit export directory.
 
         Expected directory layout::

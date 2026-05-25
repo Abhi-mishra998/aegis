@@ -22,7 +22,7 @@ never block the audit write path.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 import httpx
@@ -82,7 +82,7 @@ class SIEMEvent:
     event_hash: str | None
 
     @classmethod
-    def from_audit_log(cls, row: "AuditLog") -> "SIEMEvent":
+    def from_audit_log(cls, row: AuditLog) -> SIEMEvent:
         """Build a SIEMEvent from an AuditLog ORM row."""
         ts = row.timestamp.isoformat() if row.timestamp else ""
         risk = float((row.metadata_json or {}).get("risk_score", 0.0))
@@ -117,7 +117,6 @@ class SplunkHECForwarder:
 
     def _build_payload(self, event: SIEMEvent) -> dict:
         import time
-        from datetime import UTC, datetime
 
         try:
             from datetime import datetime as _dt
@@ -274,7 +273,7 @@ class SIEMForwarder:
         elif target:
             logger.warning("siem_unknown_target", target=target)
 
-    async def forward_audit_row(self, row: "AuditLog") -> None:
+    async def forward_audit_row(self, row: AuditLog) -> None:
         """
         Fire-and-forget forward of a single audit row.
 
@@ -289,7 +288,7 @@ class SIEMForwarder:
         except Exception as exc:
             logger.warning("siem_dispatch_failed", error=str(exc))
 
-    async def batch_forward(self, rows: list["AuditLog"]) -> int:
+    async def batch_forward(self, rows: list[AuditLog]) -> int:
         """
         Forward a batch of audit rows, returning the count of successful sends.
 
@@ -338,7 +337,7 @@ def get_siem_forwarder() -> SIEMForwarder | None:
 # ---------------------------------------------------------------------------
 
 
-async def siem_forward(row: "AuditLog") -> None:
+async def siem_forward(row: AuditLog) -> None:
     """
     Thin wrapper called via asyncio.create_task(safe_bg(siem_forward(row))).
 
