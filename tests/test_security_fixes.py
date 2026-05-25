@@ -8,16 +8,9 @@ Covered: C1, C4, H1, H2, Rego risk_adjustment
 """
 from __future__ import annotations
 
-import hashlib
-import importlib
 import re
 import sys
-import types
-import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # C1 — X-Tenant-ID mandatory on login
@@ -27,7 +20,6 @@ def test_c1_tenant_id_none_raises_http_400():
     """identity/router.py: missing X-Tenant-ID header must return 400."""
     # Import the function that builds the HTTPException
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from fastapi import HTTPException
     # Verify the conditional exists in the source
     src = Path("services/identity/router.py").read_text()
     assert "x_tenant_id is None" in src, "C1 fix: None-check for X-Tenant-ID not found"

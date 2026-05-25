@@ -8,7 +8,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -31,7 +30,6 @@ from sdk.acp_client.verifier import (
     verify_receipt,
     verify_root_chain,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

@@ -22,8 +22,6 @@ from services.gateway.llm_router import (
     LLMResponse,
     LLMRouter,
     OpenAIProvider,
-    get_llm_router,
-    router_singleton,
 )
 
 # ---------------------------------------------------------------------------
