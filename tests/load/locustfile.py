@@ -139,6 +139,11 @@ class ACPGatewayUser(HttpUser):
 
     def on_start(self):
         """Generate or validate token, extract tenant context."""
+        # Stagger logins to avoid thundering-herd on identity service.
+        # 50 users spawning at once = 50 simultaneous /auth/token calls → 500s.
+        # A 0-3s random sleep spreads them out across the spawn window.
+        time.sleep(random.uniform(0, 3))
+
         self.token = getattr(self.environment.parsed_options, "test_token", "")
         self.tenant_id = getattr(self.environment.parsed_options, "tenant_id", "")
 
