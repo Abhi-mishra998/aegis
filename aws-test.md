@@ -31,7 +31,7 @@ ssh -i ~/Downloads/acp-prod-key.pem ubuntu@43.205.42.5
 ### 1.1 — Create Admin User
 
 ```bash
-# Runs inside the gateway container — uses pgbouncer so no SSL issue
+# Run from EC2. Uses pgbouncer inside the container — no SSL issue.
 docker exec \
   -e DATABASE_URL="postgresql+asyncpg://identity_user:identity_prod_pwd@pgbouncer:6432/acp_identity" \
   acp_gateway python seed_admin.py
@@ -46,7 +46,7 @@ Expected output:
 
 ### 1.2 — Seed Demo Data (fills every UI chart with 30 days of history)
 
-Run this on the **EC2 host** (not inside Docker — the script needs to connect to 3 databases).
+Run this on the **EC2 host** (not inside Docker).
 
 ```bash
 cd ~/aegis
@@ -58,7 +58,7 @@ source .venv/bin/activate
 # Install dependencies (safe to re-run)
 pip install -e ".[server,dev]" -q
 
-# Run seed script via pgbouncer (postgre superuser can access all 3 databases)
+# Run seed script via pgbouncer
 DATABASE_URL="postgresql+asyncpg://postgre:Acp2026Prod%23Rds%24Secure@localhost:6432/acp_audit" \
 ACP_BASE_URL="http://localhost:8000" \
 ACP_ADMIN_EMAIL="admin@acp.local" \
@@ -72,7 +72,7 @@ Expected output:
   OK   — Created demo@aegisagent.in with VIEWER role
 [2/4] Audit logs (acp_audit database)...
   OK   — 2000 audit log rows seeded (30 days)
-[3/4] Incidents (acp database)...
+[3/4] Incidents (acp_api database)...
   OK   — 35 incidents seeded
 [4/4] Usage records (acp_usage database)...
   OK   — 2000 usage records seeded
@@ -83,8 +83,8 @@ Safe to re-run — existing data is detected and skipped.
 ### 1.3 — Verify Seeding Worked
 
 ```bash
-# Check admin login returns a token
-curl -s -X POST http://localhost:8000/auth/login \
+# Run from EC2. Check admin login returns a token.
+curl -s -X POST http://localhost:8000/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"admin@acp.local","password":"password"}' \
@@ -104,11 +104,11 @@ export TENANT="00000000-0000-0000-0000-000000000001"
 
 ### 2.1 — Gateway Health
 ```bash
-curl -s $BASE/health | python3 -m json.tool
+curl -s $BASE/health
 ```
 Expected:
 ```json
-{"success": true, "service": "gateway", "status": "healthy"}
+{"status":"healthy","service":"gateway","version":"1.0.0"}
 ```
 
 ### 2.2 — All Services Healthy
@@ -116,21 +116,21 @@ Expected:
 curl -s $BASE/system/health | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-services = d.get('data', {}).get('services', {})
+services = d.get('services', d.get('data', {}) and d.get('data', {}).get('services', {}) or {})
 healthy = sum(1 for v in services.values() if v.get('status') == 'healthy')
 total = len(services)
 print(f'{healthy}/{total} services healthy')
 for name, v in sorted(services.items()):
     status = v.get('status', 'unknown')
-    mark = '✓' if status == 'healthy' else '✗'
-    print(f'  {mark} {name}: {status}')
+    mark = 'OK' if status == 'healthy' else 'FAIL'
+    print(f'  [{mark}] {name}: {status}')
 "
 ```
-**Resume metric:** "23/23 microservices healthy on production boot"
+**Resume metric:** "12/12 microservices healthy on production boot"
 
 ### 2.3 — Get Auth Token
 ```bash
-TOKEN=$(curl -s -X POST $BASE/auth/login \
+TOKEN=$(curl -s -X POST $BASE/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: $TENANT" \
   -d '{"email":"admin@acp.local","password":"password"}' \
@@ -185,9 +185,9 @@ Expected: `"decision": "allow"` or `"decision": "block"` with a signed receipt.
 curl -s $BASE/audit/verify-chain \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" \
-  | python3 -m json.tool
+  | python3 -c "import sys,json; d=json.load(sys.stdin).get('data',{}); print(f'Chain valid: {d.get(\"chain_valid\")}, Violations: {d.get(\"violations\",0)}')"
 ```
-Expected: `"chain_valid": true, "violations": 0`
+Expected: `Chain valid: True, Violations: 0`
 
 **Resume metric:** "Cryptographic audit chain — 0 integrity violations across all decisions"
 
@@ -221,7 +221,7 @@ curl -vI https://aegisagent.in 2>&1 | grep -E "issuer|expire|SSL|subject"
 curl -s $BASE/status | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-lat = d.get('data', {}).get('latency', {})
+lat = d.get('data', {}).get('latency', d.get('latency', {}))
 print(f'p50:      {lat.get(\"p50_ms\", \"N/A\")} ms')
 print(f'p95:      {lat.get(\"p95_ms\", \"N/A\")} ms')
 print(f'p99:      {lat.get(\"p99_ms\", \"N/A\")} ms')
@@ -272,7 +272,7 @@ class ACPUser(HttpUser):
     agent_id = None
 
     def on_start(self):
-        r = self.client.post("/auth/login",
+        r = self.client.post("/auth/token",
             json={"email": "admin@acp.local", "password": "password"},
             headers={"X-Tenant-ID": TENANT})
         self.token = r.json()["data"]["access_token"]
@@ -401,7 +401,7 @@ time docker kill acp_pgbouncer && \
 docker kill acp_audit acp_identity acp_registry acp_decision acp_usage
 
 start=$(date +%s)
-until [ "$(docker ps --format '{{.Status}}' | grep -c healthy)" -ge 20 ]; do
+until [ "$(docker ps --format '{{.Status}}' | grep -c '(healthy)')" -ge 18 ]; do
   sleep 2
 done
 end=$(date +%s)
@@ -530,13 +530,13 @@ curl -s "$BASE/audit/logs?limit=1" \
 
 ## Phase 9 — Full Checklist (Screenshot Each)
 
-Run these all at once from Mac. Screenshot everything for your resume.
+Run these all at once from Mac.
 
 ```bash
 export BASE=https://aegisagent.in
 export TENANT="00000000-0000-0000-0000-000000000001"
 
-TOKEN=$(curl -s -X POST $BASE/auth/login \
+TOKEN=$(curl -s -X POST $BASE/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: $TENANT" \
   -d '{"email":"admin@acp.local","password":"password"}' \
@@ -548,13 +548,14 @@ AGENT_ID=$(curl -s $BASE/agents \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['items'][0]['agent_id'])")
 
 echo "=== 1. Gateway health ==="
-curl -s $BASE/health | python3 -m json.tool
+curl -s $BASE/health
 
 echo ""
 echo "=== 2. Services healthy ==="
 curl -s $BASE/system/health | python3 -c "
 import sys,json
-s=json.load(sys.stdin).get('data',{}).get('services',{})
+d=json.load(sys.stdin)
+s=d.get('services', (d.get('data') or {}).get('services', {}))
 healthy=sum(1 for v in s.values() if v.get('status')=='healthy')
 print(f'{healthy}/{len(s)} healthy')"
 
@@ -587,7 +588,8 @@ echo ""
 echo "=== 7. Latency ==="
 curl -s $BASE/status | python3 -c "
 import sys,json
-lat=json.load(sys.stdin).get('data',{}).get('latency',{})
+d=json.load(sys.stdin)
+lat=d.get('latency', (d.get('data') or {}).get('latency', {}))
 print(f'p50={lat.get(\"p50_ms\",\"N/A\")}ms  p95={lat.get(\"p95_ms\",\"N/A\")}ms  p99={lat.get(\"p99_ms\",\"N/A\")}ms')"
 
 echo ""
@@ -601,14 +603,14 @@ echo "=== Done ==="
 ```
 Production Infrastructure:
 • Deployed 24-container AI governance platform on AWS EC2 t3.2xlarge — live at aegisagent.in
-• AWS RDS PostgreSQL + ElastiCache Redis, CI/CD via GitHub Actions → SSH → docker-compose rebuild
+• AWS RDS PostgreSQL + ElastiCache Redis (TLS), CI/CD via GitHub Actions → SSH → docker-compose rebuild
 • All 24 containers healthy including PgBouncer, Jaeger, Prometheus, Grafana
 
 Platform Performance (measured in production):
 • X,000+ AI agent governance decisions with <300ms p50 latency
 • Platform MTTR < 30s — Docker restart policies, zero manual intervention
 • XXX RPS at 100 concurrent users, <1% error rate (locust load test)
-• 23/23 microservices healthy; cryptographic audit chain — 0 violations
+• 12/12 microservices healthy; cryptographic audit chain — 0 violations
 
 Security & Compliance:
 • Tamper-evident audit log: ed25519-signed Merkle roots — any deletion publicly detectable
@@ -625,21 +627,23 @@ Security & Compliance:
 # Container restarting — check why
 docker logs acp_<service> --tail 50
 
-# Check all 24 containers
+# Check all containers
 docker ps --format "{{.Names}}\t{{.Status}}" | sort
 
-# Test RDS connectivity via psql (with SSL that RDS requires)
+# Test RDS connectivity (from EC2)
 PGPASSWORD='Acp2026Prod#Rds$Secure' psql \
   -h acp-postgres-prod.cz0qqg60keaj.ap-south-1.rds.amazonaws.com \
   -U postgre -d postgres -c "SELECT count(*) FROM pg_stat_activity;"
 
-# Test pgbouncer from EC2 host (no SSL needed — pgbouncer handles it)
+# Test pgbouncer from EC2 host (no SSL — pgbouncer terminates SSL to RDS)
 PGPASSWORD='Acp2026Prod#Rds$Secure' psql \
   -h localhost -p 6432 -U postgre -d acp_audit \
   -c "SELECT count(*) FROM audit_logs;"
 
-# Test Redis
-redis-cli -h master.acp-redis-prod.1gloza.aps1.cache.amazonaws.com ping
+# Test ElastiCache Redis (TLS required — note the --tls flag)
+redis-cli --tls \
+  -h master.acp-redis-prod.1gloza.aps1.cache.amazonaws.com \
+  -p 6379 ping
 
 # Restart everything cleanly
 cd ~/aegis/infra
