@@ -112,16 +112,34 @@ def _parse_stream_event(
 
 
 async def _ensure_consumer_group(redis: Redis) -> None:
-    """Creates the Redis Stream consumer group if it does not already exist."""
-    try:
-        await redis.xgroup_create(_STREAM_KEY, _CONSUMER_GROUP, id="0", mkstream=True)
-        logger.info("audit_consumer_group_created", group=_CONSUMER_GROUP)
-    except Exception as exc:
-        if "BUSYGROUP" in str(exc):
-            logger.debug("audit_consumer_group_already_exists", group=_CONSUMER_GROUP)
-        else:
-            logger.error("audit_consumer_group_error", error=str(exc))
-            raise
+    """Creates the Redis Stream consumer group if it does not already exist.
+
+    Retries up to 3 times with backoff. On persistent failure (e.g. ElastiCache
+    connection timeout at startup), logs a warning and returns — the consumer
+    loop will create the group when Redis recovers. Never crashes the service.
+    """
+    for attempt in range(3):
+        try:
+            await redis.xgroup_create(_STREAM_KEY, _CONSUMER_GROUP, id="0", mkstream=True)
+            logger.info("audit_consumer_group_created", group=_CONSUMER_GROUP)
+            return
+        except Exception as exc:
+            if "BUSYGROUP" in str(exc):
+                logger.debug("audit_consumer_group_already_exists", group=_CONSUMER_GROUP)
+                return
+            if attempt < 2:
+                logger.warning(
+                    "audit_consumer_group_retry",
+                    error=str(exc),
+                    attempt=attempt + 1,
+                )
+                await asyncio.sleep(2 ** attempt)
+            else:
+                logger.warning(
+                    "audit_consumer_group_deferred",
+                    error=str(exc),
+                    note="consumer loop will create group when Redis recovers",
+                )
 
 
 async def _process_pending(redis: Redis) -> None:

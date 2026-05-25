@@ -111,13 +111,23 @@ async def generate_insight(event: dict) -> dict:
 
 
 async def ensure_consumer_group() -> None:
-    try:
-        await redis.xgroup_create(_STREAM_KEY, _CONSUMER_GROUP, id="0", mkstream=True)
-        logger.info("consumer_group_ready", group=_CONSUMER_GROUP)
-    except Exception as e:
-        if "BUSYGROUP" not in str(e):
-            logger.error("consumer_group_init_failed", error=str(e))
-            sys.exit(1)
+    for attempt in range(3):
+        try:
+            await redis.xgroup_create(_STREAM_KEY, _CONSUMER_GROUP, id="0", mkstream=True)
+            logger.info("consumer_group_ready", group=_CONSUMER_GROUP)
+            return
+        except Exception as e:
+            if "BUSYGROUP" in str(e):
+                return
+            if attempt < 2:
+                logger.warning("consumer_group_retry", error=str(e), attempt=attempt + 1)
+                await asyncio.sleep(2 ** attempt)
+            else:
+                logger.warning(
+                    "consumer_group_deferred",
+                    error=str(e),
+                    note="worker loop will retry when Redis recovers",
+                )
 
 
 async def store_insight(event_id: str, insight: dict) -> None:

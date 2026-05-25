@@ -63,6 +63,7 @@ jobs:
             aws s3 cp s3://acp-backups-prod-am/config/userlist.txt ~/aegis/infra/userlist.txt
 
             echo "=== Building images ==="
+            cd ~/aegis/infra
             # Hard fail on build errors — no || true here
             docker-compose \
               -f docker-compose.yml \
