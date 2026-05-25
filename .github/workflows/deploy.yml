@@ -59,7 +59,7 @@ jobs:
 
             echo "=== Rebuilding containers ==="
             cd ~/aegis/infra
-            docker compose \
+            docker-compose \
               -f docker-compose.yml \
               -f docker-compose.aws.yml \
               up -d --build
