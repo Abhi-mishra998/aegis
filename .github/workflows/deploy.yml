@@ -57,6 +57,11 @@ jobs:
             cd ~/aegis
             git pull origin main
 
+            echo "=== Pulling config from S3 ==="
+            aws s3 cp s3://acp-backups-prod-am/config/.env ~/aegis/infra/.env
+            aws s3 cp s3://acp-backups-prod-am/config/pgbouncer.aws.ini ~/aegis/infra/pgbouncer.aws.ini
+            aws s3 cp s3://acp-backups-prod-am/config/userlist.txt ~/aegis/infra/userlist.txt
+
             echo "=== Rebuilding containers ==="
             cd ~/aegis/infra
             docker-compose \
