@@ -3,8 +3,7 @@ name: Build & Push to ECR
 # Triggers on every push to main. Pull requests are intentionally excluded —
 # ECR push requires production credentials that should not run on untrusted forks.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:  # manual only — ECR not configured yet
 
 # Least-privilege: only the permissions required for OIDC token issuance.
 # ECR GetAuthorizationToken + push rights come from the IAM role, not the token.

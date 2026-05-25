@@ -1,0 +1,69 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "postgresql+asyncpg://test:test@localhost:5432/acp_test"
+      REDIS_URL: "redis://localhost:6379"
+      JWT_SECRET_KEY: "ci-unit-test-jwt-secret-not-for-production"
+      GROQ_API_KEY: "ci-unit-test-groq-key-placeholder"
+      INTERNAL_SECRET: "ci-unit-test-internal-secret-placeholder"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,server]"
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ \
+            -m "not integration" \
+            -q --tb=short --no-header
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 600s
+          script: |
+            set -e
+
+            echo "=== Pulling latest code ==="
+            cd ~/aegis
+            git pull origin main
+
+            echo "=== Rebuilding containers ==="
+            cd ~/aegis/infra
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.aws.yml \
+              up -d --build
+
+            echo "=== Cleaning up old images ==="
+            docker image prune -f
+
+            echo "=== Deploy complete ==="
+            docker ps --format "{{.Names}}\t{{.Status}}" | sort
