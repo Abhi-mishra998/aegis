@@ -915,7 +915,7 @@ Fill in EVERY `REPLACE_ME` value:
 ```bash
 # These are the specific values you MUST change:
 DATABASE_URL=postgresql+asyncpg://postgres:YOUR_RDS_PASSWORD@YOUR_RDS_ENDPOINT:5432/acp
-REDIS_URL=redis://YOUR_ELASTICACHE_ENDPOINT:6379/0
+REDIS_URL=rediss://YOUR_ELASTICACHE_ENDPOINT:6379/0
 POSTGRES_HOST=YOUR_RDS_ENDPOINT
 POSTGRES_PASSWORD=YOUR_RDS_PASSWORD
 
@@ -1037,11 +1037,14 @@ docker logs acp_audit --tail 30
 ```bash
 # Gateway health
 curl http://localhost:8000/health
-# Expect: {"success": true, ...}
+# Expect: {"status":"healthy","service":"gateway","version":"1.0.0"}
 
 # Full system health
-curl http://localhost:8000/system/health
-# Expect: all services showing "healthy"
+curl http://localhost:8000/system/health | python3 -c "
+import sys,json; d=json.load(sys.stdin)
+s=d.get('services',{}); h=sum(1 for v in s.values() if v.get('status')=='healthy')
+print(f'{h}/{len(s)} services healthy')"
+# Expect: 12/12 services healthy
 
 # UI is up
 curl -I http://localhost:5173
@@ -1096,7 +1099,7 @@ Once certificate is **Issued**, test HTTPS through ALB:
 ```bash
 # On your Mac:
 curl https://aegisagent.in/health
-# Expect: {"success": true, ...}
+# Expect: {"status":"healthy","service":"gateway","version":"1.0.0"}
 
 curl https://www.aegisagent.in/health
 # Same response
@@ -1242,8 +1245,7 @@ echo "=== 2. System health ==="
 curl -s $BASE/system/health | python3 -m json.tool
 
 echo "=== 3. Auth ==="
-# /auth/login is the USER endpoint (email+password). /auth/token is for AGENTS (agent_id+secret).
-TOKEN=$(curl -s -X POST $BASE/auth/login \
+TOKEN=$(curl -s -X POST $BASE/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: $TENANT" \
   -d '{"email":"admin@acp.local","password":"password"}' \
@@ -1290,8 +1292,11 @@ psql -h YOUR_RDS_ENDPOINT -U postgres -c "SELECT 1"
 ### Redis ping fails
 ```bash
 sudo apt-get install -y redis-tools
-redis-cli -h YOUR_ELASTICACHE_ENDPOINT ping
-# If no PONG: ElastiCache security group → allow 6379 from acp-ec2-sg
+# ElastiCache requires TLS — use --tls flag
+redis-cli --tls -h YOUR_ELASTICACHE_ENDPOINT -p 6379 ping
+# Expect: PONG
+# If no PONG: check security group allows 6379 from acp-ec2-sg
+# Also verify REDIS_URL in .env starts with rediss:// (double-s = TLS)
 ```
 
 ### ALB shows "unhealthy" target
@@ -1352,7 +1357,7 @@ for i in $(seq 1 10); do
 done
 
 # Count total decisions
-TOKEN=$(curl -s -X POST https://aegisagent.in/auth/login \
+TOKEN=$(curl -s -X POST https://aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"admin@acp.local","password":"password"}' \
