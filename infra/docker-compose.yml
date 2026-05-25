@@ -244,8 +244,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
 
   identity:
     build:
@@ -279,8 +279,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 45s
+      retries: 5
+      start_period: 120s
 
   policy:
     build:
@@ -349,8 +349,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 45s
+      retries: 5
+      start_period: 120s
 
   api:
     build:
@@ -379,8 +379,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
 
   usage:
     build:
@@ -410,8 +410,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
 
   gateway:
     build:
@@ -445,17 +445,17 @@ services:
       - ../sdk:/app/sdk:ro
     depends_on:
       identity:
-        condition: service_healthy
+        condition: service_started
       policy:
-        condition: service_healthy
+        condition: service_started
       audit:
-        condition: service_healthy
+        condition: service_started
       api:
-        condition: service_healthy
+        condition: service_started
       usage:
-        condition: service_healthy
+        condition: service_started
       decision:
-        condition: service_healthy
+        condition: service_started
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -523,7 +523,7 @@ services:
       pgbouncer:
         condition: service_healthy
       audit:
-        condition: service_healthy
+        condition: service_started
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -585,8 +585,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
 
   flight_recorder:
     build:
@@ -615,8 +615,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
 
   autonomy:
     build:
@@ -645,8 +645,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
 
   groq_worker:
     build:

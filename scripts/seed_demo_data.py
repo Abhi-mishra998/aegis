@@ -744,7 +744,7 @@ async def main() -> None:
         sys.exit(1)
 
     audit_db_url = derive_db_url(base_db_url, "acp_audit")
-    api_db_url = derive_db_url(base_db_url, "acp")
+    api_db_url = derive_db_url(base_db_url, "acp_api")
     usage_db_url = derive_db_url(base_db_url, "acp_usage")
 
     print(f"Base URL : {BASE_URL}")
