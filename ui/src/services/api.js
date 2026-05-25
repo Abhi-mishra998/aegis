@@ -146,9 +146,11 @@ export const authService = {
     console.info("AUTHENTICATION_ATTEMPT", { email: data.email });
 
     const headers = { "Content-Type": "application/json" };
-    // UI-4 FIX: Ensure we handle both camelCase and snake_case from form data
-    const tenantIdInput = data.tenant_id || data.tenantId;
-    if (tenantIdInput) headers["X-Tenant-ID"] = tenantIdInput;
+    // Always send X-Tenant-ID. Browser login never knows the tenant upfront,
+    // so fall back to the default system tenant. The identity service rejects
+    // mismatched tenants (401) if the user belongs to a different one.
+    const tenantIdInput = data.tenant_id || data.tenantId || "00000000-0000-0000-0000-000000000001";
+    headers["X-Tenant-ID"] = tenantIdInput;
 
     const res = await fetch(`${API_BASE}/auth/token`, {
       method: "POST",
