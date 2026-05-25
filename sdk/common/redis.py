@@ -12,10 +12,13 @@ logger = structlog.get_logger(__name__)
 
 _POOL_DEFAULTS: dict[str, Any] = {
     "max_connections": 50,
-    "socket_timeout": 5.0,
+    "socket_timeout": 10.0,
     "socket_connect_timeout": 5.0,
     "retry_on_timeout": True,
-    "health_check_interval": 30,  # keep idle connections alive; prevents stale-socket timeouts
+    # health_check_interval removed: it sends a PING on every connection reuse after
+    # idle period. On ElastiCache, this PING times out (socket_timeout × 3 internal
+    # retries = ~30s wasted per check), causing audit and insight_worker to loop.
+    # Actual operations (xreadgroup, xadd, get/set) reconnect automatically on failure.
 }
 
 
