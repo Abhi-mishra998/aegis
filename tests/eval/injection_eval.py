@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import statistics
 import sys
 import time
 from typing import NamedTuple
@@ -313,7 +312,7 @@ def print_results(metrics: dict, use_moderation_api: bool) -> None:
     sep = "─" * width
 
     print(f"\n{'═' * width}")
-    print(f"  ACP Injection Classifier — Evaluation Results")
+    print("  ACP Injection Classifier — Evaluation Results")
     print(f"  Tier: {tier_label}")
     print(f"{'═' * width}")
     print(f"  {'Metric':<28}  {'Value':>10}")
