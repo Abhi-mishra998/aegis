@@ -1,0 +1,75 @@
+{{- if .Values.groqWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-groq-worker
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "groq-worker" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Groq worker is a Redis stream consumer for LLM analysis jobs.
+  # A single replica is the default; scale up if Groq event lag grows.
+  # NOTE: This worker exits with code 1 when GROQ_API_KEY is missing or
+  # invalid — ensure the secret is correctly populated before enabling.
+  replicas: {{ .Values.groqWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "groq-worker" "ctx" $) | nindent 6 }}
+  strategy:
+    # Recreate avoids two workers racing on the same Redis consumer group entry.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "groq-worker" "ctx" $) | nindent 8 }}
+      {{- with .Values.groqWorker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        {{- include "acp.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.groqWorker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Allow in-flight Groq API calls to complete before SIGKILL.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: groq-worker
+          image: {{ include "acp.image" (dict "component" .Values.groqWorker "ctx" $) }}
+          imagePullPolicy: {{ include "acp.imagePullPolicy" . }}
+          securityContext:
+            {{- include "acp.containerSecurityContext" . | nindent 12 }}
+          # Workers have no HTTP port — no livenessProbe or readinessProbe needed.
+          resources:
+            {{- toYaml .Values.groqWorker.resources | nindent 12 }}
+          env:
+            # ── Global config (non-secret) ──────────────────────
+            {{- include "acp.globalEnv" . | nindent 12 }}
+            # ── Secrets — GROQ_API_KEY is required for this worker ──
+            {{- include "acp.secretEnvRefs" . | nindent 12 }}
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            # ── Pod identity (useful for log correlation) ───────
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: {{ include "acp.fullname" . }}-config
+          volumeMounts:
+            {{- include "acp.tmpVolumeMount" . | nindent 12 }}
+      volumes:
+        {{- include "acp.tmpVolume" . | nindent 8 }}
+{{- end }}

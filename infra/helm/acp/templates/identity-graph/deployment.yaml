@@ -1,0 +1,81 @@
+{{- if .Values.identityGraph.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-identity-graph
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "identity-graph" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.identityGraph.replicas }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "identity-graph" "ctx" $) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "identity-graph" "ctx" $) | nindent 8 }}
+      {{- with .Values.identityGraph.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        {{- include "acp.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.identityGraph.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: identity-graph
+          image: {{ include "acp.image" (dict "component" .Values.identityGraph "ctx" $) }}
+          imagePullPolicy: {{ include "acp.imagePullPolicy" . }}
+          securityContext:
+            {{- include "acp.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.identityGraph.containerPort }}
+              protocol: TCP
+          {{- with .Values.identityGraph.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.identityGraph.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.identityGraph.resources | nindent 12 }}
+          env:
+            # ── Global config (non-secret) ──────────────────────
+            {{- include "acp.globalEnv" . | nindent 12 }}
+            # ── Secrets (injected from K8s secrets) ────────────
+            {{- include "acp.secretEnvRefs" . | nindent 12 }}
+            # ── Pod identity (useful for log correlation) ───────
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: {{ include "acp.fullname" . }}-config
+          volumeMounts:
+            {{- include "acp.tmpVolumeMount" . | nindent 12 }}
+      volumes:
+        {{- include "acp.tmpVolume" . | nindent 8 }}
+{{- end }}

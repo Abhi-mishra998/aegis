@@ -1,0 +1,70 @@
+{{- if .Values.identity.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-identity
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "identity" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.identity.replicas }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "identity" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "identity" "ctx" $) | nindent 8 }}
+      {{- with .Values.identity.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        {{- include "acp.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.identity.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Identity issues JWTs — graceful drain is important
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: identity
+          image: {{ include "acp.image" (dict "component" .Values.identity "ctx" $) }}
+          imagePullPolicy: {{ include "acp.imagePullPolicy" . }}
+          securityContext:
+            {{- include "acp.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.identity.containerPort }}
+              protocol: TCP
+          {{- with .Values.identity.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.identity.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.identity.resources | nindent 12 }}
+          env:
+            {{- include "acp.globalEnv" . | nindent 12 }}
+            {{- include "acp.secretEnvRefs" . | nindent 12 }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: {{ include "acp.fullname" . }}-config
+          volumeMounts:
+            {{- include "acp.tmpVolumeMount" . | nindent 12 }}
+      volumes:
+        {{- include "acp.tmpVolume" . | nindent 8 }}
+{{- end }}

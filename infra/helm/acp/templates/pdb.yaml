@@ -1,0 +1,89 @@
+{{- /*
+PodDisruptionBudgets (PDBs) protect audit and identity from simultaneous
+pod eviction during node maintenance, cluster upgrades, or chaos events.
+
+Audit: minAvailable=1 ensures the audit chain writer is never fully offline.
+Identity: minAvailable=1 ensures JWT issuance is never fully blocked.
+
+Enabled independently via .Values.audit.pdb.enabled and .Values.identity.pdb.enabled.
+*/ -}}
+
+{{- if and .Values.audit.enabled .Values.audit.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "acp.fullname" . }}-audit
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "audit" "ctx" $) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.audit.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "audit" "ctx" $) | nindent 6 }}
+{{- end }}
+
+{{- if and .Values.identity.enabled .Values.identity.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "acp.fullname" . }}-identity
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "identity" "ctx" $) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.identity.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "identity" "ctx" $) | nindent 6 }}
+{{- end }}
+
+{{- if and .Values.decision.enabled .Values.decision.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "acp.fullname" . }}-decision
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "decision" "ctx" $) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.decision.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "decision" "ctx" $) | nindent 6 }}
+{{- end }}
+
+{{- if and .Values.policy.enabled .Values.policy.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "acp.fullname" . }}-policy
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "policy" "ctx" $) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.policy.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "policy" "ctx" $) | nindent 6 }}
+{{- end }}
+
+{{- if and .Values.gateway.enabled .Values.gateway.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "acp.fullname" . }}-gateway
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "gateway" "ctx" $) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.gateway.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "gateway" "ctx" $) | nindent 6 }}
+{{- end }}

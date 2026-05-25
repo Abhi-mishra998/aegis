@@ -356,6 +356,11 @@ from services.audit.transparency import transparency_router  # noqa: E402
 
 app.include_router(transparency_router)
 
+# Compliance evidence engine — EU AI Act / NIST AI RMF / SOC 2 / tool ledger.
+from services.audit.compliance import compliance_router  # noqa: E402
+
+app.include_router(compliance_router)
+
 
 # ── Receipt key endpoint (top-level, not under /logs) ───────────────────
 @app.get("/receipts/key", tags=["receipts"])

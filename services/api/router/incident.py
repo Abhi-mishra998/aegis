@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import UTC
 
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
@@ -14,6 +16,7 @@ from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.response import APIResponse
+from sdk.utils import INCIDENT_MTTR_SECONDS  # global unlabelled MTTR gauge (seconds)
 from services.api.repository.incident import IncidentRepository, StateTransitionError
 from services.api.schemas.incident import (
     IncidentActionRequest,
@@ -25,6 +28,31 @@ from services.api.schemas.incident import (
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
+
+# ── Prometheus metrics ─────────────────────────────────────────────────────────
+_INCIDENT_CREATED = Counter(
+    "acp_incident_created_total",
+    "Total incidents created",
+    ["severity", "trigger"],
+)
+_INCIDENT_RESOLVED = Counter(
+    "acp_incident_resolved_total",
+    "Total incidents resolved",
+    ["severity"],
+)
+_INCIDENT_RESOLUTION_SECONDS = Histogram(
+    "acp_incident_resolution_seconds",
+    "Time from incident creation to resolution (seconds)",
+    ["severity"],
+    buckets=[60, 300, 900, 1800, 3600, 7200, 14400, 28800, 86400],
+)
+_INCIDENT_MTTR_HOURS = Gauge(
+    "acp_incident_mttr_hours",
+    "Rolling 7-day mean time to recovery in hours (per tenant)",
+    ["tenant_id"],
+)
+# acp_incident_mttr_seconds — global unlabelled gauge for alerting rules —
+# is defined in sdk/utils.py and imported as INCIDENT_MTTR_SECONDS above.
 
 
 _SEV_EMOJI = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}
@@ -95,6 +123,11 @@ async def create_incident(
     repo     = IncidentRepository(db)
     incident = await repo.create(payload)
 
+    _INCIDENT_CREATED.labels(
+        severity=incident.severity,
+        trigger=incident.trigger or "unknown",
+    ).inc()
+
     webhook_url = settings.ALERT_WEBHOOK_URL
     if webhook_url:
         asyncio.create_task(_safe_bg(_fire_webhook(webhook_url, {
@@ -137,6 +170,10 @@ async def get_summary(
 ) -> APIResponse[IncidentSummary]:
     repo = IncidentRepository(db)
     raw  = await repo.summary(tenant_id)
+    mttr_hours = raw.get("mttr_hours", 0.0)
+    _INCIDENT_MTTR_HOURS.labels(tenant_id=str(tenant_id)).set(mttr_hours)
+    # Also refresh global seconds gauge so alert rules always have an up-to-date value.
+    INCIDENT_MTTR_SECONDS.set(mttr_hours * 3600)
     return APIResponse(data=IncidentSummary(**raw))
 
 
@@ -186,6 +223,28 @@ async def update_incident(
         raise HTTPException(status_code=422, detail=str(e))
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+
+    if payload.status and payload.status.upper() == "RESOLVED":
+        _INCIDENT_RESOLVED.labels(severity=incident.severity).inc()
+        if incident.resolved_at and incident.created_at:
+            created = (
+                incident.created_at.replace(tzinfo=UTC)
+                if incident.created_at.tzinfo is None
+                else incident.created_at
+            )
+            elapsed_seconds = (incident.resolved_at - created).total_seconds()
+            # Per-severity histogram: records exact resolution time for dashboards.
+            _INCIDENT_RESOLUTION_SECONDS.labels(severity=incident.severity).observe(elapsed_seconds)
+            try:
+                summary_raw = await IncidentRepository(db).summary(tenant_id)
+                mttr_hours = summary_raw.get("mttr_hours", 0.0)
+                # Per-tenant gauge (hours) for the operator dashboard.
+                _INCIDENT_MTTR_HOURS.labels(tenant_id=str(tenant_id)).set(mttr_hours)
+                # Global unlabelled gauge (seconds) for Prometheus alerting rules.
+                INCIDENT_MTTR_SECONDS.set(mttr_hours * 3600)
+            except Exception as _exc:
+                logger.warning("mttr_gauge_update_failed", error=str(_exc))
+
     logger.info("incident_updated", id=str(incident_id), status=payload.status)
     return APIResponse(data=IncidentResponse.model_validate(incident))
 

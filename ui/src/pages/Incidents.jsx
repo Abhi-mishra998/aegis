@@ -136,7 +136,7 @@ function IncidentDetail({ incident, onClose, onRefresh }) {
           <div>
             <h3 className="text-sm font-semibold text-white">{incident.title}</h3>
             <p className="text-xs text-neutral-500 mt-0.5 font-mono">
-              Agent {incident.agent_id?.slice(0, 8)} · {incident.tool || 'N/A'} · Risk {(incident.risk_score * 100).toFixed(0)}%
+              Agent {incident.agent_id?.slice(0, 8)} · {incident.tool || 'N/A'} · Risk {((incident.risk_score ?? 0) * 100).toFixed(0)}%
             </p>
             {incident.explanation && (
               <p className="text-xs text-neutral-400 mt-2 leading-relaxed bg-white/[0.03] rounded px-2 py-1.5 border border-white/[0.06]">
@@ -348,8 +348,8 @@ function SocFeed() {
 
                   {/* Risk + time */}
                   <div className="shrink-0 text-right">
-                    <p className={`text-[11px] font-mono font-bold ${ev.risk_score >= 0.9 ? 'text-red-400' : ev.risk_score >= 0.7 ? 'text-orange-400' : 'text-neutral-500'}`}>
-                      {(ev.risk_score * 100).toFixed(0)}%
+                    <p className={`text-[11px] font-mono font-bold ${(ev.risk_score ?? 0) >= 0.9 ? 'text-red-400' : (ev.risk_score ?? 0) >= 0.7 ? 'text-orange-400' : 'text-neutral-500'}`}>
+                      {((ev.risk_score ?? 0) * 100).toFixed(0)}%
                     </p>
                     <p className="text-[10px] text-neutral-700 font-mono mt-0.5">
                       {ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
@@ -628,7 +628,7 @@ export default function Incidents() {
                   </div>
                   <p className="text-xs text-white font-medium truncate">{inc.title}</p>
                   <p className="text-[10px] text-neutral-600 mt-0.5 font-mono truncate">
-                    Agent {inc.agent_id?.slice(0, 8)} · {inc.tool || 'N/A'} · Risk {(inc.risk_score * 100).toFixed(0)}%
+                    Agent {inc.agent_id?.slice(0, 8)} · {inc.tool || 'N/A'} · Risk {((inc.risk_score ?? 0) * 100).toFixed(0)}%
                   </p>
                 </div>
 

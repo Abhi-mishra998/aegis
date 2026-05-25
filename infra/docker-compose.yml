@@ -14,6 +14,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./postgres/primary.conf:/etc/postgresql/postgresql.conf
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     restart: unless-stopped
     deploy:
       resources:
@@ -25,6 +27,30 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  postgres_replica:
+    image: postgres:15-alpine
+    container_name: acp_postgres_replica
+    user: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./postgres/replica-setup.sh:/docker-entrypoint-initdb.d/replica-setup.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["postgres", "-c", "hot_standby=on"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - acp_network
+    restart: unless-stopped
 
   # ─────────────────────────────────────────
   # PGBouncer (Production-Ready Config)
@@ -737,8 +763,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
@@ -777,10 +803,15 @@ services:
 
 volumes:
   postgres_data:
+  postgres_replica_data:
   redis_data:
   prometheus_data:
   grafana_data:
   alertmanager_data:
   audit_keys:
+
+networks:
+  acp_network:
+    driver: bridge
 
 

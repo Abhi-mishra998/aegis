@@ -1,0 +1,51 @@
+{{- /*
+ACP ConfigMap — non-secret configuration for all services.
+Secret values (JWT_SECRET_KEY, INTERNAL_SECRET, DATABASE_URL, etc.)
+are injected via secretKeyRef in each Deployment, NOT here.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "acp.fullname" . }}-config
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.labels" . | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  # ── Environment ───────────────────────────────────────────────
+  ENVIRONMENT: {{ .Values.global.env.ENVIRONMENT | quote }}
+  LOG_LEVEL: {{ .Values.global.env.LOG_LEVEL | quote }}
+  OPA_FAIL_MODE: {{ .Values.global.env.OPA_FAIL_MODE | quote }}
+
+  # ── JWT (non-secret fields) ───────────────────────────────────
+  JWT_ALGORITHM: {{ .Values.global.env.JWT_ALGORITHM | quote }}
+  JWT_EXPIRY_MINUTES: {{ .Values.global.env.JWT_EXPIRY_MINUTES | quote }}
+
+  # ── Internal service URLs (cluster DNS) ──────────────────────
+  # These resolve within the cluster namespace.
+  # Pattern: http://<release>-<component>:<service-port>
+  GATEWAY_SERVICE_URL: "http://{{ include "acp.fullname" . }}-gateway:{{ .Values.gateway.service.port }}"
+  AUDIT_SERVICE_URL: "http://{{ include "acp.fullname" . }}-audit:{{ .Values.audit.service.port }}"
+  DECISION_SERVICE_URL: "http://{{ include "acp.fullname" . }}-decision:{{ .Values.decision.service.port }}"
+  IDENTITY_SERVICE_URL: "http://{{ include "acp.fullname" . }}-identity:{{ .Values.identity.service.port }}"
+  POLICY_SERVICE_URL: "http://{{ include "acp.fullname" . }}-policy:{{ .Values.policy.service.port }}"
+  # Legacy aliases kept for backward compatibility
+  REGISTRY_SERVICE_URL: "http://{{ include "acp.fullname" . }}-identity:{{ .Values.identity.service.port }}"
+
+  # ── OPA ───────────────────────────────────────────────────────
+  {{- if .Values.opa.enabled }}
+  OPA_URL: "http://{{ include "acp.fullname" . }}-opa:{{ .Values.opa.port }}"
+  {{- else }}
+  OPA_URL: {{ required "opa.url must be set when opa.enabled=false" .Values.opa.url | quote }}
+  {{- end }}
+
+  # ── Gateway hot-path limits ───────────────────────────────────
+  MAX_CONCURRENT_EXECUTION: {{ .Values.global.env.MAX_CONCURRENT_EXECUTION | quote }}
+  MAX_PAYLOAD_BYTES: {{ .Values.global.env.MAX_PAYLOAD_BYTES | quote }}
+
+  # ── Decision timeouts ─────────────────────────────────────────
+  DECISION_GATHER_TOTAL_TIMEOUT: {{ .Values.global.env.DECISION_GATHER_TOTAL_TIMEOUT | quote }}
+  RESILIENT_CONNECT_TIMEOUT_MS: {{ .Values.global.env.RESILIENT_CONNECT_TIMEOUT_MS | quote }}

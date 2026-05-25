@@ -93,3 +93,7 @@ packages = ["acp", "sdk", "sdk.acp_client"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["services", "sdk", "tests"]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: requires a live Docker stack (deselected by default)",
+]

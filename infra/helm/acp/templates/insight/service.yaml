@@ -1,0 +1,22 @@
+{{- if .Values.insight.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-insight
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "insight" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.insight.service.type }}
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "insight" "ctx" $) | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.insight.service.port }}
+      targetPort: {{ .Values.insight.service.targetPort }}
+{{- end }}

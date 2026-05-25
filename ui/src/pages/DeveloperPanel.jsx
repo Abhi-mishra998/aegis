@@ -194,7 +194,7 @@ export default function DeveloperPanel() {
     },
   ]
 
-  const SDK_PYTHON = `from acp_sdk import ACPClient
+  const SDK_PYTHON = `from acp_client import ACPClient
 import asyncio
 
 async def main():

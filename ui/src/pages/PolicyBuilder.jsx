@@ -501,7 +501,7 @@ export default function PolicyBuilder() {
                         <div key={d.event_id} className="flex items-center gap-2 text-[10px] p-1.5 rounded bg-white/[0.02] border border-white/[0.04]">
                           <span className="font-mono text-neutral-500 shrink-0 w-12 truncate">{d.tool}</span>
                           <span className="font-mono text-neutral-700">
-                            risk {(d.risk_score * 100).toFixed(0)}%
+                            risk {((d.risk_score ?? 0) * 100).toFixed(0)}%
                           </span>
                           <span className="ml-auto flex items-center gap-1 shrink-0">
                             <span className={d.old_decision === 'deny' ? 'text-red-400' : 'text-green-400'}>

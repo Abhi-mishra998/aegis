@@ -340,7 +340,8 @@ export default function SecurityDashboard() {
         const total    = summary.total_calls || 0
         const blocked  = (summary.threats_blocked ?? summary.total_denials ?? 0) + (summary.total_kills ?? 0)
         const coverage = total > 0 ? Math.min(100, ((blocked / total) * 100).toFixed(1)) : 0
-        const evalRate = total > 0 ? 100 : 0   // all requests pass through decision engine
+        const allowed  = summary.total_allowed ?? summary.total_allows ?? 0
+        const evalRate = total > 0 ? Math.min(100, (((blocked + allowed) / total) * 100).toFixed(1)) : 0
         return (
           <div className="grid grid-cols-3 gap-3">
             <div className="p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl">

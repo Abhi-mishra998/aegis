@@ -1,0 +1,113 @@
+{{- if .Values.opa.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-opa
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "opa" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "opa" "ctx" $) | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.opa.port }}
+      targetPort: {{ .Values.opa.port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-opa
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "opa" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "opa" "ctx" $) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "opa" "ctx" $) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: opa
+          image: {{ .Values.opa.image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: {{ .Values.opa.port }}
+              protocol: TCP
+          args:
+            - run
+            - --server
+            - --log-level=error
+            - --addr=0.0.0.0:{{ .Values.opa.port }}
+            - --bundle
+            - /bundles
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.opa.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health?bundle=true
+              port: {{ .Values.opa.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.opa.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # Bundle volume: mount your compiled OPA bundle here.
+            # In production, use an init container or CSI driver to fetch
+            # the bundle from S3/GCS rather than a static ConfigMap.
+            - name: bundles
+              mountPath: /bundles
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # Placeholder: replace with your bundle source (e.g. ConfigMap, PVC, or CSI).
+        # See infra/helm/acp/ for the bundle-server pattern used in docker-compose.
+        - name: bundles
+          emptyDir: {}
+{{- end }}

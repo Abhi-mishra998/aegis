@@ -211,7 +211,7 @@ async def main() -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(f"{GATEWAY}/auth/token", json={
             "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD,
-        })
+        }, headers={"X-Tenant-ID": TENANT_ID})
         user_token = resp.json()["data"]["access_token"]
         print("✓ Admin authenticated")
 

@@ -1,0 +1,74 @@
+{{- if .Values.insightWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "acp.fullname" . }}-insight-worker
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "insight-worker" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Background Redis stream consumer — a single replica is sufficient because
+  # work is sharded by stream key. Scale up only if analysis lag is observed.
+  replicas: {{ .Values.insightWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "insight-worker" "ctx" $) | nindent 6 }}
+  strategy:
+    # Recreate avoids two workers competing on the same Redis consumer group entry
+    # during a rolling update window.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "insight-worker" "ctx" $) | nindent 8 }}
+      {{- with .Values.insightWorker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        {{- include "acp.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.insightWorker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Allow in-flight Groq calls to complete before SIGKILL.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: insight-worker
+          image: {{ include "acp.image" (dict "component" .Values.insightWorker "ctx" $) }}
+          imagePullPolicy: {{ include "acp.imagePullPolicy" . }}
+          securityContext:
+            {{- include "acp.containerSecurityContext" . | nindent 12 }}
+          # Workers have no HTTP port — no livenessProbe or readinessProbe needed.
+          resources:
+            {{- toYaml .Values.insightWorker.resources | nindent 12 }}
+          env:
+            # ── Global config (non-secret) ──────────────────────
+            {{- include "acp.globalEnv" . | nindent 12 }}
+            # ── Secrets — GROQ_API_KEY is required for this worker ──
+            {{- include "acp.secretEnvRefs" . | nindent 12 }}
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            # ── Pod identity (useful for log correlation) ───────
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: {{ include "acp.fullname" . }}-config
+          volumeMounts:
+            {{- include "acp.tmpVolumeMount" . | nindent 12 }}
+      volumes:
+        {{- include "acp.tmpVolume" . | nindent 8 }}
+{{- end }}

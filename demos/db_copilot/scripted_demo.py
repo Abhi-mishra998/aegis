@@ -73,8 +73,14 @@ def _action_color(action: str) -> str:
     return mapping.get(action.lower(), "")
 
 
-async def _get_user_token(client: httpx.AsyncClient, email: str, password: str) -> str:
-    resp = await client.post(f"{GATEWAY}/auth/token", json={"email": email, "password": password})
+async def _get_user_token(
+    client: httpx.AsyncClient, email: str, password: str, tenant_id: str = "00000000-0000-0000-0000-000000000001"
+) -> str:
+    resp = await client.post(
+        f"{GATEWAY}/auth/token",
+        json={"email": email, "password": password},
+        headers={"X-Tenant-ID": tenant_id},
+    )
     resp.raise_for_status()
     return resp.json()["data"]["access_token"]
 
@@ -344,7 +350,7 @@ async def main() -> None:
     t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=20) as client:
         user_token = await _get_user_token(
-            client, creds["admin_email"], creds["admin_password"]
+            client, creds["admin_email"], creds["admin_password"], creds["tenant_id"]
         )
         print("  Admin    : authenticated ✓")
 
@@ -360,7 +366,7 @@ async def main() -> None:
 
     async with httpx.AsyncClient(timeout=20) as client:
         user_token = await _get_user_token(
-            client, creds["admin_email"], creds["admin_password"]
+            client, creds["admin_email"], creds["admin_password"], creds["tenant_id"]
         )
         await _verify_audit_chain(user_token)
 

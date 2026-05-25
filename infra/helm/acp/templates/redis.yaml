@@ -1,0 +1,145 @@
+# For production, disable this StatefulSet (redis.external: true) and set
+# externalRedis.host in values.yaml to point at ElastiCache, MemoryStore, or
+# another managed Redis. This single-node StatefulSet is suitable for dev/CI only.
+{{- if not .Values.redis.external }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-redis
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Headless service for StatefulSet DNS — pods resolve as
+  # <release>-redis-0.<release>-redis.<namespace>.svc.cluster.local
+  clusterIP: None
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+  ports:
+    - name: redis
+      protocol: TCP
+      port: 6379
+      targetPort: 6379
+---
+# ClusterIP service for plain DNS access (redis://acp-redis:6379/0)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "acp.fullname" . }}-redis-svc
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "acp.componentSelectorLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+  ports:
+    - name: redis
+      protocol: TCP
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "acp.fullname" . }}-redis
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "acp.fullname" . }}-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "acp.componentSelectorLabels" (dict "component" "redis" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "acp.componentSelectorLabels" (dict "component" "redis" "ctx" $) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "acp.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          # Enable AOF persistence so audit chain heads survive pod restarts.
+          # Mirrors the docker-compose.yml command.
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            - --save
+            - "60"
+            - "1000"
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          {{- include "acp.componentLabels" (dict "component" "redis" "ctx" $) | nindent 10 }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+{{- end }}

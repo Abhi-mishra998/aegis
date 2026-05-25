@@ -288,44 +288,56 @@ export default function ExecutiveDashboard() {
             </div>
           </div>
 
-          {/* System status cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <Card title="System Integrity">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 rounded-lg bg-green-500/10">
-                  <ShieldCheck size={18} className="text-green-400" aria-hidden="true" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-white">Active Defense</p>
-                  <p className="text-xs text-neutral-500">99.99% resilience</p>
-                </div>
-              </div>
-              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full bg-white/60 w-full rounded-full" aria-label="100% capacity" />
-              </div>
-              <p className="text-xs text-neutral-600 mt-2">All security nodes synchronized</p>
-            </Card>
+          {/* System status cards — wired to real risk data */}
+          {(() => {
+            const blockRate = totalRequests > 0
+              ? Math.min(100, Math.round((threatsBlocked / totalRequests) * 100))
+              : 0;
+            const isActive = totalRequests > 0;
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <Card title="System Integrity">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-green-500/10">
+                      <ShieldCheck size={18} className="text-green-400" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">{isActive ? 'Active Defense' : 'Standby'}</p>
+                      <p className="text-xs text-neutral-500">{totalRequests.toLocaleString()} requests governed</p>
+                    </div>
+                  </div>
+                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-400 rounded-full transition-all duration-700"
+                      style={{ width: isActive ? '100%' : '0%' }}
+                      aria-label={isActive ? 'System active' : 'No traffic yet'}
+                    />
+                  </div>
+                  <p className="text-xs text-neutral-500 mt-2">{isActive ? 'All governance nodes operational' : 'Awaiting first request'}</p>
+                </Card>
 
-            <Card title="Detection Sensitivity">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 rounded-lg bg-blue-500/10">
-                  <Zap size={18} className="text-blue-400" aria-hidden="true" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-white">Neural Mode</p>
-                  <p className="text-xs text-neutral-500">Strict calibration</p>
-                </div>
+                <Card title="Detection Sensitivity">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-blue-500/10">
+                      <Zap size={18} className="text-blue-400" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">{blockRate > 0 ? 'Threats Intercepted' : 'Clean Traffic'}</p>
+                      <p className="text-xs text-neutral-500">{blockRate.toFixed(1)}% block rate</p>
+                    </div>
+                  </div>
+                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.max(2, blockRate)}%`, boxShadow: blockRate > 0 ? '0 0 8px rgba(59,130,246,0.5)' : 'none' }}
+                      aria-label={`${blockRate}% block rate`}
+                    />
+                  </div>
+                  <p className="text-xs text-neutral-500 mt-2">{threatsBlocked.toLocaleString()} threats blocked of {totalRequests.toLocaleString()} total</p>
+                </Card>
               </div>
-              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-500 w-3/4 rounded-full"
-                  style={{ boxShadow: '0 0 8px rgba(59,130,246,0.5)' }}
-                  aria-label="75% sensitivity"
-                />
-              </div>
-              <p className="text-xs text-neutral-600 mt-2">Optimized for enterprise traffic</p>
-            </Card>
-          </div>
+            );
+          })()}
         </div>
 
         {/* AI Intelligence stream */}

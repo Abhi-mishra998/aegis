@@ -16,7 +16,7 @@ default reason := "no match found"
 main := {
 	"allow": allowed,
 	"reason": msg,
-	"risk_adjustment": adjustment,
+	"risk_adjustment": adjustment + risk_adjustment,
 }
 
 # =========================
@@ -132,6 +132,8 @@ adjustment := 0.60 if {
 	k8s_hard_deny
 	_k8s_tool_parts[1] in {"create", "patch", "apply"}
 }
+
+default risk_adjustment := 0.0
 
 # Escalate risk for high-risk agents attempting sensitive tools
 risk_adjustment := 0.2 if {

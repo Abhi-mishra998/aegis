@@ -61,8 +61,8 @@ class ACPSettings(BaseSettings):
     # 🌐 External Services
     # ─────────────────────────────────────────────────────────────
     GROQ_API_KEY: str = Field(
-        ...,
-        description="Groq API key for the insight service (REQUIRED)"
+        default="",
+        description="Groq API key for the insight/groq_worker services. Leave empty to disable Groq features."
     )
     GROQ_MODEL: str = Field(
         default="llama-3.3-70b-versatile",
@@ -75,6 +75,10 @@ class ACPSettings(BaseSettings):
     INTERNAL_SECRET: str = Field(
         ...,
         description="Shared secret for service-to-service mesh authentication (REQUIRED)"
+    )
+    MESH_JWT_SECRET: str = Field(
+        default="",
+        description="Signing key for service mesh JWTs. Falls back to INTERNAL_SECRET if empty."
     )
 
     OPA_URL: str = Field(
@@ -108,6 +112,15 @@ class ACPSettings(BaseSettings):
     SLACK_WEBHOOK_URL: str = Field(default="", description="Slack incoming webhook URL for security alerts (leave empty to disable)")
 
     # ─────────────────────────────────────────────────────────────
+    # 📡 SIEM Integration (optional — leave SIEM_TARGET="" to disable)
+    # ─────────────────────────────────────────────────────────────
+    SIEM_TARGET: str = Field(default="", description="SIEM target: '' | 'splunk' | 'datadog'")
+    SPLUNK_HEC_URL: str = Field(default="", description="Splunk HEC URL (e.g. https://splunk.example.com:8088/services/collector)")
+    SPLUNK_HEC_TOKEN: str = Field(default="", description="Splunk HEC token")
+    DATADOG_LOGS_URL: str = Field(default="https://http-intake.logs.datadoghq.com/api/v2/logs", description="Datadog Logs API URL")
+    DATADOG_API_KEY: str = Field(default="", description="Datadog API key")
+
+    # ─────────────────────────────────────────────────────────────
     # 🌐 CORS
     # ─────────────────────────────────────────────────────────────
     # Comma-separated list of allowed origins.
@@ -125,7 +138,7 @@ class ACPSettings(BaseSettings):
     # Leave empty to disable distributed tracing (safe for dev/Docker without a collector)
     OTLP_ENDPOINT: str = Field(default="")
 
-    @field_validator("JWT_SECRET_KEY", "INTERNAL_SECRET", "GROQ_API_KEY")
+    @field_validator("JWT_SECRET_KEY", "INTERNAL_SECRET")
     @classmethod
     def _must_not_be_empty(cls, v: str, info) -> str:
         if not v or not v.strip():
@@ -191,6 +204,52 @@ class ACPSettings(BaseSettings):
         default=100,
         description="Per-phase TCP connect timeout (ms) for ResilientClient. "
         "100ms = LAN-co-located default. Override per environment.",
+    )
+
+    # ─────────────────────────────────────────────────────────────
+    # 🤖 Multi-LLM Router (Phase 3)
+    # ─────────────────────────────────────────────────────────────
+
+    LLM_PROVIDER: str = Field(
+        default="groq",
+        description="Primary LLM provider: groq|openai|anthropic|azure_openai",
+    )
+    LLM_FALLBACK_PROVIDER: str = Field(
+        default="",
+        description="Fallback provider if primary fails (leave empty to disable)",
+    )
+    LLM_DAILY_COST_CAP_USD: float = Field(
+        default=0.0,
+        description="Per-tenant daily LLM cost cap in USD (0=disabled)",
+    )
+
+    OPENAI_API_KEY: str = Field(default="", description="OpenAI API key")
+    OPENAI_MODEL: str = Field(default="gpt-4o-mini", description="Default OpenAI model")
+
+    ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key")
+    ANTHROPIC_MODEL: str = Field(
+        default="claude-haiku-4-5-20251001",
+        description="Default Anthropic model",
+    )
+
+    AZURE_OPENAI_ENDPOINT: str = Field(default="", description="Azure OpenAI endpoint URL")
+    AZURE_OPENAI_API_KEY: str = Field(default="", description="Azure OpenAI API key")
+    AZURE_OPENAI_DEPLOYMENT: str = Field(default="", description="Azure OpenAI deployment name")
+    AZURE_OPENAI_API_VERSION: str = Field(
+        default="2024-02-01",
+        description="Azure OpenAI API version",
+    )
+
+    # ─────────────────────────────────────────────────────────────
+    # 🔍 Injection Classifier (Phase 2)
+    # ─────────────────────────────────────────────────────────────
+
+    INJECTION_USE_MODERATION_API: bool = Field(
+        default=False,
+        description=(
+            "Enable OpenAI moderation API for injection detection "
+            "(requires OPENAI_API_KEY)"
+        ),
     )
 
 

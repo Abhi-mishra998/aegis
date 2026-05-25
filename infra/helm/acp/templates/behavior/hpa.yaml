@@ -1,0 +1,52 @@
+{{- if and .Values.behavior.enabled .Values.behavior.autoscaling.enabled }}
+# HPA for the behavior service — this is the hot-path behavioral detection engine.
+# Default: scale 2-10 replicas at 60% CPU. The single-instance saturation point
+# was measured at ~47 r/s (load test Run-3, 2026-05-13); with HPA the cluster can
+# absorb sustained bursts without falling back to risk=0.5 (fail-open behavior).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "acp.fullname" . }}-behavior
+  namespace: {{ include "acp.namespace" . }}
+  labels:
+    {{- include "acp.componentLabels" (dict "component" "behavior" "ctx" $) | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "acp.fullname" . }}-behavior
+  minReplicas: {{ .Values.behavior.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.behavior.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.behavior.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      # Conservative scale-down: behavioral detectors warm up their Redis ZSETs over
+      # time; removing pods too aggressively resets in-process state.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      # Aggressive scale-up: fail-open risk (behavior_service_unavailable) is a
+      # security regression; add capacity fast.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+{{- end }}

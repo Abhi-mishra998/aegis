@@ -135,7 +135,10 @@ async def disengage_kill_switch(
 
 
 @router.get("/kill-switch/{tenant_id}", response_model=APIResponse[dict])
-async def get_kill_switch_status(tenant_id: str) -> APIResponse[dict]:
+async def get_kill_switch_status(
+    tenant_id: str,
+    _role: Annotated[str, Depends(_require_admin_or_security)],
+) -> APIResponse[dict]:
 
     redis = _get_redis()
     key = f"acp:tenant_kill:{tenant_id}"

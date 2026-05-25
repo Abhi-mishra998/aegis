@@ -1,0 +1,245 @@
+# infra/docker-compose.aws.yml
+# AWS production override — removes local postgres/redis, uses RDS + ElastiCache
+# Usage: docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d
+
+services:
+  # ── Remove local postgres (RDS replaces it) ──────────────────────────────
+  postgres:
+    profiles: ["local-only"]   # never starts in production
+
+  postgres_replica:
+    profiles: ["local-only"]   # never starts in production
+
+  # ── Remove local redis (ElastiCache replaces it) ──────────────────────────
+  redis:
+    profiles: ["local-only"]   # never starts in production
+
+  # ── PgBouncer: use AWS config pointing to RDS ─────────────────────────────
+  pgbouncer:
+    volumes:
+      - ./pgbouncer.aws.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on: []   # no local postgres dependency
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+        reservations:
+          cpus: "0.10"
+          memory: 32M
+
+  # ── Gateway: entry point, highest-traffic ────────────────────────────────
+  gateway:
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=WARNING
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  # ── All services: production restart policy + resource limits ─────────────
+  identity:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+
+  registry:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+        reservations:
+          cpus: "0.05"
+          memory: 48M
+
+  policy:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  audit:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+
+  decision:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+        reservations:
+          cpus: "0.10"
+          memory: 96M
+
+  behavior:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+        reservations:
+          cpus: "0.10"
+          memory: 96M
+
+  usage:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  api:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  insight:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  insight_worker:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  forensics:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+        reservations:
+          cpus: "0.05"
+          memory: 48M
+
+  identity_graph:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  flight_recorder:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+        reservations:
+          cpus: "0.05"
+          memory: 48M
+
+  autonomy:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+        reservations:
+          cpus: "0.05"
+          memory: 48M
+
+  groq_worker:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+
+  opa:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+
+  bundle-server:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128M
+        reservations:
+          cpus: "0.02"
+          memory: 32M
+
+  ui:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M

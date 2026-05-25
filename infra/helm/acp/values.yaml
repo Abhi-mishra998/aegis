@@ -1,0 +1,841 @@
+# ACP Helm Chart — Default Values
+# Reference: sdk/common/config.py for all env var semantics.
+# Override in values.prod.yaml for production deployments.
+
+# ─────────────────────────────────────────────────────────────
+# Global
+# ─────────────────────────────────────────────────────────────
+global:
+  image:
+    registry: ghcr.io/acp
+    pullPolicy: IfNotPresent
+    tag: "0.2.0"
+  # Labels added to every resource
+  commonLabels: {}
+  # Annotations added to every resource
+  commonAnnotations: {}
+  env:
+    ENVIRONMENT: production
+    LOG_LEVEL: INFO
+    OPA_FAIL_MODE: closed
+    JWT_ALGORITHM: HS256
+    JWT_EXPIRY_MINUTES: "15"
+    # Hot-path safety valves
+    MAX_CONCURRENT_EXECUTION: "500"
+    MAX_PAYLOAD_BYTES: "10000"
+    # Decision service timeouts (seconds)
+    DECISION_GATHER_TOTAL_TIMEOUT: "1.5"
+    RESILIENT_CONNECT_TIMEOUT_MS: "100"
+
+# ─────────────────────────────────────────────────────────────
+# Namespace
+# ─────────────────────────────────────────────────────────────
+namespaceOverride: ""
+
+# ─────────────────────────────────────────────────────────────
+# Gateway
+# ─────────────────────────────────────────────────────────────
+gateway:
+  enabled: true
+  replicas: 3
+  image:
+    name: acp-gateway
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /readiness
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  podAnnotations: {}
+  # PodDisruptionBudget — gateway has HPA so no PDB by default
+  pdb:
+    enabled: false
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: acp
+                app.kubernetes.io/component: gateway
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────
+# Audit
+# ─────────────────────────────────────────────────────────────
+audit:
+  enabled: true
+  replicas: 2
+  image:
+    name: acp-audit
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8004
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: acp
+                app.kubernetes.io/component: audit
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────
+# Decision
+# ─────────────────────────────────────────────────────────────
+decision:
+  enabled: true
+  replicas: 2
+  image:
+    name: acp-decision
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8010
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: acp
+                app.kubernetes.io/component: decision
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────
+# Identity
+# ─────────────────────────────────────────────────────────────
+identity:
+  enabled: true
+  replicas: 2
+  image:
+    name: acp-identity
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8002
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: acp
+                app.kubernetes.io/component: identity
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────
+# Policy
+# ─────────────────────────────────────────────────────────────
+policy:
+  enabled: true
+  replicas: 2
+  image:
+    name: acp-policy
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8003
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "256Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+
+# ─────────────────────────────────────────────────────────────
+# Registry — agent metadata; consulted by decision on hot path
+# ─────────────────────────────────────────────────────────────
+registry:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-registry
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8001
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: acp
+                app.kubernetes.io/component: registry
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────
+# API — ARE rules; incidents; auto-response (off hot path)
+# ─────────────────────────────────────────────────────────────
+api:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-api
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8005
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Usage — billing + cost caps; transactional outbox worker
+# ─────────────────────────────────────────────────────────────
+usage:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-usage
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8006
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Behavior — hot-path behavioral detection engine
+# Default replicas=2 for HA; HPA scales to 10 on CPU pressure.
+# Single-instance saturation measured at ~47 r/s (Run-3 2026-05-13).
+# ─────────────────────────────────────────────────────────────
+behavior:
+  enabled: true
+  replicas: 2
+  image:
+    name: acp-behavior
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8007
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: acp
+                app.kubernetes.io/component: behavior
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────
+# Insight — Groq LLM background analysis HTTP frontend
+# ─────────────────────────────────────────────────────────────
+insight:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-insight
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8011
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Insight Worker — Redis stream consumer for Groq LLM jobs
+# No HTTP port; liveness/readiness probes not applicable.
+# ─────────────────────────────────────────────────────────────
+insightWorker:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-insight
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Forensics — replay and investigation from audit logs (read-heavy)
+# ─────────────────────────────────────────────────────────────
+forensics:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-forensics
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8012
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Identity Graph — trust scoring and agent relationship graph
+# ─────────────────────────────────────────────────────────────
+identityGraph:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-identity-graph
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8013
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Flight Recorder — timeline capture for session replay
+# ─────────────────────────────────────────────────────────────
+flightRecorder:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-flight-recorder
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8014
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Autonomy — contract enforcement and approval workflow
+# ─────────────────────────────────────────────────────────────
+autonomy:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-autonomy
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 8015
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  pdb:
+    enabled: false
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Groq Worker — Redis stream consumer for Groq LLM via gateway
+# No HTTP port; liveness/readiness probes not applicable.
+# NOTE: exits code 1 if GROQ_API_KEY is missing/invalid.
+# ─────────────────────────────────────────────────────────────
+groqWorker:
+  enabled: true
+  replicas: 1
+  image:
+    name: acp-groq-worker
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  podAnnotations: {}
+  affinity: {}
+
+# ─────────────────────────────────────────────────────────────
+# Ingress
+# ─────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  host: acp.example.com
+  tls:
+    enabled: true
+    secretName: acp-tls
+
+# ─────────────────────────────────────────────────────────────
+# Network Policies
+# ─────────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+  # CIDR of ingress controller pods — allows external ingress to gateway
+  ingressControllerNamespace: ingress-nginx
+
+# ─────────────────────────────────────────────────────────────
+# External dependencies
+# ─────────────────────────────────────────────────────────────
+postgresql:
+  # Set external: true to point at AWS RDS, GCP CloudSQL, etc.
+  # When false, a simple in-cluster Postgres is deployed (dev/CI only —
+  # not recommended for production; use a managed database).
+  external: true
+  host: ""
+  port: 5432
+  database: acp
+  # Name of a pre-created K8s Secret containing:
+  #   username, password, DATABASE_URL
+  existingSecret: acp-db-credentials
+  existingSecretUsernameKey: username
+  existingSecretPasswordKey: password
+  existingSecretDatabaseUrlKey: DATABASE_URL
+
+redis:
+  # Set external: true to point at ElastiCache, MemoryStore, etc.
+  external: false
+  host: ""
+  port: 6379
+  database: 0
+  # When external: true, name of pre-created Secret containing:
+  #   REDIS_URL
+  existingSecret: acp-redis-credentials
+  existingSecretRedisUrlKey: REDIS_URL
+
+opa:
+  # If bundled OPA sidecar/service is deployed alongside ACP.
+  # Set to false if using an existing OPA instance.
+  enabled: true
+  image: openpolicyagent/opa:latest-rootless
+  port: 8181
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# ─────────────────────────────────────────────────────────────
+# Secrets configuration
+# External Secrets Operator (ESO) is the preferred approach.
+# Set externalSecrets.enabled: true to use ESO.
+# Otherwise secrets must be pre-created manually.
+# See docs/k8s-secrets-setup.md.
+# ─────────────────────────────────────────────────────────────
+externalSecrets:
+  enabled: false
+  # ESO SecretStore name (ClusterSecretStore or SecretStore)
+  secretStoreName: acp-vault-store
+  secretStoreKind: ClusterSecretStore
+  # Remote vault path prefix for all ACP secrets
+  remoteRefPrefix: secret/acp
+  refreshInterval: 1h
+
+# Name of the pre-created K8s Secret that holds ACP application secrets.
+# Keys expected: JWT_SECRET_KEY, INTERNAL_SECRET, GROQ_API_KEY
+# See docs/k8s-secrets-setup.md for the full list.
+existingSecret: acp-secrets
+
+# ─────────────────────────────────────────────────────────────
+# Service Account
+# ─────────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ─────────────────────────────────────────────────────────────
+# Pod Security
+# ─────────────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ─────────────────────────────────────────────────────────────
+# Observability
+# ─────────────────────────────────────────────────────────────
+metrics:
+  enabled: true
+  port: 9090
+  path: /metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    namespace: monitoring

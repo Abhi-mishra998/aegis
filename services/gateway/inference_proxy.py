@@ -25,6 +25,8 @@ from typing import Any
 
 import structlog
 
+from sdk.common.injection_patterns import INJECTION_PATTERNS
+
 logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -32,30 +34,6 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _MAX_PAYLOAD_CHARS: int = 5000
-
-# Prompt injection patterns (case-insensitive)
-_INJECTION_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(
-        r"ignore\s+(?:all\s+)?(?:previous|prior)\s+(?:instructions?|prompts?|filters?|rules?|guidelines?)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"forget\s+(?:all\s+)?(?:previous|prior)\s+(?:instructions?|context)",
-        re.IGNORECASE,
-    ),
-    re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.IGNORECASE),
-    re.compile(r"act\s+as\s+(?:if\s+you\s+(?:are|were)|a|an)\s+", re.IGNORECASE),
-    re.compile(r"reveal\s+(?:your\s+)?(?:system\s+)?prompt", re.IGNORECASE),
-    re.compile(
-        r"bypass\s+(?:all\s+)?(?:security|restrictions?|filters?)", re.IGNORECASE
-    ),
-    re.compile(r"jailbreak", re.IGNORECASE),
-    re.compile(r"DAN\s+mode", re.IGNORECASE),
-    re.compile(
-        r"override\s+(?:all\s+)?(?:safety|security|content)\s+(?:filters?|guidelines?|rules?)",
-        re.IGNORECASE,
-    ),
-]
 
 # Risk-scoring keyword weights (0-100 scale)
 _RISK_KEYWORDS: dict[str, float] = {
@@ -245,7 +223,7 @@ class InjectionDetector:
 
     @staticmethod
     def scan(text: str) -> ProxyDecision:
-        for pattern in _INJECTION_PATTERNS:
+        for pattern in INJECTION_PATTERNS:
             match = pattern.search(text)
             if match:
                 logger.warning(

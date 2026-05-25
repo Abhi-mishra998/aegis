@@ -175,3 +175,43 @@ groups:
         annotations:
           summary: "AUDIT CHAIN VIOLATION DETECTED — engage kill switch"
           description: "violations>0 means the audit chain integrity check failed. Follow docs/runbooks/audit_chain_violation.md Phase 1 IMMEDIATELY — kill switch, forensic snapshot, page security + legal. Do not skip Phase 1."
+
+      # ── MTTR alerting ────────────────────────────────────────────
+      # Source: acp_incident_mttr_seconds gauge emitted by
+      # services/api/router/incident.py whenever an incident is resolved
+      # or the /incidents/summary endpoint is called.
+      # The gauge holds the rolling 7-day average MTTR in seconds.
+      - alert: HighMTTR
+        expr: acp_incident_mttr_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Incident MTTR exceeds 1 hour (current: {{ $value | humanizeDuration }})"
+          description: "The rolling 7-day average time to resolve incidents has been above 3600s for 5 minutes. Review open incidents at /incidents and check ARE auto-response rules."
+
+      # ── Daily budget alerting ─────────────────────────────────────
+      # Source: acp_tenant_daily_cost_usd gauge emitted by
+      # services/usage/router/usage.py on every /usage/record call.
+      # Fires if any tenant's current-day cost exceeds $5.
+      - alert: DailyBudgetWarning
+        expr: acp_tenant_daily_cost_usd > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} daily cost exceeds $5 (current: ${{ $value | humanize }})"
+          description: "Tenant {{ $labels.tenant_id }} has accumulated more than $5 in usage cost today. Review via GET /usage/summary or GET /usage/dashboard. Consider adjusting per-agent cost caps."
+
+      # ── High incident rate alerting ───────────────────────────────
+      # Source: acp_incident_created_total counter emitted by
+      # services/api/router/incident.py on every incident creation.
+      # Fires if the rate of new incidents exceeds 10 per hour (≈0.167/min).
+      - alert: HighIncidentRate
+        expr: increase(acp_incident_created_total[1h]) > 10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10 incidents created in the last hour ({{ $value | humanize }} total)"
+          description: "The number of new incidents in the last 60 minutes has exceeded the threshold of 10. This may indicate a misbehaving agent, a policy mis-configuration, or an active attack. Check /incidents?status=OPEN."

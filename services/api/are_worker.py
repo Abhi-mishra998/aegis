@@ -71,8 +71,8 @@ def _eval_one(field: str, op: str, rule_val: object, incident: dict, window_coun
             return actual in rule_val, actual
         if op == "not_in":
             return actual not in rule_val, actual
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("are_rule_comparison_error", op=op, error=str(exc))
     return False, actual
 
 

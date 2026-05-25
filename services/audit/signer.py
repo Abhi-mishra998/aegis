@@ -56,7 +56,7 @@ _DEFAULT_ROOT_KEY_PATH = Path("/data/keys/root-signing.pem")
 _ALGORITHM = "ed25519"
 _RECEIPT_VERSION = 1
 
-_lock = threading.Lock()
+_lock = threading.RLock()  # RLock: get_root_signer() holds lock while calling get_signer()
 _signer: ReceiptSigner | None = None
 _root_signer: ReceiptSigner | None = None
 

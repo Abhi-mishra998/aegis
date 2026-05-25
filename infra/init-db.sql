@@ -128,3 +128,11 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 GRANT ALL ON SCHEMA public TO behavior_user;
 ALTER SCHEMA public OWNER TO behavior_user;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Streaming replication user
+\c postgres
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'replicator') THEN
+    CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'replicator_pass_2026';
+  END IF;
+END $$;
