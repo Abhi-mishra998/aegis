@@ -100,10 +100,13 @@ class AuditWriter:
             if data.get("org_id") is None:
                 data["org_id"] = data.get("tenant_id")
 
+            # No conflict target: suppresses conflicts on any unique constraint
+            # (PK, request_id partial index). Safe because duplicates are counted
+            # by AUDIT_DUPLICATES_DROPPED_TOTAL and the caller handles None.
             stmt = (
                 insert(AuditLog)
                 .values(**data)
-                .on_conflict_do_nothing(index_elements=["request_id", "event_hash"])
+                .on_conflict_do_nothing()
                 .returning(AuditLog)
             )
 

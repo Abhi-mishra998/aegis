@@ -1,12 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   Users, Shield, FileText, X, Power, Zap,
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
+  CreditCard, Radio, Bell, BookOpen,
 } from 'lucide-react'
-import { authService } from '../../services/api'
+import { authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
 import { useRole } from '../../hooks/useRole'
 
@@ -29,7 +30,11 @@ const operationsNav = [
   { path: '/autonomy',        label: 'Autonomy',         icon: ShieldCheck },
   { path: '/forensics',       label: 'Forensics',        icon: FileText    },
   { path: '/playground',      label: 'Playground',       icon: Terminal    },
+  { path: '/live-feed',        label: 'Live Feed',         icon: Radio,      hint: 'G L' },
+  { path: '/playbooks',       label: 'Playbooks',         icon: BookOpen    },
   { path: '/auto-response',   label: 'Auto Response',    icon: Bot         },
+  { path: '/compliance',      label: 'Compliance',       icon: Shield      },
+  { path: '/pricing',         label: 'Pricing',          icon: CreditCard  },
   { path: '/attack-sim',      label: 'Attack Sim',       icon: Crosshair   },
 ]
 
@@ -38,9 +43,24 @@ const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power
 export default function Sidebar({ isOpen, onClose }) {
   const location  = useLocation()
   const navigate  = useNavigate()
-  const { updateAuth } = useAuth()
+  const { updateAuth, isAuthenticated } = useAuth()
   const { canViewKillSwitch } = useRole()
   const navRef    = useRef(null)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  const fetchUnread = useCallback(async () => {
+    if (!isAuthenticated) return
+    try {
+      const res = await notificationService.getCount()
+      setUnreadCount((res?.data?.unread ?? res?.unread ?? 0))
+    } catch {}
+  }, [isAuthenticated])
+
+  useEffect(() => {
+    fetchUnread()
+    const id = setInterval(fetchUnread, 60_000)
+    return () => clearInterval(id)
+  }, [fetchUnread])
 
   // Auto-expand Operations group if user is on a secondary page
   const onOpsPage = operationsNav.some((i) => location.pathname.startsWith(i.path))
@@ -201,7 +221,22 @@ export default function Sidebar({ isOpen, onClose }) {
         </nav>
 
         {/* Footer */}
-        <div className="px-3 py-4 border-t border-[var(--border-subtle)] space-y-2 shrink-0">
+        <div className="px-3 py-4 border-t border-[var(--border-subtle)] space-y-1 shrink-0">
+          <button
+            onClick={() => { navigate('/notifications'); window.innerWidth < 1024 && onClose() }}
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-white hover:bg-white/[0.05] transition-all duration-150"
+            aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
+          >
+            <div className="relative shrink-0">
+              <Bell size={15} aria-hidden="true" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white text-black text-[9px] font-bold flex items-center justify-center leading-none">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </div>
+            <span>Notifications</span>
+          </button>
           <button
             onClick={handleLogout}
             className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-white hover:bg-red-500/10 transition-all duration-150"

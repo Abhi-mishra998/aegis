@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { billingService } from '../services/api';
+import Modal from '../components/Common/Modal';
 import { useAuth } from '../hooks/useAuth';
 import { eventBus } from '../lib/eventBus';
 import {
@@ -17,6 +19,8 @@ import {
   CheckCircle2,
   Hourglass,
   Download,
+  Plus,
+  X,
 } from 'lucide-react';
 import {
   XAxis,
@@ -69,8 +73,167 @@ function ChartTooltip({ active, payload, label }) {
 }
 
 /* ── Main component ────────────────────────────────────────────────────────── */
+// ── Budget Requests Panel ────────────────────────────────────────────────────
+
+function BudgetRequestsSection() {
+  const [requests,   setRequests]   = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [showCreate, setShowCreate] = useState(false)
+  const [form,       setForm]       = useState({ agent_name: '', current_cap_usd: '', requested_cap_usd: '', reason: '' })
+  const [submitting, setSubmitting] = useState(false)
+  const [error,      setError]      = useState('')
+
+  const fetchRequests = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await billingService.listBudgetRequests()
+      setRequests(res?.data || res || [])
+    } catch { /* silent if endpoint not yet deployed */ }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchRequests() }, [fetchRequests])
+
+  const handleCreate = async () => {
+    if (!form.agent_name || !form.requested_cap_usd || !form.reason) {
+      setError('Agent name, requested cap, and reason are required.'); return
+    }
+    setSubmitting(true); setError('')
+    try {
+      await billingService.createBudgetRequest({
+        agent_name:       form.agent_name,
+        current_cap_usd:  parseFloat(form.current_cap_usd) || 0,
+        requested_cap_usd:parseFloat(form.requested_cap_usd),
+        reason:           form.reason,
+      })
+      setShowCreate(false)
+      setForm({ agent_name: '', current_cap_usd: '', requested_cap_usd: '', reason: '' })
+      fetchRequests()
+    } catch (err) { setError(err.message || 'Failed to create request') }
+    finally { setSubmitting(false) }
+  }
+
+  const handleReview = async (id, approved) => {
+    try {
+      if (approved) await billingService.approveBudgetRequest(id, { approved: true })
+      else          await billingService.rejectBudgetRequest(id, { approved: false })
+      fetchRequests()
+    } catch { /* silent */ }
+  }
+
+  const statusCls = (s) => s === 'pending' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+    : s === 'approved' ? 'text-green-400 bg-green-500/10 border-green-500/20'
+    : 'text-red-400 bg-red-500/10 border-red-500/20'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-bold text-white">Budget Approval Requests</h2>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={fetchRequests} disabled={loading}>
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </Button>
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus size={12} /> New Request
+          </Button>
+        </div>
+      </div>
+
+      {loading ? <Card><div className="p-4"><SkeletonLoader count={3} /></div></Card>
+        : requests.length === 0 ? (
+          <Card>
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <DollarSign size={28} className="text-neutral-700 mb-3" />
+              <p className="text-sm text-neutral-500">No budget requests</p>
+              <p className="text-xs text-neutral-600 mt-1">Agents that hit their cost cap can submit a request here</p>
+            </div>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {requests.map(req => (
+              <div key={req.id} className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-surface)] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-medium text-white truncate">{req.agent_name}</span>
+                      <span className={`status-badge text-[10px] ${statusCls(req.status)}`}>{req.status}</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">{req.reason}</p>
+                    <div className="flex gap-4 mt-2 text-[10px] text-neutral-600 font-mono">
+                      <span>Current cap: ${fmt$(req.current_cap_usd)}</span>
+                      <span className="text-amber-400">→ Requested: ${fmt$(req.requested_cap_usd)}</span>
+                      {req.reviewed_by && <span>by {req.reviewed_by}</span>}
+                    </div>
+                  </div>
+                  {req.status === 'pending' && (
+                    <div className="flex gap-1.5 shrink-0">
+                      <button
+                        onClick={() => handleReview(req.id, true)}
+                        className="px-2.5 py-1 text-[11px] text-green-400 bg-green-500/[0.06] border border-green-500/20 rounded hover:border-green-500/40 transition-colors"
+                      >Approve</button>
+                      <button
+                        onClick={() => handleReview(req.id, false)}
+                        className="px-2.5 py-1 text-[11px] text-red-400 bg-red-500/[0.06] border border-red-500/20 rounded hover:border-red-500/40 transition-colors"
+                      >Reject</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+      {/* Create modal */}
+      {showCreate && (
+        <Modal title="New Budget Request" onClose={() => { setShowCreate(false); setError('') }}>
+          <div className="space-y-4">
+            {error && (
+              <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-500/[0.06] border border-red-500/15">
+                <AlertCircle size={12} className="text-red-400 shrink-0" />
+                <p className="text-xs text-red-400">{error}</p>
+              </div>
+            )}
+            {[
+              { label: 'Agent name',           key: 'agent_name',         type: 'text',   ph: 'e.g. data-pipeline-agent' },
+              { label: 'Current cap (USD/day)', key: 'current_cap_usd',   type: 'number', ph: '10.00' },
+              { label: 'Requested cap (USD/day)',key: 'requested_cap_usd', type: 'number', ph: '50.00' },
+            ].map(({ label, key, type, ph }) => (
+              <div key={key}>
+                <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">{label}</label>
+                <input
+                  type={type}
+                  value={form[key]}
+                  onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                  placeholder={ph}
+                  className="input-standard input-compact h-8 text-xs w-full"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Business justification</label>
+              <textarea
+                value={form.reason}
+                onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+                placeholder="Why does this agent need a higher budget?"
+                rows={3}
+                className="input-standard text-xs w-full p-2 resize-none rounded-lg"
+              />
+            </div>
+            <Button className="w-full" loading={submitting} onClick={handleCreate}>
+              Submit Request
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
 export default function Billing() {
   useAuth();
+  const navigate = useNavigate();
 
   const [summary, setSummary] = useState(null);
   const [invoices, setInvoices] = useState([]);
@@ -85,6 +248,7 @@ export default function Billing() {
   const [dashError, setDashError] = useState('');
   const [anomError, setAnomError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [costAttribution, setCostAttribution] = useState(null);
   const mountedRef = useRef(true);
 
   const fetchSummary = useCallback(async () => {
@@ -151,6 +315,9 @@ export default function Billing() {
     fetchInvoices();
     fetchDashboard();
     fetchAnomalies();
+    billingService.getCostAttribution(4)
+      .then(r => { if (mountedRef.current) setCostAttribution(r?.data || r) })
+      .catch(() => {});
     const interval = setInterval(() => {
       fetchSummary(); fetchInvoices(); fetchDashboard(); fetchAnomalies();
     }, 30_000);
@@ -479,6 +646,14 @@ export default function Billing() {
               <span className="text-xs font-semibold text-white">{fmtN(a.units)} units</span>
               <span className="text-xs font-semibold text-red-400">${fmt$(a.cost)}</span>
             </div>
+            {a.agent_id && (
+              <button
+                onClick={() => navigate(`/forensics?agent=${a.agent_id}`)}
+                className="mt-2 text-[10px] font-semibold text-indigo-400 hover:text-white transition-colors self-start"
+              >
+                Investigate →
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -719,6 +894,70 @@ export default function Billing() {
     </div>
   )}
 </div>
+
+      {/* Budget Approval Requests */}
+      <BudgetRequestsSection />
+
+      {/* LLM Cost Attribution (4-week per-agent breakdown) */}
+      {costAttribution && (costAttribution.agents?.length > 0) && (
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-white">LLM Cost Attribution</h2>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Per-agent inference spend · last {costAttribution.period_weeks ?? 4} weeks ·{' '}
+                <span className="text-indigo-400 font-semibold">
+                  ${(costAttribution.grand_total ?? 0).toFixed(4)} total
+                </span>
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-[var(--border-subtle)]">
+                  <th className="text-left py-2 pr-4 text-neutral-500 font-medium">Agent</th>
+                  <th className="text-right py-2 px-3 text-neutral-500 font-medium">Total Cost</th>
+                  <th className="text-right py-2 px-3 text-neutral-500 font-medium">Calls</th>
+                  {(costAttribution.weeks ?? []).slice(-4).map(w => (
+                    <th key={w} className="text-right py-2 px-3 text-neutral-500 font-medium">{w}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(costAttribution.agents ?? []).slice(0, 10).map((agent, i) => {
+                  const byWeek = costAttribution.by_agent_by_week?.[agent.agent_id] ?? {}
+                  const barPct = costAttribution.grand_total > 0
+                    ? Math.round((agent.total_cost / costAttribution.grand_total) * 100) : 0
+                  return (
+                    <tr key={agent.agent_id} className="border-b border-[var(--border-subtle)] hover:bg-white/[0.02]">
+                      <td className="py-2 pr-4">
+                        <span className="font-mono text-neutral-300">{agent.agent_id.slice(0, 8)}…</span>
+                        <div className="mt-1 h-1 rounded-full bg-white/[0.04] w-32">
+                          <div
+                            className="h-full rounded-full bg-indigo-500/60"
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
+                      </td>
+                      <td className="text-right py-2 px-3 font-semibold text-neutral-200">
+                        ${agent.total_cost.toFixed(4)}
+                      </td>
+                      <td className="text-right py-2 px-3 text-neutral-400">{agent.total_calls}</td>
+                      {(costAttribution.weeks ?? []).slice(-4).map(w => (
+                        <td key={w} className="text-right py-2 px-3 text-neutral-500">
+                          {byWeek[w] != null ? `$${byWeek[w].toFixed(3)}` : '—'}
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

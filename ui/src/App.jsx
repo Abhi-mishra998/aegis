@@ -6,6 +6,7 @@ import ProtectedRoute from './components/Layout/ProtectedRoute';
 import ErrorBoundary from './components/Common/ErrorBoundary';
 import IncidentOverlay from './components/Common/IncidentOverlay';
 import KeyboardCheatsheet from './components/Common/KeyboardCheatsheet';
+import CommandPalette from './components/Common/CommandPalette';
 import { useHotkeys } from './hooks/useHotkeys';
 import { onAuthFailure } from './lib/authEvents';
 import { clearSessionMetadata } from './services/api';
@@ -32,6 +33,22 @@ import RBAC from './pages/RBAC';
 import Incidents from './pages/Incidents';
 import AttackSimulation from './pages/AttackSimulation';
 import AutoResponse from './pages/AutoResponse';
+import Compliance from './pages/Compliance';
+import Pricing from './pages/Pricing';
+import WebhookSettings from './pages/WebhookSettings';
+import AdminConsole from './pages/AdminConsole';
+import SiemSettings from './pages/SiemSettings';
+import PolicyAnalytics from './pages/PolicyAnalytics';
+import ScheduledReports from './pages/ScheduledReports';
+import ThreatIntel from './pages/ThreatIntel';
+import QuotaManagement from './pages/QuotaManagement';
+import AgentProfile from './pages/AgentProfile';
+import SsoSettings from './pages/SsoSettings';
+import Notifications from './pages/Notifications';
+import LiveFeed from './pages/LiveFeed';
+import PolicySim from './pages/PolicySim';
+import UserManagement from './pages/UserManagement';
+import Playbooks from './pages/Playbooks';
 import Toast from './components/Common/Toast';
 
 // Auth state is based on session metadata (tenant_id + expiry), not the token itself.
@@ -67,7 +84,7 @@ function AuthEventHandler({ onIncident }) {
 // Global keyboard navigation — Linear-style. Lives inside <BrowserRouter> so
 // it can call `navigate()`. Bindings deliberately use `g <letter>` sequences
 // to avoid conflicting with browser shortcuts and form input.
-function GlobalShortcuts({ onShowHelp }) {
+function GlobalShortcuts({ onShowHelp, onShowPalette }) {
   const navigate = useNavigate()
   const bindings = useMemo(() => ([
     { key: 'g f', handler: () => navigate('/flight-recorder') },
@@ -79,8 +96,10 @@ function GlobalShortcuts({ onShowHelp }) {
     { key: 'g o', handler: () => navigate('/observability')   },
     { key: 'g h', handler: () => navigate('/system-health')   },
     { key: 'g d', handler: () => navigate('/developer')       },
+    { key: 'g l', handler: () => navigate('/live-feed')       },
+    { key: 'mod+k', handler: onShowPalette },
     { key: '?',   handler: onShowHelp },
-  ]), [navigate, onShowHelp])
+  ]), [navigate, onShowHelp, onShowPalette])
   useHotkeys(bindings)
   return null
 }
@@ -98,6 +117,7 @@ const HOTKEY_GROUPS = [
       { key: 'g h', desc: 'System health' },
       { key: 'g s', desc: 'Settings' },
       { key: 'g d', desc: 'Developer panel' },
+      { key: 'g l', desc: 'Live event feed' },
     ],
   },
   {
@@ -111,10 +131,11 @@ const HOTKEY_GROUPS = [
 ]
 
 function App() {
-  const [auth,     setAuth]     = useState(readSessionState);
-  const [toasts,   setToasts]   = useState([]);
-  const [incident, setIncident] = useState(null);
-  const [helpOpen, setHelpOpen] = useState(false);
+  const [auth,        setAuth]        = useState(readSessionState);
+  const [toasts,      setToasts]      = useState([]);
+  const [incident,    setIncident]    = useState(null);
+  const [helpOpen,    setHelpOpen]    = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const updateAuth = (newAuth) => setAuth((prev) => ({ ...prev, ...newAuth }));
 
@@ -178,7 +199,10 @@ function App() {
             {/* Wires auth event bus → incident overlay (needs Router context for useNavigate) */}
             <AuthEventHandler onIncident={handleIncident} />
             {auth.isAuthenticated && (
-              <GlobalShortcuts onShowHelp={() => setHelpOpen(true)} />
+              <GlobalShortcuts
+                onShowHelp={() => setHelpOpen(true)}
+                onShowPalette={() => setPaletteOpen(true)}
+              />
             )}
 
             <Routes>
@@ -202,6 +226,8 @@ function App() {
               <Route path="/forensics"       element={<ProtectedRoute><Forensics /></ProtectedRoute>} />
               <Route path="/playground"      element={<ProtectedRoute><AgentPlayground /></ProtectedRoute>} />
               <Route path="/auto-response"   element={<ProtectedRoute><AutoResponse /></ProtectedRoute>} />
+              <Route path="/compliance"      element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
+              <Route path="/pricing"         element={<Pricing />} />
               <Route path="/attack-sim"      element={<ProtectedRoute><AttackSimulation /></ProtectedRoute>} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
 
@@ -213,6 +239,20 @@ function App() {
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />
               <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
               <Route path="/risk"            element={<ProtectedRoute><RiskEngine /></ProtectedRoute>} />
+              <Route path="/webhook-settings" element={<ProtectedRoute><WebhookSettings /></ProtectedRoute>} />
+              <Route path="/admin"           element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
+              <Route path="/siem"            element={<ProtectedRoute><SiemSettings /></ProtectedRoute>} />
+              <Route path="/policy-analytics" element={<ProtectedRoute><PolicyAnalytics /></ProtectedRoute>} />
+              <Route path="/scheduled-reports" element={<ProtectedRoute><ScheduledReports /></ProtectedRoute>} />
+              <Route path="/threat-intel"     element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />
+              <Route path="/quota"            element={<ProtectedRoute><QuotaManagement /></ProtectedRoute>} />
+              <Route path="/agents/:id/profile" element={<ProtectedRoute><AgentProfile /></ProtectedRoute>} />
+              <Route path="/sso"              element={<ProtectedRoute><SsoSettings /></ProtectedRoute>} />
+              <Route path="/notifications"    element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+              <Route path="/live-feed"        element={<ProtectedRoute><LiveFeed /></ProtectedRoute>} />
+              <Route path="/policy-sim"       element={<ProtectedRoute><PolicySim /></ProtectedRoute>} />
+              <Route path="/users"            element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+              <Route path="/playbooks"        element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
 
               {/* Executive view — accessible by URL for buyer demos */}
               <Route path="/executive-summary" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
@@ -238,6 +278,9 @@ function App() {
 
         {/* SOC Incident Overlay — renders above everything including ErrorBoundary siblings */}
         <IncidentOverlay incident={incident} onDismiss={handleIncidentDismiss} />
+
+        {/* Command palette — triggered by mod+k */}
+        <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
 
         {/* Keyboard cheatsheet — triggered by `?` */}
         <KeyboardCheatsheet

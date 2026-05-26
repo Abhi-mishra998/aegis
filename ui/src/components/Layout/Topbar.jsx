@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect, useRef, useContext } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useContext, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useAgents } from '../../hooks/useAgents'
 import { AgentContext } from '../../context/AgentContext'
-import { authService } from '../../services/api'
-import { LogOut, Menu, ChevronDown, Settings, User, Zap, Bot, Command } from 'lucide-react'
+import { authService, incidentService } from '../../services/api'
+import { LogOut, Menu, ChevronDown, Settings, User, Zap, Bot, Command, AlertTriangle } from 'lucide-react'
 import NotificationCenter from '../Common/NotificationCenter'
 
 export default function Topbar({ onMenuClick, onCommandPalette }) {
@@ -13,7 +13,22 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
   const { agents, selectedAgentId, setSelectedAgentId, agentsLoading } = useAgents()
   const { sseConnected } = useContext(AgentContext)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [openIncidents, setOpenIncidents] = useState(0)
   const dropdownRef = useRef(null)
+
+  const fetchIncidentCount = useCallback(async () => {
+    try {
+      const res = await incidentService.getSummary()
+      const s = res?.data || res || {}
+      setOpenIncidents((s.open ?? 0) + (s.investigating ?? 0))
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchIncidentCount()
+    const id = setInterval(fetchIncidentCount, 60_000)
+    return () => clearInterval(id)
+  }, [fetchIncidentCount])
 
   const role = useMemo(() => {
     const stored = localStorage.getItem('user_role')
@@ -122,6 +137,25 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
         >
           <Command size={13} aria-hidden="true" />
           <span className="text-xs font-mono hidden md:inline">⌘K</span>
+        </button>
+
+        {/* Open incidents badge */}
+        <button
+          onClick={() => navigate('/incidents')}
+          aria-label={openIncidents > 0 ? `${openIncidents} open incidents` : 'Incidents — all clear'}
+          title="Open incidents"
+          className="relative p-2 rounded-lg text-neutral-500 hover:text-white hover:bg-white/[0.06] transition-colors"
+        >
+          <AlertTriangle size={16} aria-hidden="true" className={openIncidents > 0 ? 'text-red-400' : ''} />
+          {openIncidents > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 flex items-center justify-center text-[9px] font-bold text-white"
+              aria-hidden="true"
+              style={{ boxShadow: '0 0 8px rgba(239,68,68,0.6)' }}
+            >
+              {openIncidents > 9 ? '9+' : openIncidents}
+            </span>
+          )}
         </button>
 
         {/* Notification center */}

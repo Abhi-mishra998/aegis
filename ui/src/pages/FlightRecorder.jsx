@@ -147,6 +147,26 @@ export default function FlightRecorder() {
               </button>
             ))}
           </div>
+          <div className="flex flex-col gap-1.5 mb-3">
+            <input
+              type="text"
+              placeholder="Filter by tool…"
+              value={filter.tool}
+              onChange={(e) => setFilter((f) => ({ ...f, tool: e.target.value }))}
+              className="w-full text-[10px] font-mono bg-white/[0.04] border border-white/10 rounded px-2 py-1.5 text-neutral-300 placeholder-neutral-700 focus:outline-none focus:border-white/20"
+            />
+            <select
+              value={filter.status}
+              onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value }))}
+              className="w-full text-[10px] font-mono bg-white/[0.04] border border-white/10 rounded px-2 py-1.5 text-neutral-300 focus:outline-none focus:border-white/20"
+              style={{ colorScheme: 'dark' }}
+            >
+              <option value="">All statuses</option>
+              <option value="ok">ok</option>
+              <option value="error">error</option>
+              <option value="in_progress">in progress</option>
+            </select>
+          </div>
           <div className="max-h-[500px] overflow-y-auto divide-y divide-white/5">
             {timelines.map((t) => (
               <button key={t.id} onClick={() => loadReplay(t)}

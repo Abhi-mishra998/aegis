@@ -140,6 +140,33 @@ const request = async (url, options = {}, retry = 1) => {
 };
 
 
+/**
+ * Like request() but returns a Blob (for PDF downloads).
+ * Uses credentials:'include' — no token in localStorage or headers.
+ */
+const blobRequest = async (url, options = {}) => {
+  if (!isSessionValid()) {
+    emitAuthFailure({ reason: "session_expired", url });
+    throw new Error("UNAUTHENTICATED: Session expired.");
+  }
+  const tenantId = localStorage.getItem("tenant_id");
+  const headers = {
+    ...(options.headers || {}),
+    ...(tenantId && { "X-Tenant-ID": tenantId }),
+    "X-Request-ID": crypto.randomUUID(),
+  };
+  const finalUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
+  const res = await fetch(finalUrl, { ...options, headers, credentials: "include" });
+  if (res.status === 401) {
+    clearSessionMetadata();
+    emitAuthFailure({ reason: "unauthorized", url, statusCode: 401 });
+    throw new Error("UNAUTHORIZED: Session expired.");
+  }
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return res.blob();
+};
+
+
 // Auth Service
 export const authService = {
   login: async (data) => {
@@ -205,13 +232,68 @@ export const api = {
   revokeApiKey: (id) => request(`/api-keys/${id}`, { method: "DELETE" }),
   getBilling: () => request("/billing/summary"),
   getRisk: () => request("/risk/summary"),
+  getSSOProviders: () => fetch(`${API_BASE}/auth/sso/providers`, { credentials: "include" })
+    .then(r => r.ok ? r.json() : { providers: [] })
+    .catch(() => ({ providers: [] })),
 };
 
 export const auditService = {
   getSummary: () => request("/audit/logs/summary"),
   getLogs: (limit = 10, offset = 0) => request(`/audit/logs?limit=${limit}&offset=${offset}`),
+  getAgentLogs: (agentId, limit = 15) => request(`/audit/logs?agent_id=${agentId}&limit=${limit}`),
+  getKillSwitchHistory: (limit = 20) => request(`/audit/logs?action=kill&limit=${limit}`),
   searchLogs: (params) => request("/audit/logs/search", { method: "POST", body: JSON.stringify(params) }),
   verifyIntegrity: () => request("/audit/logs/verify"),
+  getHeatmap: () => request("/audit/logs/heatmap"),
+  explainDecision: (auditId) => request(`/audit/logs/${encodeURIComponent(auditId)}/explain`),
+  getDriftReport: (agentId, baselineDays = 7, comparisonHours = 24) =>
+    request(`/audit/drift/${encodeURIComponent(agentId)}?baseline_days=${baselineDays}&comparison_hours=${comparisonHours}`),
+  getRiskTrend: (agentId, days = 30) =>
+    request(`/audit/risk-trend/${encodeURIComponent(agentId)}?days=${days}`),
+  getToolBreakdown: (days = 30, limit = 20) =>
+    request(`/audit/tool-breakdown?days=${days}&limit=${limit}`),
+  getPeerBenchmark: (agentId, days = 30) =>
+    request(`/audit/peer-benchmark/${encodeURIComponent(agentId)}?days=${days}`),
+  getTopFindings: (days = 30, limit = 15) =>
+    request(`/audit/top-findings?days=${days}&limit=${limit}`),
+  getAnomalyTrends: (days = 30) =>
+    request(`/audit/trends?days=${days}`),
+  getHourlyActivity: (days = 7) =>
+    request(`/audit/hourly-activity?days=${days}`),
+  getRiskHistogram: (days = 30) =>
+    request(`/audit/risk-histogram?days=${days}`),
+  getWeeklyHeatmap: (days = 28) =>
+    request(`/audit/weekly-heatmap?days=${days}`),
+  getDecisionTrend: (days = 30) =>
+    request(`/audit/decision-trend?days=${days}`),
+  getAgentActivity: (limit = 20) =>
+    request(`/audit/agent-activity?limit=${limit}`),
+  getHighRiskEvents: (days = 7, limit = 20, threshold = 0.7) =>
+    request(`/audit/high-risk-events?days=${days}&limit=${limit}&threshold=${threshold}`),
+  getDenyReasons: (days = 30, limit = 15) =>
+    request(`/audit/deny-reasons?days=${days}&limit=${limit}`),
+  getAgentToolUsage: (agentId, days = 30) =>
+    request(`/audit/tool-usage/${encodeURIComponent(agentId)}?days=${days}`),
+  getToolRisk: (days = 30, limit = 20) =>
+    request(`/audit/tool-risk?days=${days}&limit=${limit}`),
+  getRiskPercentileTrend: (days = 30) =>
+    request(`/audit/risk-percentile-trend?days=${days}`),
+  getDailyActiveAgents: (days = 30) =>
+    request(`/audit/daily-active-agents?days=${days}`),
+  getFindingBreakdown: (days = 30, limit = 20) =>
+    request(`/audit/finding-breakdown?days=${days}&limit=${limit}`),
+  getAgentDailyDecisions: (agentId, days = 30) =>
+    request(`/audit/agent-daily-decisions/${encodeURIComponent(agentId)}?days=${days}`),
+  getAgentFindings: (agentId, days = 30) =>
+    request(`/audit/agent-findings/${encodeURIComponent(agentId)}?days=${days}`),
+  getPostureScoreTrend: (days = 30) =>
+    request(`/audit/posture-score-trend?days=${days}`),
+  getEscalationRateTrend: (days = 30) =>
+    request(`/audit/escalation-rate-trend?days=${days}`),
+  getNotes: (auditId) => request(`/audit/logs/${encodeURIComponent(auditId)}/notes`),
+  addNote: (auditId, data) => request(`/audit/logs/${encodeURIComponent(auditId)}/notes`, {
+    method: 'POST', body: JSON.stringify(data),
+  }),
 };
 
 export const registryService = {
@@ -227,6 +309,8 @@ export const registryService = {
   listPermissions: (id) => request(`/agents/${id}/permissions`),
   revokePermission: (agentId, permId) =>
     request(`/agents/${agentId}/permissions/${permId}`, { method: "DELETE" }),
+  getProfile: (id) => request(`/agents/${id}/profile`),
+  getSummary: () => request("/agents/summary"),
 };
 
 export const riskService = {
@@ -245,6 +329,11 @@ export const billingService = {
   getInvoices: () => request("/billing/invoices"),
   getDashboard: () => request("/usage/dashboard"),
   getAnomalies: () => request("/usage/anomalies"),
+  listBudgetRequests: (status) => request(`/billing/budget-requests${status ? `?status=${status}` : ''}`),
+  createBudgetRequest: (data) => request('/billing/budget-requests', { method: 'POST', body: JSON.stringify(data) }),
+  approveBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
+  rejectBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
+  getCostAttribution: (weeks = 4) => request(`/billing/cost-attribution?weeks=${weeks}`),
 };
 
 export const playgroundService = {
@@ -275,6 +364,8 @@ export const policyService = {
     method: "POST",
     body: JSON.stringify(payload),
   }),
+  testPolicy: (payload) => request("/policy/test", { method: "POST", body: JSON.stringify(payload) }),
+  uploadPolicy: (payload) => request("/policy/upload", { method: "POST", body: JSON.stringify(payload) }),
 };
 
 export const socService = {
@@ -301,6 +392,12 @@ export const incidentService = {
     method: "POST",
     body: JSON.stringify(payload),
   }),
+  getComments: (id) => request(`/incidents/${id}/comments`),
+  addComment: (id, data) => request(`/incidents/${id}/comments`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  }),
+  exportPdf: (id) => blobRequest(`/incidents/${id}/export`, { method: 'POST' }),
 };
 
 export const autoResponseService = {
@@ -425,6 +522,81 @@ export const autonomyService = {
   },
 };
 
+export const complianceService = {
+  getEuAiAct:  (params = {}) => request(`/compliance/eu-ai-act?${new URLSearchParams(params)}`),
+  getNist:     (params = {}) => request(`/compliance/nist-ai-rmf?${new URLSearchParams(params)}`),
+  getSoc2:     (params = {}) => request(`/compliance/soc2?${new URLSearchParams(params)}`),
+  exportPdf: (framework, startDate, endDate) => {
+    const q = new URLSearchParams({ framework, start_date: startDate, end_date: endDate, format: 'pdf' })
+    return blobRequest(`/compliance/export?${q}`)
+  },
+  boardReport: (data) => blobRequest('/compliance/board-report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }),
+};
+
+export const playbookService = {
+  list:          ()         => request('/playbooks'),
+  getTemplates:  ()         => request('/playbooks/templates'),
+  getStats:      ()         => request('/playbooks/stats'),
+  create:        (data)     => request('/playbooks', { method: 'POST', body: JSON.stringify(data) }),
+  get:           (id)       => request(`/playbooks/${id}`),
+  update:        (id, data) => request(`/playbooks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  remove:        (id)       => request(`/playbooks/${id}`, { method: 'DELETE' }),
+  trigger:       (id, ctx)  => request(`/playbooks/${id}/trigger`, { method: 'POST', body: JSON.stringify({ context: ctx || {} }) }),
+  getRuns:           (id) => request(`/playbooks/${id}/runs`),
+  getAutotriggerStats: () => request('/playbooks/autotrigger-stats'),
+};
+
+export const webhookService = {
+  getConfig:     ()     => request('/webhooks/config'),
+  saveConfig:    (data) => request('/webhooks/config', { method: 'POST', body: JSON.stringify(data) }),
+  testSlack:     (data) => request('/webhooks/test/slack', { method: 'POST', body: JSON.stringify(data || {}) }),
+  testPagerduty: (data) => request('/webhooks/test/pagerduty', { method: 'POST', body: JSON.stringify(data || {}) }),
+  testWebhook:   (data) => request('/webhooks/test/webhook', { method: 'POST', body: JSON.stringify(data || {}) }),
+};
+
+export const siemService = {
+  getConfig:    ()     => request('/siem/config'),
+  saveConfig:   (data) => request('/siem/config', { method: 'POST', body: JSON.stringify(data) }),
+  testSplunk:   (data) => request('/siem/test/splunk', { method: 'POST', body: JSON.stringify(data || {}) }),
+  testDatadog:  (data) => request('/siem/test/datadog', { method: 'POST', body: JSON.stringify(data || {}) }),
+  push:         (data) => request('/siem/push', { method: 'POST', body: JSON.stringify(data || { limit: 100 }) }),
+};
+
+export const scheduledReportsService = {
+  list:    ()           => request('/reports/scheduled'),
+  create:  (data)       => request('/reports/scheduled', { method: 'POST', body: JSON.stringify(data) }),
+  get:     (id)         => request(`/reports/scheduled/${id}`),
+  update:  (id, data)   => request(`/reports/scheduled/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  remove:  (id)         => request(`/reports/scheduled/${id}`, { method: 'DELETE' }),
+  runNow:      (id)         => request(`/reports/scheduled/${id}/run`, { method: 'POST' }),
+  getHistory:  (id, limit = 20) => request(`/reports/scheduled/${id}/history?limit=${limit}`),
+};
+
+export const threatIntelService = {
+  enrichIp:     (ip)     => request('/threat-intel/ip', { method: 'POST', body: JSON.stringify({ ip }) }),
+  enrichDomain: (domain) => request('/threat-intel/domain', { method: 'POST', body: JSON.stringify({ domain }) }),
+  getSummary:   ()       => request('/threat-intel/summary'),
+};
+
+export const notificationService = {
+  list:        (params = {}) => request(`/notifications?${new URLSearchParams(params)}`),
+  create:      (data)        => request('/notifications', { method: 'POST', body: JSON.stringify(data) }),
+  markRead:    (id)          => request(`/notifications/${id}/read`, { method: 'POST' }),
+  markAllRead: ()            => request('/notifications/read-all', { method: 'POST' }),
+  getCount:    ()            => request('/notifications/count'),
+};
+
+export const ssoService = {
+  getConfig:    ()     => request('/auth/sso/config'),
+  saveConfig:   (data) => request('/auth/sso/config', { method: 'POST', body: JSON.stringify(data) }),
+  testConfig:   (data) => request('/auth/sso/config/test', { method: 'POST', body: JSON.stringify(data || {}) }),
+  getProviders: ()     => request('/auth/sso/providers'),
+};
+
 export const killSwitchService = {
   getStatus: (tenantId) => request(`/decision/kill-switch/${tenantId}`),
   triggerKill: (tenantId) =>
@@ -439,3 +611,24 @@ export const killSwitchService = {
     }),
   resetKill: (tenantId) => request(`/decision/kill-switch/${tenantId}`, { method: "DELETE" }),
 };
+
+export const auditExportService = {
+  export: (params) => request('/audit/export', { method: 'POST', body: JSON.stringify(params) }),
+}
+
+export const userService = {
+  list: (params) => request('/users?' + new URLSearchParams(params || {})),
+  invite: (data) => request('/users/invite', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => request(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deactivate: (id) => request(`/users/${id}`, { method: 'DELETE' }),
+}
+
+export const securityService = {
+  getPosture: () => request('/security/posture'),
+}
+
+export const adminService = {
+  listTenants: () => request('/admin/tenants'),
+  getTenant: (id) => request(`/admin/tenants/${id}`),
+}
+

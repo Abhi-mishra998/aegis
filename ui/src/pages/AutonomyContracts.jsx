@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, Shield, AlertTriangle, UserCheck, Plus, Trash2, Lock } from 'lucide-react'
 import { autonomyService } from '../services/api'
 import Modal from '../components/Common/Modal'
+import ConfirmDialog from '../components/Common/ConfirmDialog'
+import { useAuth } from '../hooks/useAuth'
 
 const defaultContract = {
   agent_id: '',
@@ -33,13 +35,15 @@ function CSV({ value, onChange, placeholder }) {
 }
 
 export default function AutonomyContracts() {
-  const [contracts, setContracts]   = useState([])
-  const [violations, setViolations] = useState([])
-  const [overrides, setOverrides]   = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [editing, setEditing]       = useState(null)
-  const [saving, setSaving]         = useState(false)
-  const [error, setError]           = useState('')
+  const { addToast } = useAuth()
+  const [contracts, setContracts]     = useState([])
+  const [violations, setViolations]   = useState([])
+  const [overrides, setOverrides]     = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [editing, setEditing]         = useState(null)
+  const [saving, setSaving]           = useState(false)
+  const [error, setError]             = useState('')
+  const [disableTarget, setDisableTarget] = useState(null)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -78,13 +82,14 @@ export default function AutonomyContracts() {
       }
       setEditing(null)
       await fetchAll()
-    } catch (e) { alert(e.message) }
+    } catch (e) { addToast(e?.message || 'Save failed', 'error') }
     finally { setSaving(false) }
   }
 
-  const disable = async (id) => {
-    if (!confirm('Disable contract?')) return
-    await autonomyService.disableContract(id)
+  const disable = (id) => setDisableTarget(id)
+
+  const confirmDisable = async () => {
+    await autonomyService.disableContract(disableTarget)
     await fetchAll()
   }
 
@@ -201,6 +206,17 @@ export default function AutonomyContracts() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={disableTarget !== null}
+        title="Disable Contract"
+        description="Disable this contract? The agent will lose its guardrails until a new contract is created."
+        confirmLabel="Disable"
+        variant="danger"
+        onConfirm={confirmDisable}
+        onClose={() => setDisableTarget(null)}
+        onError={(e) => { addToast(e?.message || 'Disable failed', 'error'); setDisableTarget(null) }}
+      />
 
       {/*
         New / Edit Contract dialog.

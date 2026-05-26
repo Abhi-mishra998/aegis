@@ -114,7 +114,7 @@ class AgentResponse(BaseModel):
 
 
 class AgentListResponse(BaseModel):
-    data: list[AgentResponse]
+    items: list[AgentResponse]
     total: int
     page: int
     size: int

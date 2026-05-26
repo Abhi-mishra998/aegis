@@ -1,14 +1,26 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
   RefreshCw, Filter, ChevronRight, Zap, User,
   Activity, TrendingDown, Eye, Lock, Slash, ArrowUpRight,
+  Download,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
 import SkeletonLoader from '../components/Common/SkeletonLoader';
 import Modal from '../components/Common/Modal';
 import { incidentService, socService } from '../services/api';
+
+async function _exportIncidentPdf(incidentId, incidentNumber) {
+  const blob = await incidentService.exportPdf(incidentId)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `aegis-incident-${incidentNumber || incidentId.slice(0, 8)}.pdf`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 import { AuthContext } from '../context/AuthContext';
 import { eventBus } from '../lib/eventBus';
 
@@ -91,10 +103,12 @@ function ScoreGauge({ score }) {
 
 function IncidentDetail({ incident, onClose, onRefresh }) {
   const { addToast } = useContext(AuthContext);
+  const navigate = useNavigate();
   const [loading,    setLoading]    = useState(false);
   const [actionType, setActionType] = useState('NOTE');
   const [note,       setNote]       = useState('');
   const [by,         setBy]         = useState('');
+  const [exporting,  setExporting]  = useState(false);
 
   const transitions = VALID_TRANSITIONS[incident.status] || [];
 
@@ -138,6 +152,14 @@ function IncidentDetail({ incident, onClose, onRefresh }) {
             <p className="text-xs text-neutral-500 mt-0.5 font-mono">
               Agent {incident.agent_id?.slice(0, 8)} · {incident.tool || 'N/A'} · Risk {((incident.risk_score ?? 0) * 100).toFixed(0)}%
             </p>
+            {incident.agent_id && (
+              <button
+                onClick={() => { onClose(); navigate(`/agents/${incident.agent_id}/profile`) }}
+                className="mt-1.5 flex items-center gap-1 text-[11px] text-indigo-400 hover:text-white transition-colors"
+              >
+                <ArrowUpRight size={11} aria-hidden="true" /> View Agent Profile
+              </button>
+            )}
             {incident.explanation && (
               <p className="text-xs text-neutral-400 mt-2 leading-relaxed bg-white/[0.03] rounded px-2 py-1.5 border border-white/[0.06]">
                 {incident.explanation}
@@ -153,9 +175,27 @@ function IncidentDetail({ incident, onClose, onRefresh }) {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <SeverityBadge severity={incident.severity} />
             <StatusBadge status={incident.status} />
+            <button
+              onClick={async () => {
+                setExporting(true)
+                try {
+                  await _exportIncidentPdf(incident.id, incident.incident_number)
+                  addToast('Forensic PDF downloaded', 'success')
+                } catch (err) {
+                  addToast(err.message || 'Export failed', 'error')
+                } finally {
+                  setExporting(false)
+                }
+              }}
+              disabled={exporting}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-neutral-400 bg-white/[0.02] border border-[var(--border-subtle)] rounded-lg hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
+            >
+              <Download size={11} aria-hidden="true" />
+              {exporting ? 'Generating…' : 'Export PDF'}
+            </button>
           </div>
         </div>
 

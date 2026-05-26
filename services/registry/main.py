@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 
 from sdk.common.config import settings
@@ -16,16 +17,15 @@ from services.registry.service import set_registry_redis
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    # 1. Validate DB schema before accepting traffic
     async with get_session_factory()() as db:
         await check_schema(db, "registry")
 
-    # 2. Initialize Redis for caching
     redis = get_redis_client(settings.REDIS_URL)
     set_registry_redis(redis)
 
+    _app.state.client = httpx.AsyncClient(timeout=10.0)
     yield
-    # 2. Cleanup
+    await _app.state.client.aclose()
     await redis.aclose()
     await engine.dispose()
 

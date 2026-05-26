@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { killSwitchService } from '../services/api'
+import { killSwitchService, auditService } from '../services/api'
 import {
   AlertTriangle, Power, ShieldCheck, AlertOctagon,
-  ShieldAlert, Zap, Lock, RefreshCw,
+  ShieldAlert, Zap, Lock, RefreshCw, Clock,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -39,6 +39,7 @@ export default function KillSwitch() {
   const [redisSynced,   setRedisSynced]   = useState(null)
   const [error,         setError]         = useState('')
   const [confirmOpen,   setConfirmOpen]   = useState(false)
+  const [history,       setHistory]       = useState([])
 
   const fetchStatus = async () => {
     if (!tenant_id) return
@@ -55,8 +56,17 @@ export default function KillSwitch() {
     }
   }
 
+  const fetchHistory = async () => {
+    try {
+      const res = await auditService.getKillSwitchHistory(20)
+      const data = res?.data || res || {}
+      setHistory(data.items || [])
+    } catch {}
+  }
+
   useEffect(() => {
     fetchStatus()
+    fetchHistory()
     const interval = setInterval(fetchStatus, 30_000)
     return () => clearInterval(interval)
   }, [tenant_id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -247,6 +257,26 @@ export default function KillSwitch() {
           </Card>
         </div>
       </div>
+
+      {/* ── Activation History ── */}
+      <Card title="Activation History">
+        {history.length === 0 ? (
+          <p className="text-xs text-neutral-600 py-2">No kill-switch activations recorded.</p>
+        ) : (
+          <div className="divide-y divide-white/[0.04]">
+            {history.map((row, i) => (
+              <div key={row.id || i} className="flex items-center gap-3 py-2.5 text-xs">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${row.action === 'kill' ? 'bg-red-500' : 'bg-green-500'}`} aria-hidden="true" />
+                <span className="text-neutral-300 flex-1 font-mono">{row.action || '—'}</span>
+                <span className="text-neutral-500 font-mono">{row.actor || row.user_id?.slice(0, 8) || '—'}</span>
+                <span className="text-neutral-600 font-mono">
+                  {row.timestamp ? new Date(row.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* ── Confirmation modal ── */}
       <Modal

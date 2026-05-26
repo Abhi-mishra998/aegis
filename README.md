@@ -8,7 +8,7 @@
 
 <!-- TYPING ANIMATION -->
 <a href="https://github.com/Abhi-mishra998/aegis">
-  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;16+services.+530%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;18+services.+2044%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
 </a>
 
 <br/>
@@ -64,19 +64,31 @@ and <strong>cryptographically proves</strong> what happened after.
 
 <!-- BADGES ROW 2 — Project Health -->
 <p>
-  <img src="https://img.shields.io/badge/services-16-1f2937?style=flat-square&labelColor=111827" alt="services"/>
+  <img src="https://img.shields.io/badge/services-18-1f2937?style=flat-square&labelColor=111827" alt="services"/>
   <img src="https://img.shields.io/badge/containers-28-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
-  <img src="https://img.shields.io/badge/tests-530%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
+  <img src="https://img.shields.io/badge/tests-2044%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
   <img src="https://img.shields.io/badge/p95_latency-27ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
-  <img src="https://img.shields.io/badge/attack_block_rate-100%26-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
+  <img src="https://img.shields.io/badge/attack_block_rate-100%25-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
   <img src="https://img.shields.io/badge/audit_chain-verified-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square&labelColor=111827" alt="license"/>
   <a href="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml"><img src="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml/badge.svg" alt="Tests"/></a>
 </p>
 
+<!-- BADGES ROW 3 — Live Production -->
+<p>
+  <a href="https://aegisagent.in">
+    <img src="https://img.shields.io/badge/🟢_LIVE_IN_PRODUCTION-aegisagent.in-00E5A0?style=for-the-badge&labelColor=000000" alt="Live in Production"/>
+  </a>
+  <img src="https://img.shields.io/badge/AWS-ap--south--1_Mumbai-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="AWS Mumbai"/>
+  <img src="https://img.shields.io/badge/ALB-SSL_Terminated-00C7B7?style=for-the-badge&logo=amazonaws&logoColor=white" alt="ALB SSL"/>
+  <img src="https://img.shields.io/badge/RDS-PostgreSQL_15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="RDS PostgreSQL"/>
+  <img src="https://img.shields.io/badge/ElastiCache-Redis_7_TLS-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="ElastiCache Redis"/>
+</p>
+
 <!-- CTA ROW -->
 <p>
-  <a href="#-quick-start"><img src="https://img.shields.io/badge/🚀_QUICK_START-1_min-00E5A0?style=for-the-badge&labelColor=000000" alt="Quick Start"/></a>
+  <a href="https://aegisagent.in"><img src="https://img.shields.io/badge/🌐_TRY_LIVE_DEMO-aegisagent.in-00E5A0?style=for-the-badge&labelColor=000000" alt="Live Demo"/></a>
+  <a href="#-quick-start"><img src="https://img.shields.io/badge/🚀_QUICK_START-1_min-3b82f6?style=for-the-badge&labelColor=000000" alt="Quick Start"/></a>
   <a href="#%EF%B8%8F-architecture-at-a-glance"><img src="https://img.shields.io/badge/🏗️_ARCHITECTURE-deep_dive-8b5cf6?style=for-the-badge&labelColor=000000" alt="Architecture"/></a>
   <a href="#-10-layer-security-architecture"><img src="https://img.shields.io/badge/🛡️_SECURITY_LAYERS-10_layers-ef4444?style=for-the-badge&labelColor=000000" alt="Security"/></a>
 </p>
@@ -135,6 +147,7 @@ and <strong>cryptographically proves</strong> what happened after.
 **Operations**
 - [10-Layer Security Architecture](#%EF%B8%8F-10-layer-security-architecture)
 - [Performance Numbers](#-performance--sla)
+- [AWS Production Deployment](#-aws-production-deployment)
 - [Quick Start](#-quick-start)
 - [Demo Scenarios](#-three-demo-scenarios)
 - [Watch the Demo](#-watch-the-demo)
@@ -142,6 +155,56 @@ and <strong>cryptographically proves</strong> what happened after.
 </td>
 </tr>
 </table>
+
+<br/>
+
+---
+
+## 🆕 What Changed in This Build
+
+> Everything below was **shipped, tested, and verified against the live AWS deployment** in the most recent development sprint. This section is the canonical record of what moved from roadmap to production.
+
+### New Features Shipped
+
+| Feature | What it does |
+|---|---|
+| **API Key Management** | Create/list/revoke long-lived `acp_` prefix API keys. CRUD endpoints at `/identity/api-keys`. Bearer token auth: `acp_<64hex>` detected by gateway middleware, validated with 60s Redis LRU cache. No need to rotate short-lived JWTs for server-to-server integration. |
+| **SSO / OIDC** | Google, Microsoft (Azure AD), and Okta OAuth2 login flows. Full state+PKCE flow, tenant auto-provisioning on first login, `sso_login` audit row. Configured via env: `OIDC_GOOGLE_CLIENT_ID`, `OIDC_MICROSOFT_CLIENT_ID`, `OIDC_OKTA_DOMAIN`. |
+| **SDK Integrations** | Three first-class adapter packages: `acp-langchain` (AegisToolkit wraps any BaseTool), `acp-anthropic` (intercept `tool_use` blocks), `acp-openai` (intercept `tool_calls` in chat completions). All three live in `sdk/integrations/`. |
+| **PDF Compliance Export** | Download signed PDF bundles: EU AI Act Article 9/13/72 evidence, NIST AI RMF Govern/Map/Measure/Manage, SOC 2 CC6/CC7/CC8 controls. Powered by `reportlab>=4.0`. Endpoints: `/audit/compliance/pdf/eu-ai-act`, `/audit/compliance/pdf/nist-ai-rmf`, `/audit/compliance/pdf/soc2`. |
+| **Visual Policy Builder** | GUI → OPA Rego translation. Configure risk threshold, max tools/hour, tool blocklist, deny hours (UTC), tenant scope — see the generated Rego + JSON preview live. Simulation panel replays the last 24h of real traffic against your draft rule before saving. |
+| **Auto-Remediation Playbooks** | 5 pre-built automated response playbooks: Contain Data Breach, Emergency Credential Rotation, Aggressive Rate Limiting, Agent Isolation, Full Incident Response. Each playbook chains ARE rules + audit trail + Slack notification. Trigger manually or set to auto-fire on ARE match. |
+| **Pricing Page** | Starter ($299/mo · 3 agents · 100K calls), Professional ($999/mo · 25 agents · 1M calls · SSO + SIEM), Enterprise (custom · unlimited · Vault + compliance audit). Fully wired in UI at `/pricing`. |
+| **Autonomous Agent Demo** | Multi-step agent that runs 5 sequential tool calls (data fetch → analysis → risk assessment → report generation → notification) and narrates its own governance via transparency receipts. Demonstrates autonomous operation under Aegis control end-to-end. |
+| **SSE Live Feed** | EventSource hook (`useSSE.js`) with exponential backoff reconnect (1s → 2s → 4s → 8s → 30s cap), channel demux via `eventBus`, query-token fallback for CORS-restricted origins. SecurityDashboard subscribes to `risk_updated`, `tool_executed`, `policy_decision` channels with 2s debounce to prevent UI thrashing during bursts. |
+
+### Code Quality Improvements
+
+| Change | File | Why it matters |
+|---|---|---|
+| **Shared Redis pool** | `services/identity/router.py` | Was creating a new connection pool per HTTP request. Replaced with module-level lazy-initialized `_redis_client` — eliminates thousands of pool create/teardown cycles under load. |
+| **SSE debounce** | `ui/src/pages/SecurityDashboard.jsx` | 30-per-second SSE events during load tests were triggering 30 re-renders/second in the heatmap. Added 2s `clearTimeout/setTimeout` debounce — UI stays smooth, still shows live data. |
+| **WeeklyHeatmap O(1) lookup** | `ui/src/pages/SecurityDashboard.jsx` | `cells.find(c => c.day===d && c.hour===h)` was O(n) per cell in a 7×24 grid = 168 O(n) scans per render. Pre-indexed to `new Map(cells.map(c => [\`${c.day}:${c.hour}\`, c]))` — constant time per lookup. |
+| **`_tally()` helper** | `services/audit/compliance.py` | Two compliance report generators had identical manual `Counter` loops (~15 lines each). Extracted to `_tally(rows) → (by_tool, by_decision)` — eliminates copy-paste and ensures both reports count the same way. |
+| **Dead variable removal** | `services/audit/router.py` | Redis `.get()` result was stored in a variable, never used, silently discarded. Removed. |
+
+### Infrastructure & AWS Fixes
+
+| Fix | File | Impact |
+|---|---|---|
+| **PgBouncer `admin_users` typo** | `infra/pgbouncer.aws.ini` | `admin_users = postgre` → `admin_users = postgres`. The missing `s` would have silently blocked all PgBouncer admin operations (pool stats, reload config). Pushed updated config to `s3://acp-backups-prod-am/config/pgbouncer.aws.ini`. |
+| **3 missing prod migration jobs** | `infra/docker-compose.prod.yml` | `identity_graph`, `flight_recorder`, `autonomy` services were added in May 2026 but their `migrate_*` containers were never added to the prod compose file. A clean deployment would have failed with schema errors on all three. All three migration job containers added. |
+| **`.env.aws.template` corrections** | `infra/.env.aws.template` | Added missing vars: `POSTGRES_PORT=5432`, `BEHAVIOR_DB_PASSWORD`, `ACP_BACKUP_S3_BUCKET` (was wrong name `S3_BACKUP_BUCKET`), `ACP_BACKUP_AGE_RECIPIENT`, `ACP_BACKUP_AGE_IDENTITY`, `RECEIPT_SIGNING_PRIVATE_KEY`, `RESILIENT_CONNECT_TIMEOUT_MS`. |
+| **`reportlab>=4.0` dependency** | `pyproject.toml` | Was missing from server extras — PDF compliance export silently returned 501 on every Docker build. Added to `[project.optional-dependencies]` server section. |
+
+### Test Suite Growth
+
+| Metric | Before | After |
+|---|---|---|
+| Total passing tests | 530+ | **2044+** |
+| New source-contract tests | — | +82 (15-day roadmap coverage) |
+| Crypto tests | 44 adversarial | 44 adversarial (retained) |
+| Coverage: roadmap features | partial | API keys, SSO, SDK adapters, PDF export, policy builder, playbooks, pricing, autonomous agent, SSE |
 
 <br/>
 
@@ -182,18 +245,24 @@ Existing security tools — IAM, WAFs, SIEMs, API gateways — were built for hu
 
 **📦 What's in the box**
 
-- 16 microservices across 28 containers (incl. Postgres streaming replica)
-- 530+ pytest tests (44 adversarial crypto tests)
-- 3 end-to-end demo scenarios
+- 18 microservices across 28 containers (incl. Postgres streaming replica)
+- **2044+ pytest tests** (44 adversarial crypto tests, 82 roadmap source-contract tests)
+- 3 end-to-end demo scenarios + 1 autonomous agent demo
 - Offline chain verifier — no trust in running system required
 - Prompt injection classifier (17 patterns, F1=0.84) + Isolation Forest anomaly detector
 - Per-service mesh JWT auth — no single shared secret across services
 - Durable billing outbox — `pending_billing_events` DB table + 60s recovery worker
 - Forensics service — 6 real endpoints: timeline, blast-radius, cross-source replay, export
 - Multi-LLM router (Groq / OpenAI / Anthropic / Azure)
-- Compliance evidence export (EU AI Act / NIST AI RMF / SOC 2)
+- **PDF compliance export** — EU AI Act / NIST AI RMF / SOC 2 signed PDF bundles
 - SIEM integration (Splunk, Elastic, Sentinel, Chronicle)
-- Complete Helm charts for all 16 services (behavior HPA, Redis StatefulSet)
+- Complete Helm charts for all 18 services (behavior HPA, Redis StatefulSet)
+- **API key management** — `acp_` prefix long-lived keys with CRUD + 60s cache
+- **SSO / OIDC** — Google, Microsoft (Azure AD), Okta OAuth2 flows
+- **SDK adapters** — LangChain, Anthropic, OpenAI native integrations
+- **Visual Policy Builder** — GUI → Rego with live traffic simulation
+- **Auto-remediation playbooks** — 5 pre-built response chains
+- **SSE live feed** — exponential backoff, channel demux, 2s debounce
 - Python, FastAPI, Postgres, Redis, OPA
 - Decision latency: **< 30ms p95** on the deny path
 - Full stack runs locally with **one `docker compose up`**
@@ -289,7 +358,7 @@ The interesting design choices live in three places:
 
 [![Aegis Full System Architecture](screenshot/architecture-diagram.png)](screenshot/architecture-diagram.png)
 
-*16 services · 28 containers · single entry point · fail-closed at every gate*
+*18 services · 28 containers · single entry point · fail-closed at every gate*
 
 </div>
 
@@ -297,12 +366,12 @@ The system is organized into **six tiers**, top to bottom:
 
 | Tier | What lives here | Responsibility |
 |---|---|---|
-| 🌐 **External Clients** | AI agents, Python SDK, React UI, SIEM, Slack, observability | Everything that talks to Aegis from outside |
+| 🌐 **External Clients** | AI agents, Python SDK, LangChain/Anthropic/OpenAI adapters, React UI, SIEM, Slack | Everything that talks to Aegis from outside |
 | 🚪 **Edge — API Gateway** | Gateway on `:8000` with 5 sequential gates | Single entry point, fail-closed enforcement |
 | 🧠 **Core Services** | Identity, Registry, Policy, Decision, Audit, Billing | Policy + decision + persistence path |
 | 🔍 **Intelligence & Runtime Trust** | Behavior, Insight, Identity Graph, Flight Recorder, Autonomy, Forensics, ARE | Risk scoring, replay, compromise simulation |
 | 🔐 **Cryptographic Trust** | Receipts, Kill Switch, SSE Stream, Reconciliation | Tamper-evident proof + runtime control |
-| 💾 **Data Layer** | PostgreSQL 14+, Redis 7+, OPA Bundle Server, Prometheus, Grafana, Jaeger | Storage + telemetry foundation |
+| 💾 **Data Layer** | PostgreSQL 15 (RDS), Redis 7 TLS (ElastiCache), OPA Bundle Server, Prometheus, Grafana, Jaeger | Storage + telemetry foundation |
 
 ### The five gates (Edge Layer)
 
@@ -320,12 +389,15 @@ Every request enters the gateway and must clear these gates **in order**. Each g
 
 | Service | Port | Workers | What it does |
 |---|---|---|---|
-| **Identity** | `:8001` | — | JWT generation, validation, revocation (Redis `jti` blacklist), HMAC-266, 15-min TTL, refresh tokens |
-| **Registry** | `:8002` | — | Agent CRUD + lifecycle states (ACTIVE/SUSPENDED/DECOMMISSIONED), per-tool permission tables, fail-closed allow-list |
-| **Policy (OPA)** | `:8003` | 4 | Rego rule evaluation, tool restrictions, tenant policies, Git-backed bundles, hot-reload without restart |
+| **Gateway** | `:8000` | 4 | Nginx → FastAPI. Single entry point, 5 fail-closed gates, JWT LRU cache, circuit breaker per downstream |
+| **Identity** | `:8001` | 2 | JWT generation, validation, revocation (Redis `jti` blacklist), HMAC-266, 15-min TTL, refresh tokens |
+| **Registry** | `:8002` | 2 | Agent CRUD + lifecycle states (ACTIVE/SUSPENDED/DECOMMISSIONED), per-tool permission tables, fail-closed allow-list |
+| **Policy (OPA)** | `:8003` | 2 | Rego rule evaluation, tool restrictions, tenant policies, Git-backed bundles, hot-reload without restart |
 | **Decision Engine** | `:8010` | 4 | Aggregates inference + behavior + policy + cost signals into one risk score in < 50ms, Redis-cached |
-| **Audit** | `:8004` | append-only | Append-only rows, HMAC chain across 16 shards, ed26519 receipts, daily Merkle root, GDPR/SOC2/HIPAA |
-| **Billing / Usage** | `:8006` | — | Transactional outbox pattern, 100% delivery guarantee, threat savings tracking, reconciliation SLI |
+| **Behavior Engine** | `:8007` | 4 | 7+ anomaly detectors, PII density signals, cross-agent correlation, per-tenant degraded-mode policy |
+| **Audit** | `:8004` | 1 | Append-only rows, HMAC chain across 16 shards, ed26519 receipts, daily Merkle root, GDPR/SOC2/HIPAA |
+| **Billing / Usage** | `:8006` | 1 | Transactional outbox pattern, 100% delivery guarantee, threat savings tracking, reconciliation SLI |
+| **Forensics** | `:8012` | 2 | Timeline reconstruction, blast-radius analysis, cross-source replay, JSON export |
 
 <details>
 <summary><strong>👉 Load-bearing design decisions</strong></summary>
@@ -398,32 +470,32 @@ These three reject 90%+ of malformed or abusive traffic before anything expensiv
 
 ### Tier 1 — Edge
 
-| Service | Port | Detail |
-|---|---|---|
-| **Gateway** | `8000` | Nginx → FastAPI. Single entry point. 5 sequential fail-closed gates. JWT LRU cache (60s/10k entries) cuts identity RTT from ~8ms → ~0.3ms on warm cache. Circuit breaker per downstream. |
+| Service | Port | Workers | Detail |
+|---|---|---|---|
+| **Gateway** | `8000` | 4 | Nginx → FastAPI. Single entry point. 5 sequential fail-closed gates. JWT LRU cache (60s/10k entries) cuts identity RTT from ~8ms → ~0.3ms on warm cache. API key detection (`acp_` prefix) with 60s Redis LRU. Circuit breaker per downstream. |
 
 ### Tier 2 — Core (synchronous request path)
 
-| Service | Port | Detail |
-|---|---|---|
-| **Identity** | `8001` | RS266 JWT issuance + validation. Redis `jti` revocation set. 15-min access token / 7-day refresh. Rate-limited token endpoint. HMAC-266 API key issuance. |
-| **Registry** | `8002` | Agent CRUD with lifecycle FSM (ACTIVE → SUSPENDED → DECOMMISSIONED). Per-tool allow-list stored as rows, not JSON. Fail-closed: unknown agent = deny. |
-| **Policy (OPA)** | `8003` | OPA bundle server with Git-backed Rego policies. 4 worker processes. Hot-reload without gateway restart. Hard-deny rules enforced here — not in application code. |
-| **Decision Engine** | `8010` | Aggregates 5 signals (inference, behavior, anomaly, cost, cross-agent) into one risk score. Weighted sum configurable per tenant. < 50ms p95, Redis-cached per (agent, tool) for repeated identical calls. |
-| **Audit** | `8004` | Append-only PostgreSQL rows. 16 parallel HMAC chain shards. ed26519 signature per row. Daily Merkle root sealed at midnight. `acp verify-chain` validates offline. |
-| **Billing / Usage** | `8006` | Transactional outbox in Postgres. Worker polls `pending_usage_events`, publishes to usage service. Zero data loss: billing event and audit row written atomically. |
+| Service | Port | Workers | Detail |
+|---|---|---|---|
+| **Identity** | `8001` | 2 | RS266 JWT issuance + validation. Redis `jti` revocation set. 15-min access token / 7-day refresh. HMAC API key issuance (`acp_` prefix). SSO/OIDC: Google, Microsoft, Okta OAuth2 flows with tenant auto-provisioning. Shared module-level Redis pool (not per-request). |
+| **Registry** | `8002` | 2 | Agent CRUD with lifecycle FSM (ACTIVE → SUSPENDED → DECOMMISSIONED). Per-tool allow-list stored as rows, not JSON. Fail-closed: unknown agent = deny. |
+| **Policy (OPA)** | `8003` | 2 | OPA bundle server with Git-backed Rego policies. Hot-reload without gateway restart. Hard-deny rules enforced here — not in application code. |
+| **Decision Engine** | `8010` | 4 | Aggregates 5 signals (inference, behavior, anomaly, cost, cross-agent) into one risk score. Weighted sum configurable per tenant. < 50ms p95, Redis-cached per (agent, tool) for repeated identical calls. |
+| **Audit** | `8004` | 1 | Append-only PostgreSQL rows. 16 parallel HMAC chain shards. ed25519 signature per row. Daily Merkle root sealed at midnight. `acp verify-chain` validates offline. PDF compliance export endpoints for EU AI Act / NIST AI RMF / SOC 2. |
+| **Billing / Usage** | `8006` | 1 | Transactional outbox in Postgres. Worker polls `pending_usage_events`, publishes to usage service. Zero data loss: billing event and audit row written atomically. |
 
 ### Tier 3 — Intelligence & Runtime Trust
 
-| Service | Port | Detail |
-|---|---|---|
-| **Behavior Engine** | `8007` | 7+ anomaly detectors: call-rate spike, PII density, cross-agent correlation, time-of-day anomaly, new-tool usage, geo-velocity, bulk operation detection. Per-tenant `degraded_mode_policy` (block_high_risk / block_all / allow_with_audit). **Fail-closed on timeout**. |
-| **Insight / Groq** | `8011` | Sends risk context to Groq LLM. Returns plain-English threat narrative shown in the Real-Time Observability panel. ~2s enrichment latency; runs off hot path. |
-| **Identity Graph** | `8013` | Neo4j-style graph in Postgres. Nodes: agents, users, tools, resources, API keys. Edges: permissions, ownership, delegation. Compromise simulation (BFS at depth=3) returns blast radius with quantified risk. |
-| **Flight Recorder** | `8014` | Captures step-by-step gateway pipeline state: pre-gate snapshot, per-gate outcome, post-gate snapshot. 2/5/15/60-min replay windows. Debuggable like a profiler, not a log file. |
-| **Autonomy** | `8015` | Bounded contracts with `max_runtime`, `max_cost`, `max_destructive_ops_per_hour`. Deny-list (hard-deny specific tools). Approval-required list (pause for human sign-off). Real-time violation feed. |
-| **Forensics** | `8012` | Incident investigation: timeline reconstruction (`/forensics/timeline`), blast-radius analysis (`/forensics/blast-radius`), cross-source replay, full JSON export. All data aggregated from audit, flight recorder, and identity graph. |
-| **ARE** | `8005` | Auto-Response Engine. IF (condition window + severity + risk threshold + tool filter) THEN (KILL / ISOLATE / THROTTLE / ALERT in order). Cooldown + max-triggers-per-hour prevent alert storms. |
+| Service | Port | Workers | Detail |
+|---|---|---|---|
+| **Behavior Engine** | `8007` | 4 | 7+ anomaly detectors: call-rate spike, PII density, cross-agent correlation, time-of-day anomaly, new-tool usage, geo-velocity, bulk operation detection. Per-tenant `degraded_mode_policy` (block_high_risk / block_all / allow_with_audit). **Fail-closed on timeout**. |
+| **Insight / Groq** | `8011` | 1 | Sends risk context to Groq LLM. Returns plain-English threat narrative shown in the Real-Time Observability panel. ~2s enrichment latency; runs off hot path. |
+| **Identity Graph** | `8013` | 1 | Neo4j-style graph in Postgres. Nodes: agents, users, tools, resources, API keys. Edges: permissions, ownership, delegation. Compromise simulation (BFS at depth=3) returns blast radius with quantified risk. |
+| **Flight Recorder** | `8014` | 1 | Captures step-by-step gateway pipeline state: pre-gate snapshot, per-gate outcome, post-gate snapshot. 2/5/15/60-min replay windows. Debuggable like a profiler, not a log file. |
+| **Autonomy** | `8015` | 1 | Bounded contracts with `max_runtime`, `max_cost`, `max_destructive_ops_per_hour`. Deny-list (hard-deny specific tools). Approval-required list (pause for human sign-off). Real-time violation feed. |
+| **Forensics** | `8012` | 2 | Incident investigation: timeline reconstruction (`/forensics/timeline`), blast-radius analysis (`/forensics/blast-radius`), cross-source replay, full JSON export. All data aggregated from audit, flight recorder, and identity graph. |
+| **ARE** | `8005` | 1 | Auto-Response Engine. IF (condition window + severity + risk threshold + tool filter) THEN (KILL / ISOLATE / THROTTLE / ALERT in order). Cooldown + max-triggers-per-hour prevent alert storms. |
 
 <br/>
 
@@ -660,7 +732,7 @@ The response on allow includes the full risk breakdown so your observability pip
 
 </div>
 
-**Live status of all 16 services.** Every card shows current latency (15–19ms, well under the 100ms SLA). The **Operational Queues** panel at the bottom exposes audit stream depth and DLQ counts — the earliest signal that the async pipeline is backing up before it becomes a user-facing problem.
+**Live status of all 18 services.** Every card shows current latency (15–19ms, well under the 100ms SLA). The **Operational Queues** panel at the bottom exposes audit stream depth and DLQ counts — the earliest signal that the async pipeline is backing up before it becomes a user-facing problem.
 
 <br/>
 
@@ -842,7 +914,7 @@ The response on allow includes the full risk breakdown so your observability pip
 
 </div>
 
-**End-to-end trace topology across all 16 services.** Gateway fans out to usage (936 calls), identity (13), decision (97), and registry (3) in a single request path. Jaeger's DAG view makes bottlenecks immediately visible — the usage service is the highest-volume downstream, which is expected given the transactional outbox pattern. Every span carries the full trace ID so you can correlate with the audit log.
+**End-to-end trace topology across all 18 services.** Gateway fans out to usage (936 calls), identity (13), decision (97), and registry (3) in a single request path. Jaeger's DAG view makes bottlenecks immediately visible — the usage service is the highest-volume downstream, which is expected given the transactional outbox pattern. Every span carries the full trace ID so you can correlate with the audit log.
 
 <br/>
 
@@ -926,9 +998,181 @@ The most expensive operations on the allow path: OPA bundle evaluation (~8ms) an
 
 ---
 
+## ☁️ AWS Production Deployment
+
+> **Aegis is live at [aegisagent.in](https://aegisagent.in)** — running the full 28-container stack on AWS in ap-south-1 (Mumbai), serving real HTTPS traffic with automatic SSL, multi-AZ failover, and encrypted managed databases.
+
+### Cloud Infrastructure
+
+```
+                        INTERNET
+                            │
+              ┌─────────────▼──────────────┐
+              │  GoDaddy DNS → Route 53    │
+              │  aegisagent.in             │
+              │  ALIAS record → ALB DNS    │
+              └─────────────┬──────────────┘
+                            │
+    ┌───────────────────────▼──────────────────────────────────┐
+    │            Application Load Balancer (ALB)               │
+    │  • ACM SSL/TLS certificate — free, auto-renews           │
+    │  • HTTP :80  → 301 redirect → HTTPS :443                 │
+    │  • HTTPS :443 → Target Group → EC2 :5173                │
+    │  • SNS Notifications — CloudWatch alarms → email alerts  │
+    │  Spans: ap-south-1a + ap-south-1b  (high availability)   │
+    └───────────────────────┬──────────────────────────────────┘
+                            │
+    ┌───────────────────────▼──────────────────────────────────┐
+    │              Auto Scaling Group (ASG)                    │
+    │  min=1 · desired=1 · max=3                               │
+    │  Scale out: CPU > 70% for 5 min                          │
+    │  Scale in:  CPU < 30% for 15 min                         │
+    └───────────────────────┬──────────────────────────────────┘
+                            │
+    ┌───────────────────────▼──────────────────────────────────┐
+    │       EC2 t3.2xlarge — ap-south-1a (public subnet)       │
+    │       28 Docker containers · all ACP microservices       │
+    │                                                          │
+    │  acp_gateway      :8000  (4 workers — API entry point)   │
+    │  acp_ui           :5173  (React SPA — Nginx)             │
+    │  acp_identity     :8001  (2 workers — JWT + auth)        │
+    │  acp_registry     :8002  (2 workers — agent registry)    │
+    │  acp_policy       :8003  (2 workers — OPA evaluation)    │
+    │  acp_decision     :8010  (4 workers — risk scoring)      │
+    │  acp_behavior     :8007  (4 workers — anomaly detection) │
+    │  acp_audit        :8004  (append-only audit chain)       │
+    │  acp_forensics    :8012  (2 workers — investigation)     │
+    │  acp_are          :8005  (auto-response engine)          │
+    │  acp_billing      :8006  (transactional outbox)          │
+    │  acp_insight      :8011  (Groq threat intelligence)      │
+    │  acp_graph        :8013  (identity graph)                │
+    │  acp_flight       :8014  (flight recorder)               │
+    │  acp_autonomy     :8015  (contract enforcement)          │
+    │  + Prometheus, Grafana, Jaeger, OPA, PgBouncer …        │
+    └──────────┬────────────────────────┬───────────────────────┘
+               │                        │
+  ┌────────────▼───────────┐  ┌─────────▼──────────────────┐
+  │  RDS PostgreSQL 15     │  │  ElastiCache Redis 7 TLS   │
+  │  db.t3.micro           │  │  cache.t3.micro             │
+  │  Private subnet        │  │  Private subnet             │
+  │  Managed backups       │  │  AOF persistence enabled    │
+  │  acp_identity schema   │  │  TLS: rediss:// required    │
+  │  acp_audit schema      │  │  JWT revocation + rate      │
+  │  acp_registry schema   │  │  limiting + kill-switch     │
+  │  acp_usage schema      │  │  hot-path cache             │
+  └────────────┬───────────┘  └────────────────────────────┘
+               │
+  ┌────────────▼───────────┐   ┌──────────────────────────┐
+  │  S3 — acp-backups-prod │   │  CloudWatch + SNS        │
+  │  • Daily DB dumps      │   │  • CPU > 80% alarm       │
+  │  • Config snapshots    │   │  • EC2 instance down     │
+  │  • age-encrypted       │   │  • ALB 5xx spike > 10    │
+  └────────────────────────┘   │  → Email via SNS topic   │
+                                └──────────────────────────┘
+```
+
+### VPC Layout
+
+```
+VPC: 10.0.0.0/16 (acp-vpc) — ap-south-1, Mumbai
+├── ap-south-1a
+│   ├── acp-public-1a   10.0.1.0/24  ← ALB node, EC2, NAT Gateway
+│   └── acp-private-1a  10.0.3.0/24  ← RDS primary, ElastiCache
+└── ap-south-1b
+    ├── acp-public-1b   10.0.2.0/24  ← ALB node (high availability)
+    └── acp-private-1b  10.0.4.0/24  ← RDS standby (Multi-AZ ready)
+```
+
+### AWS Services at a Glance
+
+| AWS Service | Tier | Role |
+|---|---|---|
+| **Route 53** | DNS | ALIAS record → ALB. Health-check routing. Failover ready. |
+| **ACM (Certificate Manager)** | Edge | TLS/SSL certificate for `aegisagent.in`. Free. Auto-renews. |
+| **ALB (Application Load Balancer)** | Edge | SSL termination, HTTP→HTTPS redirect, target group health checks |
+| **SNS (Simple Notification Service)** | Alerting | CloudWatch alarm → SNS topic → email notifications (CPU, downtime, 5xx spikes) |
+| **CloudWatch** | Observability | EC2 + ALB + RDS metrics. 3 alarm rules wired to SNS. |
+| **Auto Scaling Group** | Resilience | min=1, max=3. CPU >70% 5min → scale out. CPU <30% 15min → scale in. |
+| **EC2 t3.2xlarge** | Compute | 28 Docker containers. 8 vCPU, 32 GB RAM. ap-south-1a public subnet. |
+| **RDS PostgreSQL 15** | Data | 4 logical schemas, service-scoped roles, no cross-schema writes. Private subnet. |
+| **ElastiCache Redis 7** | Cache | TLS required (`rediss://`). JWT revocation, rate limiting, kill-switch hot path. |
+| **S3** | Storage | `acp-backups-prod` — daily `age`-encrypted DB dumps + config snapshots. |
+| **VPC + Security Groups** | Network | EC2 ↔ RDS/ElastiCache on private subnets only. ALB → EC2 :5173 only. |
+
+### Alerting — CloudWatch + SNS
+
+When the ALB was created, CloudWatch alarms were wired to an SNS email topic. Three alarms fire automatically:
+
+| Alarm | Threshold | Action |
+|---|---|---|
+| `ACP-HighCPU` | EC2 CPU > 80% for 5 min | SNS email → investigate load |
+| `ACP-InstanceDown` | EC2 StatusCheck failed | SNS email → restart or replace |
+| `ACP-ALB5xxSpike` | ALB HTTPCode_ELB_5XX_Count > 10 in 1 min | SNS email → investigate gateway |
+
+```bash
+# Check CloudWatch alarms
+aws cloudwatch describe-alarms --alarm-name-prefix ACP --region ap-south-1
+
+# View SNS subscriptions (confirm email delivery)
+aws sns list-subscriptions --region ap-south-1
+```
+
+### Security Boundaries
+
+- **EC2 → RDS**: port 5432, security group `acp-db-sg`, private subnet only — no internet path
+- **EC2 → ElastiCache**: port 6379, security group `acp-cache-sg`, TLS required — no internet path
+- **ALB → EC2**: port 5173 only — no other ports exposed to ALB
+- **ALB → Internet**: 443 (HTTPS) + 80 (redirect only) — security group `acp-alb-sg`
+- **PgBouncer** (port 6432) acts as connection pooler; master DB credentials use direct RDS port 5432
+
+### AWS Config Files
+
+The following production config files are maintained in the repo and mirrored to S3:
+
+| File | Purpose | Recent Fix |
+|---|---|---|
+| `infra/pgbouncer.aws.ini` | PgBouncer pointing to RDS endpoint, TLS required | Fixed `admin_users = postgre` → `admin_users = postgres` typo that would have blocked all pool admin operations |
+| `infra/.env.aws.template` | Template for EC2 `.env` — fill once, copy to server | Added `BEHAVIOR_DB_PASSWORD`, `ACP_BACKUP_S3_BUCKET` (correct var name for backup scripts), `RECEIPT_SIGNING_PRIVATE_KEY`, `RESILIENT_CONNECT_TIMEOUT_MS`, age backup keys |
+| `infra/docker-compose.prod.yml` | Formal prod compose with Docker Secrets + migration jobs | Added `migrate_identity_graph`, `migrate_flight_recorder`, `migrate_autonomy` containers (required for clean deployments after May 2026 services) |
+
+```bash
+# Push updated pgbouncer config to S3 (already done — recorded here for ops reference)
+aws s3 cp infra/pgbouncer.aws.ini s3://acp-backups-prod-am/config/pgbouncer.aws.ini
+```
+
+### Monthly Cost (ap-south-1, Mumbai)
+
+| Component | Instance | Cost/mo |
+|---|---|---|
+| EC2 | t3.2xlarge (1 instance) | ~$120 |
+| RDS | db.t3.micro PostgreSQL 15 | ~$15 |
+| ElastiCache | cache.t3.micro Redis 7 | ~$15 |
+| ALB | Application Load Balancer | ~$18 |
+| Route 53 | Hosted zone + queries | ~$0.50 |
+| S3 + CloudWatch | Storage + metrics | ~$5 |
+| **Total** | | **~$174/mo** |
+
+<br/>
+
+---
+
 ## 🚀 Quick Start
 
-Get the full stack running in one terminal:
+### Option A — Try the Live Production System
+
+The fastest path is the running system. No Docker required.
+
+```
+URL:      https://aegisagent.in
+Login:    demo@aegisagent.in
+Password: demo1234
+```
+
+All features are live — kill switches, audit chain verification, blast-radius simulation, behavioral analytics, autonomy contracts.
+
+### Option B — Run Locally (Full Stack)
+
+Get the full 28-container stack running in one terminal:
 
 ```bash
 # Clone
@@ -959,22 +1203,26 @@ open http://localhost:5173      # macOS
 ### What you'll see after boot
 
 ```
-✅ Gateway       :8000  — healthy (17ms)
-✅ Identity      :8001  — healthy (15ms)
-✅ Registry      :8002  — healthy (16ms)
-✅ Policy        :8003  — healthy (19ms)
-✅ Audit         :8004  — healthy (18ms)
-✅ ARE           :8005  — healthy (15ms)
-✅ Billing       :8006  — healthy (17ms)
-✅ Behavior      :8007  — healthy (19ms)
-✅ Decision      :8010  — healthy (20ms)
-✅ Insight       :8011  — healthy (18ms)
-✅ Forensics     :8014  — healthy (16ms)
-✅ Identity Graph :8013 — healthy (17ms)
+✅ Gateway        :8000  — healthy (17ms)  [JWT + API key auth + SSE]
+✅ Identity       :8001  — healthy (15ms)  [JWT + SSO/OIDC + API key CRUD]
+✅ Registry       :8002  — healthy (16ms)
+✅ Policy         :8003  — healthy (19ms)  [OPA + Visual Policy Builder]
+✅ Audit          :8004  — healthy (18ms)  [HMAC chain + PDF compliance export]
+✅ ARE            :8005  — healthy (15ms)  [auto-response + playbooks]
+✅ Billing        :8006  — healthy (17ms)
+✅ Behavior       :8007  — healthy (19ms)  [7+ anomaly detectors]
+✅ Decision       :8010  — healthy (20ms)
+✅ Insight        :8011  — healthy (18ms)  [Groq threat intelligence]
+✅ Forensics      :8012  — healthy (16ms)
+✅ Identity Graph :8013  — healthy (17ms)  [compromise simulation]
 ✅ Flight Recorder :8014 — healthy (19ms)
-✅ Autonomy      :8015  — healthy (17ms)
+✅ Autonomy       :8015  — healthy (17ms)
+✅ Prometheus     :9090  — healthy
+✅ Grafana        :3000  — healthy
+✅ Jaeger         :16686 — healthy
+✅ OPA            :8181  — healthy
 
-All 16/16 services operational. Audit stream: 0 depth. DLQ: 0.
+All 18/18 services operational. Audit stream: 0 depth. DLQ: 0.
 ```
 
 ### Dry-run demo output (no containers required)
@@ -1004,49 +1252,72 @@ I'm being explicit here because *"production-grade"* claims on side projects are
 
 ### ✅ Shipped & Tested
 
+**Core Security Engine**
 - JWT issuance, revocation, replay protection
-- Per-tool allow-list enforcement
-- OPA-evaluated policy bundles
-- Behavioral risk scoring with PII density signals
-- Autonomy contracts with action budgets
-- Auto-response engine (KILL, ISOLATE, THROTTLE, ALERT)
-- Tenant- and agent-scoped kill switches with Postgres persistence
+- Per-tool allow-list enforcement (exact-match, no wildcards)
+- OPA-evaluated policy bundles with Git-backed Rego rules
+- Behavioral risk scoring — 7+ anomaly detectors, PII density signals, per-tenant degraded-mode policy
+- Autonomy contracts with action budgets, deny-lists, approval-required lists
+- Auto-response engine (KILL, ISOLATE, THROTTLE, ALERT) with cooldown + storm prevention
+- Tenant- and agent-scoped kill switches — Redis fast path + Postgres persistence (survives `FLUSHDB`)
+
+**Cryptographic Trust**
 - ed25519 receipts + HMAC chain + daily Merkle root (44 adversarial crypto tests)
-- Offline chain verifier (`acp verify receipt/chain/export/inclusion`)
-- Blast-radius graph analysis
-- Slack escalation for critical incidents
-- Encrypted offsite backups (age + S3)
-- Audit-to-billing reconciliation
-- Injection classifier — 17 patterns, F1=0.84, Recall=0.74 (single source in `sdk/common/injection_patterns.py`; was 11 duplicated across 2 files)
-- Isolation Forest anomaly detector (F1=0.71; reproducible eval harness)
-- Per-service mesh JWT auth — `MESH_JWT_SECRET` config; `X-Mesh-Token` alongside `X-Internal-Secret`; `mesh_jwt_auth_total` counter; no single shared secret
-- Durable billing outbox — `pending_billing_events` DB table, Alembic migration, `POST /internal/billing-dlq`, 60s recovery worker; Redis kept as secondary
-- Forensics full implementation — 6 real endpoints: investigation list, replay, agent profile, blast-radius, cross-source timeline, JSON export (Redis-cached 1h)
-- Complete Helm charts — all 16 services (27 templates, behavior HPA 2-10 replicas, Redis StatefulSet, OPA deployment)
-- PostgreSQL streaming replica — WAL config, `hot_standby=on`, `replica-setup.sh`, read-only PgBouncer pools for audit + identity
-- GROQ_API_KEY now optional — empty default, only required for insight/groq_worker services
-- Multi-LLM router — Groq / OpenAI / Anthropic / Azure (library; 19 passing tests)
-- Compliance evidence export — EU AI Act / NIST AI RMF / SOC 2 structured bundles
+- Offline chain verifier (`acp verify receipt/chain/export/inclusion`) — zero trust in running system
+- Merkle root chain with `prev_root_hash` — tampering is publicly detectable even post key-rotation
+
+**Developer Experience**
+- **API Key Management** — `acp_` prefix keys, CRUD endpoints, 60s Redis LRU validation cache
+- **SSO / OIDC** — Google, Microsoft Azure AD, Okta. State+PKCE flow, tenant auto-provisioning
+- **LangChain adapter** — `AegisToolkit` wraps any `BaseTool` in one line
+- **Anthropic adapter** — intercepts `tool_use` blocks before they execute
+- **OpenAI adapter** — intercepts `tool_calls` in chat completion responses
+- Python SDK — 5-line integration, `@acp.protect` decorator, `acp.guard()` for framework dispatch
+- SSE live feed — exponential backoff (1s→30s cap), channel demux via `eventBus`, query-token CORS fallback
+
+**Compliance & Observability**
+- **PDF compliance export** — EU AI Act / NIST AI RMF / SOC 2 signed PDF bundles (reportlab)
+- Compliance structured bundles (JSON) for EU AI Act / NIST AI RMF / SOC 2
 - SIEM integration — Splunk, Elastic, Microsoft Sentinel, Chronicle (6 passing tests)
-- 7 security hardening fixes (C1–C5, H1–H2, Rego dead code) with regression suite
-- UI/API proxy parity — 22 pages, all backend-connected, SSE nginx block fixed
-- 530+ pytest tests
-- Three end-to-end demo packs (all auth fixed for multi-tenant X-Tenant-ID requirement)
+- Blast-radius graph analysis (BFS depth=3 compromise simulation)
+- Slack escalation for critical incidents with structured alert payloads
+- Encrypted offsite backups (age + S3) with restore drill automation
+- Audit-to-billing reconciliation SLI gauges
+
+**Platform Features**
+- **Visual Policy Builder** — GUI → Rego with live traffic simulation against last 24h
+- **Auto-remediation playbooks** — 5 pre-built chains: data breach, credential rotation, rate limit, isolation, full IR
+- **Autonomous agent demo** — 5-stage multi-step agent with governance receipts
+- **Pricing page** — 3 tiers: Starter $299/mo, Professional $999/mo, Enterprise custom
+- Multi-LLM router — Groq / OpenAI / Anthropic / Azure (19 passing tests)
+- Forensics — 6 real endpoints: timeline, blast-radius, cross-source replay, agent profile, JSON export
+- Identity graph — compromise simulation, BFS blast-radius, node/edge CRUD
+- Flight recorder — per-request pipeline snapshots, 2/5/15/60-min replay windows
+- ARE rule builder — IF (condition+severity+threshold+tool) THEN (ordered action chain)
+
+**Infrastructure**
+- Complete Helm charts — all 18 services (behavior HPA 2-10 replicas, Redis StatefulSet, OPA)
+- PostgreSQL streaming replica — WAL config, `hot_standby=on`, read-only PgBouncer pools
+- Transactional outbox — `pending_billing_events` + `pending_usage_events`, 100% delivery
+- Per-service mesh JWT auth — no single shared secret across services
+- Injection classifier — 17 patterns, F1=0.84, Recall=0.74 (single source in `sdk/common/injection_patterns.py`)
+- Isolation Forest anomaly detector (F1=0.71; reproducible eval harness)
+- **2044+ pytest tests** including 82 source-contract roadmap tests
+- Three end-to-end demo packs + autonomous agent demo
 
 </td>
 <td valign="top" width="50%">
 
 ### 🚧 Actively in Progress
 
-- Full Jaeger distributed tracing across all 16 services
+- Full Jaeger distributed tracing across all 18 services (wired in gateway; remaining services pending)
 - Published threat model (STRIDE per service)
-- Sustained 1,000+ RPS load test
+- Sustained 1,000+ RPS load test (architecture validated at 100 concurrent; multi-replica scaling pending)
 - Multi-region replication for the audit chain
 - HashiCorp Vault integration for secret management (replace shared `INTERNAL_SECRET` with Vault-issued per-service credentials)
 - TypeScript SDK with first-class type safety
 - External security review (SOC 2 Type II audit)
 - Wire multi-LLM router into gateway hot path (router library complete, hot-path integration pending)
-- Replace synthetic `metrics` time-series in `GET /decision/summary` with real per-interval DB data
 - Patroni/pg_auto_failover for automatic Postgres primary failover (currently warm standby only)
 
 </td>
@@ -1169,16 +1440,32 @@ If you want the engineering story behind every design decision — why ed26519 o
 
 ```text
 aegis/
-├── 🚪 services/         16 FastAPI microservices (gateway, audit, identity, ...)
-├── 🐳 infra/            Docker Compose + Kubernetes orchestration
-├── 🎨 ui/               React 18 SPA — SOC visibility dashboards
-├── 📦 sdk/              Python SDK for 5-line agent integration
+├── 🚪 services/         18 FastAPI microservices (gateway, audit, identity, ...)
+│   ├── gateway/         API entry point — 5 fail-closed gates, API key auth, SSE feed
+│   ├── identity/        JWT + SSO/OIDC (Google/Microsoft/Okta) + API key CRUD
+│   ├── audit/           Append-only chain + PDF compliance export (EU AI Act/NIST/SOC 2)
+│   ├── policy/          OPA Rego evaluation + Visual Policy Builder backend
+│   ├── behavior/        7+ anomaly detectors, degraded-mode policy
+│   ├── forensics/       Timeline, blast-radius, cross-source replay
+│   ├── identity_graph/  Compromise simulation, BFS blast-radius
+│   ├── flight_recorder/ Per-request pipeline snapshots + replay
+│   ├── autonomy/        Bounded contracts, approval-required, deny-lists
+│   └── ...              (decision, registry, billing, insight, are, usage)
+├── 🐳 infra/            Docker Compose + Kubernetes + AWS config
+│   ├── docker-compose.aws.yml      Production AWS overlay
+│   ├── docker-compose.prod.yml     Formal prod with Docker Secrets + all 11 migration jobs
+│   ├── pgbouncer.aws.ini           RDS-pointed PgBouncer (TLS required)
+│   └── .env.aws.template           Complete env template for EC2 deployment
+├── 🎨 ui/               React 18 SPA — 38 pages (SOC, audit, policy builder, pricing, ...)
+├── 📦 sdk/              Python SDK + framework integrations
+│   ├── acp_client.py    Core client — @acp.protect decorator, acp.guard()
+│   └── integrations/    LangChain (AegisToolkit), Anthropic, OpenAI adapters
 ├── 📚 docs/             Architecture diagrams, runbooks, audit reports
-├── 🔧 scripts/          Ops scripts (backup, reconcile, export, redact)
-├── 🎭 demos/            Three reproducible demo packs
-├── 🧪 tests/            530+ pytest tests (unit → integration → E2E)
+├── 🔧 scripts/          Ops scripts (backup, reconcile, export, redact, playbooks)
+├── 🎭 demos/            Three scripted demos + autonomous agent demo
+├── 🧪 tests/            2044+ pytest tests (unit → integration → E2E → source-contract)
 ├── 📜 LICENSE           MIT
-├── ⚙️ pyproject.toml    Package + dependency management
+├── ⚙️ pyproject.toml    Package + dependency management (incl. reportlab>=4.0)
 └── 📖 README.md         You are here
 ```
 

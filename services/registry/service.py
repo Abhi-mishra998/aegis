@@ -96,7 +96,7 @@ class AgentService:
         pages = (total + size - 1) // size if size > 0 else 0
 
         return AgentListResponse(
-            data=[AgentResponse.model_validate(a) for a in agents],
+            items=[AgentResponse.model_validate(a) for a in agents],
             total=total,
             page=page,
             size=size,

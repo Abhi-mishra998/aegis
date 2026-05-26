@@ -1407,7 +1407,7 @@ Prometheus (tunnel):   http://localhost:9090
 RDS password:          (what you set in Step 12.4)
 Admin email:           admin@acp.local   ← created by reinit_system.py
 Admin password:        password          ← CHANGE THIS immediately after first login
-Demo email:            demo@aegisagent.in / demo  ← created by seed_demo_data.py
+Demo email:            demo@aegisagent.in / demo1234  ← created by seed_demo_data.py
 ```
 
 Save everything above in a local password manager. Never put real passwords in git.

@@ -23,17 +23,20 @@ Supported frameworks:
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import uuid
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +63,15 @@ def _to_iso(dt: datetime | None) -> str | None:
     if dt is None:
         return None
     return dt.isoformat()
+
+
+def _tally(rows: list[AuditLog]) -> tuple[Counter[str], Counter[str]]:
+    by_tool: Counter[str] = Counter()
+    by_decision: Counter[str] = Counter()
+    for r in rows:
+        by_tool[r.tool or "unknown"] += 1
+        by_decision[(r.decision or "unknown").lower()] += 1
+    return by_tool, by_decision
 
 
 # ---------------------------------------------------------------------------
@@ -98,27 +110,20 @@ async def generate_tool_call_ledger(
     result = await db.execute(query)
     rows: list[AuditLog] = list(result.scalars().all())
 
-    by_decision: Counter[str] = Counter()
-    by_tool: Counter[str] = Counter()
-    entries: list[dict[str, Any]] = []
-
-    for row in rows:
-        decision_val = (row.decision or "unknown").lower()
-        tool_val = row.tool or "unknown"
-        by_decision[decision_val] += 1
-        by_tool[tool_val] += 1
-        entries.append(
-            {
-                "id": str(row.id),
-                "timestamp": _to_iso(row.timestamp),
-                "agent_id": str(row.agent_id),
-                "tool": tool_val,
-                "decision": decision_val,
-                "reason": row.reason,
-                "event_hash": row.event_hash,
-                "request_id": row.request_id,
-            }
-        )
+    by_tool, by_decision = _tally(rows)
+    entries: list[dict[str, Any]] = [
+        {
+            "id": str(row.id),
+            "timestamp": _to_iso(row.timestamp),
+            "agent_id": str(row.agent_id),
+            "tool": row.tool or "unknown",
+            "decision": (row.decision or "unknown").lower(),
+            "reason": row.reason,
+            "event_hash": row.event_hash,
+            "request_id": row.request_id,
+        }
+        for row in rows
+    ]
 
     # Light chain-integrity check — runs only over the filtered window so the
     # report is self-contained; a full tenant-wide check uses /logs/verify.
@@ -173,14 +178,12 @@ async def generate_eu_ai_act_bundle(
     tool_result = await db.execute(tool_q.order_by(AuditLog.timestamp.asc()))
     tool_rows: list[AuditLog] = list(tool_result.scalars().all())
 
-    tool_summary: dict[str, Any] = {"total_calls": len(tool_rows), "by_tool": {}, "by_decision": {}}
-    by_tool: Counter[str] = Counter()
-    by_decision: Counter[str] = Counter()
-    for r in tool_rows:
-        by_tool[r.tool or "unknown"] += 1
-        by_decision[(r.decision or "unknown").lower()] += 1
-    tool_summary["by_tool"] = dict(by_tool)
-    tool_summary["by_decision"] = dict(by_decision)
+    by_tool, by_decision = _tally(tool_rows)
+    tool_summary: dict[str, Any] = {
+        "total_calls": len(tool_rows),
+        "by_tool": dict(by_tool),
+        "by_decision": dict(by_decision),
+    }
 
     # ── Article 16: Record-keeping — chain integrity reference ─────────────
     integrity_result = await verify_audit_chain(db, tenant_id)
@@ -602,6 +605,165 @@ def export_bundle_as_json(bundle: dict[str, Any], output_path: Path) -> Path:
 # FastAPI Router
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Audit Log CSV / JSON Export — POST /audit/export
+# ---------------------------------------------------------------------------
+
+class AuditExportRequest(BaseModel):
+    format: str = "csv"          # "csv" | "json"
+    start_date: str | None = None
+    end_date: str | None = None
+    agent_id: str | None = None
+    action: str | None = None
+    limit: int = 5000
+
+
+audit_export_router = APIRouter(
+    prefix="/audit",
+    tags=["audit-export"],
+    dependencies=[Depends(verify_internal_secret)],
+)
+
+
+@audit_export_router.post("/export")
+async def export_audit_logs(
+    payload: AuditExportRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> StreamingResponse:
+    """
+    Export audit logs as CSV or JSON.
+
+    Body: {format, start_date?, end_date?, agent_id?, action?, limit?}
+    limit: default 5000, max 10000.
+    Returns a StreamingResponse with Content-Disposition attachment.
+    """
+    export_format = (payload.format or "csv").lower()
+    if export_format not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be 'csv' or 'json'")
+
+    limit = max(1, min(payload.limit or 5000, 10_000))
+
+    def _parse_dt(s: str | None, default: datetime) -> datetime:
+        if not s:
+            return default
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format '{s}'. Expected ISO-8601.",
+            )
+
+    now_utc = datetime.now(UTC)
+    period_start = _parse_dt(payload.start_date, now_utc - timedelta(days=30))
+    period_end = _parse_dt(payload.end_date, now_utc)
+
+    q = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= period_start)
+        .where(AuditLog.timestamp <= period_end)
+    )
+    if payload.agent_id:
+        try:
+            agent_uuid = uuid.UUID(payload.agent_id)
+            q = q.where(AuditLog.agent_id == agent_uuid)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid agent_id format")
+    if payload.action:
+        q = q.where(AuditLog.action == payload.action)
+
+    q = q.order_by(AuditLog.timestamp.desc()).limit(limit)
+    rows = list((await db.execute(q)).scalars().all())
+
+    date_slug = now_utc.strftime("%Y%m%d")
+    tid_short = str(tenant_id).replace("-", "")[:12]
+
+    if export_format == "csv":
+        filename = f"acp-audit-{tid_short}-{date_slug}.csv"
+
+        _CSV_FIELDS = [
+            "id", "timestamp", "tenant_id", "agent_id", "action",
+            "tool", "decision", "reason", "request_id", "event_hash",
+            "billing_status", "risk_score",
+        ]
+
+        def _csv_generator():
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=_CSV_FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            yield buf.getvalue()
+            for r in rows:
+                buf = io.StringIO()
+                writer = csv.DictWriter(buf, fieldnames=_CSV_FIELDS, extrasaction="ignore")
+                writer.writerow({
+                    "id":             str(r.id),
+                    "timestamp":      r.timestamp.isoformat() if r.timestamp else "",
+                    "tenant_id":      str(r.tenant_id),
+                    "agent_id":       str(r.agent_id),
+                    "action":         r.action or "",
+                    "tool":           r.tool or "",
+                    "decision":       r.decision or "",
+                    "reason":         r.reason or "",
+                    "request_id":     r.request_id or "",
+                    "event_hash":     r.event_hash or "",
+                    "billing_status": r.billing_status or "",
+                    "risk_score":     str((r.metadata_json or {}).get("risk_score", "")),
+                })
+                yield buf.getvalue()
+
+        return StreamingResponse(
+            _csv_generator(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    # JSON format
+    filename = f"acp-audit-{tid_short}-{date_slug}.json"
+
+    entries = [
+        {
+            "id":             str(r.id),
+            "timestamp":      r.timestamp.isoformat() if r.timestamp else None,
+            "tenant_id":      str(r.tenant_id),
+            "agent_id":       str(r.agent_id),
+            "action":         r.action,
+            "tool":           r.tool,
+            "decision":       r.decision,
+            "reason":         r.reason,
+            "request_id":     r.request_id,
+            "event_hash":     r.event_hash,
+            "billing_status": r.billing_status,
+            "metadata_json":  r.metadata_json or {},
+        }
+        for r in rows
+    ]
+
+    json_bytes = json.dumps(
+        {"tenant_id": str(tenant_id), "exported_at": now_utc.isoformat(), "count": len(entries), "rows": entries},
+        indent=2,
+        default=str,
+    ).encode("utf-8")
+
+    return StreamingResponse(
+        iter([json_bytes]),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Compliance Router
+# ---------------------------------------------------------------------------
+
 compliance_router = APIRouter(
     prefix="/compliance",
     tags=["compliance"],
@@ -713,3 +875,1183 @@ async def export_compliance_bundle(
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /compliance/export — PDF or JSON export (Day 9-10 feature)
+# ---------------------------------------------------------------------------
+
+_FRAMEWORK_TO_GENERATOR = {
+    "EU_AI_ACT":    "eu_ai_act",
+    "NIST_AI_RMF":  "nist_ai_rmf",
+    "SOC2":         "soc2",
+}
+
+
+@compliance_router.post("/export")
+async def compliance_export(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    framework: str = Query("EU_AI_ACT", description="EU_AI_ACT | NIST_AI_RMF | SOC2"),
+    start_date: str | None = Query(None, description="ISO-8601 start date (default: 30 days ago)"),
+    end_date: str | None = Query(None, description="ISO-8601 end date (default: today)"),
+    format: str = Query("pdf", description="pdf | json"),
+) -> Response:
+    """
+    Generate and download a compliance report as PDF or JSON.
+
+    For PDF: returns application/pdf with Content-Disposition attachment.
+    For JSON: returns the raw evidence dict.
+
+    Returns HTTP 501 if `format=pdf` and reportlab is not installed.
+    """
+    # ── Validate framework ─────────────────────────────────────────────────
+    if framework not in _FRAMEWORK_TO_GENERATOR:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown framework '{framework}'. Valid: {sorted(_FRAMEWORK_TO_GENERATOR)}",
+        )
+
+    # ── Parse / default date range ──────────────────────────────────────────
+    now_utc = datetime.now(UTC)
+    _default_end = now_utc
+    _default_start = now_utc - timedelta(days=30)
+
+    def _parse_dt(s: str | None, default: datetime) -> datetime:
+        if not s:
+            return default
+        try:
+            dt = datetime.fromisoformat(s)
+            # Make timezone-aware if naive
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format '{s}'. Expected ISO-8601 (e.g. 2026-05-01 or 2026-05-01T00:00:00Z).",
+            )
+
+    period_start = _parse_dt(start_date, _default_start)
+    period_end = _parse_dt(end_date, _default_end)
+
+    if period_end <= period_start:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+
+    # ── Generate evidence bundle ────────────────────────────────────────────
+    if framework == "EU_AI_ACT":
+        evidence = await generate_eu_ai_act_bundle(db, tenant_id, period_start, period_end)
+    elif framework == "NIST_AI_RMF":
+        evidence = await generate_nist_ai_rmf_bundle(db, tenant_id, period_start, period_end)
+    else:  # SOC2
+        evidence = await generate_soc2_evidence(db, tenant_id, period_start, period_end)
+
+    # ── JSON format ─────────────────────────────────────────────────────────
+    if format.lower() == "json":
+        ts = now_utc.strftime("%Y%m%dT%H%M%SZ")
+        fw_slug = framework.lower().replace("_", "-")
+        filename = f"aegis-compliance-{fw_slug}-{ts}.json"
+        return Response(
+            content=json.dumps(evidence, indent=2, default=str).encode("utf-8"),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # ── PDF format ──────────────────────────────────────────────────────────
+    try:
+        from services.audit.pdf_export import generate_compliance_pdf
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "PDF export requires reportlab which is not installed. "
+                "Use format=json or install reportlab (pip install reportlab). "
+                f"Error: {exc}"
+            ),
+        ) from exc
+
+    start_str = period_start.strftime("%Y-%m-%d")
+    end_str = period_end.strftime("%Y-%m-%d")
+
+    try:
+        pdf_bytes = generate_compliance_pdf(
+            tenant_id=str(tenant_id),
+            framework=framework,
+            start_date=start_str,
+            end_date=end_str,
+            evidence=evidence,
+        )
+    except Exception as exc:
+        logger.error("compliance_pdf_generation_failed", error=str(exc), framework=framework)
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF generation failed: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    date_slug = now_utc.strftime("%Y%m%d")
+    fw_slug = framework.lower().replace("_", "-")
+    filename = f"aegis-compliance-{fw_slug}-{date_slug}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /incidents/{incident_id}/export — Forensic incident PDF
+# ---------------------------------------------------------------------------
+
+# NOTE: This route is intentionally on the compliance_router (prefix=/compliance)
+# so it shares the same `verify_internal_secret` dependency and is mounted at
+# /compliance/incidents/{incident_id}/export on the audit service.  The gateway
+# proxy at /incidents/{incident_id}/export strips the /compliance prefix when
+# forwarding to the upstream audit service.
+
+@compliance_router.post("/incidents/{incident_id}/export")
+async def export_incident_pdf(
+    incident_id: str,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """
+    Generate and download a forensic PDF for a specific security incident.
+
+    Evidence strategy (no separate incidents table in the audit service):
+    1. Query audit_logs where metadata->>'incident_id' = incident_id OR
+       where request_id = incident_id (either field may carry the reference).
+    2. Also pull the 20 most recent audit rows for the tenant as general context.
+    3. Derive a minimal incident_data dict from the audit rows.
+    4. Return application/pdf with Content-Disposition attachment.
+
+    Returns HTTP 501 if reportlab is not installed.
+    """
+    try:
+        from services.audit.incident_pdf import generate_incident_pdf  # noqa: PLC0415
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "PDF export requires reportlab which is not installed. "
+                "Install it with: pip install reportlab. "
+                f"Error: {exc}"
+            ),
+        ) from exc
+
+    # ── 1. Fetch audit rows linked to this incident ─────────────────────────
+    from sqlalchemy import Text, cast, or_  # noqa: PLC0415
+
+    incident_q = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(
+            or_(
+                AuditLog.request_id == incident_id,
+                # JSONB path: metadata_json->>'incident_id' = incident_id
+                AuditLog.metadata_json[cast("incident_id", Text)].as_string() == incident_id,
+            )
+        )
+        .order_by(AuditLog.timestamp.asc())
+        .limit(100)
+    )
+    incident_rows = list((await db.execute(incident_q)).scalars().all())
+
+    # ── 2. Recent tenant context rows ───────────────────────────────────────
+    context_q = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .order_by(AuditLog.timestamp.desc())
+        .limit(20)
+    )
+    context_rows = list((await db.execute(context_q)).scalars().all())
+
+    # Merge, deduplicate, keep chronological order
+    all_rows_map: dict[str, AuditLog] = {}
+    for r in (*context_rows, *incident_rows):
+        all_rows_map[str(r.id)] = r
+    all_rows = sorted(all_rows_map.values(), key=lambda r: r.timestamp)
+
+    # ── 3. Build incident_data from the first matched incident row ──────────
+    primary: AuditLog | None = incident_rows[0] if incident_rows else (all_rows[0] if all_rows else None)
+
+    if primary is not None:
+        meta: dict = primary.metadata_json or {}
+        risk_score = meta.get("risk_score", meta.get("score", "—"))
+        findings_raw = meta.get("findings", meta.get("signals", []))
+        severity = meta.get("severity", "medium")
+        # Infer severity from action/decision if not in metadata
+        if primary.decision and primary.decision.lower() in ("deny", "kill"):
+            severity = meta.get("severity", "high")
+        elif primary.decision and primary.decision.lower() == "escalate":
+            severity = meta.get("severity", "medium")
+
+        incident_data: dict = {
+            "id": incident_id,
+            "severity": severity,
+            "status": meta.get("status", "open"),
+            "title": meta.get("title", f"Security incident {incident_id[:8]}"),
+            "description": meta.get("description", primary.reason or ""),
+            "agent_id": str(primary.agent_id),
+            "findings": findings_raw if isinstance(findings_raw, list) else [],
+            "risk_score": risk_score,
+            "created_at": primary.timestamp.isoformat() if primary.timestamp else None,
+            "resolved_at": meta.get("resolved_at"),
+            "tenant_id": str(tenant_id),
+        }
+    else:
+        # No audit rows found — produce a minimal placeholder report
+        incident_data = {
+            "id": incident_id,
+            "severity": "unknown",
+            "status": "unknown",
+            "title": f"Incident {incident_id}",
+            "description": "No audit entries found for this incident ID.",
+            "agent_id": "—",
+            "findings": [],
+            "risk_score": "—",
+            "created_at": None,
+            "resolved_at": None,
+            "tenant_id": str(tenant_id),
+        }
+
+    # Serialise audit rows to plain dicts for the PDF generator
+    audit_entries: list[dict] = [
+        {
+            "id": str(r.id),
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "action": r.action,
+            "tool": r.tool,
+            "decision": r.decision,
+            "reason": r.reason,
+            "request_id": r.request_id,
+            "metadata_json": r.metadata_json or {},
+        }
+        for r in all_rows
+    ]
+
+    # ── 4. Generate PDF ─────────────────────────────────────────────────────
+    try:
+        pdf_bytes = generate_incident_pdf(
+            incident_data=incident_data,
+            audit_entries=audit_entries,
+            receipt=None,  # receipt requires separate /logs/{id}/receipt call
+        )
+    except Exception as exc:
+        logger.error("incident_pdf_generation_failed", error=str(exc), incident_id=incident_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF generation failed: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    date_slug = datetime.now(UTC).strftime("%Y%m%d")
+    filename = f"aegis-incident-{incident_id[:8]}-{date_slug}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# SIEM Integration — /compliance/siem/*
+# Stores Splunk HEC / Datadog config per-tenant in Redis and exposes
+# manual-push + connection-test endpoints.
+# ---------------------------------------------------------------------------
+
+import os as _os  # noqa: E402
+
+import redis.asyncio as aioredis  # noqa: E402
+
+
+def _get_redis() -> aioredis.Redis:
+    return aioredis.from_url(_os.environ.get("REDIS_URL", "redis://redis:6379"))
+
+
+def _siem_key(tenant_id: uuid.UUID) -> str:
+    return f"acp:siem:{tenant_id}"
+
+
+def _mask(value: str | None) -> str:
+    """Show only the last 4 characters of a secret value."""
+    if not value:
+        return ""
+    return f"***{value[-4:]}" if len(value) > 4 else "****"
+
+
+@compliance_router.get("/siem/config", response_model=APIResponse[dict])
+async def get_siem_config(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Return the current SIEM config (tokens masked) from Redis."""
+    r = _get_redis()
+    try:
+        raw: dict[bytes, bytes] = await r.hgetall(_siem_key(tenant_id))
+        cfg: dict[str, str] = {k.decode(): v.decode() for k, v in raw.items()}
+    finally:
+        await r.aclose()
+
+    return APIResponse(
+        data={
+            "splunk_url":    cfg.get("splunk_url", ""),
+            "splunk_token":  _mask(cfg.get("splunk_token", "")),
+            "datadog_key":   _mask(cfg.get("datadog_key", "")),
+            "datadog_site":  cfg.get("datadog_site", "datadoghq.com"),
+        }
+    )
+
+
+@compliance_router.post("/siem/config", response_model=APIResponse[dict])
+async def save_siem_config(
+    payload: dict[str, Any],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Persist SIEM config {splunk_url, splunk_token, datadog_key, datadog_site} to Redis."""
+    mapping: dict[str, str] = {}
+    for field in ("splunk_url", "splunk_token", "datadog_key", "datadog_site"):
+        if field in payload:
+            mapping[field] = str(payload[field])
+
+    if not mapping:
+        raise HTTPException(status_code=400, detail="No recognised SIEM fields provided")
+
+    r = _get_redis()
+    try:
+        await r.hset(_siem_key(tenant_id), mapping=mapping)
+    finally:
+        await r.aclose()
+
+    return APIResponse(data={"saved": list(mapping.keys())})
+
+
+@compliance_router.post("/siem/test/splunk", response_model=APIResponse[dict])
+async def test_splunk_connection(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Push one synthetic test event to Splunk and return the result."""
+    from services.audit.siem_export import push_to_splunk  # noqa: PLC0415
+
+    r = _get_redis()
+    try:
+        raw: dict[bytes, bytes] = await r.hgetall(_siem_key(tenant_id))
+        cfg: dict[str, str] = {k.decode(): v.decode() for k, v in raw.items()}
+    finally:
+        await r.aclose()
+
+    test_event = {
+        "type": "acp_siem_test",
+        "tenant_id": str(tenant_id),
+        "message": "ACP SIEM connectivity test",
+        "timestamp": _now_iso(),
+    }
+    result = await push_to_splunk(
+        [test_event],
+        hec_url=cfg.get("splunk_url", ""),
+        token=cfg.get("splunk_token", ""),
+    )
+    return APIResponse(data=result)
+
+
+@compliance_router.post("/siem/test/datadog", response_model=APIResponse[dict])
+async def test_datadog_connection(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Push one synthetic test event to Datadog and return the result."""
+    from services.audit.siem_export import push_to_datadog  # noqa: PLC0415
+
+    r = _get_redis()
+    try:
+        raw: dict[bytes, bytes] = await r.hgetall(_siem_key(tenant_id))
+        cfg: dict[str, str] = {k.decode(): v.decode() for k, v in raw.items()}
+    finally:
+        await r.aclose()
+
+    test_event = {
+        "type": "acp_siem_test",
+        "tenant_id": str(tenant_id),
+        "message": "ACP SIEM connectivity test",
+        "timestamp": _now_iso(),
+    }
+    result = await push_to_datadog(
+        [test_event],
+        api_key=cfg.get("datadog_key", ""),
+        site=cfg.get("datadog_site", "datadoghq.com"),
+    )
+    return APIResponse(data=result)
+
+
+@compliance_router.post("/siem/push", response_model=APIResponse[dict])
+async def manual_siem_push(
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """
+    Manually push the last N audit events to the configured SIEM target.
+
+    Body: {limit: 100, target: "splunk"|"datadog"|"all"}
+    Default: limit=100, target="all"
+    """
+    from services.audit.siem_export import (  # noqa: PLC0415
+        push_to_datadog,
+        push_to_splunk,
+    )
+
+    limit = int(payload.get("limit", 100))
+    target = str(payload.get("target", "all")).lower()
+
+    if limit < 1 or limit > 10_000:
+        raise HTTPException(status_code=400, detail="limit must be 1–10000")
+
+    # Fetch recent audit rows
+    q = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .order_by(AuditLog.timestamp.desc())
+        .limit(limit)
+    )
+    rows = list((await db.execute(q)).scalars().all())
+    events: list[dict[str, Any]] = [
+        {
+            "id": str(r.id),
+            "timestamp": _to_iso(r.timestamp),
+            "tenant_id": str(r.tenant_id),
+            "agent_id": str(r.agent_id),
+            "action": r.action,
+            "tool": r.tool,
+            "decision": r.decision,
+            "reason": r.reason,
+            "request_id": r.request_id,
+            "event_hash": r.event_hash,
+        }
+        for r in rows
+    ]
+
+    # Load SIEM config from Redis
+    r_client = _get_redis()
+    try:
+        raw: dict[bytes, bytes] = await r_client.hgetall(_siem_key(tenant_id))
+        cfg: dict[str, str] = {k.decode(): v.decode() for k, v in raw.items()}
+    finally:
+        await r_client.aclose()
+
+    results: dict[str, Any] = {"events_fetched": len(events)}
+
+    if target in ("splunk", "all"):
+        results["splunk"] = await push_to_splunk(
+            events,
+            hec_url=cfg.get("splunk_url", ""),
+            token=cfg.get("splunk_token", ""),
+        )
+
+    if target in ("datadog", "all"):
+        results["datadog"] = await push_to_datadog(
+            events,
+            api_key=cfg.get("datadog_key", ""),
+            site=cfg.get("datadog_site", "datadoghq.com"),
+        )
+
+    if target not in ("splunk", "datadog", "all"):
+        raise HTTPException(status_code=400, detail="target must be splunk, datadog, or all")
+
+    return APIResponse(data=results)
+
+
+# ---------------------------------------------------------------------------
+# SCHEDULED REPORTS — /compliance/scheduled-reports/*
+# ---------------------------------------------------------------------------
+
+from services.audit.scheduled_reports import (  # noqa: E402
+    create_report,
+    delete_report,
+    get_report,
+    list_deliveries,
+    list_reports,
+    record_delivery,
+    trigger_report_now,
+    update_report,
+)
+
+
+@compliance_router.get("/scheduled-reports", response_model=APIResponse[list])
+async def list_scheduled_reports_endpoint(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[list]:
+    """List all scheduled report configs for the tenant."""
+    reports = await list_reports(db, str(tenant_id))
+    return APIResponse(
+        data=[
+            {
+                "id": str(r.id),
+                "tenant_id": r.tenant_id,
+                "name": r.name,
+                "report_type": r.report_type,
+                "schedule": r.schedule,
+                "recipients": r.recipients,
+                "framework": r.framework,
+                "is_active": r.is_active,
+                "last_run_at": r.last_run_at.isoformat() if r.last_run_at else None,
+                "next_run_at": r.next_run_at.isoformat() if r.next_run_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reports
+        ]
+    )
+
+
+@compliance_router.post("/scheduled-reports", response_model=APIResponse[dict])
+async def create_scheduled_report_endpoint(
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Create a new scheduled report configuration."""
+    required = ("name", "report_type", "schedule")
+    missing = [f for f in required if f not in payload]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
+
+    report = await create_report(db, str(tenant_id), payload)
+    return APIResponse(
+        data={
+            "id": str(report.id),
+            "tenant_id": report.tenant_id,
+            "name": report.name,
+            "report_type": report.report_type,
+            "schedule": report.schedule,
+            "recipients": report.recipients,
+            "framework": report.framework,
+            "is_active": report.is_active,
+            "last_run_at": report.last_run_at.isoformat() if report.last_run_at else None,
+            "next_run_at": report.next_run_at.isoformat() if report.next_run_at else None,
+            "created_at": report.created_at.isoformat() if report.created_at else None,
+        }
+    )
+
+
+@compliance_router.get("/scheduled-reports/{report_id}", response_model=APIResponse[dict])
+async def get_scheduled_report_endpoint(
+    report_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fetch a single scheduled report config."""
+    report = await get_report(db, str(tenant_id), report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Scheduled report not found")
+    return APIResponse(
+        data={
+            "id": str(report.id),
+            "tenant_id": report.tenant_id,
+            "name": report.name,
+            "report_type": report.report_type,
+            "schedule": report.schedule,
+            "recipients": report.recipients,
+            "framework": report.framework,
+            "is_active": report.is_active,
+            "last_run_at": report.last_run_at.isoformat() if report.last_run_at else None,
+            "next_run_at": report.next_run_at.isoformat() if report.next_run_at else None,
+            "created_at": report.created_at.isoformat() if report.created_at else None,
+        }
+    )
+
+
+@compliance_router.patch("/scheduled-reports/{report_id}", response_model=APIResponse[dict])
+async def update_scheduled_report_endpoint(
+    report_id: str,
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Update name/schedule/recipients/is_active on a scheduled report."""
+    report = await update_report(db, str(tenant_id), report_id, payload)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Scheduled report not found")
+    return APIResponse(
+        data={
+            "id": str(report.id),
+            "tenant_id": report.tenant_id,
+            "name": report.name,
+            "report_type": report.report_type,
+            "schedule": report.schedule,
+            "recipients": report.recipients,
+            "framework": report.framework,
+            "is_active": report.is_active,
+            "last_run_at": report.last_run_at.isoformat() if report.last_run_at else None,
+            "next_run_at": report.next_run_at.isoformat() if report.next_run_at else None,
+            "created_at": report.created_at.isoformat() if report.created_at else None,
+        }
+    )
+
+
+@compliance_router.delete("/scheduled-reports/{report_id}", response_model=APIResponse[dict])
+async def delete_scheduled_report_endpoint(
+    report_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Delete a scheduled report config."""
+    deleted = await delete_report(db, str(tenant_id), report_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Scheduled report not found")
+    return APIResponse(data={"deleted": True, "report_id": report_id})
+
+
+@compliance_router.post("/scheduled-reports/{report_id}/run", response_model=APIResponse[dict])
+async def run_scheduled_report_now_endpoint(
+    report_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Trigger an immediate one-shot report run (writes Redis trigger key, TTL 3600)."""
+    result = await trigger_report_now(db, str(tenant_id), report_id)
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Scheduled report not found")
+
+    # Record the manual trigger in delivery history
+    report = await get_report(db, str(tenant_id), report_id)
+    if report:
+        await record_delivery(
+            db, report_id, str(tenant_id), "queued",
+            triggered_by="manual", recipients=list(report.recipients or []),
+        )
+
+    return APIResponse(data=result)
+
+
+@compliance_router.get(
+    "/scheduled-reports/{report_id}/history",
+    response_model=APIResponse[list],
+)
+async def list_report_delivery_history(
+    report_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    limit: int = Query(20, ge=1, le=100),
+) -> APIResponse[list]:
+    """Return delivery attempts for one scheduled report, newest first."""
+    report = await get_report(db, str(tenant_id), report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Scheduled report not found")
+
+    deliveries = await list_deliveries(db, str(tenant_id), report_id, limit=limit)
+    return APIResponse(data=[
+        {
+            "id":           str(d.id),
+            "report_id":    str(d.report_id),
+            "status":       d.status,
+            "triggered_by": d.triggered_by,
+            "recipients":   d.recipients or [],
+            "error_message": d.error_message,
+            "duration_ms":  d.duration_ms,
+            "created_at":   d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in deliveries
+    ])
+
+
+# ---------------------------------------------------------------------------
+# THREAT INTELLIGENCE — /compliance/threat-intel/*
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# IN-APP NOTIFICATIONS — /notifications
+# ---------------------------------------------------------------------------
+from services.audit.notifications import (  # noqa: E402
+    create_notification,
+    get_unread_count,
+    list_notifications,
+    mark_all_read,
+    mark_read,
+)
+from services.audit.threat_intel import enrich_domain, enrich_ip  # noqa: E402
+
+_notifications_router = APIRouter(
+    prefix="/notifications",
+    tags=["notifications"],
+    dependencies=[Depends(verify_internal_secret)],
+)
+
+
+@_notifications_router.get("", response_model=APIResponse[list])
+async def list_notifications_endpoint(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    unread_only: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+) -> APIResponse[list]:
+    """List notifications for the tenant (newest first)."""
+    rows = await list_notifications(db, str(tenant_id), unread_only=unread_only, limit=limit)
+    return APIResponse(
+        data=[
+            {
+                "id": str(r.id),
+                "tenant_id": r.tenant_id,
+                "title": r.title,
+                "body": r.body,
+                "level": r.level,
+                "category": r.category,
+                "is_read": r.is_read,
+                "link": r.link,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    )
+
+
+@_notifications_router.post("", response_model=APIResponse[dict], status_code=201)
+async def create_notification_endpoint(
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Create a new in-app notification (internal or system-generated)."""
+    required = ("title", "body")
+    missing = [f for f in required if f not in payload]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
+
+    notif = await create_notification(
+        db,
+        tenant_id=str(tenant_id),
+        title=str(payload["title"]),
+        body=str(payload["body"]),
+        level=str(payload.get("level", "info")),
+        category=str(payload.get("category", "system")),
+        link=payload.get("link"),
+    )
+    return APIResponse(
+        data={
+            "id": str(notif.id),
+            "tenant_id": notif.tenant_id,
+            "title": notif.title,
+            "body": notif.body,
+            "level": notif.level,
+            "category": notif.category,
+            "is_read": notif.is_read,
+            "link": notif.link,
+            "created_at": notif.created_at.isoformat() if notif.created_at else None,
+        }
+    )
+
+
+@_notifications_router.post("/{notification_id}/read", response_model=APIResponse[dict])
+async def mark_notification_read_endpoint(
+    notification_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Mark a single notification as read."""
+    found = await mark_read(db, str(tenant_id), notification_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return APIResponse(data={"marked_read": True, "id": notification_id})
+
+
+@_notifications_router.post("/read-all", response_model=APIResponse[dict])
+async def mark_all_read_endpoint(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Mark all unread notifications for the tenant as read."""
+    count = await mark_all_read(db, str(tenant_id))
+    return APIResponse(data={"marked_read": count})
+
+
+@_notifications_router.get("/count", response_model=APIResponse[dict])
+async def get_unread_count_endpoint(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Return count of unread notifications for the tenant."""
+    count = await get_unread_count(db, str(tenant_id))
+    return APIResponse(data={"unread": count})
+
+
+def _threat_intel_redis() -> aioredis.Redis:
+    return aioredis.from_url(_os.environ.get("REDIS_URL", "redis://redis:6379"))
+
+
+@compliance_router.post("/threat-intel/ip", response_model=APIResponse[dict])
+async def threat_intel_ip_endpoint(
+    payload: dict[str, Any],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Enrich an IP address via AbuseIPDB (or demo data if no key is set)."""
+    ip = payload.get("ip", "").strip()
+    if not ip:
+        raise HTTPException(status_code=400, detail="'ip' field is required")
+
+    cache_key = f"acp:threat_intel:cache:ip:{ip}"
+    count_key = f"acp:threat_intel:ip_count:{tenant_id}"
+
+    r = _threat_intel_redis()
+    try:
+        # Check cache
+        cached = await r.get(cache_key)
+        if cached:
+            import json as _json  # noqa: PLC0415
+            result = _json.loads(cached)
+        else:
+            result = await enrich_ip(ip)
+            import json as _json  # noqa: PLC0415 F811
+            await r.set(cache_key, _json.dumps(result), ex=3600)
+
+        await r.incr(count_key)
+    finally:
+        await r.aclose()
+
+    return APIResponse(data=result)
+
+
+@compliance_router.post("/threat-intel/domain", response_model=APIResponse[dict])
+async def threat_intel_domain_endpoint(
+    payload: dict[str, Any],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Enrich a domain via AlienVault OTX (or demo data if no key is set)."""
+    domain = payload.get("domain", "").strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="'domain' field is required")
+
+    cache_key = f"acp:threat_intel:cache:domain:{domain}"
+    count_key = f"acp:threat_intel:domain_count:{tenant_id}"
+
+    r = _threat_intel_redis()
+    try:
+        cached = await r.get(cache_key)
+        if cached:
+            import json as _json  # noqa: PLC0415
+            result = _json.loads(cached)
+        else:
+            result = await enrich_domain(domain)
+            import json as _json  # noqa: PLC0415 F811
+            await r.set(cache_key, _json.dumps(result), ex=3600)
+
+        await r.incr(count_key)
+    finally:
+        await r.aclose()
+
+    return APIResponse(data=result)
+
+
+@compliance_router.get("/threat-intel/summary", response_model=APIResponse[dict])
+async def threat_intel_summary_endpoint(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Return {ips_checked, domains_checked, high_risk_count} from Redis counters."""
+    ip_count_key = f"acp:threat_intel:ip_count:{tenant_id}"
+    domain_count_key = f"acp:threat_intel:domain_count:{tenant_id}"
+
+    r = _threat_intel_redis()
+    try:
+        ip_count_raw = await r.get(ip_count_key)
+        domain_count_raw = await r.get(domain_count_key)
+        # high_risk_count is not tracked per-tenant in the current implementation;
+        # return 0 as a safe default (enrichment results are cached individually).
+        ips_checked = int(ip_count_raw) if ip_count_raw else 0
+        domains_checked = int(domain_count_raw) if domain_count_raw else 0
+    finally:
+        await r.aclose()
+
+    return APIResponse(
+        data={
+            "ips_checked": ips_checked,
+            "domains_checked": domains_checked,
+            "high_risk_count": 0,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# INCIDENT WORKFLOW API — /incidents
+# GET    /incidents/{incident_id}         — fetch incident
+# POST   /incidents                       — create incident
+# PATCH  /incidents/{incident_id}         — update status, assignee, severity, notes
+# POST   /incidents/{incident_id}/comments — add timeline comment
+# GET    /incidents/{incident_id}/comments — list comments (ASC)
+# ---------------------------------------------------------------------------
+
+from services.audit.models import AuditIncident, IncidentComment  # noqa: E402
+
+_VALID_STATUSES = frozenset({"open", "investigating", "contained", "resolved", "closed"})
+
+incidents_router = APIRouter(
+    prefix="/incidents",
+    tags=["incidents"],
+    dependencies=[Depends(verify_internal_secret)],
+)
+
+
+def _serialize_incident(inc: AuditIncident) -> dict:
+    return {
+        "id":              str(inc.id),
+        "tenant_id":       inc.tenant_id,
+        "title":           inc.title,
+        "description":     inc.description,
+        "severity":        inc.severity,
+        "status":          inc.status,
+        "assignee":        inc.assignee,
+        "notes":           inc.notes,
+        "source_audit_id": inc.source_audit_id,
+        "created_at":      inc.created_at.isoformat() if inc.created_at else None,
+        "updated_at":      inc.updated_at.isoformat() if inc.updated_at else None,
+    }
+
+
+def _serialize_comment(c: IncidentComment) -> dict:
+    return {
+        "id":          str(c.id),
+        "incident_id": str(c.incident_id),
+        "tenant_id":   c.tenant_id,
+        "author":      c.author,
+        "body":        c.body,
+        "created_at":  c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+@incidents_router.post("", response_model=APIResponse[dict], status_code=201)
+async def create_incident(
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Create a new audit-service incident record."""
+    required = ("title",)
+    missing = [f for f in required if f not in payload]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
+
+    status_val = str(payload.get("status", "open")).lower()
+    if status_val not in _VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{status_val}'. Valid: {sorted(_VALID_STATUSES)}")
+
+    inc = AuditIncident(
+        tenant_id=str(tenant_id),
+        title=str(payload["title"]),
+        description=payload.get("description"),
+        severity=str(payload.get("severity", "medium")).lower(),
+        status=status_val,
+        assignee=payload.get("assignee"),
+        notes=payload.get("notes"),
+        source_audit_id=payload.get("source_audit_id"),
+    )
+    db.add(inc)
+    await db.commit()
+    await db.refresh(inc)
+    return APIResponse(data=_serialize_incident(inc))
+
+
+@incidents_router.get("", response_model=APIResponse[list])
+async def list_incidents(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    status: str | None = Query(None),
+    severity: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> APIResponse[list]:
+    """List incidents for the tenant with optional status/severity filter."""
+    q = select(AuditIncident).where(AuditIncident.tenant_id == str(tenant_id))
+    if status:
+        q = q.where(AuditIncident.status == status.lower())
+    if severity:
+        q = q.where(AuditIncident.severity == severity.lower())
+    q = q.order_by(AuditIncident.created_at.desc()).offset(offset).limit(limit)
+    rows = list((await db.execute(q)).scalars().all())
+    return APIResponse(data=[_serialize_incident(r) for r in rows])
+
+
+@incidents_router.get("/{incident_id}", response_model=APIResponse[dict])
+async def get_incident(
+    incident_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fetch a single incident by UUID."""
+    try:
+        inc_uuid = uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident_id format")
+
+    inc = (
+        await db.execute(
+            select(AuditIncident).where(
+                AuditIncident.id == inc_uuid,
+                AuditIncident.tenant_id == str(tenant_id),
+            )
+        )
+    ).scalar_one_or_none()
+    if inc is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return APIResponse(data=_serialize_incident(inc))
+
+
+@incidents_router.patch("/{incident_id}", response_model=APIResponse[dict])
+async def update_incident(
+    incident_id: str,
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """
+    Update status, assignee, severity, or notes on an incident.
+
+    Writes an audit row recording which fields changed and the previous status.
+    """
+    try:
+        inc_uuid = uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident_id format")
+
+    inc = (
+        await db.execute(
+            select(AuditIncident).where(
+                AuditIncident.id == inc_uuid,
+                AuditIncident.tenant_id == str(tenant_id),
+            )
+        )
+    ).scalar_one_or_none()
+    if inc is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    previous_status = inc.status
+    changed_fields: list[str] = []
+
+    if "status" in payload:
+        new_status = str(payload["status"]).lower()
+        if new_status not in _VALID_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status '{new_status}'. Valid: {sorted(_VALID_STATUSES)}",
+            )
+        if new_status != inc.status:
+            inc.status = new_status
+            changed_fields.append("status")
+
+    if "assignee" in payload:
+        inc.assignee = payload["assignee"]
+        changed_fields.append("assignee")
+
+    if "severity" in payload:
+        inc.severity = str(payload["severity"]).lower()
+        changed_fields.append("severity")
+
+    if "notes" in payload:
+        inc.notes = payload["notes"]
+        changed_fields.append("notes")
+
+    if changed_fields:
+        inc.updated_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(inc)
+
+        # Write audit row for the update
+        try:
+            import os as _os  # noqa: PLC0415
+
+            import redis.asyncio as _aioredis  # noqa: PLC0415
+
+            from services.audit.writer import AuditWriter  # noqa: PLC0415
+            _r = _aioredis.from_url(_os.environ.get("REDIS_URL", "redis://redis:6379"))
+            try:
+                from services.audit.schemas import AuditLogCreate  # noqa: PLC0415
+                audit_payload = AuditLogCreate(
+                    tenant_id=tenant_id,
+                    agent_id=uuid.UUID(int=0),
+                    action="incident_updated",
+                    tool=None,
+                    decision="allow",
+                    reason=f"Incident {incident_id} updated: {', '.join(changed_fields)}",
+                    metadata_json={
+                        "incident_id": incident_id,
+                        "changed_fields": changed_fields,
+                        "previous_status": previous_status,
+                        "new_status": inc.status,
+                    },
+                )
+                await AuditWriter.log(db, _r, audit_payload)
+            finally:
+                await _r.aclose()
+        except Exception as _audit_exc:
+            logger.warning("incident_audit_write_failed", error=str(_audit_exc))
+
+    return APIResponse(data=_serialize_incident(inc))
+
+
+@incidents_router.post("/{incident_id}/comments", response_model=APIResponse[dict], status_code=201)
+async def add_comment(
+    incident_id: str,
+    payload: dict[str, Any],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Add a timeline comment to an incident."""
+    try:
+        inc_uuid = uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident_id format")
+
+    # Verify incident exists and belongs to tenant
+    inc = (
+        await db.execute(
+            select(AuditIncident).where(
+                AuditIncident.id == inc_uuid,
+                AuditIncident.tenant_id == str(tenant_id),
+            )
+        )
+    ).scalar_one_or_none()
+    if inc is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    required = ("author", "body")
+    missing = [f for f in required if f not in payload]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
+
+    comment = IncidentComment(
+        incident_id=inc_uuid,
+        tenant_id=str(tenant_id),
+        author=str(payload["author"]),
+        body=str(payload["body"]),
+    )
+    db.add(comment)
+    await db.commit()
+    await db.refresh(comment)
+    return APIResponse(data=_serialize_comment(comment))
+
+
+@incidents_router.get("/{incident_id}/comments", response_model=APIResponse[list])
+async def list_comments(
+    incident_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[list]:
+    """Return all comments for an incident, ordered by created_at ASC."""
+    try:
+        inc_uuid = uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident_id format")
+
+    # Verify incident belongs to tenant
+    inc_exists = (
+        await db.execute(
+            select(AuditIncident.id).where(
+                AuditIncident.id == inc_uuid,
+                AuditIncident.tenant_id == str(tenant_id),
+            )
+        )
+    ).scalar_one_or_none()
+    if inc_exists is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    q = (
+        select(IncidentComment)
+        .where(IncidentComment.incident_id == inc_uuid)
+        .order_by(IncidentComment.created_at.asc())
+    )
+    rows = list((await db.execute(q)).scalars().all())
+    return APIResponse(data=[_serialize_comment(r) for r in rows])

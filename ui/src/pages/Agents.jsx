@@ -2,6 +2,7 @@ import React, { useState, useEffect, useId } from 'react';
 import { registryService } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
+import { useAuth } from '../hooks/useAuth';
 import {
   Bot,
   Plus,
@@ -12,12 +13,16 @@ import {
   ExternalLink,
   CheckCircle2,
   RefreshCw,
+  User,
+  ShieldAlert,
+  RotateCcw,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
 import DataTable from '../components/Common/DataTable';
 import SkeletonLoader from '../components/Common/SkeletonLoader';
 import Modal from '../components/Common/Modal';
+import ConfirmDialog from '../components/Common/ConfirmDialog';
 
 /* ── Risk badge helper ─────────────────────────────────────────────────────── */
 function RiskBadge({ score }) {
@@ -50,8 +55,10 @@ export default function Agents() {
   const navigate = useNavigate();
   const formId = useId();
   const { refreshAgents, setSelectedAgentId } = useAgents();
+  const { addToast } = useAuth();
 
   const [agents,  setAgents]  = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
   const [creating, setCreating] = useState(false);
@@ -63,18 +70,33 @@ export default function Agents() {
   const [newDesc, setNewDesc] = useState('');
 
   /* Delete confirmation modal */
-  const [deleteTarget, setDeleteTarget] = useState(null); // { id, name }
-  const [deleting,     setDeleting]     = useState(false);
+  const [deleteTarget,     setDeleteTarget]     = useState(null); // { id, name }
+  const [deleting,         setDeleting]         = useState(false);
+
+  /* Quarantine confirmation */
+  const [quarantineTarget, setQuarantineTarget] = useState(null); // { id, name }
+
+  /* Reactivation confirmation */
+  const [reactivateTarget, setReactivateTarget] = useState(null); // { id, name }
 
   const fetchAgents = async () => {
     setLoading(true);
     try {
-      const res = await registryService.listAgents();
-      const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : Array.isArray(res?.data?.data) ? res.data.data : [];
-      setAgents(list);
-      setError('');
-    } catch (err) {
-      setError(err.message || 'Failed to reach identity module.');
+      const [res, sumRes] = await Promise.allSettled([
+        registryService.listAgents(),
+        registryService.getSummary(),
+      ]);
+      if (res.status === 'fulfilled') {
+        const r = res.value;
+        const list = Array.isArray(r) ? r : Array.isArray(r?.data) ? r.data : Array.isArray(r?.data?.items) ? r.data.items : Array.isArray(r?.data?.data) ? r.data.data : [];
+        setAgents(list);
+        setError('');
+      } else {
+        setError(res.reason?.message || 'Failed to reach identity module.');
+      }
+      if (sumRes.status === 'fulfilled') {
+        setSummary(sumRes.value?.data || sumRes.value || null);
+      }
     } finally {
       setLoading(false);
     }
@@ -137,6 +159,20 @@ export default function Agents() {
     }
   };
 
+  const handleQuarantine = async () => {
+    await registryService.updateAgent(quarantineTarget.id, { status: 'QUARANTINED' });
+    await fetchAgents();
+    await refreshAgents();
+    addToast(`Agent "${quarantineTarget.name}" quarantined`, 'info');
+  };
+
+  const handleReactivate = async () => {
+    await registryService.updateAgent(reactivateTarget.id, { status: 'ACTIVE' });
+    await fetchAgents();
+    await refreshAgents();
+    addToast(`Agent "${reactivateTarget.name}" reactivated`, 'success');
+  };
+
   const filtered = agents.filter((a) =>
     (a.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
     (a.id   ?? '').toLowerCase().includes(search.toLowerCase())
@@ -186,11 +222,45 @@ export default function Agents() {
           <Button
             variant="ghost"
             size="icon"
+            aria-label={`View profile for ${row.name}`}
+            title="Agent profile"
+            onClick={(e) => { e.stopPropagation(); navigate(`/agents/${row.id}/profile`); }}
+          >
+            <User size={13} aria-hidden="true" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             aria-label={`Inspect forensics for ${row.name}`}
+            title="Forensics"
             onClick={(e) => { e.stopPropagation(); navigate(`/forensics?agent=${row.id}`); }}
           >
             <ExternalLink size={13} aria-hidden="true" />
           </Button>
+          {(row.status ?? '').toLowerCase() !== 'quarantined' && (row.status ?? '').toLowerCase() !== 'terminated' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Quarantine agent ${row.name}`}
+              title="Quarantine"
+              className="hover:text-amber-400 hover:bg-amber-500/10"
+              onClick={(e) => { e.stopPropagation(); setQuarantineTarget({ id: row.id, name: row.name }); }}
+            >
+              <ShieldAlert size={13} aria-hidden="true" />
+            </Button>
+          )}
+          {['quarantined', 'inactive', 'suspended'].includes((row.status ?? '').toLowerCase()) && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Reactivate agent ${row.name}`}
+              title="Reactivate"
+              className="hover:text-green-400 hover:bg-green-500/10"
+              onClick={(e) => { e.stopPropagation(); setReactivateTarget({ id: row.id, name: row.name }); }}
+            >
+              <RotateCcw size={13} aria-hidden="true" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -317,18 +387,24 @@ export default function Agents() {
           <div className="space-y-4">
             <div className="metric-row">
               <span className="text-xs text-neutral-500">Total Agents</span>
-              <span className="text-sm font-bold text-white">{agents.length}</span>
+              <span className="text-sm font-bold text-white">{summary?.total ?? agents.length}</span>
             </div>
             <div className="metric-row">
               <span className="text-xs text-neutral-500">Active</span>
               <span className="text-sm font-semibold text-green-400">
-                {agents.filter((a) => (a.status ?? '').toLowerCase() === 'active').length}
+                {summary?.active ?? agents.filter((a) => (a.status ?? '').toLowerCase() === 'active').length}
+              </span>
+            </div>
+            <div className="metric-row">
+              <span className="text-xs text-neutral-500">Quarantined</span>
+              <span className="text-sm font-semibold text-amber-400">
+                {summary?.quarantined ?? agents.filter((a) => (a.status ?? '').toLowerCase() === 'quarantined').length}
               </span>
             </div>
             <div className="metric-row">
               <span className="text-xs text-neutral-500">High Risk</span>
               <span className="text-sm font-semibold text-red-400">
-                {agents.filter((a) => (a.risk_score ?? 0) >= 70).length}
+                {summary?.high_risk ?? agents.filter((a) => ['high', 'critical'].includes((a.risk_level ?? '').toLowerCase())).length}
               </span>
             </div>
             <div className="flex items-center gap-2 pt-2">
@@ -362,6 +438,30 @@ export default function Agents() {
           />
         )}
       </div>
+
+      {/* ── Quarantine confirmation ── */}
+      <ConfirmDialog
+        isOpen={quarantineTarget !== null}
+        title="Quarantine Agent"
+        description={`Quarantine "${quarantineTarget?.name}"? The agent will be blocked from executing tools until reactivated.`}
+        confirmLabel="Quarantine"
+        variant="danger"
+        onConfirm={handleQuarantine}
+        onClose={() => setQuarantineTarget(null)}
+        onError={(e) => { addToast(e?.message || 'Quarantine failed', 'error'); setQuarantineTarget(null); }}
+      />
+
+      {/* ── Reactivate confirmation ── */}
+      <ConfirmDialog
+        isOpen={reactivateTarget !== null}
+        title="Reactivate Agent"
+        description={`Reactivate "${reactivateTarget?.name}"? The agent will resume normal execution under its existing policy rules.`}
+        confirmLabel="Reactivate"
+        variant="default"
+        onConfirm={handleReactivate}
+        onClose={() => setReactivateTarget(null)}
+        onError={(e) => { addToast(e?.message || 'Reactivation failed', 'error'); setReactivateTarget(null); }}
+      />
 
       {/* ── Delete confirmation modal ── */}
       <Modal

@@ -71,6 +71,7 @@ server = [
     "bcrypt",
     "prometheus-client",
     "groq",
+    "reportlab>=4.0",
 ]
 dev = [
     "pytest",

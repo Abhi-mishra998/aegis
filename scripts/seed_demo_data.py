@@ -24,6 +24,7 @@ import json
 import math
 import os
 import random
+import ssl as _ssl
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -57,7 +58,7 @@ ADMIN_EMAIL = os.getenv("ACP_ADMIN_EMAIL", "admin@acp.local")
 ADMIN_PASSWORD = os.getenv("ACP_ADMIN_PASSWORD", "password")
 
 DEMO_EMAIL = "demo@aegisagent.in"
-DEMO_PASSWORD = "demo"
+DEMO_PASSWORD = "demo1234"
 
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = "11111111-1111-1111-1111-111111111111"
@@ -65,8 +66,6 @@ AGENT_ID = "11111111-1111-1111-1111-111111111111"
 AUDIT_CHAIN_SHARD_COUNT = 16
 SEED_DAYS = 30
 TARGET_AUDIT_ROWS = 2000
-
-INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "")
 
 # ---------------------------------------------------------------------------
 # .env loader (minimal, no dotenv dependency required)
@@ -89,6 +88,14 @@ def load_env_file(path: Path) -> dict[str, str]:
         val = val.strip().strip('"').strip("'")
         env[key] = val
     return env
+
+
+# Load .env early so INTERNAL_SECRET and DATABASE_URL are available
+_env_values = load_env_file(REPO_ROOT / ".env")
+for _k, _v in _env_values.items():
+    os.environ.setdefault(_k, _v)
+
+INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "")
 
 
 def get_database_url() -> str:
@@ -338,7 +345,7 @@ def generate_audit_rows() -> list[dict]:
                 "prev_hash": prev,
                 "chain_shard": shard,
                 "billing_status": "completed",
-                "timestamp": ts.isoformat(),
+                "timestamp": ts,
             }
         )
 
@@ -381,11 +388,11 @@ def generate_incidents() -> list[dict]:
             mitigated_at = None
 
             if status == "RESOLVED":
-                acknowledged_at = (ts + timedelta(minutes=random.randint(2, 15))).isoformat()
-                mitigated_at = (ts + timedelta(minutes=random.randint(15, 60))).isoformat()
-                resolved_at = (ts + timedelta(hours=random.randint(1, 8))).isoformat()
+                acknowledged_at = ts + timedelta(minutes=random.randint(2, 15))
+                mitigated_at = ts + timedelta(minutes=random.randint(15, 60))
+                resolved_at = ts + timedelta(hours=random.randint(1, 8))
             elif status == "INVESTIGATING":
-                acknowledged_at = (ts + timedelta(minutes=random.randint(2, 20))).isoformat()
+                acknowledged_at = ts + timedelta(minutes=random.randint(2, 20))
 
             timeline = [
                 {
@@ -395,11 +402,11 @@ def generate_incidents() -> list[dict]:
                 }
             ]
             if acknowledged_at:
-                timeline.append({"ts": acknowledged_at, "event": "acknowledged", "actor": "oncall"})
+                timeline.append({"ts": acknowledged_at.isoformat(), "event": "acknowledged", "actor": "oncall"})
             if mitigated_at:
-                timeline.append({"ts": mitigated_at, "event": "mitigated", "actor": "oncall"})
+                timeline.append({"ts": mitigated_at.isoformat(), "event": "mitigated", "actor": "oncall"})
             if resolved_at:
-                timeline.append({"ts": resolved_at, "event": "resolved", "actor": "oncall"})
+                timeline.append({"ts": resolved_at.isoformat(), "event": "resolved", "actor": "oncall"})
 
             explanation = (
                 f"Detected by {trigger} during agent execution of '{tool}'. "
@@ -432,8 +439,8 @@ def generate_incidents() -> list[dict]:
                     "dedup_key": hashlib.sha256(f"{title}{TENANT_ID}".encode()).hexdigest()[:16],
                     "violation_count": random.randint(1, 5),
                     "explanation": explanation,
-                    "created_at": ts.isoformat(),
-                    "updated_at": ts.isoformat(),
+                    "created_at": ts,
+                    "updated_at": ts,
                 }
             )
 
@@ -486,11 +493,30 @@ def generate_usage_rows(audit_rows: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _rds_ssl_context() -> _ssl.SSLContext:
+    """Shared SSL context for RDS connections. CERT_NONE is acceptable for a
+    seed script running inside the VPC; swap to CERT_REQUIRED + CA bundle for
+    stricter environments."""
+    ctx = _ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    return ctx
+
+
+_RDS_SSL_CTX: _ssl.SSLContext | None = None
+
+
 async def connect(db_url: str) -> asyncpg.Connection:
     """Connect to PostgreSQL using asyncpg (plain postgres:// URL)."""
-    # asyncpg doesn't want the postgresql:// scheme — it wants postgres://
-    url = db_url.replace("postgresql://", "postgres://")
-    return await asyncpg.connect(url)
+    global _RDS_SSL_CTX
+    url = db_url.replace("postgresql+asyncpg://", "postgres://").replace("postgresql://", "postgres://")
+    url = url.split("?")[0]
+    ssl_ctx: _ssl.SSLContext | None = None
+    if "amazonaws.com" in url:
+        if _RDS_SSL_CTX is None:
+            _RDS_SSL_CTX = _rds_ssl_context()
+        ssl_ctx = _RDS_SSL_CTX
+    return await asyncpg.connect(url, ssl=ssl_ctx)
 
 
 async def check_audit_seeded(conn: asyncpg.Connection) -> bool:
@@ -736,16 +762,16 @@ async def main() -> None:
     print("=" * 60)
     print()
 
-    # Resolve DB URLs
+    # Resolve DB URLs — per-DB overrides take priority (for service-user credentials)
     try:
         base_db_url = get_database_url()
     except RuntimeError as e:
         print(f"ERROR: {e}")
         sys.exit(1)
 
-    audit_db_url = derive_db_url(base_db_url, "acp_audit")
-    api_db_url = derive_db_url(base_db_url, "acp_api")
-    usage_db_url = derive_db_url(base_db_url, "acp_usage")
+    audit_db_url = os.getenv("AUDIT_DB_URL") or derive_db_url(base_db_url, "acp_audit")
+    api_db_url   = os.getenv("API_DB_URL")   or derive_db_url(base_db_url, "acp_api")
+    usage_db_url = os.getenv("USAGE_DB_URL") or derive_db_url(base_db_url, "acp_usage")
 
     print(f"Base URL : {BASE_URL}")
     print(f"Audit DB : {audit_db_url.split('@')[-1]}")

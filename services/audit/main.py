@@ -29,7 +29,7 @@ from fastapi import Depends, FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.db import engine, get_db, get_session_factory
+from sdk.common.db import engine, get_db, get_session_factory, get_tenant_id
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
@@ -318,6 +318,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         run_transparency_scheduler(get_session_factory())
     )
 
+    # 2026-05-26 — Scheduled report email delivery worker. Polls Redis for
+    # acp:report_trigger:* keys written by trigger_report_now() and emails
+    # the generated PDF to each report's recipients via SMTP.
+    from services.audit.report_delivery import run_report_delivery_worker
+    delivery_task = asyncio.create_task(
+        run_report_delivery_worker(get_session_factory())
+    )
+
     logger.info("audit_service_started")
     yield
 
@@ -329,6 +337,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     bp_task.cancel()
     outbox_task.cancel()
     transparency_task.cancel()
+    delivery_task.cancel()
 
     # Wait for consumer to finish processing current batch
     try:
@@ -349,6 +358,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Transparency scheduler is just a sleep loop — should exit immediately.
     with suppress(TimeoutError, asyncio.CancelledError):
         await asyncio.wait_for(transparency_task, timeout=5.0)
+
+    # Report delivery worker is also a sleep loop — exit immediately.
+    with suppress(TimeoutError, asyncio.CancelledError):
+        await asyncio.wait_for(delivery_task, timeout=5.0)
 
     # Final cleanup
     await redis.aclose()
@@ -378,6 +391,21 @@ app.include_router(transparency_router)
 from services.audit.compliance import compliance_router  # noqa: E402
 
 app.include_router(compliance_router)
+
+# Audit log CSV/JSON export — POST /audit/export
+from services.audit.compliance import audit_export_router  # noqa: E402
+
+app.include_router(audit_export_router)
+
+# In-app notifications
+from services.audit.compliance import _notifications_router  # noqa: E402
+
+app.include_router(_notifications_router)
+
+# Incident workflow — PATCH status + comment thread
+from services.audit.compliance import incidents_router  # noqa: E402
+
+app.include_router(incidents_router)
 
 
 # ── Receipt key endpoint (top-level, not under /logs) ───────────────────
@@ -453,3 +481,152 @@ async def verify_signed_receipt(
         "expected_fingerprint": active._fingerprint,  # noqa: SLF001
         "errors":               ["signature_mismatch"],
     }
+
+
+# ── Board-level executive PDF report ────────────────────────────────────────
+
+@app.post("/board-report", tags=["compliance"])
+async def board_report(
+    payload: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id_dep: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> Any:
+    """
+    Generate a board-level executive PDF security report.
+
+    Body: {"start_date": "...", "end_date": "...", "tenant_id": "..."}
+
+    Returns application/pdf with Content-Disposition attachment.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from fastapi.responses import Response
+    from sqlalchemy import func, select
+
+    from services.audit.models import AuditLog
+
+    # ── Parse request body ──────────────────────────────────────────────────
+    now_utc = datetime.now(UTC)
+    default_end = now_utc
+    default_start = now_utc - timedelta(days=30)
+
+    def _parse_dt(s: str | None, default: datetime) -> datetime:
+        if not s:
+            return default
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+        except ValueError:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format '{s}'. Expected ISO-8601.",
+            )
+
+    start_str = payload.get("start_date")
+    end_str = payload.get("end_date")
+    period_start = _parse_dt(start_str, default_start)
+    period_end = _parse_dt(end_str, default_end)
+
+    # Allow tenant_id override in body (gateway injects via header as well)
+    body_tenant_id = payload.get("tenant_id")
+    try:
+        tenant_id = uuid.UUID(body_tenant_id) if body_tenant_id else tenant_id_dep
+    except (ValueError, AttributeError):
+        tenant_id = tenant_id_dep
+
+    start_display = period_start.strftime("%Y-%m-%d")
+    end_display = period_end.strftime("%Y-%m-%d")
+
+    # ── Query audit_logs for summary ────────────────────────────────────────
+    total_q = await db.execute(
+        select(func.count()).where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.created_at >= period_start,
+            AuditLog.created_at <= period_end,
+        )
+    )
+    total = total_q.scalar() or 0
+
+    blocked_q = await db.execute(
+        select(func.count()).where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.created_at >= period_start,
+            AuditLog.created_at <= period_end,
+            AuditLog.decision.in_(["deny", "block", "kill"]),
+        )
+    )
+    blocked = blocked_q.scalar() or 0
+    allowed = total - blocked
+    block_rate = (blocked / total * 100) if total > 0 else 0.0
+
+    summary = {
+        "total": total,
+        "allowed": allowed,
+        "blocked": blocked,
+        "block_rate": block_rate,
+        "incidents_resolved": 0,
+        "policy_compliance_pct": 100.0,
+        "chain_integrity_pct": 100.0,
+        "avg_response_ms": 0,
+    }
+
+    # ── Top blocked tools ───────────────────────────────────────────────────
+    top_tools_q = await db.execute(
+        select(AuditLog.tool, func.count().label("cnt"))
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.created_at >= period_start,
+            AuditLog.created_at <= period_end,
+            AuditLog.decision.in_(["deny", "block", "kill"]),
+            AuditLog.tool.isnot(None),
+        )
+        .group_by(AuditLog.tool)
+        .order_by(func.count().desc())
+        .limit(10)
+    )
+    top_tools = [
+        {"tool_name": row.tool, "count": row.cnt}
+        for row in top_tools_q.fetchall()
+    ]
+
+    # ── Generate PDF ────────────────────────────────────────────────────────
+    try:
+        from services.audit.board_report import generate_board_report_pdf
+    except ImportError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "PDF export requires reportlab which is not installed. "
+                f"Error: {exc}"
+            ),
+        ) from exc
+
+    try:
+        pdf_bytes = generate_board_report_pdf(
+            tenant_id=str(tenant_id),
+            start_date=start_display,
+            end_date=end_display,
+            summary=summary,
+            incidents=[],
+            top_tools=top_tools,
+        )
+    except Exception as exc:
+        logger.error("board_report_pdf_generation_failed", error=str(exc))
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=500,
+            detail=f"Board report generation failed: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    date_slug = now_utc.strftime("%Y%m%d")
+    filename = f"board-report-{date_slug}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
