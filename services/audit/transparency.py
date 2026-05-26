@@ -441,6 +441,7 @@ async def verify_root(
     # ── Date shortcut: {"date": "YYYY-MM-DD"} auto-fetches & verifies stored root ──
     if isinstance(payload, dict) and payload.keys() <= {"date"} and "date" in payload:
         from datetime import date as _date
+
         from sqlalchemy import select as _select
 
         from services.audit.models import TransparencyRoot as _TR
