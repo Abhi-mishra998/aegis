@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -170,6 +170,80 @@ async def get_billing_invoices(
 
 
 # ---------------------------------------------------------------------------
+# COST ATTRIBUTION — per-agent weekly breakdown (last 4 weeks)
+# ---------------------------------------------------------------------------
+
+@router.get("/cost-attribution", response_model=APIResponse[dict])
+async def get_cost_attribution(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    weeks:     int = Query(4, ge=1, le=12),
+) -> APIResponse[dict]:
+    """
+    Return per-agent, per-week cost breakdown for the last N weeks.
+
+    Response:
+      weeks:            list of ISO week labels  ["2026-W21", ...]
+      agents:           list of {agent_id, total_cost, total_calls}
+      by_agent_by_week: {agent_id: {week: cost}}
+      totals_by_week:   {week: cost}
+      grand_total:      float
+    """
+    since = datetime.now(tz=UTC) - timedelta(weeks=weeks)
+
+    week_expr = func.to_char(UsageRecord.timestamp, "IYYY-IW")
+    stmt = (
+        select(
+            UsageRecord.agent_id,
+            week_expr.label("iso_week"),
+            func.count(UsageRecord.id).label("calls"),
+            func.coalesce(func.sum(UsageRecord.cost), 0.0).label("cost"),
+        )
+        .where(
+            UsageRecord.tenant_id == tenant_id,
+            UsageRecord.timestamp >= since,
+        )
+        .group_by(UsageRecord.agent_id, week_expr)
+        .order_by(week_expr)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    week_set: set[str] = set()
+    agents_map: dict[str, dict] = {}
+
+    for row in rows:
+        aid  = str(row.agent_id) if row.agent_id else "unknown"
+        week = row.iso_week or "unknown"
+        week_set.add(week)
+        if aid not in agents_map:
+            agents_map[aid] = {"agent_id": aid, "total_cost": 0.0, "total_calls": 0, "by_week": {}}
+        agents_map[aid]["total_cost"]  += float(row.cost or 0)
+        agents_map[aid]["total_calls"] += int(row.calls or 0)
+        agents_map[aid]["by_week"][week] = float(row.cost or 0)
+
+    sorted_weeks = sorted(week_set)
+    agents_list  = sorted(agents_map.values(), key=lambda a: a["total_cost"], reverse=True)
+
+    by_agent_by_week = {a["agent_id"]: a.pop("by_week") for a in agents_list}
+
+    totals_by_week: dict[str, float] = {}
+    for a_bw in by_agent_by_week.values():
+        for w, c in a_bw.items():
+            totals_by_week[w] = round(totals_by_week.get(w, 0.0) + c, 4)
+
+    grand_total = round(sum(a["total_cost"] for a in agents_list), 4)
+
+    return APIResponse(data={
+        "weeks":            sorted_weeks,
+        "agents":           agents_list,
+        "by_agent_by_week": by_agent_by_week,
+        "totals_by_week":   totals_by_week,
+        "grand_total":      grand_total,
+        "period_weeks":     weeks,
+    })
+
+
+# ---------------------------------------------------------------------------
 # EVENTS — BILLING TRIGGERS
 # ---------------------------------------------------------------------------
 
@@ -234,3 +308,163 @@ async def record_billing_event(
             status_code=500,
             detail=f"Billing event processing failed: {str(e)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# BUDGET APPROVAL WORKFLOW
+# ---------------------------------------------------------------------------
+
+from services.billing import (
+    budget_requests as _br,  # noqa: E402  (local import avoids circular at module load)
+)
+
+
+class BudgetRequestCreate(BaseModel):
+    """Payload for creating a new budget increase request."""
+
+    agent_id: uuid.UUID | None = None
+    agent_name: str
+    current_cap_usd: float
+    requested_cap_usd: float
+    reason: str
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class BudgetRequestOut(BaseModel):
+    """Response shape for a budget request row."""
+
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    agent_id: uuid.UUID | None
+    agent_name: str
+    requested_by: str
+    current_cap_usd: float
+    requested_cap_usd: float
+    reason: str
+    status: str
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewDecision(BaseModel):
+    """Payload for approve / reject endpoints."""
+
+    approved: bool
+    comment: str | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+def _get_redis(request: Request):
+    """Extract the Redis client stored on the billing engine in app.state."""
+    engine = getattr(request.app.state, "billing_engine", None)
+    if engine is None or not hasattr(engine, "redis"):
+        raise HTTPException(status_code=500, detail="Redis not available via billing engine")
+    return engine.redis
+
+
+@router.post("/budget-requests", response_model=APIResponse[BudgetRequestOut], status_code=201)
+async def create_budget_request(
+    body: BudgetRequestCreate,
+    request: Request,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[BudgetRequestOut]:
+    """Submit a new budget increase request for review."""
+    # requested_by comes from the authenticated user email stored in app state,
+    # falling back to "system" for automated submissions.
+    requested_by: str = request.headers.get("X-User-Email", "system")
+    row = await _br.create_request(
+        db,
+        tenant_id=tenant_id,
+        agent_id=body.agent_id,
+        agent_name=body.agent_name,
+        current_cap=body.current_cap_usd,
+        requested_cap=body.requested_cap_usd,
+        reason=body.reason,
+        requested_by=requested_by,
+    )
+    return APIResponse(data=BudgetRequestOut.model_validate(row))
+
+
+@router.get("/budget-requests", response_model=APIResponse[list[BudgetRequestOut]])
+async def list_budget_requests(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status: str | None = Query(default=None, description="Filter by status: pending/approved/rejected"),
+) -> APIResponse[list[BudgetRequestOut]]:
+    """List budget requests for the current tenant."""
+    rows = await _br.list_requests(db, tenant_id=tenant_id, status=status)
+    return APIResponse(data=[BudgetRequestOut.model_validate(r) for r in rows])
+
+
+@router.get("/budget-requests/{req_id}", response_model=APIResponse[BudgetRequestOut])
+async def get_budget_request(
+    req_id: uuid.UUID,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[BudgetRequestOut]:
+    """Fetch a single budget request by ID."""
+    rows = await _br.list_requests(db, tenant_id=tenant_id)
+    match = next((r for r in rows if r.id == req_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Budget request not found")
+    return APIResponse(data=BudgetRequestOut.model_validate(match))
+
+
+@router.post("/budget-requests/{req_id}/approve", response_model=APIResponse[BudgetRequestOut])
+async def approve_budget_request(
+    req_id: uuid.UUID,
+    body: ReviewDecision,
+    request: Request,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[BudgetRequestOut]:
+    """Approve a budget request and update the Redis cost-cap key."""
+    reviewer: str = request.headers.get("X-User-Email", "manager")
+    redis = _get_redis(request)
+    try:
+        row = await _br.review_request(
+            db,
+            redis,
+            request_id=req_id,
+            tenant_id=tenant_id,
+            approved=True,
+            reviewed_by=reviewer,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return APIResponse(data=BudgetRequestOut.model_validate(row))
+
+
+@router.post("/budget-requests/{req_id}/reject", response_model=APIResponse[BudgetRequestOut])
+async def reject_budget_request(
+    req_id: uuid.UUID,
+    body: ReviewDecision,
+    request: Request,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[BudgetRequestOut]:
+    """Reject a budget request (no cap change)."""
+    reviewer: str = request.headers.get("X-User-Email", "manager")
+    redis = _get_redis(request)
+    try:
+        row = await _br.review_request(
+            db,
+            redis,
+            request_id=req_id,
+            tenant_id=tenant_id,
+            approved=False,
+            reviewed_by=reviewer,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return APIResponse(data=BudgetRequestOut.model_validate(row))

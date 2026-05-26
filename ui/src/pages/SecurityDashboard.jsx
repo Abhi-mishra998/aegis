@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Shield, AlertTriangle, Activity, BarChart2, RefreshCw, Eye, Zap } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { Shield, AlertTriangle, Activity, BarChart2, RefreshCw, Eye, Zap, CheckCircle2, XCircle, Info } from 'lucide-react'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  ComposedChart, AreaChart, Area, Line, LineChart, CartesianGrid, ReferenceLine,
+} from 'recharts'
 import Card from '../components/Common/Card'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
-import { auditService, riskService, incidentService } from '../services/api'
+import { auditService, riskService, incidentService, securityService } from '../services/api'
 import { eventBus } from '../lib/eventBus'
 
 const DECISION_META = {
@@ -154,6 +157,280 @@ function AnomalyHeatmap({ logs }) {
   )
 }
 
+/* ── Posture Score Trend ─────────────────────────────────────────────────── */
+function PostureScoreTrendChart({ series, avgScore }) {
+  if (!series || series.length === 0) return (
+    <div className="flex items-center justify-center h-32 text-neutral-600 text-xs">No decision data in window</div>
+  )
+  const ticks = series.filter((_, i) => i % Math.ceil(series.length / 6) === 0).map(d => d.date)
+  const scoreColor = avgScore == null ? '#6366f1' : avgScore >= 90 ? '#22c55e' : avgScore >= 70 ? '#f59e0b' : '#ef4444'
+  return (
+    <ResponsiveContainer width="100%" height={140}>
+      <LineChart data={series} margin={{ top: 8, right: 16, bottom: 8, left: -16 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+        <XAxis dataKey="date" ticks={ticks} tick={{ fontSize: 9, fill: '#525252' }} tickFormatter={d => d.slice(5)} />
+        <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: '#525252' }} tickFormatter={v => `${v}%`} />
+        <ReferenceLine y={90} stroke="#22c55e" strokeDasharray="4 3" strokeOpacity={0.4} />
+        <Tooltip
+          contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 11 }}
+          labelStyle={{ color: '#999' }}
+          formatter={(v) => [v != null ? `${v}%` : '—', 'Posture Score']}
+        />
+        <Line
+          type="monotone"
+          dataKey="posture_score"
+          stroke={scoreColor}
+          strokeWidth={2}
+          dot={false}
+          connectNulls
+          name="Posture Score"
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
+/* ── Daily Active Agents Chart ───────────────────────────────────────────── */
+function DailyActiveAgentsChart({ series }) {
+  if (!series || series.length === 0) return (
+    <div className="flex items-center justify-center h-32 text-neutral-600 text-xs">No agent activity in window</div>
+  )
+  const ticks = series.filter((_, i) => i % Math.ceil(series.length / 6) === 0).map(d => d.date)
+  return (
+    <ResponsiveContainer width="100%" height={120}>
+      <AreaChart data={series} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <defs>
+          <linearGradient id="activeAgentsGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#6366f1" stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+        <XAxis dataKey="date" ticks={ticks} tick={{ fontSize: 9, fill: '#525252' }} tickFormatter={d => d.slice(5)} />
+        <YAxis allowDecimals={false} tick={{ fontSize: 9, fill: '#525252' }} />
+        <Tooltip
+          contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, fontSize: 11 }}
+          labelStyle={{ color: '#999' }}
+          formatter={(v, name) => [v, name === 'active_agents' ? 'Active Agents' : 'Total Calls']}
+        />
+        <Area type="monotone" dataKey="active_agents" stroke="#6366f1" fill="url(#activeAgentsGrad)" strokeWidth={1.5} dot={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+  )
+}
+
+/* ── Agent Activity Summary Table ───────────────────────────────────────── */
+function AgentActivityTable({ agents, navigate }) {
+  if (!agents || agents.length === 0) return (
+    <div className="flex items-center justify-center h-24 text-neutral-600 text-xs">No agent data</div>
+  )
+
+  const riskColor = (r) => r >= 0.7 ? 'text-red-400' : r >= 0.4 ? 'text-amber-400' : 'text-green-400'
+  const denyColor = (d) => d >= 30 ? 'text-red-400' : d >= 10 ? 'text-amber-400' : 'text-neutral-400'
+
+  const fmtDate = (iso) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
+
+  return (
+    <div className="table-scroll -mx-5">
+      <table className="table-base min-w-[640px]" role="table">
+        <thead>
+          <tr>
+            {['Agent', 'First Seen', 'Last Seen', 'Calls', 'Deny Rate', 'Avg Risk', ''].map(h => (
+              <th key={h} className="table-th first:pl-5">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {agents.map((a) => (
+            <tr key={a.agent_id} className="table-row">
+              <td className="table-td first:pl-5 font-mono text-xs">
+                <button
+                  onClick={() => navigate(`/forensics?agent=${a.agent_id}`)}
+                  className="hover:text-blue-400 transition-colors"
+                  aria-label={`Investigate ${a.agent_id.slice(0, 8)}`}
+                >
+                  {a.agent_id.slice(0, 12)}
+                </button>
+              </td>
+              <td className="table-td text-neutral-500 text-xs">{fmtDate(a.first_seen)}</td>
+              <td className="table-td text-neutral-400 text-xs">{fmtDate(a.last_seen)}</td>
+              <td className="table-td text-xs tabular-nums">{a.total_calls.toLocaleString()}</td>
+              <td className={`table-td text-xs tabular-nums font-medium ${denyColor(a.deny_rate)}`}>
+                {a.deny_rate.toFixed(1)}%
+              </td>
+              <td className={`table-td text-xs tabular-nums font-medium ${riskColor(a.avg_risk)}`}>
+                {a.avg_risk.toFixed(3)}
+              </td>
+              <td className="table-td pr-4">
+                <button
+                  onClick={() => navigate(`/forensics?agent=${a.agent_id}`)}
+                  className="text-[10px] text-neutral-600 hover:text-blue-400 transition-colors"
+                  aria-label={`Investigate ${a.agent_id.slice(0, 8)}`}
+                >
+                  <Eye size={12} aria-hidden="true" />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/* ── Weekly Activity Heatmap ─────────────────────────────────────────────── */
+function WeeklyHeatmap({ cells, maxCount }) {
+  if (!cells || cells.length === 0) return (
+    <div className="flex items-center justify-center h-24 text-neutral-600 text-xs">
+      Insufficient data for weekly heatmap
+    </div>
+  )
+
+  const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const cellMap = new Map(cells.map(c => [`${c.day}:${c.hour}`, c]))
+
+  const getCellColor = (pct) => {
+    if (pct === 0)   return 'bg-white/[0.02] border-white/[0.04]'
+    if (pct >= 75)   return 'bg-indigo-500/50 border-indigo-500/60'
+    if (pct >= 50)   return 'bg-indigo-500/30 border-indigo-500/40'
+    if (pct >= 25)   return 'bg-indigo-500/15 border-indigo-500/25'
+    return 'bg-indigo-500/07 border-indigo-500/15'
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[520px]">
+        {/* Hour axis labels */}
+        <div className="flex mb-1 ml-10">
+          {Array.from({ length: 24 }, (_, h) => (
+            <div key={h} className="flex-1 text-center text-[8px] text-neutral-700 font-mono">
+              {h % 6 === 0 ? (h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`) : ''}
+            </div>
+          ))}
+        </div>
+
+        {DAY_LABELS.map((day, d) => (
+          <div key={day} className="flex items-center mb-0.5">
+            <div className="w-10 text-[9px] font-mono text-neutral-600 shrink-0 pr-1.5 text-right">{day}</div>
+            {Array.from({ length: 24 }, (_, h) => {
+              const cell = cellMap.get(`${d}:${h}`)
+              return (
+                <div key={h} className="flex-1 px-px">
+                  <div
+                    className={`w-full h-5 rounded-sm border ${getCellColor(cell?.pct ?? 0)}`}
+                    title={cell?.count ? `${day} ${h}:00 — ${cell.count} requests` : 'No data'}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        ))}
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 mt-3 ml-10">
+          {[['bg-white/[0.02] border-white/[0.04]', 'None'], ['bg-indigo-500/07 border-indigo-500/15', '<25%'], ['bg-indigo-500/15 border-indigo-500/25', '25–50%'], ['bg-indigo-500/30 border-indigo-500/40', '50–75%'], ['bg-indigo-500/50 border-indigo-500/60', '>75%']].map(([cls, label]) => (
+            <div key={label} className="flex items-center gap-1.5">
+              <div className={`w-3 h-3 rounded-sm border ${cls}`} aria-hidden="true" />
+              <span className="text-[10px] text-neutral-600">{label}</span>
+            </div>
+          ))}
+          {maxCount != null && (
+            <span className="text-[10px] text-neutral-700 ml-auto">peak: {maxCount.toLocaleString()} req</span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Tenant 30-Day Security Trend ────────────────────────────────────────── */
+function TenantTrendChart({ data }) {
+  if (!data || data.length === 0) return (
+    <div className="flex items-center justify-center h-40 text-neutral-600 text-xs">
+      No trend data available
+    </div>
+  )
+
+  const formatted = data.map(d => ({
+    ...d,
+    label: d.date ? d.date.slice(5) : '',
+  }))
+
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <ComposedChart data={formatted} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <defs>
+          <linearGradient id="totalGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.25} />
+            <stop offset="95%" stopColor="#6366f1" stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke="rgba(255,255,255,0.04)" vertical={false} />
+        <XAxis
+          dataKey="label"
+          tick={{ fill: '#525252', fontSize: 10 }}
+          axisLine={false}
+          tickLine={false}
+          interval={Math.floor(formatted.length / 6)}
+        />
+        <YAxis
+          yAxisId="left"
+          tick={{ fill: '#525252', fontSize: 10 }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <YAxis
+          yAxisId="right"
+          orientation="right"
+          domain={[0, 1]}
+          tick={{ fill: '#525252', fontSize: 10 }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={v => v.toFixed(1)}
+        />
+        <Tooltip
+          contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, fontSize: 11 }}
+          labelStyle={{ color: '#fff', fontWeight: 600 }}
+          itemStyle={{ color: '#a3a3a3' }}
+        />
+        <Area
+          yAxisId="left"
+          type="monotone"
+          dataKey="count"
+          name="Total Decisions"
+          stroke="#6366f1"
+          strokeWidth={1.5}
+          fill="url(#totalGrad)"
+          dot={false}
+        />
+        <Line
+          yAxisId="left"
+          type="monotone"
+          dataKey="threats"
+          name="Threats"
+          stroke="#ef4444"
+          strokeWidth={1.5}
+          dot={false}
+        />
+        <Line
+          yAxisId="right"
+          type="monotone"
+          dataKey="avg_risk"
+          name="Avg Risk"
+          stroke="#f97316"
+          strokeWidth={1.5}
+          strokeDasharray="3 2"
+          dot={false}
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
+}
+
 /* ── Component ─────────────────────────────────────────────────────────────── */
 export default function SecurityDashboard() {
   const navigate    = useNavigate()
@@ -163,17 +440,29 @@ export default function SecurityDashboard() {
   const [logs,            setLogs]            = useState([])
   const [threats,         setThreats]         = useState([])
   const [incidentSummary, setIncidentSummary] = useState(null)
+  const [posture,         setPosture]         = useState(null)
+  const [trends,          setTrends]          = useState([])
+  const [weeklyHeatmap,   setWeeklyHeatmap]   = useState(null)
+  const [agentActivity,       setAgentActivity]       = useState(null)
+  const [dailyActiveAgents,   setDailyActiveAgents]   = useState(null)
+  const [postureScoreTrend,   setPostureScoreTrend]   = useState(null)
   const [loading,         setLoading]         = useState(true)
   const [error,           setError]           = useState(null)
   const [lastRefresh,     setLastRefresh]     = useState(null)
 
   const load = useCallback(async () => {
     try {
-      const [sumRes, logsRes, threatRes, incRes] = await Promise.allSettled([
+      const [sumRes, logsRes, threatRes, incRes, postureRes, trendsRes, weeklyRes, agentRes, daaRes, pstRes] = await Promise.allSettled([
         auditService.getSummary(),
         auditService.getLogs(30, 0),
         riskService.getTopThreats(),
         incidentService.getSummary(),
+        securityService.getPosture(),
+        auditService.getAnomalyTrends(30),
+        auditService.getWeeklyHeatmap(28),
+        auditService.getAgentActivity(),
+        auditService.getDailyActiveAgents(),
+        auditService.getPostureScoreTrend(),
       ])
       if (!mounted.current) return
 
@@ -181,6 +470,23 @@ export default function SecurityDashboard() {
       if (logsRes.status   === 'fulfilled') setLogs(logsRes.value?.data?.items || logsRes.value?.items || [])
       if (threatRes.status === 'fulfilled') setThreats(threatRes.value?.data || threatRes.value || [])
       if (incRes.status    === 'fulfilled') setIncidentSummary(incRes.value?.data || incRes.value || null)
+      if (postureRes.status === 'fulfilled') setPosture(postureRes.value?.data || postureRes.value || null)
+      if (trendsRes.status === 'fulfilled') {
+        const t = trendsRes.value?.data || trendsRes.value || []
+        setTrends(Array.isArray(t) ? t : [])
+      }
+      if (weeklyRes.status === 'fulfilled') {
+        setWeeklyHeatmap(weeklyRes.value?.data || weeklyRes.value || null)
+      }
+      if (agentRes.status === 'fulfilled') {
+        setAgentActivity(agentRes.value?.data || agentRes.value || null)
+      }
+      if (daaRes.status === 'fulfilled') {
+        setDailyActiveAgents(daaRes.value?.data || daaRes.value || null)
+      }
+      if (pstRes.status === 'fulfilled') {
+        setPostureScoreTrend(pstRes.value?.data || pstRes.value || null)
+      }
 
       setLastRefresh(new Date())
       setError(null)
@@ -196,13 +502,15 @@ export default function SecurityDashboard() {
     load()
     // 30-second polling fallback in addition to SSE events
     const interval = setInterval(load, 30_000)
-    // Subscribe to SSE events for live updates
-    const unsubRisk  = eventBus.on('risk_updated',    () => load())
-    const unsubTool  = eventBus.on('tool_executed',   () => load())
-    const unsubAlert = eventBus.on('policy_decision', () => load())
+    let debounceTimer = null
+    const trigger = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(load, 2_000) }
+    const unsubRisk  = eventBus.on('risk_updated',    trigger)
+    const unsubTool  = eventBus.on('tool_executed',   trigger)
+    const unsubAlert = eventBus.on('policy_decision', trigger)
     return () => {
       mounted.current = false
       clearInterval(interval)
+      clearTimeout(debounceTimer)
       unsubRisk()
       unsubTool()
       unsubAlert()
@@ -268,6 +576,39 @@ export default function SecurityDashboard() {
         <Card title="Active Agents"   value={summary?.active_agents_count?.toLocaleString() ?? '—'} icon={Eye} subtitle="Currently monitored" />
         <Card title="Avg Risk Score"  value={summary?.avg_risk_score != null ? summary.avg_risk_score.toFixed(3) : '—'} icon={BarChart2} subtitle="Across all requests" />
       </div>
+
+      {/* Security Posture Checklist */}
+      {posture && (
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield size={13} className="text-neutral-500" />
+              <h2 className="text-xs font-medium text-white">Security Posture</h2>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                posture.posture_score >= 80 ? 'text-green-400 bg-green-500/10 border-green-500/20' :
+                posture.posture_score >= 60 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
+                'text-red-400 bg-red-500/10 border-red-500/20'
+              }`}>{posture.posture_score}/100</span>
+            </div>
+            <span className="text-[10px] text-neutral-600">Chain: {posture.chain_status || 'unknown'}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-subtle)]">
+            {(posture.items || []).map((item) => {
+              const Icon = item.status === 'ok' ? CheckCircle2 : item.status === 'warning' ? AlertTriangle : item.status === 'error' ? XCircle : Info
+              const color = item.status === 'ok' ? 'text-green-400' : item.status === 'warning' ? 'text-amber-400' : item.status === 'error' ? 'text-red-400' : 'text-blue-400'
+              return (
+                <div key={item.label} className="flex items-start gap-3 px-4 py-3">
+                  <Icon size={13} className={`${color} shrink-0 mt-0.5`} />
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-white">{item.label}</div>
+                    <div className="text-[11px] text-neutral-500 mt-0.5">{item.detail}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Security posture widget */}
       {incidentSummary && (() => {
@@ -427,6 +768,22 @@ export default function SecurityDashboard() {
         <AnomalyHeatmap logs={logs} />
       </Card>
 
+      {/* Weekly Activity Heatmap */}
+      <Card title="Weekly Activity Pattern (28 days)" icon={Zap}>
+        <p className="text-xs text-neutral-600 mb-4">
+          Request volume by day-of-week × hour — darker = more activity relative to peak.
+        </p>
+        <WeeklyHeatmap cells={weeklyHeatmap?.cells} maxCount={weeklyHeatmap?.max_count} />
+      </Card>
+
+      {/* 30-Day Security Trend */}
+      <Card title="30-Day Security Trend" icon={Activity}>
+        <p className="text-xs text-neutral-600 mb-4">
+          Daily decisions (area), threats detected (red line), and avg risk score (orange dashed — right axis).
+        </p>
+        <TenantTrendChart data={trends} />
+      </Card>
+
       {/* Live decision log */}
       <Card title="Live Decision Log" icon={Activity}>
         <div className="table-scroll -mx-5">
@@ -479,6 +836,45 @@ export default function SecurityDashboard() {
             </tbody>
           </table>
         </div>
+      </Card>
+
+      {/* Posture Score Trend */}
+      <Card title="Tenant Posture Score (30 days)" icon={Shield}>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-neutral-600">Allow % of all decisions · dashed line = 90% target</p>
+          {postureScoreTrend?.avg_score != null && (
+            <span className={`text-sm font-mono font-bold ${
+              postureScoreTrend.avg_score >= 90 ? 'text-green-400' :
+              postureScoreTrend.avg_score >= 70 ? 'text-amber-400' : 'text-red-400'
+            }`}>
+              {postureScoreTrend.avg_score}% avg
+            </span>
+          )}
+        </div>
+        <PostureScoreTrendChart series={postureScoreTrend?.series} avgScore={postureScoreTrend?.avg_score} />
+      </Card>
+
+      {/* Daily Active Agents */}
+      <Card title="Daily Active Agents (30 days)" icon={Activity}>
+        <DailyActiveAgentsChart series={dailyActiveAgents?.series} />
+        {dailyActiveAgents?.peak_agents != null && (
+          <p className="text-[10px] text-neutral-700 mt-2">
+            Peak: {dailyActiveAgents.peak_agents} agents in one day
+          </p>
+        )}
+      </Card>
+
+      {/* Agent Activity Summary */}
+      <Card title="Agent Activity Registry" icon={Eye}>
+        <p className="text-xs text-neutral-600 mb-4">
+          All known agents — ordered by most recently active. Click any row to investigate.
+        </p>
+        <AgentActivityTable agents={agentActivity?.agents} navigate={navigate} />
+        {agentActivity?.total != null && (
+          <p className="text-[10px] text-neutral-700 mt-3">
+            {agentActivity.total} agents shown
+          </p>
+        )}
       </Card>
     </div>
   )

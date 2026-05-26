@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import secrets
 import uuid
-from collections.abc import AsyncGenerator
 from functools import partial
 from typing import Annotated, Any
 
 import bcrypt
+import httpx
 import structlog
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -61,16 +64,19 @@ def _get_auth_semaphore() -> asyncio.Semaphore:
 # =========================
 
 
-async def get_redis() -> AsyncGenerator[Any, None]:
-    """Yield a Redis client (Cluster-aware)."""
-    r = get_redis_client(settings.REDIS_URL, decode_responses=False)
-    try:
-        yield r
-    finally:
-        if hasattr(r, "aclose"):
-            await r.aclose()
-        else:
-            await r.close()
+_redis_client: Any = None
+
+
+def _get_redis_client() -> Any:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = get_redis_client(settings.REDIS_URL, decode_responses=False)
+    return _redis_client
+
+
+async def get_redis() -> Any:
+    """Yield the shared Redis client (one pool per process)."""
+    yield _get_redis_client()
 
 
 # =========================
@@ -738,3 +744,653 @@ async def upsert_tenant(
         "monthly_request_cap":  monthly_val,
         "daily_inference_cost_cap_usd": cost_cap_val,
     }
+
+
+# =============================================================================
+# SSO / OIDC — Google, Microsoft, Okta
+# =============================================================================
+
+_SSO_STATE_SECRET = os.environ.get("SSO_STATE_SECRET", settings.JWT_SECRET_KEY)
+
+
+def _sso_config_key(tenant_id: str) -> str:
+    return f"acp:sso:config:{tenant_id}"
+
+
+def _mask_sso_secret(value: str | None) -> str:
+    """Show only the last 8 characters of a secret value."""
+    if not value:
+        return ""
+    return f"***{value[-8:]}" if len(value) > 8 else "****"
+
+
+def _decode_redis_hash(raw: dict) -> dict[str, str]:
+    return {
+        (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+        for k, v in raw.items()
+    }
+
+
+@router.get("/auth/sso/config", summary="Get current SSO provider configuration")
+async def get_sso_config(
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> dict:
+    """Return current SSO provider config from Redis (secrets masked)."""
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+
+    raw: dict[bytes, bytes] = await redis.hgetall(_sso_config_key(x_tenant_id))
+    cfg = _decode_redis_hash(raw)
+
+    return {
+        "provider_type": cfg.get("provider_type", ""),
+        "entity_id": cfg.get("entity_id", ""),
+        "sso_url": cfg.get("sso_url", ""),
+        "certificate": _mask_sso_secret(cfg.get("certificate", "")),
+        "client_id": cfg.get("client_id", ""),
+        "client_secret": _mask_sso_secret(cfg.get("client_secret", "")),
+        "issuer": cfg.get("issuer", ""),
+    }
+
+
+@router.post("/auth/sso/config", summary="Save SSO provider configuration")
+async def save_sso_config(
+    body: dict,
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> dict:
+    """Persist SSO provider config to Redis hash acp:sso:config:{tenant_id}."""
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+
+    allowed_fields = ("provider_type", "entity_id", "sso_url", "certificate", "client_id", "client_secret", "issuer")
+    mapping: dict[str, str] = {}
+    for field in allowed_fields:
+        if field in body:
+            mapping[field] = str(body[field])
+
+    if not mapping:
+        raise HTTPException(status_code=400, detail="No recognised SSO config fields provided")
+
+    await redis.hset(_sso_config_key(x_tenant_id), mapping=mapping)
+    logger.info("sso_config_saved", tenant_id=x_tenant_id, fields=list(mapping.keys()))
+    return {"status": "ok", "saved": list(mapping.keys())}
+
+
+@router.post("/auth/sso/config/test", summary="Test SSO provider configuration reachability")
+async def test_sso_config(
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> dict:
+    """
+    Validate SSO config by attempting a metadata fetch.
+    - SAML: GET entity_id URL
+    - OIDC: GET issuer/.well-known/openid-configuration
+    Returns {reachable: bool, issuer: str, status: str}
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+
+    raw: dict[bytes, bytes] = await redis.hgetall(_sso_config_key(x_tenant_id))
+    cfg = _decode_redis_hash(raw)
+
+    provider_type = cfg.get("provider_type", "oidc").lower()
+    issuer = cfg.get("issuer", "")
+    entity_id = cfg.get("entity_id", "")
+
+    if provider_type == "saml":
+        test_url = entity_id
+        if not test_url:
+            return {"reachable": False, "issuer": issuer, "status": "no_entity_id_configured"}
+    else:
+        # OIDC: fetch well-known discovery document
+        base = issuer.rstrip("/") if issuer else ""
+        test_url = f"{base}/.well-known/openid-configuration" if base else ""
+        if not test_url:
+            return {"reachable": False, "issuer": issuer, "status": "no_issuer_configured"}
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            resp = await client.get(test_url)
+        reachable = resp.status_code < 400
+        discovered_issuer = issuer
+        if provider_type == "oidc" and reachable:
+            try:
+                doc = resp.json()
+                discovered_issuer = doc.get("issuer", issuer)
+            except Exception:
+                pass
+        return {
+            "reachable": reachable,
+            "issuer": discovered_issuer,
+            "status": f"http_{resp.status_code}",
+        }
+    except Exception as exc:
+        logger.warning("sso_config_test_failed", url=test_url, error=str(exc))
+        return {"reachable": False, "issuer": issuer, "status": f"unreachable: {type(exc).__name__}"}
+
+
+@router.get("/auth/sso/providers", summary="List enabled SSO providers")
+async def list_sso_providers() -> dict:
+    """Returns provider names that have been configured via env vars."""
+    from services.identity.oidc import enabled_providers
+    return {"providers": enabled_providers()}
+
+
+@router.get("/auth/sso/{provider}", summary="Initiate SSO login")
+async def sso_login(
+    provider: str,
+    request: Request,
+    tenant_id: str | None = None,
+) -> RedirectResponse:
+    """
+    Redirect the browser to the OIDC provider's authorization endpoint.
+    `tenant_id` query param determines which tenant the SSO user belongs to.
+    Defaults to the demo tenant when omitted.
+    """
+    from services.identity.oidc import _provider_cfg, enabled_providers, generate_state
+
+    if provider not in enabled_providers():
+        raise HTTPException(status_code=404, detail=f"SSO provider '{provider}' is not configured")
+
+    tid = tenant_id or "00000000-0000-0000-0000-000000000001"
+    state = generate_state(_SSO_STATE_SECRET, provider, tid)
+
+    base = str(request.base_url).rstrip("/")
+    redirect_uri = f"{base}/auth/sso/{provider}/callback"
+
+    cfg = _provider_cfg(provider)
+    from services.identity.oidc import _get_discovery
+    doc = await _get_discovery(provider)
+
+    from urllib.parse import urlencode
+    params = {
+        "client_id":     cfg["client_id"],
+        "redirect_uri":  redirect_uri,
+        "response_type": "code",
+        "scope":         cfg["scope"],
+        "state":         state,
+        "nonce":         secrets.token_urlsafe(16),
+    }
+    auth_url = f"{doc['authorization_endpoint']}?{urlencode(params)}"
+    return RedirectResponse(auth_url, status_code=302)
+
+
+@router.get("/auth/sso/{provider}/callback", summary="Handle SSO callback")
+async def sso_callback(
+    provider: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
+    """
+    Exchange the authorization code for an id_token, upsert the user,
+    issue an ACP JWT, and redirect to the dashboard with an httpOnly cookie.
+    """
+    from services.identity.oidc import exchange_code, verify_state
+
+    if error:
+        logger.warning("sso_provider_error", provider=provider, error=error)
+        return RedirectResponse("/?sso_error=provider_denied", status_code=302)
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    # CSRF verification — state encodes "{provider}|{tenant_id}|{ts}|{sig}"
+    try:
+        _, tenant_id_str = verify_state(_SSO_STATE_SECRET, state)
+    except ValueError as exc:
+        logger.warning("sso_state_invalid", error=str(exc))
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
+
+    try:
+        tenant_uuid = uuid.UUID(tenant_id_str)
+    except ValueError:
+        tenant_uuid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+    base = str(request.base_url).rstrip("/")
+    redirect_uri = f"{base}/auth/sso/{provider}/callback"
+
+    try:
+        claims = await exchange_code(provider, code, redirect_uri)
+    except Exception as exc:
+        logger.error("sso_code_exchange_failed", provider=provider, error=str(exc))
+        return RedirectResponse("/?sso_error=exchange_failed", status_code=302)
+
+    email = (claims.get("email") or "").strip().lower()
+
+    if not email:
+        return RedirectResponse("/?sso_error=no_email", status_code=302)
+
+    # Upsert user — find by email + tenant, create if not present
+    result = await db.execute(
+        select(User).where(User.email == email, User.tenant_id == tenant_uuid)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # SSO users get a random unusable password hash (they can only log in via SSO)
+        dummy_pw = bcrypt.hashpw(secrets.token_bytes(32), bcrypt.gensalt()).decode()
+        user = User(
+            email=email,
+            hashed_password=dummy_pw,
+            tenant_id=tenant_uuid,
+            org_id=tenant_uuid,
+            role=UserRole.VIEWER,
+            is_active=True,
+        )
+        db.add(user)
+        try:
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            await db.rollback()
+            result = await db.execute(
+                select(User).where(User.email == email, User.tenant_id == tenant_uuid)
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                return RedirectResponse("/?sso_error=db_error", status_code=302)
+
+    if not user.is_active:
+        return RedirectResponse("/?sso_error=account_disabled", status_code=302)
+
+    token_svc = TokenService(redis)
+    token, expires_in = await token_svc.issue(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        role=user.role,
+        org_id=user.org_id or user.tenant_id,
+    )
+
+    await push_audit_event(
+        redis=redis,
+        tenant_id=user.tenant_id,
+        agent_id=None,
+        action="user_login",
+        metadata={"role": user.role, "user_id": str(user.id), "sso_provider": provider},
+    )
+
+    logger.info("sso_login_success", provider=provider, email=email, tenant_id=str(tenant_uuid))
+
+    response = RedirectResponse("/", status_code=302)
+    response.set_cookie(
+        "acp_token",
+        token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=expires_in,
+        path="/",
+    )
+    return response
+
+
+# =============================================================================
+# USER MANAGEMENT — GET /users, POST /users/invite, PATCH /users/{user_id},
+#                   DELETE /users/{user_id}
+# =============================================================================
+
+
+@router.get(
+    "/users",
+    response_model=APIResponse[list],
+    summary="List users for the tenant",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def list_users(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+    role: str | None = None,
+    is_active: bool | None = None,
+) -> APIResponse[list]:
+    """List users for the authenticated tenant. Filter by role and/or is_active."""
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Tenant UUID")
+
+    q = select(User).where(User.tenant_id == tenant_uuid)
+    if role is not None:
+        try:
+            role_enum = UserRole(role.upper())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid role '{role}'. Valid: {[r.value for r in UserRole]}",
+            )
+        q = q.where(User.role == role_enum)
+    if is_active is not None:
+        q = q.where(User.is_active == is_active)
+    q = q.order_by(User.id)
+
+    result = await db.execute(q)
+    users = result.scalars().all()
+
+    return APIResponse(
+        data=[
+            {
+                "id":         str(u.id),
+                "email":      u.email,
+                "role":       u.role,
+                "is_active":  u.is_active,
+                "created_at": u.created_at.isoformat() if hasattr(u, "created_at") and u.created_at else None,
+            }
+            for u in users
+        ]
+    )
+
+
+@router.post(
+    "/users/invite",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_201_CREATED,
+    summary="Invite a new user",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def invite_user(
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> APIResponse[dict]:
+    """
+    Create a new user via invitation.
+
+    Body: {email, role}
+    Role must be one of the UserRole enum values.
+    Assigns a random secure password (user must reset via SSO or password reset).
+    Writes an audit row with action="user_invited".
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Tenant UUID")
+
+    email = str(body.get("email", "")).strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="'email' is required")
+
+    role_raw = str(body.get("role", "")).upper()
+    try:
+        role_enum = UserRole(role_raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role '{role_raw}'. Valid: {[r.value for r in UserRole]}",
+        )
+
+    # Generate a random secure password — user must reset before use
+    random_pw = secrets.token_urlsafe(24)
+    hashed_password = bcrypt.hashpw(random_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    user = User(
+        email=email,
+        hashed_password=hashed_password,
+        tenant_id=tenant_uuid,
+        org_id=tenant_uuid,
+        role=role_enum,
+        is_active=True,
+    )
+    db.add(user)
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="User with this email already exists")
+
+    # Audit trail
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_uuid,
+            agent_id=None,
+            action="user_invited",
+            metadata={"email": email, "role": role_enum},
+        )
+    except Exception as _audit_exc:
+        logger.warning("user_invite_audit_failed", error=str(_audit_exc))
+
+    return APIResponse(
+        data={
+            "id":         str(user.id),
+            "email":      user.email,
+            "role":       user.role,
+            "is_active":  user.is_active,
+            "created_at": user.created_at.isoformat() if hasattr(user, "created_at") and user.created_at else None,
+        }
+    )
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=APIResponse[dict],
+    summary="Update user role or active status",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def update_user(
+    user_id: str,
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> APIResponse[dict]:
+    """
+    Update a user's role or is_active status.
+
+    Body: {role?: str, is_active?: bool}
+    Writes an audit row with action="user_updated".
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Tenant UUID")
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    result = await db.execute(
+        select(User).where(User.id == user_uuid, User.tenant_id == tenant_uuid)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    changed_fields: list[str] = []
+
+    if "role" in body:
+        role_raw = str(body["role"]).upper()
+        try:
+            role_enum = UserRole(role_raw)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid role '{role_raw}'. Valid: {[r.value for r in UserRole]}",
+            )
+        if user.role != role_enum:
+            user.role = role_enum
+            changed_fields.append("role")
+
+    if "is_active" in body:
+        new_active = bool(body["is_active"])
+        if user.is_active != new_active:
+            user.is_active = new_active
+            changed_fields.append("is_active")
+
+    if changed_fields:
+        await db.commit()
+        await db.refresh(user)
+
+        try:
+            await push_audit_event(
+                redis=redis,
+                tenant_id=tenant_uuid,
+                agent_id=None,
+                action="user_updated",
+                metadata={"user_id": user_id, "changed_fields": changed_fields},
+            )
+        except Exception as _audit_exc:
+            logger.warning("user_update_audit_failed", error=str(_audit_exc))
+
+    return APIResponse(
+        data={
+            "id":         str(user.id),
+            "email":      user.email,
+            "role":       user.role,
+            "is_active":  user.is_active,
+            "created_at": user.created_at.isoformat() if hasattr(user, "created_at") and user.created_at else None,
+        }
+    )
+
+
+@router.delete(
+    "/users/{user_id}",
+    response_model=APIResponse[dict],
+    summary="Soft-delete (deactivate) a user",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def deactivate_user(
+    user_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> APIResponse[dict]:
+    """
+    Soft-delete a user by setting is_active = False.
+
+    Does NOT hard-delete the record.
+    Writes an audit row with action="user_deactivated".
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Tenant UUID")
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    result = await db.execute(
+        select(User).where(User.id == user_uuid, User.tenant_id == tenant_uuid)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_active = False
+    await db.commit()
+
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_uuid,
+            agent_id=None,
+            action="user_deactivated",
+            metadata={"user_id": user_id, "email": user.email},
+        )
+    except Exception as _audit_exc:
+        logger.warning("user_deactivate_audit_failed", error=str(_audit_exc))
+
+
+# =========================
+# ADMIN TENANT LIST (Phase 9)
+# =========================
+
+
+@router.get(
+    "/admin/tenants",
+    summary="List all tenants (admin view)",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def list_admin_tenants(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return all tenant rows from acp_identity.tenants.
+
+    Protected by internal-secret so only the gateway (or ops scripts) can call
+    it — never exposed to end-user tokens directly.
+
+    Returns:
+        {"data": [...tenant objects...]}
+    """
+    result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    tenants = result.scalars().all()
+
+    rows = []
+    for t in tenants:
+        rows.append({
+            "id":                   str(t.id),
+            "name":                 t.name,
+            "tenant_id":            str(t.tenant_id),
+            "plan":                 t.tier.value,
+            "is_active":            t.is_active,
+            "created_at":           t.created_at.isoformat() if t.created_at else None,
+            "requests_per_second":  t.requests_per_second,
+            "burst":                t.burst,
+            "daily_request_cap":    t.daily_request_cap,
+            "monthly_request_cap":  t.monthly_request_cap,
+        })
+
+    return {"data": rows}
+
+
+@router.get(
+    "/admin/tenants/{tenant_id}",
+    summary="Get a single tenant by tenant_id (admin view)",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def get_admin_tenant(
+    tenant_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return a single tenant row by its tenant_id UUID.
+
+    Protected by internal-secret so only the gateway (or ops scripts) can call
+    it — never exposed to end-user tokens directly.
+
+    Returns:
+        {"data": {...tenant object...}}
+    """
+    try:
+        tenant_uuid = uuid.UUID(tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid tenant_id UUID format")
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    return {
+        "data": {
+            "id":                   str(tenant.id),
+            "name":                 tenant.name,
+            "tenant_id":            str(tenant.tenant_id),
+            "plan":                 tenant.tier.value,
+            "is_active":            tenant.is_active,
+            "created_at":           tenant.created_at.isoformat() if tenant.created_at else None,
+            "requests_per_second":  tenant.requests_per_second,
+            "burst":                tenant.burst,
+            "daily_request_cap":    tenant.daily_request_cap,
+            "monthly_request_cap":  tenant.monthly_request_cap,
+        }
+    }
+
+    return APIResponse(data={"status": "ok"})

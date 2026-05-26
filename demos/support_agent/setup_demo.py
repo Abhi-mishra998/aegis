@@ -22,13 +22,25 @@ from pathlib import Path
 
 import httpx
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_ROOT))
+
+_env_file = _ROOT / ".env"
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
 
 GATEWAY       = os.getenv("ACP_GATEWAY_URL",  "http://localhost:8000")
 IDENTITY_URL  = os.getenv("ACP_IDENTITY_URL", "http://localhost:8002")
 GRAPH_URL     = os.getenv("ACP_GRAPH_URL",    "http://localhost:8013")
 AUTONOMY_URL  = os.getenv("ACP_AUTONOMY_URL", "http://localhost:8015")
-INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "acp_internal_prod_secret_f93284h")
+INTERNAL_SECRET = os.getenv("INTERNAL_SECRET") or ""
+if not INTERNAL_SECRET:
+    raise SystemExit("ERROR: INTERNAL_SECRET not set. Add it to .env or export it.")
 TENANT_ID     = os.getenv("ACP_TENANT_ID",    "00000000-0000-0000-0000-000000000001")
 ADMIN_EMAIL   = os.getenv("ACP_ADMIN_EMAIL",  "admin@acp.local")
 ADMIN_PASSWORD = os.getenv("ACP_ADMIN_PASSWORD", "password")

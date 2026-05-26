@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings as policy_settings
+from sdk.common.db import get_tenant_id
 from sdk.common.deadline import check_deadline
 from sdk.common.response import APIResponse
 from services.policy.opa_client import opa_client
@@ -415,6 +419,195 @@ async def execute_tool(
         "signals": decision_meta.get("signals", {}),
         "executed_at": datetime.now(tz=UTC).isoformat(),
     }
+
+
+# =========================
+# POLICY TEST (DRY-RUN against live OPA)
+# =========================
+
+_ALLOWED_ROLES: frozenset[str] = frozenset({"ADMIN", "SECURITY"})
+_NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
+
+
+def _require_admin_or_security(
+    x_acp_role: str | None = Header(default=None),
+    _secret: str = Depends(verify_internal_secret),
+) -> str:
+    """Require ADMIN or SECURITY role (injected by Gateway from validated JWT)."""
+    role = (x_acp_role or "").upper()
+    if role not in _ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ADMIN or SECURITY role required",
+        )
+    return role
+
+
+class PolicyTestCase(BaseModel):
+    tool_name: str
+    parameters: dict[str, Any] = {}
+    risk_score: float = 0.0
+    expected: str  # "allow" or "deny"
+
+
+class PolicyTestRequest(BaseModel):
+    rego: str
+    test_cases: list[PolicyTestCase]
+
+
+class PolicyTestResult(BaseModel):
+    input: dict[str, Any]
+    expected: str
+    actual: str
+    passed: bool
+    risk_adjustment: float
+
+
+class PolicyTestResponse(BaseModel):
+    results: list[PolicyTestResult]
+    passed_count: int
+    total: int
+    all_passed: bool
+
+
+@router.post(
+    "/test",
+    response_model=APIResponse[PolicyTestResponse],
+    summary="Test Rego policy against sample inputs (dry-run, no auth required)",
+    tags=["policy"],
+)
+async def test_policy(payload: PolicyTestRequest) -> APIResponse[PolicyTestResponse]:
+    """
+    Evaluate each test case against the live OPA policy engine using
+    ``opa_client.check_policy()``. The ``rego`` field is shown for UX context
+    (future: could be pushed as a temporary bundle), but evaluation uses the
+    currently deployed OPA policy so admins can validate expected outcomes
+    against real policy behaviour without activating any changes.
+
+    No agent authentication required — this is an admin dry-run tool.
+    """
+    results: list[PolicyTestResult] = []
+
+    for case in payload.test_cases:
+        opa_input: dict[str, Any] = {
+            "tool": case.tool_name,
+            "risk_score": case.risk_score,
+            "parameters": case.parameters,
+            # Provide a minimal agent stub so OPA can evaluate without a real agent
+            "agent": {
+                "id": str(uuid.UUID(int=0)),
+                "name": "policy_test_stub",
+                "status": "active",
+                "risk_level": "low",
+                "permissions": [
+                    {"tool_name": "*", "action": "allow", "granted_by": str(uuid.UUID(int=0))}
+                ],
+            },
+            "behavior_history": [],
+            "metadata": {"source": "policy_test"},
+        }
+
+        try:
+            allowed, _reason, risk_adjustment = await opa_client.check_policy(opa_input)
+        except Exception as exc:
+            logger.warning("policy_test_opa_error", error=str(exc), tool=case.tool_name)
+            allowed, risk_adjustment = False, 0.0
+
+        actual = "allow" if allowed else "deny"
+        expected = case.expected.lower()
+        results.append(
+            PolicyTestResult(
+                input=opa_input,
+                expected=expected,
+                actual=actual,
+                passed=(actual == expected),
+                risk_adjustment=risk_adjustment,
+            )
+        )
+
+    passed_count = sum(1 for r in results if r.passed)
+    return APIResponse(
+        data=PolicyTestResponse(
+            results=results,
+            passed_count=passed_count,
+            total=len(results),
+            all_passed=(passed_count == len(results)),
+        )
+    )
+
+
+# =========================
+# POLICY UPLOAD
+# =========================
+
+
+class PolicyUploadRequest(BaseModel):
+    name: str
+    rego: str
+    description: str = ""
+
+
+class PolicyUploadResponse(BaseModel):
+    status: str
+    path: str
+    reload_hint: str
+
+
+@router.post(
+    "/upload",
+    response_model=APIResponse[PolicyUploadResponse],
+    summary="Save a named Rego policy to disk (ADMIN/SECURITY only)",
+    tags=["policy"],
+)
+async def upload_policy(
+    payload: PolicyUploadRequest,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    _role: str = Depends(_require_admin_or_security),
+) -> APIResponse[PolicyUploadResponse]:
+    """
+    Validate ``name``, write the Rego content to
+    ``/tmp/acp_policies/{tenant_id}/{name}.rego``, and return a reload hint.
+    OPA polls the bundle server every 30 s so the new policy takes effect
+    automatically without a manual reload.
+
+    Requires ADMIN or SECURITY role (enforced via ``X-ACP-Role`` header injected
+    by the Gateway from the validated JWT claims).
+    """
+    if not _NAME_RE.match(payload.name):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Policy name must match ^[a-zA-Z0-9_]{1,64}$",
+        )
+
+    policy_dir = os.path.join("/tmp", "acp_policies", str(tenant_id))
+    os.makedirs(policy_dir, exist_ok=True)
+
+    file_path = os.path.join(policy_dir, f"{payload.name}.rego")
+    try:
+        with open(file_path, "w", encoding="utf-8") as fh:
+            fh.write(payload.rego)
+    except OSError as exc:
+        logger.error("policy_upload_write_failed", path=file_path, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to write policy file: {exc}",
+        ) from exc
+
+    logger.info(
+        "policy_uploaded",
+        tenant_id=str(tenant_id),
+        name=payload.name,
+        path=file_path,
+        description=payload.description,
+    )
+
+    return APIResponse(
+        data=PolicyUploadResponse(
+            status="saved",
+            path=file_path,
+            reload_hint="OPA polls bundle server every 30s",
+        )
+    )
 
 
 # =========================

@@ -26,19 +26,45 @@ from services.gateway.client import service_client
 logger = structlog.get_logger(__name__)
 
 _IDEMPOTENCY_PREFIX = "acp:idempotency:"
+_API_KEY_CACHE_PREFIX = "acp:apikey:valid:"
+_API_KEY_CACHE_TTL = 60  # seconds
 
 
 class _AuthMixin:
+    async def _validate_api_key_cached(self, raw_key: str) -> dict | None:
+        """Validate an API key with Redis caching (60s TTL) to avoid per-request DB calls."""
+        cache_key = f"{_API_KEY_CACHE_PREFIX}{hashlib.sha256(raw_key.encode()).hexdigest()}"
+        try:
+            cached = await self.redis.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass  # cache miss is fine; fall through to live call
+
+        key_data = await service_client.validate_api_key(raw_key)
+        if key_data:
+            try:
+                await self.redis.setex(cache_key, _API_KEY_CACHE_TTL, json.dumps(key_data, default=str))
+            except Exception:
+                pass
+        return key_data
+
     async def _authenticate(
         self, request: Request, is_execute_path: bool = False
     ) -> tuple[uuid.UUID, uuid.UUID, str, str, str | None]:
         """
         Authenticate the request and return
         (tenant_id, agent_id, tenant_id_str, agent_id_str, jti).
+
+        Auth precedence:
+          1. Authorization: Bearer acp_... → API key
+          2. Authorization: Bearer <JWT>   → JWT
+          3. X-API-Key header              → API key (legacy header)
+          4. Cookie acp_token              → JWT from cookie
         """
         auth_header = request.headers.get("Authorization")
         x_cookie_token = request.cookies.get("acp_token")
-        api_key = request.headers.get("X-API-Key")
+        api_key_header = request.headers.get("X-API-Key")
         client_ip = request.client.host if request.client else "unknown"
 
         if not auth_header and x_cookie_token:
@@ -57,111 +83,153 @@ class _AuthMixin:
             parts = auth_header.split(" ", 1)
             if len(parts) == 2:
                 token = parts[1].strip()
-                token_hash = hashlib.sha256(token.encode()).hexdigest()
-                # Local Revocation Check
-                try:
-                    if await self.redis.get(f"{REDIS_REVOKE_PREFIX}{token_hash}"):
-                        await self.redis.incr(auth_fail_key)
-                        await self.redis.expire(auth_fail_key, 300)
-                        failures = await self.redis.get(auth_fail_key)
-                        if failures and int(failures) > 1000:
-                            raise HTTPException(status_code=429, detail="Too many authentication failures")
-                        raise HTTPException(status_code=401, detail="Token revoked")
-                except HTTPException:
-                    raise
-                except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
-                    # Redis timeout on revocation check -> FAIL CLOSED (Security First)
-                    logger.error("redis_timeout_revocation_check", error=str(_re))
-                    raise HTTPException(status_code=503, detail="Security infrastructure timeout")
 
-                try:
-                    from services.gateway.auth import token_validator as tv
-                    if tv and hasattr(tv, 'validate'):
-                        auth_data = await tv.validate(token)
-                    else:
-                        from services.gateway.auth import LocalTokenValidator
-                        auth_data = LocalTokenValidator()._validate_signature(token)
-                except Exception as exc:
-                    try:
-                        await self.redis.incr(auth_fail_key)
-                        await self.redis.expire(auth_fail_key, 300)
-                    except Exception as _re:
-                        logger.debug("auth_fail_counter_error", error=str(_re))
+                # ── API key Bearer path (prefix: acp_) ────────────────────
+                if token.startswith("acp_"):
+                    key_data = await self._validate_api_key_cached(token)
+                    if not key_data:
+                        try:
+                            await self.redis.incr(auth_fail_key)
+                            await self.redis.expire(auth_fail_key, 300)
+                        except Exception:
+                            pass
+                        raise HTTPException(status_code=401, detail="Invalid or expired API key")
 
-                    detail = str(exc) if isinstance(exc, ACPAuthError) else "Invalid token"
-                    raise HTTPException(status_code=401, detail=detail)
-
-                # Active RBAC Mapping
-                role = auth_data.get("role", "VIEWER")
-                permissions_map = {
-                    "ADMIN": ["*"],
-                    "SECURITY": ["kill_switch", "view_risk", "execute_agent"],
-                    "AUDITOR": ["view_risk", "view_audit"],
-                    "VIEWER": ["view_risk"],
-                    "agent": ["execute_agent"],
-                }
-                request.state.permissions = permissions_map.get(role, [])
-                request.state.role = role
-
-                # Write-path enforcement: mutations require ADMIN or SECURITY,
-                # except agent-role tokens on /execute (controlled by OPA + Decision Engine).
-                if request.method not in ("GET", "HEAD", "OPTIONS"):
-                    if role not in ("ADMIN", "SECURITY"):
-                        if not (is_execute_path and role == "agent"):
-                            raise HTTPException(
-                                status_code=403,
-                                detail="Write operations require ADMIN or SECURITY role",
-                            )
-
-                # Enterprise JTI Atomic Burst Lock — tool executions only.
-                # Management CRUD paths are already protected by RBAC and rate limiting.
-                # Replay detection only applies to /execute (tool execution) where the
-                # same JTI reusing within 50ms would indicate a genuine replay attack.
-                jti = auth_data.get("jti")
-                if jti and is_execute_path and request.method not in ("GET", "HEAD", "OPTIONS"):
-                    if await self.redis.get(f"{REDIS_REVOKE_PREFIX}jti:{jti}"):
-                        raise HTTPException(status_code=401, detail="Token ID revoked")
-
-                    replay_key = f"acp:jti_last_used:{jti}"
-                    now_ts = time.time()
-
-                    try:
-                        if not await self.redis.setnx(replay_key, now_ts):
-                            last = await self.redis.get(replay_key)
-                            if last and (now_ts - float(last)) < 0.001:  # 1ms burst window (reduced for load tests)
-                                raise HTTPException(status_code=429, detail="Too many requests: burst replay detected")
-                            await self.redis.set(replay_key, now_ts)
-
-                        # Replay TTL aligned with Token Expiry
-                        exp = auth_data.get("exp")
-                        ttl = int(exp - now_ts) if exp else 900
-                        await self.redis.expire(replay_key, max(1, ttl))
-                    except HTTPException:
-                        raise  # propagate real replay rejections
-                    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
-                        # Redis unavailable → skip replay check; genuine replays are still
-                        # caught by JTI revocation above. False-blocking valid traffic is worse.
-                        logger.warning("replay_check_skipped_redis_unavailable", jti=jti, error=str(_re))
-
-                agent_id_str = auth_data.get("agent_id", "")
-                request.state.actor = auth_data.get("sub", "unknown")
-                tenant_id_str = auth_data["tenant_id"]
-
-                try:
+                    tenant_id_str = str(key_data["tenant_id"])
                     tenant_id = uuid.UUID(tenant_id_str)
-                    agent_id = uuid.UUID(agent_id_str) if agent_id_str else uuid.UUID(int=0)
-                except ValueError:
-                    raise HTTPException(status_code=401, detail="Invalid identity claims in token")
 
-                # Store full JWT claims so downstream code can use embedded permissions
-                # without making any Registry or Policy HTTP calls.
-                request.state.jwt_claims = auth_data
-        elif api_key:
-            key_data = await service_client.validate_api_key(api_key)
+                    x_agent_hdr = request.headers.get("X-Agent-ID", "")
+                    try:
+                        agent_id = uuid.UUID(x_agent_hdr) if x_agent_hdr else uuid.UUID(int=0)
+                    except ValueError:
+                        agent_id = uuid.UUID(int=0)
+                    agent_id_str = str(agent_id)
+
+                    request.state.permissions = ["execute_agent", "view_risk"]
+                    request.state.role = "agent"
+                    request.state.actor = f"apikey:{key_data.get('key_prefix', token[:8])}"
+                    request.state.jwt_claims = {}
+                    jti = None
+
+                # ── JWT Bearer path ────────────────────────────────────────
+                else:
+                    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+                    # Local Revocation Check
+                    try:
+                        if await self.redis.get(f"{REDIS_REVOKE_PREFIX}{token_hash}"):
+                            await self.redis.incr(auth_fail_key)
+                            await self.redis.expire(auth_fail_key, 300)
+                            failures = await self.redis.get(auth_fail_key)
+                            if failures and int(failures) > 1000:
+                                raise HTTPException(status_code=429, detail="Too many authentication failures")
+                            raise HTTPException(status_code=401, detail="Token revoked")
+                    except HTTPException:
+                        raise
+                    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
+                        # Redis timeout on revocation check -> FAIL CLOSED (Security First)
+                        logger.error("redis_timeout_revocation_check", error=str(_re))
+                        raise HTTPException(status_code=503, detail="Security infrastructure timeout")
+
+                    try:
+                        from services.gateway.auth import token_validator as tv
+                        if tv and hasattr(tv, 'validate'):
+                            auth_data = await tv.validate(token)
+                        else:
+                            from services.gateway.auth import LocalTokenValidator
+                            auth_data = LocalTokenValidator()._validate_signature(token)
+                    except Exception as exc:
+                        try:
+                            await self.redis.incr(auth_fail_key)
+                            await self.redis.expire(auth_fail_key, 300)
+                        except Exception as _re:
+                            logger.debug("auth_fail_counter_error", error=str(_re))
+
+                        detail = str(exc) if isinstance(exc, ACPAuthError) else "Invalid token"
+                        raise HTTPException(status_code=401, detail=detail)
+
+                    # Active RBAC Mapping
+                    role = auth_data.get("role", "VIEWER")
+                    permissions_map = {
+                        "ADMIN": ["*"],
+                        "SECURITY": ["kill_switch", "view_risk", "execute_agent"],
+                        "AUDITOR": ["view_risk", "view_audit"],
+                        "VIEWER": ["view_risk"],
+                        "agent": ["execute_agent"],
+                    }
+                    request.state.permissions = permissions_map.get(role, [])
+                    request.state.role = role
+
+                    # Write-path enforcement: mutations require ADMIN or SECURITY,
+                    # except agent-role tokens on /execute (controlled by OPA + Decision Engine).
+                    if request.method not in ("GET", "HEAD", "OPTIONS"):
+                        if role not in ("ADMIN", "SECURITY"):
+                            if not (is_execute_path and role == "agent"):
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="Write operations require ADMIN or SECURITY role",
+                                )
+
+                    # Enterprise JTI Atomic Burst Lock — tool executions only.
+                    # Management CRUD paths are already protected by RBAC and rate limiting.
+                    # Replay detection only applies to /execute (tool execution) where the
+                    # same JTI reusing within 50ms would indicate a genuine replay attack.
+                    jti = auth_data.get("jti")
+                    if jti and is_execute_path and request.method not in ("GET", "HEAD", "OPTIONS"):
+                        if await self.redis.get(f"{REDIS_REVOKE_PREFIX}jti:{jti}"):
+                            raise HTTPException(status_code=401, detail="Token ID revoked")
+
+                        replay_key = f"acp:jti_last_used:{jti}"
+                        now_ts = time.time()
+
+                        try:
+                            if not await self.redis.setnx(replay_key, now_ts):
+                                last = await self.redis.get(replay_key)
+                                if last and (now_ts - float(last)) < 0.001:  # 1ms burst window (reduced for load tests)
+                                    raise HTTPException(status_code=429, detail="Too many requests: burst replay detected")
+                                await self.redis.set(replay_key, now_ts)
+
+                            # Replay TTL aligned with Token Expiry
+                            exp = auth_data.get("exp")
+                            ttl = int(exp - now_ts) if exp else 900
+                            await self.redis.expire(replay_key, max(1, ttl))
+                        except HTTPException:
+                            raise  # propagate real replay rejections
+                        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
+                            # Redis unavailable → skip replay check; genuine replays are still
+                            # caught by JTI revocation above. False-blocking valid traffic is worse.
+                            logger.warning("replay_check_skipped_redis_unavailable", jti=jti, error=str(_re))
+
+                    agent_id_str = auth_data.get("agent_id", "")
+                    request.state.actor = auth_data.get("sub", "unknown")
+                    tenant_id_str = auth_data["tenant_id"]
+
+                    try:
+                        tenant_id = uuid.UUID(tenant_id_str)
+                        agent_id = uuid.UUID(agent_id_str) if agent_id_str else uuid.UUID(int=0)
+                    except ValueError:
+                        raise HTTPException(status_code=401, detail="Invalid identity claims in token")
+
+                    # Store full JWT claims so downstream code can use embedded permissions
+                    # without making any Registry or Policy HTTP calls.
+                    request.state.jwt_claims = auth_data
+
+        elif api_key_header:
+            # Legacy X-API-Key header support
+            key_data = await self._validate_api_key_cached(api_key_header)
             if key_data:
-                tenant_id_str = key_data["tenant_id"]
+                tenant_id_str = str(key_data["tenant_id"])
                 tenant_id = uuid.UUID(tenant_id_str)
-                agent_id = uuid.UUID(int=0)
+                x_agent_hdr = request.headers.get("X-Agent-ID", "")
+                try:
+                    agent_id = uuid.UUID(x_agent_hdr) if x_agent_hdr else uuid.UUID(int=0)
+                except ValueError:
+                    agent_id = uuid.UUID(int=0)
+                agent_id_str = str(agent_id)
+                request.state.permissions = ["execute_agent", "view_risk"]
+                request.state.role = "agent"
+                request.state.actor = f"apikey:{key_data.get('key_prefix', api_key_header[:8])}"
+                request.state.jwt_claims = {}
 
         if not tenant_id:
             raise HTTPException(status_code=401, detail="Authentication required")

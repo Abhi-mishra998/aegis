@@ -241,6 +241,57 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  migrate_identity_graph:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        DB_PASS=$$(cat /run/secrets/db_password)
+        export DATABASE_URL="postgresql+asyncpg://identity_graph_user:$${DB_PASS}@pgbouncer:6432/acp_identity_graph"
+        cd /app/services/identity_graph && alembic upgrade head
+    secrets:
+      - db_password
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: on-failure
+
+  migrate_flight_recorder:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        DB_PASS=$$(cat /run/secrets/db_password)
+        export DATABASE_URL="postgresql+asyncpg://flight_recorder_user:$${DB_PASS}@pgbouncer:6432/acp_flight_recorder"
+        cd /app/services/flight_recorder && alembic upgrade head
+    secrets:
+      - db_password
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: on-failure
+
+  migrate_autonomy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        DB_PASS=$$(cat /run/secrets/db_password)
+        export DATABASE_URL="postgresql+asyncpg://autonomy_user:$${DB_PASS}@pgbouncer:6432/acp_autonomy"
+        cd /app/services/autonomy && alembic upgrade head
+    secrets:
+      - db_password
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: on-failure
+
   # ─────────────────────────────────────────
   # MICROSERVICES
   # ─────────────────────────────────────────

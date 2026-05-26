@@ -1,5 +1,8 @@
+import math
 import uuid
-from typing import Annotated
+from collections import Counter
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -104,8 +107,42 @@ async def list_agents(
     bound_logger = logger.bind(request_id=request_id, tenant_id=str(tenant_id))
 
     response = await service.list_agents(tenant_id, owner_id, status_val, page, size)
-    bound_logger.info("agents_listed", count=len(response.data), total=response.total)
+    bound_logger.info("agents_listed", count=len(response.items), total=response.total)
     return APIResponse(data=response)
+
+
+@router.get("/summary", response_model=APIResponse[dict])
+async def get_agent_summary(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fleet-wide summary: counts by status and by risk level."""
+    from sqlalchemy import func, select
+
+    from services.registry.models import Agent
+
+    rows = (
+        await db.execute(
+            select(Agent.status, Agent.risk_level, func.count().label("cnt"))
+            .where(Agent.tenant_id == tenant_id)
+            .where(Agent.deleted_at.is_(None))
+            .group_by(Agent.status, Agent.risk_level)
+        )
+    ).all()
+
+    total = sum(r.cnt for r in rows)
+    active = sum(r.cnt for r in rows if str(r.status).upper() == "ACTIVE")
+    quarantined = sum(r.cnt for r in rows if str(r.status).upper() == "QUARANTINED")
+    terminated = sum(r.cnt for r in rows if str(r.status).upper() == "TERMINATED")
+    high_risk = sum(r.cnt for r in rows if str(r.risk_level).lower() in ("high", "critical"))
+
+    return APIResponse(data={
+        "total": total,
+        "active": active,
+        "quarantined": quarantined,
+        "terminated": terminated,
+        "high_risk": high_risk,
+    })
 
 
 @router.get(
@@ -128,6 +165,138 @@ async def get_agent(
     response = await service.get_agent(tenant_id, agent_id_uuid)
     bound_logger.info("agent_retrieved")
     return APIResponse(data=response)
+
+
+@router.get(
+    "/{agent_id}/profile",
+    summary="Get agent behavioral profile derived from audit logs",
+)
+async def get_agent_profile(
+    agent_id: uuid.UUID,
+    request: Request,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    request_id: str = Header(None, alias="X-Request-ID"),
+) -> dict[str, Any]:
+    """Fetch per-agent behavioral stats by querying the audit service."""
+    bound_logger = logger.bind(
+        request_id=request_id, tenant_id=str(tenant_id), agent_id=str(agent_id)
+    )
+
+    audit_url = settings.AUDIT_SERVICE_URL.rstrip("/")
+    headers = {
+        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        "X-Tenant-ID": str(tenant_id),
+    }
+
+    try:
+        client = request.app.state.client
+        resp = await client.get(
+            f"{audit_url}/logs",
+            params={"agent_id": str(agent_id), "limit": 200},
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Audit service error")
+        payload = resp.json()
+        # Support both {data: {items: [...]}} and {data: [...]}
+        data = payload.get("data", {})
+        if isinstance(data, dict):
+            logs = data.get("items", [])
+        elif isinstance(data, list):
+            logs = data
+        else:
+            logs = []
+    except HTTPException:
+        raise
+    except Exception as exc:
+        bound_logger.warning("agent_profile_audit_fetch_failed", error=str(exc))
+        logs = []
+
+    now_utc = datetime.now(UTC)
+
+    total_decisions = len(logs)
+    allowed = sum(1 for r in logs if (r.get("decision") or "").lower() in ("allow", "allowed"))
+    blocked = total_decisions - allowed
+    block_rate = round((blocked / total_decisions * 100), 2) if total_decisions else 0.0
+
+    # Average risk score
+    risk_scores = [
+        float((r.get("metadata_json") or {}).get("risk_score", 0.0))
+        for r in logs
+    ]
+    avg_risk_score = round(sum(risk_scores) / len(risk_scores), 4) if risk_scores else 0.0
+
+    # Last 7 days avg risk per day
+    day_scores: dict[str, list[float]] = {}
+    for r in logs:
+        ts_raw = r.get("timestamp") or r.get("created_at")
+        if ts_raw:
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                day_key = ts.strftime("%Y-%m-%d")
+                score = float((r.get("metadata_json") or {}).get("risk_score", 0.0))
+                day_scores.setdefault(day_key, []).append(score)
+            except (ValueError, AttributeError):
+                pass
+
+    risk_trend: list[float] = []
+    for i in range(6, -1, -1):
+        day = (now_utc - timedelta(days=i)).strftime("%Y-%m-%d")
+        scores = day_scores.get(day, [])
+        risk_trend.append(round(sum(scores) / len(scores), 4) if scores else 0.0)
+
+    # Top 5 tools
+    tool_counts: Counter = Counter()
+    for r in logs:
+        tool = r.get("tool")
+        if tool:
+            tool_counts[tool] += 1
+    top_tools = [
+        {"tool": t, "count": c} for t, c in tool_counts.most_common(5)
+    ]
+
+    # Last active
+    timestamps = []
+    for r in logs:
+        ts_raw = r.get("timestamp") or r.get("created_at")
+        if ts_raw:
+            try:
+                timestamps.append(datetime.fromisoformat(ts_raw.replace("Z", "+00:00")))
+            except (ValueError, AttributeError):
+                pass
+    last_active = max(timestamps).isoformat() if timestamps else None
+
+    # Behavioral drift: today's avg_risk > 7-day-avg * 1.3
+    today_key = now_utc.strftime("%Y-%m-%d")
+    today_scores = day_scores.get(today_key, [])
+    today_avg = sum(today_scores) / len(today_scores) if today_scores else 0.0
+    seven_day_avg = sum(risk_trend) / len(risk_trend) if risk_trend else 0.0
+    behavioral_drift = today_avg > (seven_day_avg * 1.3) if seven_day_avg > 0 else False
+
+    # Anomaly score: z-score of today vs 7-day window
+    non_zero_trend = [v for v in risk_trend if v > 0]
+    if len(non_zero_trend) >= 2:
+        mean_trend = sum(non_zero_trend) / len(non_zero_trend)
+        variance = sum((v - mean_trend) ** 2 for v in non_zero_trend) / len(non_zero_trend)
+        std_dev = math.sqrt(variance) if variance > 0 else 0.0
+        anomaly_score = round(abs(today_avg - mean_trend) / std_dev, 4) if std_dev > 0 else 0.0
+    else:
+        anomaly_score = 0.0
+
+    bound_logger.info("agent_profile_computed", total_decisions=total_decisions)
+    return {
+        "agent_id": str(agent_id),
+        "total_decisions": total_decisions,
+        "allowed": allowed,
+        "blocked": blocked,
+        "block_rate": block_rate,
+        "avg_risk_score": avg_risk_score,
+        "risk_trend": risk_trend,
+        "top_tools": top_tools,
+        "last_active": last_active,
+        "behavioral_drift": behavioral_drift,
+        "anomaly_score": anomaly_score,
+    }
 
 
 @router.patch("/{agent_id}", response_model=APIResponse[AgentResponse])

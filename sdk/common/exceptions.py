@@ -106,9 +106,13 @@ def setup_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if not isinstance(detail, str):
+            import json as _json
+            detail = _json.dumps(detail)
         return JSONResponse(
             status_code=exc.status_code,
-            content=APIResponse(success=False, error=exc.detail).model_dump(),
+            content=APIResponse(success=False, error=detail).model_dump(),
         )
 
     @app.exception_handler(ACPError)

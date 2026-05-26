@@ -213,7 +213,7 @@ function AgentRow({ agent }) {
                     onChange={(e) => setForm(f => ({ ...f, tool_name: e.target.value }))}
                     className="input-standard input-compact h-8 text-xs"
                   >
-                    {TOOL_OPTIONS.map(t => (
+                    {[...new Set([...TOOL_OPTIONS, ...permissions.map(p => p.tool_name).filter(Boolean)])].map(t => (
                       <option key={t} value={t} className="bg-[#080808]">{t}</option>
                     ))}
                   </select>
@@ -259,9 +259,10 @@ export default function RBAC() {
     setError('')
     try {
       const res  = await registryService.listAgents()
-      const list = Array.isArray(res)         ? res
-                 : Array.isArray(res?.data)   ? res.data
-                 : Array.isArray(res?.data?.data) ? res.data.data
+      const list = Array.isArray(res)              ? res
+                 : Array.isArray(res?.data)        ? res.data
+                 : Array.isArray(res?.data?.items) ? res.data.items
+                 : Array.isArray(res?.data?.data)  ? res.data.data
                  : []
       if (mountedRef.current) setAgents(list)
     } catch (err) {

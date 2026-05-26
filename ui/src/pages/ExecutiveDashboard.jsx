@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, riskService, dashboardService } from '../services/api';
+import { api, riskService, dashboardService, complianceService, threatIntelService } from '../services/api';
 import {
   DollarSign,
   ShieldAlert,
@@ -76,15 +76,42 @@ function InsightCard({ insight }) {
 /* ── Main component ────────────────────────────────────────────────────────── */
 export default function ExecutiveDashboard() {
   const navigate = useNavigate();
-  const [billing,  setBilling]  = useState(null);
-  const [risk,     setRisk]     = useState(null);
-  const [insights, setInsights] = useState([]);
+  const [billing,     setBilling]     = useState(null);
+  const [risk,        setRisk]        = useState(null);
+  const [agentStats,  setAgentStats]  = useState(null);
+  const [insights,    setInsights]    = useState([]);
+  const [threatIntel, setThreatIntel] = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  const downloadBoardReport = async () => {
+    setExporting(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+      const blob = await complianceService.boardReport({ start_date: monthAgo, end_date: today });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `board-report-${today}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // silently ignore — board report backend may not be deployed yet
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
     const fetchData = async () => {
+      // Threat intel fetched in parallel, non-blocking
+      threatIntelService.getSummary()
+        .then((r) => { if (mounted) setThreatIntel(r?.data || r || null) })
+        .catch(() => {})
+
       try {
         // Single aggregated call instead of 3 separate requests
         const res = await dashboardService.getState();
@@ -92,8 +119,9 @@ export default function ExecutiveDashboard() {
         const state = res.data || res;
         setBilling(state.billing || {});
         setRisk(state.audit || {});
+        setAgentStats(state.agents || null);
         const ins = state.insights || [];
-        setInsights(Array.isArray(ins) ? ins.slice(0, 3) : []);
+        setInsights(Array.isArray(ins) ? ins.slice(0, 5) : []);
         setError('');
       } catch (err) {
         // Fallback: try individual calls if aggregate endpoint is unreachable
@@ -107,7 +135,7 @@ export default function ExecutiveDashboard() {
           setBilling(billingRes.data || billingRes);
           setRisk(riskRes.data || riskRes);
           const insData = insightRes.data || insightRes;
-          setInsights(Array.isArray(insData) ? insData.slice(0, 3) : []);
+          setInsights(Array.isArray(insData) ? insData.slice(0, 5) : []);
           setError('');
         } catch (fallbackErr) {
           if (mounted) setError(fallbackErr.message || 'Failed to sync backend modules.');
@@ -149,6 +177,15 @@ export default function ExecutiveDashboard() {
           <p className="text-xs text-neutral-500">ROI analytics and real-time threat intelligence</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={downloadBoardReport}
+            disabled={exporting}
+          >
+            <FileDown size={13} aria-hidden="true" />
+            {exporting ? 'Generating…' : 'Board Report'}
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -229,12 +266,38 @@ export default function ExecutiveDashboard() {
         <Card
           title="Volatility Index"
           value={highRiskAgents.toLocaleString()}
-          subtitle="High-risk agent nodes"
+          subtitle={agentStats?.quarantined > 0 ? `${agentStats.quarantined} quarantined` : 'High-risk agent nodes'}
           icon={AlertOctagon}
           trend={highRiskAgents > 0 ? 'down' : 'up'}
           trendValue={highRiskAgents > 0 ? 'Elevated' : 'Stable'}
         />
       </div>
+
+      {/* ── Threat Intelligence summary ── */}
+      {threatIntel && (
+        <div className="flex items-center gap-4 px-5 py-3 rounded-xl bg-white/[0.02] border border-white/[0.06] text-xs flex-wrap">
+          <div className="flex items-center gap-2 shrink-0">
+            <ShieldCheck size={13} className="text-blue-400" aria-hidden="true" />
+            <span className="text-neutral-400 font-medium">Threat Intelligence</span>
+          </div>
+          {[
+            ['Indicators',   threatIntel.total_indicators ?? threatIntel.indicators ?? '—'],
+            ['Active',       threatIntel.active_threats   ?? threatIntel.threats    ?? '—'],
+            ['Blocked IPs',  threatIntel.blocked_ips      ?? '—'],
+            ['Blocked Domains', threatIntel.blocked_domains ?? '—'],
+          ].map(([label, value]) => (
+            <div key={label} className="flex items-center gap-1.5">
+              <span className="text-neutral-600">{label}:</span>
+              <span className="text-white font-mono font-semibold">{String(value)}</span>
+            </div>
+          ))}
+          {threatIntel.last_updated && (
+            <span className="ml-auto text-neutral-700 font-mono text-[10px]">
+              updated {new Date(threatIntel.last_updated).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── Charts + AI stream ── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

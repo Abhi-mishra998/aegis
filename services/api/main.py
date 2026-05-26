@@ -289,3 +289,35 @@ setup_app(app, "api-management")
 app.include_router(api_key_router, prefix="/api-keys", tags=["API Keys"])
 app.include_router(incident_router,                    tags=["Incidents"])
 app.include_router(are_router,                         tags=["ARE"])
+
+
+# ── Internal throttle endpoint — called by autonomy-service playbook executor ──
+@app.post("/internal/throttle", tags=["internal"], include_in_schema=False)
+async def internal_set_throttle(payload: dict) -> dict:
+    """Write a per-agent throttle key to Redis.
+
+    Called by the autonomy-service playbook THROTTLE action so it can apply
+    rate limits without needing direct Redis access.
+
+    Body: { agent_id, tenant_id, rate }  (rate = "<n>/<unit>", e.g. "5/m")
+    """
+
+    from sdk.common.config import settings as _cfg
+
+    agent_id  = payload.get("agent_id", "")
+    tenant_id = payload.get("tenant_id", "")
+    rate      = payload.get("rate", "5/m")
+
+    if not agent_id or not tenant_id:
+        return {"status": "error", "reason": "agent_id and tenant_id are required"}
+
+    try:
+        from sdk.common.redis import get_redis_client
+        r = get_redis_client(_cfg.REDIS_URL, decode_responses=True)
+        await r.setex(f"acp:{tenant_id}:throttle:{agent_id}", 3600, rate)
+        await r.aclose()
+        logger.info("internal_throttle_set", agent=agent_id[:8], rate=rate)
+        return {"status": "throttled", "agent_id": agent_id, "rate": rate}
+    except Exception as exc:
+        logger.error("internal_throttle_failed", error=str(exc))
+        return {"status": "error", "reason": str(exc)}

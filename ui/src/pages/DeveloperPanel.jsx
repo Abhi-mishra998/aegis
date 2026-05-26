@@ -164,13 +164,22 @@ export default function DeveloperPanel() {
   -d '{"email":"admin@example.com","password":"your_password"}'`,
     },
     {
-      title: 'Execute Tool',
+      title: 'Execute Tool (JWT)',
       code: `curl -X POST ${GW}/execute \\
   -H "Authorization: Bearer ${tokenPlaceholder}" \\
   -H "X-Tenant-ID: ${tid}" \\
   -H "X-Agent-ID: YOUR_AGENT_ID" \\
   -H "Content-Type: application/json" \\
-  -d '{"tool":"data.query","payload":{"query":"SELECT 1"}}'`,
+  -d '{"tool_name":"data.query","parameters":{"query":"SELECT 1"}}'`,
+    },
+    {
+      title: 'Execute Tool (API Key)',
+      code: `curl -X POST ${GW}/execute \\
+  -H "Authorization: Bearer acp_YOUR_API_KEY" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  -H "X-Agent-ID: YOUR_AGENT_ID" \\
+  -H "Content-Type: application/json" \\
+  -d '{"tool_name":"data.query","parameters":{"query":"SELECT 1"}}'`,
     },
     {
       title: 'List Agents',
@@ -363,22 +372,62 @@ console.log(\`Decision: \${result.action}, Risk: \${result.risk}\`);`
 
       {/* ── SDK Guide ── */}
       {tab === 2 && (
-        <div className="space-y-6">
-          <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 text-xs text-blue-300">
-            The ACP SDK wraps the gateway API with automatic authentication, idempotency keys, and typed error handling.
-          </div>
+        <div className="space-y-8">
+          {/* ── Framework integrations — 3-line install ── */}
           <div>
-            <p className="text-xs font-bold text-neutral-400 mb-2 uppercase tracking-widest">Python SDK</p>
+            <p className="text-xs font-bold text-neutral-400 mb-3 uppercase tracking-widest">Framework Integrations — 3-Line Install</p>
+            <div className="grid grid-cols-1 gap-4">
+              {[
+                {
+                  label: 'LangChain',
+                  install: 'pip install aegis-langchain',
+                  code: `from aegis_langchain import AegisMiddleware\nagent = AegisMiddleware(my_langchain_agent, api_key="acp_...")\nresult = agent.invoke({"input": "analyze /etc/passwd"})  # automatically blocked`,
+                },
+                {
+                  label: 'OpenAI',
+                  install: 'pip install aegis-openai',
+                  code: `from aegis_openai import AegisOpenAI\nclient = AegisOpenAI(aegis_key="acp_...", tenant_id="${tid}")\nresponse = client.chat.completions.create(model="gpt-4o", messages=[...], tools=[...])`,
+                },
+                {
+                  label: 'Anthropic / Claude',
+                  install: 'pip install aegis-anthropic',
+                  code: `from aegis_anthropic import AegisAnthropic\nclient = AegisAnthropic(aegis_key="acp_...", tenant_id="${tid}")\nresponse = client.messages.create(model="claude-opus-4-7", max_tokens=1024, tools=[...], messages=[...])`,
+                },
+              ].map(({ label, install, code }) => (
+                <div key={label} className="rounded-xl border border-white/5 bg-white/[0.01] overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-white/[0.02]">
+                    <span className="text-xs font-bold text-white">{label}</span>
+                    <CopyButton text={install} />
+                  </div>
+                  <div className="px-4 py-2 border-b border-white/5 bg-black/30">
+                    <code className="text-[11px] font-mono text-amber-400">{install}</code>
+                  </div>
+                  <pre className="px-4 py-3 text-[11px] font-mono text-green-400 overflow-x-auto whitespace-pre leading-relaxed">{code}</pre>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] text-neutral-600">
+              All three packages wrap the <code>/execute</code> endpoint. Blocked tool calls return a descriptive message instead of executing — your agent handles it naturally.
+            </p>
+          </div>
+
+          {/* ── Low-level SDKs ── */}
+          <div>
+            <p className="text-xs font-bold text-neutral-400 mb-2 uppercase tracking-widest">Low-Level Python SDK</p>
+            <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/10 text-xs text-blue-300 mb-3">
+              The ACP SDK wraps the gateway API with automatic authentication, idempotency keys, and typed error handling.
+            </div>
             <CodeBlock code={SDK_PYTHON} language="python" />
           </div>
           <div>
             <p className="text-xs font-bold text-neutral-400 mb-2 uppercase tracking-widest">JavaScript SDK</p>
             <CodeBlock code={SDK_JS} language="javascript" />
           </div>
+
           <Card title="Required Headers">
             <div className="space-y-0 text-xs font-mono">
               {[
-                ['Authorization',  'Bearer <JWT>',                        'Required for all authenticated endpoints'],
+                ['Authorization',  'Bearer <JWT or acp_key>',             'JWT from /auth/token or API key created above'],
                 ['X-Tenant-ID',    '<uuid>',                              'Tenant isolation — must match JWT claim'],
                 ['X-Agent-ID',     '<agent-uuid or "dashboard-agent">',   'Agent context for policy evaluation'],
                 ['X-Request-ID',   '<uuid>',                              'Distributed tracing (auto-generated by SDK)'],

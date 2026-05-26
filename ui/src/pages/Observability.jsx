@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useContext } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -9,6 +9,7 @@ import {
 import { auditService, decisionService, riskService } from '../services/api'
 import { useAgents } from '../hooks/useAgents'
 import { useAuth } from '../hooks/useAuth'
+import { AgentContext } from '../context/AgentContext'
 import { eventBus } from '../lib/eventBus'
 
 // ── Action & threat style maps ─────────────────────────────────────────────────
@@ -413,6 +414,7 @@ function RiskTimeline({ data }) {
 export default function Observability() {
   const { agents } = useAgents()
   const { isAuthenticated } = useAuth()
+  const { sseConnected } = useContext(AgentContext)
 
   const [metrics, setMetrics]           = useState({ total: 0, allowed: 0, blocked: 0, escalated: 0, kill: 0 })
   const [flashSet, setFlashSet]         = useState(new Set())
@@ -433,22 +435,29 @@ export default function Observability() {
     return m
   }, [agents])
 
-  // ── Initial data load + 30-second polling ─────────────────────────────────
+  // ── Initial data load ─────────────────────────────────────────────────────
+  // SSE (via AgentContext → eventBus) owns real-time decision updates.
+  // On mount: seed the feed from history and load aggregate metrics.
+  // Background: refresh aggregate counters every 5 min to reconcile SSE drift.
+  // We never poll decisions or insights — SSE prepends them as they arrive.
   useEffect(() => {
     if (!isAuthenticated) return
 
-    const loadData = () => {
+    const loadMetrics = () => {
       auditService.getSummary().then((res) => {
         const d = res?.data || res || {}
-        setMetrics({
-          total:     d.total_calls        || 0,
-          allowed:   d.allowed_requests   || 0,
-          blocked:   d.threats_blocked    || 0,
-          escalated: 0,
-          kill:      0,
-        })
+        setMetrics((prev) => ({
+          // Only reset from DB when SSE hasn't delivered any events yet.
+          total:     prev.total > 0 ? prev.total : (d.total_calls       || 0),
+          allowed:   prev.total > 0 ? prev.allowed : (d.allowed_requests || 0),
+          blocked:   prev.total > 0 ? prev.blocked : (d.threats_blocked  || 0),
+          escalated: prev.escalated,
+          kill:      prev.kill,
+        }))
       }).catch(() => {})
+    }
 
+    const loadHistory = () => {
       decisionService.getHistory(50).then((res) => {
         const items = res?.data?.items || res?.items || []
         const feed = items.map((i) => ({
@@ -458,7 +467,8 @@ export default function Observability() {
           action: i.decision,
           risk: i.risk_score || 0,
         }))
-        setDecisions(feed)
+        // Only seed from history if SSE hasn't delivered live events yet.
+        setDecisions((prev) => prev.length > 0 ? prev : feed)
 
         const timeline = [...feed].reverse().slice(-MAX_TIMELINE).map((item, idx) => ({
           label: fmtHHMMSS(item.ts || item.timestamp),
@@ -466,19 +476,39 @@ export default function Observability() {
           action: item.action,
           idx,
         }))
-        setRiskTimeline(timeline)
+        setRiskTimeline((prev) => prev.length > 0 ? prev : timeline)
       }).catch(() => {})
 
       riskService.getInsights().then((res) => {
         const raw  = res?.data
         const list = Array.isArray(raw) ? raw : Array.isArray(raw?.insights) ? raw.insights : Array.isArray(res) ? res : []
-        setInsights(list.map((i) => ({ ...i, _ts: Date.now(), _live: false })))
+        setInsights((prev) => prev.length > 0 ? prev : list.map((i) => ({ ...i, _ts: Date.now(), _live: false })))
       }).catch(() => {})
     }
 
-    loadData()
-    const interval = setInterval(loadData, 30_000)
-    return () => clearInterval(interval)
+    loadMetrics()
+    loadHistory()
+
+    const metricsInterval = setInterval(loadMetrics, 300_000)
+
+    const insightsInterval = setInterval(() => {
+      riskService.getInsights().then((res) => {
+        const raw = res?.data
+        const list = Array.isArray(raw) ? raw : Array.isArray(raw?.insights) ? raw.insights : Array.isArray(res) ? res : []
+        if (list.length > 0) {
+          setInsights((prev) => {
+            const liveItems = prev.filter((i) => i._live)
+            const liveIds = new Set(liveItems.map((i) => i.event_id).filter(Boolean))
+            const serverItems = list
+              .filter((i) => !liveIds.has(i.event_id))
+              .map((i) => ({ ...i, _ts: i._ts || Date.now(), _live: false }))
+            return [...liveItems, ...serverItems].slice(0, MAX_INSIGHTS)
+          })
+        }
+      }).catch(() => {})
+    }, 60_000)
+
+    return () => { clearInterval(metricsInterval); clearInterval(insightsInterval) }
   }, [isAuthenticated])
 
   // ── SSE: tool_executed (via eventBus from AgentContext) ───────────────────
@@ -601,10 +631,20 @@ export default function Observability() {
               last event {secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo / 60)}m ago`}
             </span>
           )}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/20">
-            <div className={`w-1.5 h-1.5 rounded-full ${isAuthenticated ? 'bg-green-500 animate-pulse' : 'bg-neutral-500'}`} />
-            <span className={`text-[10px] font-mono font-bold ${isAuthenticated ? 'text-green-400' : 'text-neutral-500'}`}>
-              {isAuthenticated ? 'LIVE' : 'OFFLINE'}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${
+            sseConnected
+              ? 'bg-green-500/10 border-green-500/20'
+              : isAuthenticated
+                ? 'bg-yellow-500/10 border-yellow-500/20'
+                : 'bg-neutral-500/10 border-neutral-500/20'
+          }`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${
+              sseConnected ? 'bg-green-500 animate-pulse' : isAuthenticated ? 'bg-yellow-500' : 'bg-neutral-500'
+            }`} />
+            <span className={`text-[10px] font-mono font-bold ${
+              sseConnected ? 'text-green-400' : isAuthenticated ? 'text-yellow-400' : 'text-neutral-500'
+            }`}>
+              {sseConnected ? 'LIVE' : isAuthenticated ? 'CONNECTING…' : 'OFFLINE'}
             </span>
           </div>
         </div>

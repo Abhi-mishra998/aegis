@@ -106,7 +106,7 @@ export default function IdentityGraph() {
     setBlast(null)
     setBlastError('')
     try {
-      const res = await graphService.getBlastRadius(n.id, 3)
+      const res = await graphService.getBlastRadius(n.id, depth)
       setBlast(res?.data || null)
     } catch (e) {
       // 2026-05-14: surface failures instead of silent console.warn.

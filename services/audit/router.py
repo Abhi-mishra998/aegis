@@ -25,7 +25,7 @@ from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.response import APIResponse
 from services.audit.integrity import verify_audit_chain
-from services.audit.models import AuditLog, PendingUsageEvent
+from services.audit.models import AuditLog, AuditNote, PendingUsageEvent
 from services.audit.schemas import (
     AuditLogCreate,
     AuditLogListResponse,
@@ -115,27 +115,57 @@ async def get_summary(
     """Fast dashboard summary from Redis counters + Deep DB insights."""
     tid = str(tenant_id)
 
-    # 1. Real-time counters from Redis
-    total_calls = await redis.get(f"acp:metrics:total_calls:{tid}") or 0
-    total_denials = await redis.get(f"acp:metrics:total_denials:{tid}") or 0
-    agent_count = await redis.scard(f"acp:metrics:active_agents:{tid}") or 0
+    # Aggregate totals directly from DB so counts are always accurate,
+    # regardless of whether Redis counters were populated (they're only
+    # incremented at runtime and are reset on container restart).
+    from sqlalchemy import case as sa_case
+    execute_actions = {"execute_tool", "decision_evaluate"}
+    count_q = await db.execute(
+        select(
+            func.count().label("total"),
+            func.sum(sa_case((AuditLog.decision.in_(["deny", "block"]), 1), else_=0)).label("blocked"),
+            func.sum(sa_case((AuditLog.decision == "allow", 1), else_=0)).label("allowed"),
+            func.sum(sa_case((AuditLog.action.in_(execute_actions), 1), else_=0)).label("exec_total"),
+        ).where(AuditLog.tenant_id == tenant_id)
+    )
+    row = count_q.one()
+    total_reqs  = int(row.exec_total or 0)
+    blocked_reqs = int(row.blocked or 0)
+    allowed_reqs = int(row.allowed or 0)
+    agent_count = int(await redis.scard(f"acp:metrics:active_agents:{tid}") or 0)
 
-    total_reqs = int(total_calls)
-    blocked_reqs = int(total_denials)
-    allowed_reqs = total_reqs - blocked_reqs
+    # Risk distribution from DB metadata_json
+    risk_dist_q = await db.execute(
+        select(
+            func.sum(sa_case((sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) >= 0.80, 1), else_=0)).label("critical"),
+            func.sum(sa_case(
+                (sa.and_(sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) >= 0.60,
+                         sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) < 0.80), 1), else_=0)).label("high"),
+            func.sum(sa_case(
+                (sa.and_(sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) >= 0.30,
+                         sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) < 0.60), 1), else_=0)).label("medium"),
+            func.sum(sa_case((sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) < 0.30, 1), else_=0)).label("low"),
+        ).where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.metadata_json["risk_score"] != None,
+        )
+    )
+    try:
+        rd = risk_dist_q.one()
+        risk_dist = {
+            "critical": int(rd.critical or 0),
+            "high": int(rd.high or 0),
+            "medium": int(rd.medium or 0),
+            "low": int(rd.low or 0),
+        }
+    except Exception:
+        risk_dist = {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
-    risk_dist = {
-        "critical": int(await redis.get(f"acp:metrics:risk_distribution:{tid}:critical") or 0),
-        "high": int(await redis.get(f"acp:metrics:risk_distribution:{tid}:high") or 0),
-        "medium": int(await redis.get(f"acp:metrics:risk_distribution:{tid}:medium") or 0),
-        "low": int(await redis.get(f"acp:metrics:risk_distribution:{tid}:low") or 0),
-    }
-
-    # 2. Deep Insights from AuditAggregator (DB)
+    # Deep Insights from AuditAggregator (DB)
     top_risky = await AuditAggregator.get_top_risky_agents(db, tenant_id, limit=5)
     trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=7)
 
-    # 3. Avg risk score from DB
+    # Avg risk score from DB
     avg_risk_result = await db.execute(
         select(func.avg(
             sa.cast(AuditLog.metadata_json["risk_score"], sa.Float)
@@ -162,6 +192,33 @@ async def get_summary(
             }
         )
     )
+
+@router.get("/heatmap", response_model=APIResponse[dict])
+async def get_heatmap(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Return request-volume heatmap: {day_name: [count_h0..count_h23]} for last 7 days."""
+    import datetime as _dt
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=7)
+    dow_col  = func.extract("dow",  AuditLog.timestamp).label("dow")
+    hour_col = func.extract("hour", AuditLog.timestamp).label("hour")
+    q = (
+        select(dow_col, hour_col, func.count().label("cnt"))
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= cutoff)
+        .group_by(dow_col, hour_col)
+    )
+    rows = (await db.execute(q)).all()
+    # PostgreSQL DOW: 0=Sun, 1=Mon … 6=Sat
+    _dow_map = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun"}
+    _days    = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    heatmap: dict[str, list[int]] = {d: [0] * 24 for d in _days}
+    for row in rows:
+        day_name = _dow_map.get(int(row.dow), "Mon")
+        heatmap[day_name][int(row.hour)] = int(row.cnt)
+    return APIResponse(data=heatmap)
+
 
 @router.get("/trends", response_model=APIResponse[list[dict]])
 async def get_trends(
@@ -346,9 +403,6 @@ async def soc_timeline(
         reason = (row.reason or "")[:80]
         return f"{dec} — {tool} (risk {risk:.0%}){f': {reason}' if reason else ''}"
 
-    tid = str(tenant_id)
-    int(await redis.get(f"acp:metrics:total_denials:{tid}") or 0)
-
     events = [
         {
             "id":        str(row.id),
@@ -431,6 +485,621 @@ async def get_receipt(
         raise HTTPException(status_code=404, detail="no audit row matches the given execution_id")
 
     return APIResponse(data=get_signer().sign(row))
+
+
+# ---------------------------------------------------------------------------
+# Decision Root Cause — human-readable explanation of why a decision was made
+# ---------------------------------------------------------------------------
+
+_FINDING_LABELS: dict[str, str] = {
+    "sql_injection":        "SQL injection pattern detected in query",
+    "ddl_destruction":      "DDL statement that would destroy or truncate a table",
+    "path_traversal":       "File path traversal attempt (e.g. ../etc/passwd)",
+    "pii_exfiltration":     "Potential personally-identifiable data exfiltration",
+    "data_exfiltration":    "Bulk data read consistent with exfiltration",
+    "anomaly":              "Statistical anomaly in tool call frequency/pattern",
+    "high_risk":            "Composite risk score exceeds policy threshold",
+    "bulk_operation":       "Operation targets an unusually large number of records",
+    "unguarded_mutation":   "Write/delete without a WHERE clause guard",
+    "prompt_injection":     "Adversarial content attempting to override system prompt",
+    "sensitive_path":       "Access to a sensitive filesystem path",
+    "rate_limit":           "Request rate exceeded tenant or agent quota",
+    "cost_cap":             "Inference cost cap reached for this agent",
+}
+
+
+@router.get("/{audit_id}/explain", response_model=APIResponse[dict])
+async def explain_decision(
+    audit_id: str,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """
+    Return a structured root-cause explanation for one audit decision.
+
+    Accepts either the row UUID or the upstream request_id.
+    Response:
+      audit_id, decision, risk_score, findings, explanation, signals,
+      policy_context, timeline (last 5 decisions by same agent)
+    """
+    # ── Fetch target row ─────────────────────────────────────────────────────
+    row: AuditLog | None = None
+    try:
+        as_uuid = uuid.UUID(audit_id)
+        row = (
+            await db.execute(
+                select(AuditLog).where(
+                    AuditLog.id == as_uuid,
+                    AuditLog.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+    except ValueError:
+        pass
+
+    if row is None:
+        row = (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.request_id == audit_id,
+                    AuditLog.tenant_id == tenant_id,
+                )
+                .order_by(AuditLog.timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="audit row not found")
+
+    # ── Extract signals from metadata_json ───────────────────────────────────
+    meta = row.metadata_json or {}
+    if isinstance(meta, str):
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+
+    risk_score = float(meta.get("risk_score") or 0)
+    raw_reasons = meta.get("reasons") or []
+    if isinstance(raw_reasons, str):
+        raw_reasons = [r.strip() for r in raw_reasons.split(";") if r.strip()]
+    findings = [str(r) for r in raw_reasons] if raw_reasons else []
+
+    # Also pull findings from row.reason field
+    if not findings and row.reason:
+        findings = [r.strip() for r in row.reason.split(";") if r.strip()]
+
+    signals = [
+        {
+            "finding": f,
+            "label": _FINDING_LABELS.get(f, f.replace("_", " ").title()),
+            "triggered": True,
+        }
+        for f in findings
+    ]
+
+    # ── Build human explanation ───────────────────────────────────────────────
+    decision = row.decision or "unknown"
+
+    if decision in ("deny", "block"):
+        if risk_score >= 0.9:
+            risk_phrase = f"a critical risk score of {risk_score:.2f}"
+        elif risk_score >= 0.7:
+            risk_phrase = f"a high risk score of {risk_score:.2f}"
+        else:
+            risk_phrase = f"a risk score of {risk_score:.2f}"
+
+        if findings:
+            finding_summary = ", ".join(
+                _FINDING_LABELS.get(f, f) for f in findings[:3]
+            )
+            explanation = (
+                f"This {row.action or 'operation'} on tool '{row.tool}' was denied "
+                f"because the Aegis policy engine detected {risk_phrase}. "
+                f"Triggered findings: {finding_summary}."
+            )
+        else:
+            explanation = (
+                f"This {row.action or 'operation'} on tool '{row.tool}' was denied "
+                f"because the Aegis policy engine detected {risk_phrase}. "
+                f"The OPA policy enforced a block at this risk level."
+            )
+
+    elif decision == "escalate":
+        explanation = (
+            f"This operation on tool '{row.tool}' required human approval "
+            f"(risk score {risk_score:.2f}). It was escalated to a reviewer "
+            f"before execution was permitted."
+        )
+
+    elif decision in ("allow", "monitor"):
+        explanation = (
+            f"This operation on tool '{row.tool}' was permitted "
+            f"(risk score {risk_score:.2f}). "
+            + (f"Monitoring findings: {', '.join(findings[:3])}." if findings else
+               "No policy violations detected.")
+        )
+
+    else:
+        explanation = (
+            f"Decision '{decision}' recorded for tool '{row.tool}' "
+            f"with risk score {risk_score:.2f}."
+        )
+
+    # ── Contextual timeline: last 5 decisions by same agent ──────────────────
+    timeline_rows = (
+        await db.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.agent_id == row.agent_id,
+                AuditLog.id != row.id,
+            )
+            .order_by(AuditLog.timestamp.desc())
+            .limit(5)
+        )
+    ).scalars().all()
+
+    timeline = [
+        {
+            "audit_id":   str(r.id),
+            "action":     r.action,
+            "tool":       r.tool,
+            "decision":   r.decision,
+            "timestamp":  r.timestamp.isoformat() if r.timestamp else None,
+            "risk_score": float(
+                (r.metadata_json or {}).get("risk_score", 0)
+                if isinstance(r.metadata_json, dict) else 0
+            ),
+        }
+        for r in timeline_rows
+    ]
+
+    return APIResponse(data={
+        "audit_id":       str(row.id),
+        "request_id":     row.request_id,
+        "agent_id":       str(row.agent_id),
+        "action":         row.action,
+        "tool":           row.tool,
+        "decision":       decision,
+        "risk_score":     risk_score,
+        "findings":       findings,
+        "signals":        signals,
+        "explanation":    explanation,
+        "policy_context": {
+            "framework": "OPA",
+            "version":   meta.get("policy_version", "v1"),
+        },
+        "timestamp":      row.timestamp.isoformat() if row.timestamp else None,
+        "timeline":       timeline,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Analyst Notes — add / list investigation annotations on audit entries
+# ---------------------------------------------------------------------------
+
+_NOTE_TYPES = {"analysis", "false_positive", "confirmed_threat", "escalated"}
+
+
+class _NoteCreate(BaseModel):
+    note_type: str = "analysis"
+    body: str
+    created_by: str = "analyst"
+
+
+@router.post("/{audit_id}/notes", response_model=APIResponse[dict], status_code=201)
+async def add_audit_note(
+    audit_id: str,
+    payload: _NoteCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Append an analyst note to an audit log entry."""
+    try:
+        audit_uuid = uuid.UUID(audit_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="audit_id must be a valid UUID")
+
+    if payload.note_type not in _NOTE_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"note_type must be one of: {', '.join(sorted(_NOTE_TYPES))}",
+        )
+    if not payload.body.strip():
+        raise HTTPException(status_code=422, detail="body must not be empty")
+
+    # Verify the audit row belongs to this tenant
+    row = (await db.execute(
+        select(AuditLog)
+        .where(AuditLog.id == audit_uuid, AuditLog.tenant_id == tenant_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="audit row not found")
+
+    note = AuditNote(
+        id=uuid.uuid4(),
+        audit_id=audit_uuid,
+        tenant_id=tenant_id,
+        created_by=payload.created_by[:255],
+        note_type=payload.note_type,
+        body=payload.body.strip(),
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+
+    return APIResponse(data={
+        "id":         str(note.id),
+        "audit_id":   str(note.audit_id),
+        "note_type":  note.note_type,
+        "body":       note.body,
+        "created_by": note.created_by,
+        "created_at": note.created_at.isoformat() if note.created_at else None,
+    })
+
+
+@router.get("/{audit_id}/notes", response_model=APIResponse[list])
+async def list_audit_notes(
+    audit_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[list]:
+    """Return all analyst notes for one audit log entry, oldest first."""
+    try:
+        audit_uuid = uuid.UUID(audit_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="audit_id must be a valid UUID")
+
+    notes = (await db.execute(
+        select(AuditNote)
+        .where(AuditNote.audit_id == audit_uuid, AuditNote.tenant_id == tenant_id)
+        .order_by(AuditNote.created_at.asc())
+    )).scalars().all()
+
+    return APIResponse(data=[
+        {
+            "id":         str(n.id),
+            "audit_id":   str(n.audit_id),
+            "note_type":  n.note_type,
+            "body":       n.body,
+            "created_by": n.created_by,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+        }
+        for n in notes
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Agent Behavioral Drift Detection
+# ---------------------------------------------------------------------------
+
+@router.get("/drift/{agent_id}", response_model=APIResponse[dict])
+async def get_agent_drift(
+    agent_id:         str,
+    db:               Annotated[AsyncSession, Depends(get_db)],
+    tenant_id:        Annotated[uuid.UUID, Depends(get_tenant_id)],
+    baseline_days:    int = Query(7, ge=1, le=30),
+    comparison_hours: int = Query(24, ge=1, le=168),
+) -> APIResponse[dict]:
+    """
+    Return a behavioral drift report for one agent.
+
+    Compares the agent's rolling *baseline* (last ``baseline_days`` days)
+    against its *recent* activity (last ``comparison_hours`` hours).
+
+    Response fields:
+      drift_score      — composite 0–1 (0 = identical to baseline)
+      drift_level      — low / medium / high / critical
+      baseline         — avg_risk, deny_rate, call_volume, unique_tools
+      recent           — same metrics for the comparison window
+      metrics          — per-signal drift components
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="agent_id must be a valid UUID")
+
+    report = await AuditAggregator.get_agent_drift_report(
+        db,
+        agent_id=agent_uuid,
+        tenant_id=tenant_id,
+        baseline_days=baseline_days,
+        comparison_hours=comparison_hours,
+    )
+    return APIResponse(data=report)
+
+
+# ---------------------------------------------------------------------------
+# Top Security Findings Frequency
+# ---------------------------------------------------------------------------
+
+@router.get("/top-findings", response_model=APIResponse[dict])
+async def get_top_findings(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    limit:     int = Query(15, ge=1, le=50),
+) -> APIResponse[dict]:
+    """Frequency ranking of canonical security findings over the past ``days`` days.
+
+    Unnests ``metadata_json->findings[]`` and counts each finding code.
+    Returns top ``limit`` findings sorted by occurrence count descending.
+    """
+    result = await AuditAggregator.get_top_findings(
+        db, tenant_id=tenant_id, days=days, limit=limit,
+    )
+    return APIResponse(data=result)
+
+
+# ---------------------------------------------------------------------------
+# Agent Peer Benchmarking
+# ---------------------------------------------------------------------------
+
+@router.get("/peer-benchmark/{agent_id}", response_model=APIResponse[dict])
+async def get_agent_peer_benchmark(
+    agent_id:  str,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Percentile rank of one agent vs. all others in the tenant.
+
+    Returns deny_rate, avg_risk, and call_volume percentile ranks (0-100)
+    plus tenant-wide p50/p75/p95 reference values.
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="agent_id must be a valid UUID")
+
+    benchmark = await AuditAggregator.get_agent_peer_benchmark(
+        db, agent_id=agent_uuid, tenant_id=tenant_id, days=days,
+    )
+    return APIResponse(data=benchmark)
+
+
+# ---------------------------------------------------------------------------
+# Tool-Level Risk Breakdown
+# ---------------------------------------------------------------------------
+
+@router.get("/tool-breakdown", response_model=APIResponse[dict])
+async def get_tool_risk_breakdown(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    limit:     int = Query(20, ge=1, le=100),
+) -> APIResponse[dict]:
+    """Top tools by denial rate and average risk score over the past ``days`` days.
+
+    Response: list of tools with total_calls, denied_calls, deny_rate, avg_risk.
+    """
+    breakdown = await AuditAggregator.get_tool_risk_breakdown(
+        db, tenant_id=tenant_id, limit=limit, days=days,
+    )
+    return APIResponse(data=breakdown)
+
+
+# ---------------------------------------------------------------------------
+# Per-Agent Risk Score Trend (30-day rolling daily series)
+# ---------------------------------------------------------------------------
+
+@router.get("/risk-trend/{agent_id}", response_model=APIResponse[dict])
+async def get_agent_risk_trend(
+    agent_id:  str,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Daily risk score trend for one agent over the past ``days`` days.
+
+    Response: series (list of daily buckets) + summary (max_risk, avg_risk,
+    total_denials, active_days).
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="agent_id must be a valid UUID")
+
+    trend = await AuditAggregator.get_agent_risk_trend(
+        db,
+        agent_id=agent_uuid,
+        tenant_id=tenant_id,
+        days=days,
+    )
+    return APIResponse(data=trend)
+
+
+@router.get("/hourly-activity", response_model=APIResponse[dict])
+async def get_hourly_activity(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(7, ge=1, le=30),
+) -> APIResponse[dict]:
+    """24-bucket hour-of-day activity breakdown — request count, deny count, avg risk."""
+    result = await AuditAggregator.get_hourly_activity(db, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/risk-histogram", response_model=APIResponse[dict])
+async def get_risk_histogram(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    bins:      int = Query(10, ge=5, le=20),
+) -> APIResponse[dict]:
+    """Risk score frequency distribution — equal-width histogram over [0, 1]."""
+    result = await AuditAggregator.get_risk_histogram(db, tenant_id, days=days, bins=bins)
+    return APIResponse(data=result)
+
+
+@router.get("/weekly-heatmap", response_model=APIResponse[dict])
+async def get_weekly_heatmap(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(28, ge=7, le=90),
+) -> APIResponse[dict]:
+    """7×24 request count grid by day-of-week × hour-of-day."""
+    result = await AuditAggregator.get_weekly_heatmap(db, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/decision-trend", response_model=APIResponse[dict])
+async def get_decision_trend(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Daily decision outcome breakdown — allow/deny/escalate/monitor/kill."""
+    result = await AuditAggregator.get_decision_trend(db, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/agent-activity", response_model=APIResponse[dict])
+async def get_agent_activity(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    limit:     int = Query(20, ge=5, le=100),
+) -> APIResponse[dict]:
+    """Per-agent activity summary — first/last seen, call count, deny rate, avg risk."""
+    result = await AuditAggregator.get_agent_activity_summary(db, tenant_id, limit=limit)
+    return APIResponse(data=result)
+
+
+@router.get("/high-risk-events", response_model=APIResponse[dict])
+async def get_high_risk_events(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int   = Query(7,   ge=1,   le=30),
+    limit:     int   = Query(20,  ge=5,   le=100),
+    threshold: float = Query(0.7, ge=0.0, le=1.0),
+) -> APIResponse[dict]:
+    """Most recent audit events at or above the risk score threshold."""
+    result = await AuditAggregator.get_high_risk_events(
+        db, tenant_id, days=days, limit=limit, threshold=threshold,
+    )
+    return APIResponse(data=result)
+
+
+@router.get("/deny-reasons", response_model=APIResponse[dict])
+async def get_deny_reasons(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    limit:     int = Query(15, ge=5, le=50),
+) -> APIResponse[dict]:
+    """Top deny/kill reason strings by frequency."""
+    result = await AuditAggregator.get_deny_reasons(db, tenant_id, days=days, limit=limit)
+    return APIResponse(data=result)
+
+
+@router.get("/tool-usage/{agent_id}", response_model=APIResponse[dict])
+async def get_agent_tool_usage(
+    agent_id: uuid.UUID,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+) -> APIResponse[dict]:
+    """Per-tool call stats (calls, deny_rate, avg_risk) for a single agent."""
+    result = await AuditAggregator.get_agent_tool_usage(db, agent_id, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/tool-risk", response_model=APIResponse[dict])
+async def get_tool_risk_leaderboard(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    limit:     int = Query(20, ge=5, le=50),
+) -> APIResponse[dict]:
+    """Cross-agent tool risk leaderboard ordered by deny count."""
+    result = await AuditAggregator.get_tool_risk_leaderboard(db, tenant_id, days=days, limit=limit)
+    return APIResponse(data=result)
+
+
+@router.get("/risk-percentile-trend", response_model=APIResponse[dict])
+async def get_risk_percentile_trend(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Daily p50/p75/p95 risk score percentiles over the given window."""
+    result = await AuditAggregator.get_risk_percentile_trend(db, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/daily-active-agents", response_model=APIResponse[dict])
+async def get_daily_active_agents(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Distinct active agents per day over the given window."""
+    result = await AuditAggregator.get_daily_active_agents(db, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/finding-breakdown", response_model=APIResponse[dict])
+async def get_finding_breakdown(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    limit:     int = Query(20, ge=5, le=50),
+) -> APIResponse[dict]:
+    """Ranked frequency of canonical finding types."""
+    result = await AuditAggregator.get_finding_breakdown(db, tenant_id, days=days, limit=limit)
+    return APIResponse(data=result)
+
+
+@router.get("/agent-daily-decisions/{agent_id}", response_model=APIResponse[dict])
+async def get_agent_daily_decisions(
+    agent_id:  uuid.UUID,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Daily allow/deny counts for a single agent."""
+    result = await AuditAggregator.get_agent_daily_decisions(db, agent_id, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/agent-findings/{agent_id}", response_model=APIResponse[dict])
+async def get_agent_finding_breakdown(
+    agent_id:  uuid.UUID,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=1, le=90),
+    limit:     int = Query(15, ge=5, le=50),
+) -> APIResponse[dict]:
+    """Ranked finding type frequency for a single agent."""
+    result = await AuditAggregator.get_agent_finding_breakdown(
+        db, agent_id, tenant_id, days=days, limit=limit
+    )
+    return APIResponse(data=result)
+
+
+@router.get("/posture-score-trend", response_model=APIResponse[dict])
+async def get_posture_score_trend(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Daily tenant posture score (allow% of total decisions)."""
+    result = await AuditAggregator.get_posture_score_trend(db, tenant_id, days=days)
+    return APIResponse(data=result)
+
+
+@router.get("/escalation-rate-trend", response_model=APIResponse[dict])
+async def get_escalation_rate_trend(
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days:      int = Query(30, ge=7, le=90),
+) -> APIResponse[dict]:
+    """Daily escalation rate (escalate% of total decisions)."""
+    result = await AuditAggregator.get_escalation_rate_trend(db, tenant_id, days=days)
+    return APIResponse(data=result)
 
 
 # ---------------------------------------------------------------------------

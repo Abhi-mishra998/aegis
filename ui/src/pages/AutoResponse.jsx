@@ -8,18 +8,19 @@ import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
 import Modal from '../components/Common/Modal'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
-import { autoResponseService } from '../services/api'
+import { autoResponseService, playbookService } from '../services/api'
 import { AuthContext } from '../context/AuthContext'
 import { eventBus } from '../lib/eventBus'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ACTION_TYPES = [
-  { value: 'KILL_AGENT',    label: 'Kill Agent',    color: 'text-red-400' },
-  { value: 'ISOLATE_AGENT', label: 'Isolate Agent', color: 'text-orange-400' },
-  { value: 'BLOCK_TOOL',    label: 'Block Tool',    color: 'text-amber-400' },
-  { value: 'THROTTLE',      label: 'Throttle',      color: 'text-blue-400' },
-  { value: 'ALERT',         label: 'Alert',         color: 'text-purple-400' },
+  { value: 'KILL_AGENT',       label: 'Kill Agent',       color: 'text-red-400' },
+  { value: 'ISOLATE_AGENT',    label: 'Isolate Agent',    color: 'text-orange-400' },
+  { value: 'BLOCK_TOOL',       label: 'Block Tool',       color: 'text-amber-400' },
+  { value: 'THROTTLE',         label: 'Throttle',         color: 'text-blue-400' },
+  { value: 'ALERT',            label: 'Alert',            color: 'text-purple-400' },
+  { value: 'TRIGGER_PLAYBOOK', label: 'Trigger Playbook', color: 'text-cyan-400' },
 ]
 
 const ACTION_COLOR = Object.fromEntries(ACTION_TYPES.map(a => [a.value, a.color]))
@@ -266,6 +267,11 @@ function RuleFormModal({ initial, onSave, onClose }) {
                 <input type="text" placeholder="5/m"
                   value={act.rate || ''} onChange={e => setAction(i, 'rate', e.target.value)}
                   className="input-standard h-10 text-sm w-32 font-mono" />
+              )}
+              {act.type === 'TRIGGER_PLAYBOOK' && (
+                <input type="text" placeholder="Playbook UUID"
+                  value={act.playbook_id || ''} onChange={e => setAction(i, 'playbook_id', e.target.value)}
+                  className="input-standard h-10 text-sm w-72 font-mono" />
               )}
               <button onClick={() => removeAction(i)}
                 className="p-1.5 rounded-lg bg-red-500/5 text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors ml-auto">
@@ -765,6 +771,215 @@ function PendingPanel() {
   )
 }
 
+// ─── Playbooks Panel ─────────────────────────────────────────────────────────
+
+const STEP_COLORS = {
+  KILL_AGENT:    'text-red-400',
+  ISOLATE_AGENT: 'text-orange-400',
+  BLOCK_TOOL:    'text-amber-400',
+  THROTTLE:      'text-blue-400',
+  REVOKE_KEY:    'text-rose-400',
+  SEND_ALERT:    'text-purple-400',
+  WEBHOOK:       'text-cyan-400',
+}
+
+function PlaybookCard({ pb, onTrigger, onViewRuns }) {
+  const [triggering, setTriggering] = useState(false)
+  const handleTrigger = async () => {
+    setTriggering(true)
+    try { await onTrigger(pb.id) } finally { setTriggering(false) }
+  }
+  return (
+    <div className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-surface)] p-4 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <h3 className="text-sm font-semibold text-white truncate">{pb.name}</h3>
+            <span className={`status-badge text-[10px] ${pb.mode === 'auto' ? 'text-green-400 bg-green-500/10 border-green-500/20' : pb.mode === 'manual' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-blue-400 bg-blue-500/10 border-blue-500/20'}`}>
+              {pb.mode}
+            </span>
+            {!pb.is_active && <span className="status-badge text-[10px] text-neutral-600 bg-white/[0.02] border-white/[0.06]">inactive</span>}
+          </div>
+          {pb.description && <p className="text-[11px] text-neutral-500 leading-relaxed">{pb.description}</p>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => onViewRuns(pb.id)}
+            className="flex items-center gap-1 px-2 py-1 text-[11px] text-neutral-500 bg-white/[0.02] border border-white/[0.06] rounded hover:text-white hover:border-white/10 transition-colors"
+          >
+            <History size={10} /> Runs
+          </button>
+          <button
+            onClick={handleTrigger}
+            disabled={triggering || !pb.is_active}
+            className="flex items-center gap-1 px-2 py-1 text-[11px] text-purple-400 bg-purple-500/[0.06] border border-purple-500/20 rounded hover:border-purple-500/40 disabled:opacity-40 transition-colors"
+          >
+            <Zap size={10} />{triggering ? 'Triggering…' : 'Trigger'}
+          </button>
+        </div>
+      </div>
+
+      {/* Steps */}
+      {Array.isArray(pb.steps) && pb.steps.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {pb.steps.map((step, i) => (
+            <span key={i} className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-white/[0.02] border border-white/[0.06] font-mono ${STEP_COLORS[step.action_type] || 'text-neutral-400'}`}>
+              <span className="text-neutral-700">{i + 1}.</span>{step.action_type}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {pb.run_count != null && (
+        <p className="text-[10px] text-neutral-600">Triggered {pb.run_count} time{pb.run_count !== 1 ? 's' : ''}</p>
+      )}
+    </div>
+  )
+}
+
+function RunsModal({ playbookId, onClose }) {
+  const [runs, setRuns] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    playbookService.getRuns(playbookId)
+      .then(r => setRuns(r?.data || r || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [playbookId])
+
+  return (
+    <Modal title="Playbook Runs" onClose={onClose}>
+      {loading ? <SkeletonLoader count={3} /> : runs.length === 0 ? (
+        <p className="text-xs text-neutral-500 text-center py-8">No runs yet.</p>
+      ) : (
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {runs.map(r => (
+            <div key={r.id} className="p-3 rounded-lg border border-[var(--border-subtle)] bg-white/[0.02] space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className={`font-medium ${r.status === 'success' ? 'text-green-400' : r.status === 'failed' ? 'text-red-400' : 'text-amber-400'}`}>
+                  {r.status}
+                </span>
+                <span className="text-neutral-600 font-mono">{r.started_at ? new Date(r.started_at).toLocaleString() : ''}</span>
+              </div>
+              <p className="text-[10px] text-neutral-500">by {r.triggered_by || 'manual'}</p>
+              {r.steps_executed?.length > 0 && (
+                <div className="flex gap-1 flex-wrap">
+                  {r.steps_executed.map((s, i) => (
+                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.02] border border-white/[0.05] text-neutral-500 font-mono">
+                      {s.action_type || s}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+function PlaybooksPanel({ addToast }) {
+  const [playbooks,  setPlaybooks]  = useState([])
+  const [templates,  setTemplates]  = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [runsFor,    setRunsFor]    = useState(null)
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [pbRes, tmplRes] = await Promise.all([
+        playbookService.list().catch(() => ({ data: [] })),
+        playbookService.getTemplates().catch(() => ({ data: [] })),
+      ])
+      setPlaybooks(pbRes?.data || pbRes || [])
+      setTemplates(tmplRes?.data || tmplRes || [])
+    } catch { /* silent */ } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchAll() }, [fetchAll])
+
+  const handleTrigger = async (id) => {
+    try {
+      await playbookService.trigger(id, {})
+      addToast('Playbook triggered', 'success')
+      fetchAll()
+    } catch { addToast('Trigger failed', 'error') }
+  }
+
+  const handleInstall = async (tmpl) => {
+    try {
+      await playbookService.create(tmpl)
+      addToast(`"${tmpl.name}" installed`, 'success')
+      fetchAll()
+    } catch { addToast('Install failed', 'error') }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Installed playbooks */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold text-white">Installed Playbooks</h2>
+          <Button variant="secondary" size="sm" onClick={fetchAll} disabled={loading}>
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+        {loading ? <Card><div className="p-4"><SkeletonLoader count={3} /></div></Card>
+          : playbooks.length === 0 ? (
+            <Card>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Shield size={28} className="text-neutral-700 mb-3" />
+                <p className="text-sm text-neutral-400">No playbooks installed</p>
+                <p className="text-xs text-neutral-600 mt-1">Install a template from the library below</p>
+              </div>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {playbooks.map(pb => (
+                <PlaybookCard key={pb.id} pb={pb} onTrigger={handleTrigger} onViewRuns={setRunsFor} />
+              ))}
+            </div>
+          )}
+      </div>
+
+      {/* Template library */}
+      {templates.length > 0 && (
+        <div>
+          <h2 className="text-sm font-bold text-white mb-3">Template Library</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {templates.map((tmpl, i) => (
+              <div key={i} className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-surface)] p-4 space-y-2.5">
+                <div>
+                  <h3 className="text-xs font-semibold text-white">{tmpl.name}</h3>
+                  {tmpl.description && <p className="text-[10px] text-neutral-500 mt-0.5 leading-relaxed">{tmpl.description}</p>}
+                </div>
+                {Array.isArray(tmpl.steps) && (
+                  <div className="flex flex-wrap gap-1">
+                    {tmpl.steps.map((s, j) => (
+                      <span key={j} className={`text-[10px] px-1.5 py-0.5 rounded bg-white/[0.02] border border-white/[0.06] font-mono ${STEP_COLORS[s.action_type] || 'text-neutral-400'}`}>
+                        {s.action_type}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => handleInstall(tmpl)}
+                  className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-[11px] text-purple-400 bg-purple-500/[0.06] border border-purple-500/20 rounded-lg hover:border-purple-500/40 transition-colors"
+                >
+                  <Plus size={11} /> Install
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {runsFor && <RunsModal playbookId={runsFor} onClose={() => setRunsFor(null)} />}
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AutoResponse() {
@@ -889,9 +1104,10 @@ export default function AutoResponse() {
       {/* Tab bar */}
       <div className="flex gap-1 p-1 bg-white/[0.02] border border-white/[0.06] rounded-lg w-fit">
         {[
-          { id: 'rules',    label: 'Rules',    icon: Zap },
-          { id: 'metrics',  label: 'Metrics',  icon: BarChart2 },
-          { id: 'pending',  label: 'Pending',  icon: UserCheck },
+          { id: 'rules',      label: 'Rules',      icon: Zap },
+          { id: 'playbooks',  label: 'Playbooks',  icon: Shield },
+          { id: 'metrics',    label: 'Metrics',    icon: BarChart2 },
+          { id: 'pending',    label: 'Pending',    icon: UserCheck },
         ].map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setActiveTab(id)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${activeTab === id ? 'bg-white/[0.08] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}>
@@ -900,8 +1116,9 @@ export default function AutoResponse() {
         ))}
       </div>
 
-      {activeTab === 'metrics' && <MetricsPanel />}
-      {activeTab === 'pending' && <PendingPanel />}
+      {activeTab === 'metrics'   && <MetricsPanel />}
+      {activeTab === 'pending'   && <PendingPanel />}
+      {activeTab === 'playbooks' && <PlaybooksPanel addToast={addToast} />}
 
       {/* Info banner */}
       {activeTab === 'rules' && !areEnabled && (

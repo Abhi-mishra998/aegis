@@ -102,7 +102,7 @@ function TimelineEvent({ event, isLast, idx }) {
 
         {Array.isArray(event.reasons) && event.reasons.length > 0 && (
           <div className="mt-3 space-y-1">
-            {event.reasons.slice(0, 3).map((r, i) => (
+            {event.reasons.slice(0, 5).map((r, i) => (
               <div key={i} className="flex items-start gap-2">
                 <ChevronRight size={10} className="text-neutral-600 mt-0.5 shrink-0" aria-hidden="true" />
                 <span className="text-[11px] text-neutral-500 italic leading-relaxed">{r}</span>
@@ -259,6 +259,23 @@ export default function Forensics() {
               icon={ShieldCheck}
               subtitle="Approved executions"
             />
+          </div>
+
+          {/* Quick navigation */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => navigate(`/agents/${profile.agent_id}/profile`)}
+              className="text-[11px] font-semibold text-indigo-400 hover:text-white transition-colors flex items-center gap-1"
+            >
+              View Agent Profile →
+            </button>
+            <span className="text-neutral-700 text-xs">·</span>
+            <button
+              onClick={() => navigate(`/incidents?agent=${profile.agent_id}`)}
+              className="text-[11px] font-semibold text-indigo-400 hover:text-white transition-colors flex items-center gap-1"
+            >
+              View Incidents →
+            </button>
           </div>
 
           {/* Decision breakdown */}

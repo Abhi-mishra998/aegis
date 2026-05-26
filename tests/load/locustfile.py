@@ -14,9 +14,9 @@ Usage:
     locust -f tests/load/locustfile.py \
         --host http://localhost:8000 \
         --test-token <JWT> \
-        --users 100 \
-        --spawn-rate 10 \
-        --run-time 120s
+        --users 200 \
+        --spawn-rate 20 \
+        --run-time 180s
 """
 
 import base64
@@ -140,9 +140,9 @@ class ACPGatewayUser(HttpUser):
     def on_start(self):
         """Generate or validate token, extract tenant context."""
         # Stagger logins to avoid thundering-herd on identity service.
-        # 50 users spawning at once = 50 simultaneous /auth/token calls → 500s.
-        # A 0-3s random sleep spreads them out across the spawn window.
-        time.sleep(random.uniform(0, 3))
+        # 200 users spawning at once = 200 simultaneous /auth/token calls → 500s.
+        # A 0-5s random sleep spreads them out across the spawn window.
+        time.sleep(random.uniform(0, 5))
 
         self.token = getattr(self.environment.parsed_options, "test_token", "")
         self.tenant_id = getattr(self.environment.parsed_options, "tenant_id", "")
@@ -316,7 +316,41 @@ class ACPGatewayUser(HttpUser):
                 response.failure(f"Bad token NOT rejected (Expected 401): {response.status_code}")
 
     # ------------------------------------------------------------------
-    # 5. NO AUTH (2%)
+    # 5. PLAYBOOKS LIST READ (3%)
+    # ------------------------------------------------------------------
+    @task(3)
+    def list_playbooks(self):
+        self._refresh_token_if_needed()
+        with self.client.get(
+            "/playbooks",
+            headers=self._headers(),
+            name="/playbooks GET",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 404):
+                response.success()
+            else:
+                response.failure(f"Unexpected playbooks status: {response.status_code}")
+
+    # ------------------------------------------------------------------
+    # 6. COMPLIANCE SUMMARY READ (2%)
+    # ------------------------------------------------------------------
+    @task(2)
+    def compliance_read(self):
+        self._refresh_token_if_needed()
+        with self.client.get(
+            "/compliance/eu-ai-act",
+            headers=self._headers(),
+            name="/compliance/eu-ai-act GET",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 404):
+                response.success()
+            else:
+                response.failure(f"Unexpected compliance status: {response.status_code}")
+
+    # ------------------------------------------------------------------
+    # 7. NO AUTH (2%)
     # ------------------------------------------------------------------
     @task(2)
     def no_auth(self):

@@ -56,21 +56,54 @@ jobs:
 
             echo "=== Pulling latest code ==="
             cd ~/aegis
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
 
             echo "=== Pulling config from S3 ==="
             aws s3 cp s3://acp-backups-prod-am/config/.env ~/aegis/infra/.env
             aws s3 cp s3://acp-backups-prod-am/config/pgbouncer.aws.ini ~/aegis/infra/pgbouncer.aws.ini
             aws s3 cp s3://acp-backups-prod-am/config/userlist.txt ~/aegis/infra/userlist.txt
 
-            echo "=== Building images ==="
+            echo "=== Pre-building React UI (outside Docker) ==="
+            # Build the React app using a throwaway node container that mounts
+            # the ui/ directory. This avoids Docker multi-stage build cache
+            # entirely — the dist/ output lands directly on the host filesystem
+            # where we can verify it before the Docker image is built.
+            cd ~/aegis/ui
+            # dist/ from a previous run is owned by root (created inside Docker).
+            # Run cleanup and build together inside the container so root removes
+            # root-owned files — the ubuntu host user can't rm them directly.
+            docker run --rm \
+              -v "$(pwd)":/app \
+              -w /app \
+              -e NODE_OPTIONS="--max-old-space-size=512" \
+              node:20-alpine \
+              sh -c "rm -rf /app/dist && npm ci && npm run build"
+            # Verify on the host (glob works here — path exists on host)
+            JS_BUILT=$(ls dist/assets/*.js 2>/dev/null | wc -l)
+            if [ "$JS_BUILT" -eq 0 ]; then
+              echo "ERROR: npm build produced no JS assets — aborting deploy"
+              exit 1
+            fi
+            echo "  React build OK — ${JS_BUILT} JS bundle(s) in dist/assets/"
+
+            echo "=== Building UI Docker image ==="
             cd ~/aegis/infra
-            # Hard fail on build errors — no || true here. --parallel builds
-            # all images concurrently instead of sequentially.
+            # Single-stage nginx image: just copies the pre-built dist/.
+            # No multi-stage build = no BuildKit cache interference.
             docker-compose \
               -f docker-compose.yml \
               -f docker-compose.aws.yml \
-              build --parallel
+              build --no-cache ui
+
+            echo "=== Building remaining images ==="
+            OTHER=$(docker-compose -f docker-compose.yml -f docker-compose.aws.yml \
+              config --services | grep -v '^ui$' | tr '\n' ' ')
+            docker-compose \
+              -f docker-compose.yml \
+              -f docker-compose.aws.yml \
+              build --parallel $OTHER
 
             echo "=== Starting containers ==="
             # || true is intentional and scoped: docker-compose up can exit non-zero
@@ -82,10 +115,30 @@ jobs:
               -f docker-compose.aws.yml \
               up -d --no-build || true
 
+            echo "=== Verifying UI assets are present ==="
+            # Fail fast if the JS bundle is missing — catches npm build failures
+            # before the health gate so the error message is clear.
+            sleep 5
+            JS_COUNT=$(docker exec acp_ui sh -c 'ls /usr/share/nginx/html/assets/*.js 2>/dev/null | wc -l' || echo 0)
+            if [ "$JS_COUNT" -eq 0 ]; then
+              echo "ERROR: No JS assets found in acp_ui container — build failed"
+              docker logs --tail 50 acp_ui 2>&1 || true
+              exit 1
+            fi
+            echo "  UI assets OK — ${JS_COUNT} JS bundle(s) found"
+            # Smoke-test: the root page must return 200
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173/ || echo 000)
+            if [ "$HTTP" != "200" ]; then
+              echo "ERROR: UI returned HTTP $HTTP (expected 200)"
+              docker logs --tail 30 acp_ui 2>&1 || true
+              exit 1
+            fi
+            echo "  UI smoke-test OK (HTTP 200)"
+
             echo "=== Waiting for required services (up to 5 min) ==="
             # These are the services that must be healthy for the platform to work.
             # audit is listed first — it is the security-critical service.
-            REQUIRED="acp_audit acp_gateway acp_identity acp_registry acp_api acp_usage acp_decision acp_pgbouncer acp_opa"
+            REQUIRED="acp_audit acp_gateway acp_identity acp_registry acp_api acp_usage acp_decision acp_pgbouncer acp_opa acp_ui"
             WAITED=0
             while [ $WAITED -lt 300 ]; do
               STILL_WAITING=""

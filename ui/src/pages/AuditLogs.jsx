@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { auditService } from '../services/api'
+import { auditService, auditExportService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { eventBus } from '../lib/eventBus'
 import {
   ShieldCheck, ShieldAlert, AlertCircle, Search, RefreshCw,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Activity, FileText, Hash, Clock, Filter, Eye,
-  ToggleLeft, ToggleRight, CheckCircle2, XCircle,
+  ToggleLeft, ToggleRight, CheckCircle2, XCircle, Download,
+  HelpCircle, Loader2, AlertTriangle, MessageSquare, Plus, Send,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -48,6 +49,210 @@ function RiskPill({ score }) {
 }
 
 /* ── Expanded row ──────────────────────────────────────────────────────────── */
+function ExplainPanel({ auditId }) {
+  const [loading, setLoading] = useState(false)
+  const [data,    setData]    = useState(null)
+  const [error,   setError]   = useState('')
+
+  const load = async () => {
+    setLoading(true); setError('')
+    try {
+      const res = await auditService.explainDecision(auditId)
+      setData(res?.data || res)
+    } catch (e) { setError(e?.message || 'Failed to load explanation') }
+    finally { setLoading(false) }
+  }
+
+  if (!data && !loading && !error) {
+    return (
+      <button
+        onClick={load}
+        className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-400 hover:border-indigo-500/60 hover:bg-indigo-500/[0.06] transition-colors"
+      >
+        <HelpCircle size={12} /> Explain this decision
+      </button>
+    )
+  }
+
+  if (loading) return <div className="flex items-center gap-2 text-xs text-neutral-500"><Loader2 size={12} className="animate-spin" /> Loading explanation…</div>
+  if (error)   return <p className="text-xs text-red-400 flex items-center gap-1"><AlertTriangle size={11} />{error}</p>
+  if (!data)   return null
+
+  const isDeny = (data.decision || '').toLowerCase() === 'deny'
+
+  return (
+    <div className={`rounded-xl border p-4 space-y-3 text-xs ${isDeny ? 'bg-red-500/[0.04] border-red-500/20' : 'bg-white/[0.02] border-white/[0.06]'}`}>
+      <div className="flex items-start gap-2">
+        {isDeny
+          ? <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
+          : <ShieldCheck size={14} className="text-green-400 shrink-0 mt-0.5" />}
+        <p className="text-neutral-200 leading-relaxed">{data.explanation}</p>
+      </div>
+
+      {data.signals?.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-neutral-600 uppercase tracking-widest">Triggered Findings</p>
+          <div className="flex flex-wrap gap-1.5">
+            {data.signals.map((s, i) => (
+              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-300 text-[10px] font-mono">
+                {s.finding}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.timeline?.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] text-neutral-600 uppercase tracking-widest">Recent Agent Decisions</p>
+          <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+            {data.timeline.map((t, i) => {
+              const d = (t.decision || '').toLowerCase()
+              const cls = d === 'deny' ? 'text-red-400' : d === 'allow' ? 'text-green-400' : 'text-neutral-400'
+              return (
+                <div key={i} className="flex items-center gap-2 text-[10px] text-neutral-500">
+                  <span className={`font-semibold ${cls} w-12 shrink-0`}>{d.toUpperCase()}</span>
+                  <span className="font-mono text-neutral-600">{t.tool || '—'}</span>
+                  <span className="ml-auto text-neutral-700">
+                    {t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : ''}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      <p className="text-[10px] text-neutral-700">
+        Policy: {data.policy_context?.framework} {data.policy_context?.version}
+      </p>
+    </div>
+  )
+}
+
+/* ── Notes panel ───────────────────────────────────────────────────────────── */
+const NOTE_TYPE_STYLE = {
+  analysis:         'text-blue-400   bg-blue-500/10   border-blue-500/20',
+  false_positive:   'text-amber-400  bg-amber-500/10  border-amber-500/20',
+  confirmed_threat: 'text-red-400    bg-red-500/10    border-red-500/20',
+  escalated:        'text-orange-400 bg-orange-500/10 border-orange-500/20',
+}
+
+const NOTE_TYPES = ['analysis', 'false_positive', 'confirmed_threat', 'escalated']
+
+function NotesPanel({ auditId }) {
+  const [notes,     setNotes]     = useState(null)
+  const [loading,   setLoading]   = useState(false)
+  const [error,     setError]     = useState('')
+  const [open,      setOpen]      = useState(false)
+  const [body,      setBody]      = useState('')
+  const [noteType,  setNoteType]  = useState('analysis')
+  const [createdBy, setCreatedBy] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitErr,  setSubmitErr]  = useState('')
+
+  const load = async () => {
+    setLoading(true); setError('')
+    try {
+      const res = await auditService.getNotes(auditId)
+      setNotes(res?.data ?? res ?? [])
+    } catch (e) { setError(e?.message || 'Failed to load notes') }
+    finally { setLoading(false) }
+  }
+
+  const handleToggle = () => {
+    if (!open && notes === null) load()
+    setOpen(v => !v)
+  }
+
+  const handleAdd = async (e) => {
+    e.preventDefault()
+    if (!body.trim()) return
+    setSubmitting(true); setSubmitErr('')
+    try {
+      await auditService.addNote(auditId, { note_type: noteType, body: body.trim(), created_by: createdBy.trim() || 'analyst' })
+      setBody(''); setCreatedBy(''); setNoteType('analysis')
+      await load()
+    } catch (e) { setSubmitErr(e?.message || 'Failed to add note') }
+    finally { setSubmitting(false) }
+  }
+
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={handleToggle}
+        className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-violet-500/30 text-violet-400 hover:border-violet-500/60 hover:bg-violet-500/[0.06] transition-colors"
+      >
+        <MessageSquare size={12} />
+        Analyst Notes {notes !== null && <span className="ml-0.5 font-semibold">({notes.length})</span>}
+        {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+      </button>
+
+      {open && (
+        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 space-y-4 text-xs">
+          {loading && <div className="flex items-center gap-2 text-neutral-500"><Loader2 size={12} className="animate-spin" /> Loading notes…</div>}
+          {error   && <p className="text-red-400 flex items-center gap-1"><AlertTriangle size={11} />{error}</p>}
+
+          {notes !== null && notes.length === 0 && !loading && (
+            <p className="text-neutral-600 italic">No notes yet. Add one below.</p>
+          )}
+
+          {notes !== null && notes.length > 0 && (
+            <div className="space-y-3">
+              {notes.map(n => (
+                <div key={n.id} className="rounded-lg border border-white/[0.05] bg-black/20 p-3 space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`status-badge text-[10px] ${NOTE_TYPE_STYLE[n.note_type] ?? 'text-neutral-400 bg-white/5 border-white/10'}`}>
+                      {(n.note_type || 'analysis').replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-neutral-600">{n.created_by}</span>
+                    <span className="ml-auto text-neutral-700">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</span>
+                  </div>
+                  <p className="text-neutral-300 leading-relaxed whitespace-pre-wrap">{n.body}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={handleAdd} className="space-y-2 border-t border-white/[0.06] pt-3">
+            <div className="flex gap-2">
+              <select
+                value={noteType}
+                onChange={e => setNoteType(e.target.value)}
+                className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-neutral-300 focus:outline-none focus:border-violet-500/50"
+              >
+                {NOTE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+              </select>
+              <input
+                value={createdBy}
+                onChange={e => setCreatedBy(e.target.value)}
+                placeholder="Your name (optional)"
+                className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-neutral-300 placeholder-neutral-600 focus:outline-none focus:border-violet-500/50"
+              />
+            </div>
+            <textarea
+              value={body}
+              onChange={e => setBody(e.target.value)}
+              placeholder="Write your analysis note…"
+              rows={3}
+              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none focus:border-violet-500/50"
+            />
+            {submitErr && <p className="text-red-400 text-[10px]">{submitErr}</p>}
+            <button
+              type="submit"
+              disabled={submitting || !body.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/20 border border-violet-500/30 text-violet-300 text-[11px] hover:bg-violet-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {submitting ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+              Add Note
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ExpandedRow({ log }) {
   let meta = null
   try { meta = typeof log.metadata_json === 'string' ? JSON.parse(log.metadata_json) : log.metadata_json } catch {}
@@ -75,6 +280,18 @@ function ExpandedRow({ log }) {
           <pre className="font-mono text-xs text-neutral-400 bg-black/30 border border-white/5 rounded-xl p-4 overflow-x-auto leading-relaxed">
             {JSON.stringify(meta, null, 2)}
           </pre>
+        </div>
+      )}
+      {log.id && (
+        <div className="space-y-1.5">
+          <p className="label-standard">Root Cause Analysis</p>
+          <ExplainPanel auditId={log.id} />
+        </div>
+      )}
+      {log.id && (
+        <div className="space-y-1.5">
+          <p className="label-standard">Investigation Notes</p>
+          <NotesPanel auditId={log.id} />
         </div>
       )}
     </div>
@@ -252,6 +469,33 @@ export default function AuditLogs() {
     </div>
   )
 
+  const [exporting, setExporting] = useState(false)
+
+  const handleExport = async (format) => {
+    setExporting(true)
+    try {
+      const params = {
+        format,
+        ...(filterAgentId  ? { agent_id:  filterAgentId  } : {}),
+        ...(filterDecision && filterDecision !== 'all' ? { action: filterDecision } : {}),
+        ...(filterFrom     ? { start_date: filterFrom    } : {}),
+        ...(filterTo       ? { end_date:   filterTo      } : {}),
+        limit: 5000,
+      }
+      const res = await auditExportService.export(params)
+      const blob = new Blob([typeof res === 'string' ? res : JSON.stringify(res, null, 2)], {
+        type: format === 'csv' ? 'text/csv' : 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `acp-audit-${new Date().toISOString().slice(0, 10)}.${format}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch { /* silently fail */ }
+    setExporting(false)
+  }
+
   const s           = summary || {}
   const totalCalls  = s.total_calls   ?? 0
   const totalDenials = s.total_denials ?? 0
@@ -314,6 +558,27 @@ export default function AuditLogs() {
           {integrityStatus === 'broken' && integrityMessage && (
             <span className="text-xs text-red-400 font-mono" role="alert">{integrityMessage}</span>
           )}
+
+          {/* Export */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => handleExport('csv')}
+              disabled={exporting}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-l-lg border border-r-0 border-white/5 bg-white/[0.02] text-xs text-neutral-400 hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
+            >
+              <Download size={13} aria-hidden="true" />
+              {exporting ? 'Exporting…' : 'CSV'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExport('json')}
+              disabled={exporting}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-r-lg border border-white/5 bg-white/[0.02] text-xs text-neutral-400 hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
+            >
+              JSON
+            </button>
+          </div>
         </div>
       </div>
 

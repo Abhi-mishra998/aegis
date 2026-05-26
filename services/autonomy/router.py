@@ -332,3 +332,440 @@ async def add_override(
     db.add(ev)
     await db.commit()
     return APIResponse(data=OverrideOut.model_validate(ev))
+
+
+# ---------------------------------------------------------------------------
+# Playbooks Engine (Day 13-14)
+# ---------------------------------------------------------------------------
+from typing import Any  # noqa: E402
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+from services.autonomy.playbooks import (  # noqa: E402
+    Playbook,
+    PlaybookRun,
+    execute_playbook,
+    get_playbook_templates,
+)
+
+# ── Pydantic schemas ──────────────────────────────────────────────────────
+
+class PlaybookCreate(BaseModel):
+    name: str
+    description: str | None = None
+    trigger_conditions: dict[str, Any] = Field(default_factory=dict)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    mode: str = "auto"
+    is_active: bool = True
+
+
+class PlaybookOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    name: str
+    description: str | None = None
+    trigger_conditions: dict[str, Any]
+    steps: list[dict[str, Any]]
+    mode: str
+    is_active: bool
+    run_count: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class PlaybookRunOut(BaseModel):
+    id: uuid.UUID
+    playbook_id: uuid.UUID
+    triggered_by: str
+    status: str
+    steps_executed: list[dict[str, Any]]
+    result: dict[str, Any]
+    started_at: datetime
+    finished_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class PlaybookTriggerIn(BaseModel):
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Playbook CRUD routes ──────────────────────────────────────────────────
+
+_playbooks_router = APIRouter()  # nested, inherits parent prefix/deps
+
+
+@router.get("/playbooks/templates", response_model=APIResponse[list[dict]])
+async def list_playbook_templates() -> APIResponse[list[dict]]:
+    """Return 4 pre-built remediation templates. No auth required."""
+    return APIResponse(data=get_playbook_templates())
+
+
+@router.get("/playbooks", response_model=APIResponse[list[PlaybookOut]])
+async def list_playbooks(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[list[PlaybookOut]]:
+    from sqlalchemy import desc, select  # noqa: F811
+    stmt = (
+        select(Playbook)
+        .where(Playbook.tenant_id == tenant_id)
+        .order_by(desc(Playbook.created_at))
+    )
+    rows = list((await db.execute(stmt)).scalars().all())
+    return APIResponse(data=[PlaybookOut.model_validate(r) for r in rows])
+
+
+@router.post("/playbooks", response_model=APIResponse[PlaybookOut])
+async def create_playbook(
+    payload: PlaybookCreate,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[PlaybookOut]:
+    pb = Playbook(
+        tenant_id=tenant_id,
+        name=payload.name,
+        description=payload.description,
+        trigger_conditions=payload.trigger_conditions,
+        steps=payload.steps,
+        mode=payload.mode,
+        is_active=payload.is_active,
+        run_count=0,
+    )
+    db.add(pb)
+    await db.commit()
+    await db.refresh(pb)
+    return APIResponse(data=PlaybookOut.model_validate(pb))
+
+
+@router.get("/playbooks/{playbook_id}", response_model=APIResponse[PlaybookOut])
+async def get_playbook(
+    playbook_id: uuid.UUID,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[PlaybookOut]:
+    from sqlalchemy import select  # noqa: F811
+    pb = (await db.execute(
+        select(Playbook).where(
+            Playbook.id == playbook_id,
+            Playbook.tenant_id == tenant_id,
+        )
+    )).scalar_one_or_none()
+    if pb is None:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    return APIResponse(data=PlaybookOut.model_validate(pb))
+
+
+@router.patch("/playbooks/{playbook_id}", response_model=APIResponse[PlaybookOut])
+async def update_playbook(
+    playbook_id: uuid.UUID,
+    payload: PlaybookCreate,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[PlaybookOut]:
+    from sqlalchemy import select  # noqa: F811
+    pb = (await db.execute(
+        select(Playbook).where(
+            Playbook.id == playbook_id,
+            Playbook.tenant_id == tenant_id,
+        )
+    )).scalar_one_or_none()
+    if pb is None:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    pb.name               = payload.name
+    pb.description        = payload.description
+    pb.trigger_conditions = payload.trigger_conditions
+    pb.steps              = payload.steps
+    pb.mode               = payload.mode
+    pb.is_active          = payload.is_active
+    await db.commit()
+    await db.refresh(pb)
+    return APIResponse(data=PlaybookOut.model_validate(pb))
+
+
+@router.delete("/playbooks/{playbook_id}", response_model=APIResponse[dict])
+async def delete_playbook(
+    playbook_id: uuid.UUID,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[dict]:
+    from sqlalchemy import select  # noqa: F811
+    pb = (await db.execute(
+        select(Playbook).where(
+            Playbook.id == playbook_id,
+            Playbook.tenant_id == tenant_id,
+        )
+    )).scalar_one_or_none()
+    if pb is None:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    pb.is_active = False
+    await db.commit()
+    return APIResponse(data={"id": str(playbook_id), "is_active": False})
+
+
+@router.post("/playbooks/{playbook_id}/trigger", response_model=APIResponse[dict])
+async def trigger_playbook(
+    playbook_id: uuid.UUID,
+    payload: PlaybookTriggerIn,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[dict]:
+    """
+    Manually trigger a playbook run.
+    The run is executed in the background; response returns the run_id immediately.
+    """
+    from sqlalchemy import select  # noqa: F811
+    # Verify playbook exists and belongs to tenant
+    pb = (await db.execute(
+        select(Playbook).where(
+            Playbook.id == playbook_id,
+            Playbook.tenant_id == tenant_id,
+        )
+    )).scalar_one_or_none()
+    if pb is None:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    # Create a pending run record to return the run_id immediately
+    run = PlaybookRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        playbook_id=playbook_id,
+        triggered_by="manual",
+        status="pending",
+        steps_executed=[],
+        result={"context": payload.context},
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+    run_id = run.id
+
+    # Fire-and-forget background execution
+    async def _bg_execute() -> None:
+        from sdk.common.db import get_session_factory  # noqa: F811
+        session_factory = get_session_factory()
+        async with session_factory() as bg_db:
+            try:
+                await execute_playbook(
+                    playbook_id=playbook_id,
+                    context=payload.context,
+                    db=bg_db,
+                    tenant_id=tenant_id,
+                    triggered_by="manual",
+                )
+            except Exception as exc:
+                _logger.error(
+                    "playbook_bg_execute_failed",
+                    playbook_id=str(playbook_id),
+                    run_id=str(run_id),
+                    error=str(exc),
+                )
+
+    asyncio.create_task(_safe_bg(_bg_execute()))
+
+    return APIResponse(data={"run_id": str(run_id), "status": "triggered"})
+
+
+@router.get("/playbooks/autotrigger-stats", response_model=APIResponse[list[dict]])
+async def get_autotrigger_stats(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[list[dict]]:
+    """Return per-playbook auto-trigger counts (runs with triggered_by='auto')."""
+    from sqlalchemy import func, select  # noqa: F811
+    stmt = (
+        select(
+            PlaybookRun.playbook_id,
+            func.count().label("auto_count"),
+            func.max(PlaybookRun.started_at).label("last_auto_at"),
+        )
+        .where(
+            PlaybookRun.tenant_id == tenant_id,
+            PlaybookRun.triggered_by == "auto",
+        )
+        .group_by(PlaybookRun.playbook_id)
+    )
+    rows = (await db.execute(stmt)).all()
+    return APIResponse(data=[
+        {
+            "playbook_id":  str(r.playbook_id),
+            "auto_count":   r.auto_count,
+            "last_auto_at": r.last_auto_at.isoformat() if r.last_auto_at else None,
+        }
+        for r in rows
+    ])
+
+
+@router.get("/playbooks/{playbook_id}/runs", response_model=APIResponse[list[PlaybookRunOut]])
+async def list_playbook_runs(
+    playbook_id: uuid.UUID,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(20, ge=1, le=100),
+) -> APIResponse[list[PlaybookRunOut]]:
+    from sqlalchemy import desc, select  # noqa: F811
+    # Verify playbook belongs to tenant
+    pb = (await db.execute(
+        select(Playbook).where(
+            Playbook.id == playbook_id,
+            Playbook.tenant_id == tenant_id,
+        )
+    )).scalar_one_or_none()
+    if pb is None:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    stmt = (
+        select(PlaybookRun)
+        .where(
+            PlaybookRun.playbook_id == playbook_id,
+            PlaybookRun.tenant_id == tenant_id,
+        )
+        .order_by(desc(PlaybookRun.started_at))
+        .limit(limit)
+    )
+    rows = list((await db.execute(stmt)).scalars().all())
+    return APIResponse(data=[PlaybookRunOut.model_validate(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Webhook Settings (SEND_ALERT / WEBHOOK config per-tenant)
+# Stored in Redis hash  acp:webhooks:{tenant_id}
+# ---------------------------------------------------------------------------
+
+
+from services.autonomy.webhook_executor import (  # noqa: E402
+    fire_generic_webhook,
+    fire_pagerduty,
+    fire_slack,
+)
+
+_WEBHOOK_KEY_TTL: int | None = None  # persistent — no TTL
+
+
+def _mask(value: str) -> str:
+    """Return a masked representation of a secret string."""
+    if not value:
+        return ""
+    return value[:4] + "***" if len(value) > 4 else "***"
+
+
+async def _get_redis() -> _Redis:
+    """Return (or lazily create) a module-level Redis client."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = _Redis.from_url(_REDIS_URL, decode_responses=True)
+    return _redis_client
+
+
+class WebhookConfigIn(BaseModel):
+    slack_url:       str = ""
+    pagerduty_key:   str = ""
+    generic_url:     str = ""
+
+
+class WebhookConfigOut(BaseModel):
+    slack_url:       str = ""
+    pagerduty_key:   str = ""
+    generic_url:     str = ""
+
+
+class WebhookTestRequest(BaseModel):
+    message: str = "Aegis test alert — webhook configuration verified"
+    url:     str = ""
+    method:  str = "POST"
+    payload: dict = Field(default_factory=dict)
+    headers: dict = Field(default_factory=dict)
+
+
+@router.get("/webhooks/config", response_model=APIResponse[WebhookConfigOut])
+async def get_webhook_config(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[WebhookConfigOut]:
+    """Return the stored webhook configuration with secret values masked."""
+    redis = await _get_redis()
+    key = f"acp:webhooks:{tenant_id}"
+    raw: dict[str, str] = await redis.hgetall(key)
+    return APIResponse(data=WebhookConfigOut(
+        slack_url=_mask(raw.get("slack_url", "")),
+        pagerduty_key=_mask(raw.get("pagerduty_key", "")),
+        generic_url=raw.get("generic_url", ""),  # URL is not a secret, don't mask
+    ))
+
+
+@router.post("/webhooks/config", response_model=APIResponse[dict])
+async def save_webhook_config(
+    payload: WebhookConfigIn,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Persist webhook configuration for the tenant in Redis."""
+    redis = await _get_redis()
+    key = f"acp:webhooks:{tenant_id}"
+    mapping: dict[str, str] = {}
+    if payload.slack_url:
+        mapping["slack_url"] = payload.slack_url
+    if payload.pagerduty_key:
+        mapping["pagerduty_key"] = payload.pagerduty_key
+    if payload.generic_url:
+        mapping["generic_url"] = payload.generic_url
+    if mapping:
+        await redis.hset(key, mapping=mapping)
+    return APIResponse(data={"saved": True, "fields": list(mapping.keys())})
+
+
+@router.post("/webhooks/test/slack", response_model=APIResponse[dict])
+async def test_slack_webhook(
+    req: WebhookTestRequest,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fire a test Slack message using the configured (or supplied) webhook URL."""
+    redis = await _get_redis()
+    key = f"acp:webhooks:{tenant_id}"
+    raw: dict[str, str] = await redis.hgetall(key)
+    # Supplied URL takes precedence over stored config
+    webhook_url = req.url or raw.get("slack_url", "")
+    result = await fire_slack(
+        message=req.message,
+        webhook_url=webhook_url,
+        context={"tenant_id": str(tenant_id), "test": "true"},
+    )
+    return APIResponse(data=result)
+
+
+@router.post("/webhooks/test/pagerduty", response_model=APIResponse[dict])
+async def test_pagerduty_webhook(
+    req: WebhookTestRequest,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fire a test PagerDuty alert using the configured (or supplied) routing key."""
+    redis = await _get_redis()
+    key = f"acp:webhooks:{tenant_id}"
+    raw: dict[str, str] = await redis.hgetall(key)
+    routing_key = raw.get("pagerduty_key", "")
+    result = await fire_pagerduty(
+        summary=req.message,
+        severity="info",
+        routing_key=routing_key,
+        dedup_key=f"aegis-test-{tenant_id}",
+    )
+    return APIResponse(data=result)
+
+
+@router.post("/webhooks/test/webhook", response_model=APIResponse[dict])
+async def test_generic_webhook(
+    req: WebhookTestRequest,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fire a test generic webhook using the configured (or supplied) URL."""
+    redis = await _get_redis()
+    key = f"acp:webhooks:{tenant_id}"
+    raw: dict[str, str] = await redis.hgetall(key)
+    url = req.url or raw.get("generic_url", "")
+    result = await fire_generic_webhook(
+        url=url,
+        payload={**req.payload, "aegis_context": {"tenant_id": str(tenant_id), "test": "true"}},
+        method=req.method,
+        headers=req.headers,
+    )
+    return APIResponse(data=result)

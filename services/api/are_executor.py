@@ -8,6 +8,7 @@ No direct HTTP calls from the worker anymore.
 from __future__ import annotations
 
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,8 @@ logger = structlog.get_logger(__name__)
 
 _LOCK_TTL = 30          # seconds — lock expires if executor crashes mid-action
 _DESTRUCTIVE = frozenset({"KILL_AGENT", "ISOLATE_AGENT"})
+
+_AUTONOMY_URL = os.environ.get("AUTONOMY_SERVICE_URL", "http://autonomy:8007")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +135,37 @@ async def _do_throttle(redis, agent_id: str, tenant_id: str, rate: str) -> str:
     return f"THROTTLE:{rate}"
 
 
+async def _do_trigger_playbook(playbook_id: str, incident: dict, tenant_id: str) -> str:
+    """Trigger an autonomy-service playbook for the current incident."""
+    if not playbook_id:
+        return "TRIGGER_PLAYBOOK:no_id"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            resp = await c.post(
+                f"{_AUTONOMY_URL.rstrip('/')}/playbooks/{playbook_id}/trigger",
+                json={"context": {
+                    "source": "are",
+                    "incident_id":  incident.get("id", ""),
+                    "agent_id":     incident.get("agent_id", ""),
+                    "tenant_id":    tenant_id,
+                    "risk_score":   incident.get("risk_score", 0),
+                    "severity":     incident.get("severity", "HIGH"),
+                }},
+                headers={
+                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                    "X-Tenant-ID": tenant_id,
+                },
+            )
+        if resp.status_code in (200, 201):
+            logger.info("are_exec_trigger_playbook", playbook=playbook_id[:8])
+            return f"TRIGGER_PLAYBOOK:{playbook_id[:8]}"
+        logger.warning("are_exec_trigger_playbook_non200", status=resp.status_code)
+        return f"TRIGGER_PLAYBOOK:error_{resp.status_code}"
+    except Exception as exc:
+        logger.error("are_exec_trigger_playbook_failed", error=str(exc))
+        return "TRIGGER_PLAYBOOK:error"
+
+
 async def _do_alert(incident: dict, tenant_id: str) -> str:
     url = settings.SLACK_WEBHOOK_URL
     if not url:
@@ -210,6 +244,8 @@ class AREExecutor:
                     return await _do_throttle(self._redis, agent_id, tenant_id, action.get("rate", "5/m"))
                 if atype == "ALERT":
                     return await _do_alert(incident, tenant_id)
+                if atype == "TRIGGER_PLAYBOOK":
+                    return await _do_trigger_playbook(action.get("playbook_id", ""), incident, tenant_id)
         except RuntimeError as exc:
             # Lock contention — skip this action, another worker is handling it
             logger.info("are_lock_contention", action=atype, detail=str(exc))

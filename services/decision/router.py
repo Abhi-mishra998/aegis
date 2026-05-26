@@ -216,12 +216,12 @@ async def get_decision_history(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     limit: int = 20,
 ) -> APIResponse[dict]:
-    audit_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/audit/logs"
+    audit_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs"
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(
                 audit_url,
-                params={"limit": limit},
+                params={"limit": limit, "action": "execute_tool"},
                 headers={
                     "X-Tenant-ID": str(tenant_id),
                     "X-Internal-Secret": settings.INTERNAL_SECRET,

@@ -38,7 +38,7 @@ HISTORY_WINDOW_SIZE = 50          # actions kept in sliding list
 VELOCITY_WINDOW_SECONDS = 60      # 1-minute RPM window
 VELOCITY_THRESHOLD_RPM = 100      # requests/min → velocity_risk starts rising
 VELOCITY_MAX_RPM = 500            # RPM where velocity_risk reaches 1.0
-LOOP_DETECT_LENGTH = 3            # N identical consecutive tools = loop
+LOOP_DETECT_LENGTH = 6            # N identical consecutive tools = loop
 SEQUENCE_N_GRAM = 3               # n-gram length for sequence fingerprinting
 
 # Dangerous action sequences — O(1) lookup

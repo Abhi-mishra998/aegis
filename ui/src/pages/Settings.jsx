@@ -2,6 +2,8 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import {
   Lock, Code2, HeartPulse, Radio, Zap, CreditCard, Shield, ChevronRight,
+  Webhook, Users, Database, BarChart2, Calendar, Crosshair, Gauge, Key,
+  FlaskConical, BookOpen,
 } from 'lucide-react'
 
 const sections = [
@@ -9,20 +11,31 @@ const sections = [
     title: 'Access control',
     items: [
       { to: '/rbac',          label: 'RBAC Manager',    desc: 'Roles, permissions, tenant scopes',  icon: Lock },
+      { to: '/users',         label: 'User Management', desc: 'Invite, manage roles, deactivate',   icon: Users },
       { to: '/security',      label: 'Security Ops',    desc: 'Authentication + secrets posture',   icon: Shield },
+      { to: '/sso',           label: 'SSO Configuration', desc: 'SAML 2.0 / OIDC single sign-on',  icon: Key },
     ],
   },
   {
     title: 'Operations',
     items: [
-      { to: '/system-health', label: 'System Health',   desc: 'Service status + queue depth',       icon: HeartPulse },
-      { to: '/observability', label: 'Observability',   desc: 'Metrics, traces, SLO dashboards',    icon: Radio },
+      { to: '/system-health',    label: 'System Health',      desc: 'Service status + queue depth',       icon: HeartPulse },
+      { to: '/observability',    label: 'Observability',      desc: 'Metrics, traces, SLO dashboards',    icon: Radio },
+      { to: '/admin',            label: 'Admin Console',      desc: 'Platform health + tenant activity',  icon: Users },
+      { to: '/policy-analytics', label: 'Policy Analytics',   desc: 'Hit rates, FP rates, coverage gaps', icon: BarChart2 },
+      { to: '/quota',            label: 'Quota Management',   desc: 'Request limits + inference cost caps', icon: Gauge },
     ],
   },
   {
     title: 'Developer',
     items: [
-      { to: '/developer',     label: 'Developer Panel', desc: 'API keys, SDK examples, webhooks',   icon: Code2 },
+      { to: '/developer',        label: 'Developer Panel',    desc: 'API keys, SDK examples',          icon: Code2 },
+      { to: '/policy-sim',       label: 'Policy Simulation',  desc: 'Dry-run policies on historical events', icon: FlaskConical },
+      { to: '/playbooks',        label: 'Playbooks',          desc: 'Automated incident response sequences',  icon: BookOpen },
+      { to: '/webhook-settings', label: 'Webhook Settings',   desc: 'Slack, PagerDuty, generic hooks', icon: Webhook },
+      { to: '/siem',             label: 'SIEM Integration',   desc: 'Splunk HEC + Datadog Logs push',  icon: Database },
+      { to: '/threat-intel',     label: 'Threat Intelligence', desc: 'IP + domain enrichment feeds',   icon: Crosshair },
+      { to: '/scheduled-reports', label: 'Scheduled Reports', desc: 'Automated PDF delivery to stakeholders', icon: Calendar },
     ],
   },
   {

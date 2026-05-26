@@ -37,6 +37,8 @@ export function AgentProvider({ children }) {
         ? res
         : Array.isArray(res?.data)
         ? res.data
+        : Array.isArray(res?.data?.items)
+        ? res.data.items
         : Array.isArray(res?.data?.data)
         ? res.data.data
         : []

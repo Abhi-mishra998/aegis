@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Terminal, Play, AlertTriangle, Clock, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 import Card from '../components/Common/Card'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
-import { playgroundService } from '../services/api'
+import { playgroundService, registryService } from '../services/api'
 import { useAgents } from '../hooks/useAgents'
 
 const DECISION_META = {
@@ -70,8 +70,9 @@ export default function AgentPlayground() {
   const [executing,     setExecuting]     = useState(false)
   const [result,        setResult]        = useState(null)
   const [execError,     setExecError]     = useState(null)
-  const [rawOpen,       setRawOpen]       = useState(false)
-  const [history,       setHistory]       = useState([])
+  const [rawOpen,          setRawOpen]          = useState(false)
+  const [history,          setHistory]          = useState([])
+  const [toolSuggestions,  setToolSuggestions]  = useState([])
 
   // Sync local selection with global context selection
   useEffect(() => {
@@ -79,6 +80,20 @@ export default function AgentPlayground() {
       setLocalAgentId(selectedAgentId)
     }
   }, [selectedAgentId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch allowed tool names from agent permissions when agent changes
+  useEffect(() => {
+    if (!localAgentId) { setToolSuggestions([]); return }
+    registryService.listPermissions(localAgentId)
+      .then((res) => {
+        const perms = res?.data || res || []
+        const tools = Array.isArray(perms)
+          ? perms.map((p) => p.tool_name || p.resource || p.tool).filter(Boolean)
+          : []
+        setToolSuggestions([...new Set(tools)])
+      })
+      .catch(() => setToolSuggestions([]))
+  }, [localAgentId])
 
   const selectedAgent = localAgentId
 
@@ -189,6 +204,20 @@ export default function AgentPlayground() {
                   placeholder="e.g. data.query, restart_server"
                   className="input-standard h-9 font-mono"
                 />
+                {toolSuggestions.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {toolSuggestions.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setTool(t)}
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-white/10 text-neutral-500 hover:text-white hover:border-white/20 transition-colors"
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Payload */}

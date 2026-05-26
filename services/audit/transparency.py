@@ -384,6 +384,7 @@ _VERIFY_ROOT_RECEIPT_REQUIRED = ("kind", "tenant_id", "root_date", "root_hash")
 @transparency_router.post("/verify-root", response_model=APIResponse[dict])
 async def verify_root(
     db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     payload: dict[str, Any] | None = None,
 ) -> APIResponse[dict]:
     """Verify a signed transparency-root payload server-side.
@@ -436,6 +437,23 @@ async def verify_root(
         if http_400:
             raise HTTPException(status_code=400, detail=body)
         return APIResponse(data=body)
+
+    # ── Date shortcut: {"date": "YYYY-MM-DD"} auto-fetches & verifies stored root ──
+    if isinstance(payload, dict) and payload.keys() <= {"date"} and "date" in payload:
+        from datetime import date as _date
+        from sqlalchemy import select as _select
+
+        from services.audit.models import TransparencyRoot as _TR
+        try:
+            d = _date.fromisoformat(str(payload["date"]))
+        except (ValueError, TypeError):
+            return _err(["malformed_payload"], http_400=True)
+        row = (await db.execute(
+            _select(_TR).where(_TR.tenant_id == tenant_id, _TR.root_date == d)
+        )).scalars().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no root for {d}")
+        payload = row.signed_root_payload
 
     # ── Phase 1: structural validation ────────────────────────────────────
     if not isinstance(payload, dict) or not payload:

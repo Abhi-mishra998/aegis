@@ -1,0 +1,260 @@
+import React, { useEffect, useState, useCallback } from 'react'
+import {
+  Shield, Search, Globe, Wifi, AlertTriangle,
+  CheckCircle2, XCircle, Loader2, RefreshCw, Info,
+  Activity, Lock, FlaskConical,
+} from 'lucide-react'
+import { threatIntelService } from '../services/api'
+
+function ScoreBadge({ score }) {
+  const s = Number(score) || 0
+  const { color, label } =
+    s >= 75 ? { color: 'bg-red-500/10 text-red-400 border-red-500/20', label: 'HIGH RISK' } :
+    s >= 40 ? { color: 'bg-amber-500/10 text-amber-400 border-amber-500/20', label: 'MEDIUM' } :
+    s >= 10 ? { color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20', label: 'LOW' } :
+              { color: 'bg-green-500/10 text-green-400 border-green-500/20', label: 'CLEAN' }
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${color}`}>
+      {s} — {label}
+    </span>
+  )
+}
+
+function ResultCard({ result, type }) {
+  if (!result) return null
+  if (result.status === 'error') {
+    return (
+      <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
+        <XCircle size={14} /> {result.error || 'Enrichment failed'}
+      </div>
+    )
+  }
+
+  const score = result.abuse_score ?? result.score ?? 0
+
+  return (
+    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {type === 'ip' ? <Wifi size={14} className="text-neutral-400" /> : <Globe size={14} className="text-neutral-400" />}
+          <span className="text-sm font-mono text-white">{result.ip || result.domain}</span>
+        </div>
+        <ScoreBadge score={score} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {result.country && (
+          <div className="bg-white/[0.03] rounded-lg p-2.5">
+            <div className="text-[10px] text-neutral-600 mb-0.5">Country</div>
+            <div className="text-xs text-white">{result.country}</div>
+          </div>
+        )}
+        {result.isp && (
+          <div className="bg-white/[0.03] rounded-lg p-2.5">
+            <div className="text-[10px] text-neutral-600 mb-0.5">ISP</div>
+            <div className="text-xs text-white truncate">{result.isp}</div>
+          </div>
+        )}
+        {result.reports != null && (
+          <div className="bg-white/[0.03] rounded-lg p-2.5">
+            <div className="text-[10px] text-neutral-600 mb-0.5">Abuse Reports</div>
+            <div className="text-xs text-white">{result.reports}</div>
+          </div>
+        )}
+        {result.is_tor != null && (
+          <div className="bg-white/[0.03] rounded-lg p-2.5">
+            <div className="text-[10px] text-neutral-600 mb-0.5">Tor Exit Node</div>
+            <div className={`text-xs ${result.is_tor ? 'text-red-400' : 'text-green-400'}`}>
+              {result.is_tor ? 'Yes' : 'No'}
+            </div>
+          </div>
+        )}
+        {result.categories && (
+          <div className="col-span-2 bg-white/[0.03] rounded-lg p-2.5">
+            <div className="text-[10px] text-neutral-600 mb-0.5">Categories</div>
+            <div className="flex flex-wrap gap-1">
+              {(result.categories || []).map(c => (
+                <span key={c} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-neutral-400">{c}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 text-[10px] text-neutral-600">
+        <Info size={10} />
+        Source: {result.source}
+        {result.source === 'demo' && ' (demo data — configure API keys for live enrichment)'}
+      </div>
+    </div>
+  )
+}
+
+function KpiTile({ icon: Icon, label, value, accent }) {
+  return (
+    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 flex items-center gap-3">
+      <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center shrink-0">
+        <Icon size={15} className="text-neutral-500" />
+      </div>
+      <div>
+        <div className={`text-xl font-semibold ${accent || 'text-white'}`}>{value ?? '—'}</div>
+        <div className="text-[10px] text-neutral-600">{label}</div>
+      </div>
+    </div>
+  )
+}
+
+export default function ThreatIntel() {
+  const [query, setQuery]     = useState('')
+  const [mode, setMode]       = useState('ip')
+  const [loading, setLoading] = useState(false)
+  const [result, setResult]   = useState(null)
+  const [summary, setSummary] = useState(null)
+  const [history, setHistory] = useState([])
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await threatIntelService.getSummary()
+      setSummary(res?.data || res)
+    } catch {}
+  }, [])
+
+  useEffect(() => { loadSummary() }, [loadSummary])
+
+  const isIp = (v) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v.trim())
+
+  const enrich = async () => {
+    const val = query.trim()
+    if (!val) return
+    const detectedMode = isIp(val) ? 'ip' : 'domain'
+    setMode(detectedMode)
+    setLoading(true)
+    setResult(null)
+    try {
+      const res = detectedMode === 'ip'
+        ? await threatIntelService.enrichIp(val)
+        : await threatIntelService.enrichDomain(val)
+      const data = res?.data || res
+      setResult(data)
+      setHistory(h => [{ value: val, type: detectedMode, score: data?.abuse_score ?? data?.score ?? 0, ts: new Date() }, ...h.slice(0, 9)])
+      loadSummary()
+    } catch (err) {
+      setResult({ status: 'error', error: err.message })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleKey = (e) => { if (e.key === 'Enter') enrich() }
+
+  const highRisk = history.filter(h => h.score >= 75).length
+  const isDemoMode = result?.demo_mode || summary?.demo_mode
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold text-white mb-1">Threat Intelligence</h1>
+        <p className="text-sm text-neutral-400">
+          Enrich IPs and domains against external threat feeds. Enter an IP address or domain name.
+        </p>
+      </header>
+
+      {isDemoMode && (
+        <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-400">
+          <FlaskConical size={13} className="shrink-0 mt-0.5" />
+          <span>
+            <strong>Demo mode</strong> — no API keys detected. Results are deterministic hashed data,
+            not live threat feeds. Set <code className="font-mono">ABUSEIPDB_API_KEY</code> and{' '}
+            <code className="font-mono">OTX_API_KEY</code> to enable real enrichment.
+          </span>
+        </div>
+      )}
+
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-3">
+        <KpiTile icon={Wifi}          label="IPs checked"      value={summary?.ips_checked ?? 0} />
+        <KpiTile icon={Globe}         label="Domains checked"  value={summary?.domains_checked ?? 0} />
+        <KpiTile icon={AlertTriangle} label="High risk found"  value={summary?.high_risk_count ?? highRisk} accent={highRisk > 0 ? 'text-red-400' : 'text-white'} />
+      </div>
+
+      {/* Search */}
+      <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="8.8.8.8 or evil-domain.com"
+              className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
+            />
+          </div>
+          <button
+            onClick={enrich}
+            disabled={!query.trim() || loading}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
+            Enrich
+          </button>
+        </div>
+        <div className="flex gap-2 mt-3">
+          {['ip', 'domain'].map(m => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`text-xs px-3 py-1 rounded-full border ${mode === m ? 'border-white/30 bg-white/[0.06] text-white' : 'border-[var(--border-subtle)] text-neutral-600'}`}
+            >
+              {m === 'ip' ? 'IP Address' : 'Domain'}
+            </button>
+          ))}
+          <span className="text-xs text-neutral-600 self-center ml-1">— auto-detected from input</span>
+        </div>
+      </div>
+
+      {/* Result */}
+      {result && <ResultCard result={result} type={mode} />}
+
+      {/* Recent lookups */}
+      {history.length > 0 && (
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <h2 className="text-sm font-medium text-white flex items-center gap-2">
+              <Activity size={13} className="text-neutral-500" /> Recent Lookups
+            </h2>
+            <button onClick={() => setHistory([])} className="text-xs text-neutral-600 hover:text-white">Clear</button>
+          </div>
+          <div className="divide-y divide-[var(--border-subtle)]">
+            {history.map((h, i) => (
+              <button
+                key={i}
+                onClick={() => { setQuery(h.value); setMode(h.type) }}
+                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/[0.02] text-left"
+              >
+                <div className="flex items-center gap-2">
+                  {h.type === 'ip' ? <Wifi size={12} className="text-neutral-600" /> : <Globe size={12} className="text-neutral-600" />}
+                  <span className="text-xs font-mono text-neutral-300">{h.value}</span>
+                  <span className="text-[10px] text-neutral-600">{h.ts.toLocaleTimeString()}</span>
+                </div>
+                <ScoreBadge score={h.score} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Config note */}
+      <div className="p-4 bg-white/[0.02] border border-[var(--border-subtle)] rounded-xl text-xs text-neutral-500 leading-relaxed">
+        <div className="flex items-start gap-2">
+          <Lock size={12} className="shrink-0 text-neutral-600 mt-0.5" />
+          <div>
+            <strong className="text-neutral-400">Live enrichment:</strong> Set{' '}
+            <code className="text-neutral-400">ABUSEIPDB_API_KEY</code> for real IP scores (free tier: 1,000 checks/day) and{' '}
+            <code className="text-neutral-400">OTX_API_KEY</code> for AlienVault OTX domain/domain enrichment.
+            Without keys, Aegis returns deterministic demo data based on input hashing.
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

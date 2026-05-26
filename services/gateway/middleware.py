@@ -67,9 +67,14 @@ _SKIP_PATHS = frozenset(
         "/system/health",  # ops aggregate — must be reachable by k8s/ALB/Datadog probes (no tenant data)
         "/status",         # public customer-shareable status page (no tenant data)
         "/auth/token", "/auth/login", "/auth/agent/token",  # public auth endpoints
+        "/auth/sso/providers",  # SSO provider list (public — drives login UI buttons)
         "/events/stream",  # SSE — inline auth handled in the route handler
     ]
 )
+
+# SSO callback paths are public (browser redirects from OAuth providers carry no auth headers).
+# They are matched by prefix rather than exact path because they include /{provider}/callback.
+_SKIP_PATH_PREFIXES = ("/auth/sso/",)
 
 # Management paths: require auth + rate-limiting, but bypass the agent
 # tool-execution security pipeline (OPA policy + Decision Engine).
@@ -154,7 +159,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         deadline = start_time + _GLOBAL_SLA_BUDGET
         self._init_context(request, request_id, deadline)
 
-        if request.url.path in _SKIP_PATHS:
+        if request.url.path in _SKIP_PATHS or request.url.path.startswith(_SKIP_PATH_PREFIXES):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
@@ -292,88 +297,124 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 risk_score=risk_score, status="ok",
             )))
 
-            # Extract tool parameters for sensitivity checks (Issue #4, #6)
+            # Extract tool parameters for security checks and metadata.
+            # Scans BOTH body["input"] (ACP execute format) and body["parameters"]
+            # (legacy SDK format) so hard-deny rules fire regardless of which
+            # field the caller uses.
             tool_metadata = {}
             try:
+                import re as _re
                 if raw_body:
                     body_dict = json.loads(raw_body)
-                    if isinstance(body_dict, dict) and "parameters" in body_dict:
-                        params = body_dict.get("parameters", {})
-                        # M-2 FIX (2026-05-13): Path traversal hard-deny applies to ANY
-                        # tool parameter that names a file/dir, not just read_file. We
-                        # scan known path-like fields and any value that smells like a path.
+                    if isinstance(body_dict, dict):
+                        # Collect all string values from input, parameters, and payload
+                        _input_dict = body_dict.get("input") or {}
+                        _params_dict = body_dict.get("parameters") or {}
+                        _payload_dict = body_dict.get("payload") or {}
+                        _all_params: dict = {}
+                        if isinstance(_input_dict, dict):
+                            _all_params.update(_input_dict)
+                        if isinstance(_params_dict, dict):
+                            _all_params.update(_params_dict)
+                        if isinstance(_payload_dict, dict):
+                            _all_params.update(_payload_dict)
+                        # Also check top-level string fields (query, sql, path)
+                        for _top_k in ("query", "sql", "path", "command", "cmd"):
+                            _top_v = body_dict.get(_top_k)
+                            if isinstance(_top_v, str):
+                                _all_params.setdefault(_top_k, _top_v)
+
                         _PATH_FIELDS = ("path", "file_path", "filename", "src", "dst", "destination", "target", "uri", "url")
-                        for _k, _v in (params.items() if isinstance(params, dict) else []):
-                            if not isinstance(_v, str):
+                        _SQL_FIELDS  = ("query", "sql", "statement", "command", "q")
+
+                        for _k, _v in _all_params.items():
+                            if not isinstance(_v, str) or not _v:
                                 continue
-                            looks_path = _k.lower() in _PATH_FIELDS or _v.startswith("/") or "../" in _v
-                            if not looks_path:
-                                continue
+
+                            # --- PATH TRAVERSAL HARD DENY ---
                             _decoded_v = urllib.parse.unquote(_v).replace("\\", "/")
                             _vl = _v.lower()
-                            _path_attack = (
-                                "../" in _v
-                                or "../" in _decoded_v
-                                or "..%2f" in _vl
-                                or "..%5c" in _vl
-                                or "\x00" in _v
-                                or _decoded_v.startswith("/etc")
-                                or _decoded_v.startswith("/root")
-                                or _decoded_v.startswith("/proc")
-                                or _decoded_v.startswith("/sys")
-                                or _v.startswith("/etc")
-                                or _v.startswith("/root")
-                                or _v.startswith("/proc")
-                                or _v.startswith("/sys")
-                            )
-                            if _path_attack:
-                                logger.warning(
-                                    "path_traversal_blocked",
-                                    tool=tool_name, field=_k, path=_v[:100], request_id=request_id,
+                            _looks_path = _k.lower() in _PATH_FIELDS or _v.startswith("/") or "../" in _v
+                            if _looks_path:
+                                _path_attack = (
+                                    "../" in _v
+                                    or "../" in _decoded_v
+                                    or "..%2f" in _vl
+                                    or "..%5c" in _vl
+                                    or "\x00" in _v
+                                    or _decoded_v.startswith("/etc")
+                                    or _decoded_v.startswith("/root")
+                                    or _decoded_v.startswith("/proc")
+                                    or _decoded_v.startswith("/sys")
+                                    or _v.startswith("/etc")
+                                    or _v.startswith("/root")
+                                    or _v.startswith("/proc")
+                                    or _v.startswith("/sys")
                                 )
-                                # Extract the full traversal prefix for the error message
-                                import re as _re
-                                _m = _re.match(r"((?:\.\./)+)", _v)
-                                _pt = _m.group(1) if _m else (_v[:20] if _v.startswith("/") else "../")
-                                resp = self._deny(f"Security: Path traversal detected: '{_pt}'", 403)
-                                await self._log_audit(
-                                    t_id_str, agent_id, "execute_tool", tool_name, "block",
-                                    "path_traversal_detected", request_id,
-                                    {"blocked_field": _k, "blocked_path": _v[:100]},
+                                if _path_attack:
+                                    logger.warning(
+                                        "path_traversal_blocked",
+                                        tool=tool_name, field=_k, path=_v[:100], request_id=request_id,
+                                    )
+                                    _m = _re.match(r"((?:\.\./)+)", _v)
+                                    _pt = _m.group(1) if _m else (_v[:20] if _v.startswith("/") else "../")
+                                    resp = self._deny(f"Security: Path traversal detected: '{_pt}'", 403)
+                                    await self._log_audit(
+                                        t_id_str, agent_id, "execute_tool", tool_name, "block",
+                                        "path_traversal_detected", request_id,
+                                        {"blocked_field": _k, "blocked_path": _v[:100]},
+                                    )
+                                    await self._emit_groq_event(
+                                        event_id=request_id, tenant_id=t_id_str,
+                                        agent_id=str(agent_id), tool=tool_name,
+                                        decision="block", risk_score=1.0,
+                                        signals={"blocked_field": _k},
+                                        reasons=["path_traversal_detected"],
+                                        source="path_traversal_hard_deny",
+                                    )
+                                    _flight_final["decision"] = "block"
+                                    _flight_final["risk"]     = 1.0
+                                    _flight_final["status"]   = "failed"
+                                    return resp
+
+                            # --- SQL INJECTION HARD DENY ---
+                            _looks_sql = _k.lower() in _SQL_FIELDS
+                            if _looks_sql:
+                                _SQL_PATTERN = _re.compile(
+                                    r"(--|\b(DROP|TRUNCATE|DELETE|INSERT|UPDATE|UNION|SELECT|ALTER|CREATE|EXEC|EXECUTE|CAST|CONVERT)\b.*\b(TABLE|DATABASE|FROM|INTO|SET|WHERE|SCHEMA)\b|';\s*(--|\w)|xp_\w+)",
+                                    _re.IGNORECASE | _re.DOTALL,
                                 )
-                                # 2026-05-14: feed Groq pipeline — these are the
-                                # textbook examples we want enriched insights for.
-                                await self._emit_groq_event(
-                                    event_id=request_id,
-                                    tenant_id=t_id_str,
-                                    agent_id=str(agent_id),
-                                    tool=tool_name,
-                                    decision="block",
-                                    risk_score=1.0,
-                                    signals={"blocked_field": _k},
-                                    reasons=["path_traversal_detected"],
-                                    source="path_traversal_hard_deny",
-                                )
-                                _flight_final["decision"] = "block"
-                                _flight_final["risk"]     = 1.0
-                                _flight_final["status"]   = "failed"
-                                return resp
-                        if tool_name == "read_file" and "path" in params:
-                            tool_metadata["path"] = params["path"]
-                        elif tool_name == "query" and "sql" in params:
-                            tool_metadata["sql"] = params["sql"]
-                    # Also extract top-level input/sql for db.* and query tools
-                    _SQL_TOOL = (
-                        tool_name in {"query", "db.query", "db.execute", "sql", "db.run"}
-                        or tool_name.startswith("db.")
-                    )
-                    if _SQL_TOOL and "sql" not in tool_metadata:
-                        _top_sql = (
-                            body_dict.get("input") or body_dict.get("sql")
-                            or body_dict.get("query") or ""
-                        )
-                        if isinstance(_top_sql, str) and _top_sql:
-                            tool_metadata["input"] = _top_sql
+                                if _SQL_PATTERN.search(_v):
+                                    logger.warning(
+                                        "sql_injection_blocked",
+                                        tool=tool_name, field=_k, value=_v[:100], request_id=request_id,
+                                    )
+                                    resp = self._deny("Security: SQL injection detected in tool input", 403)
+                                    await self._log_audit(
+                                        t_id_str, agent_id, "execute_tool", tool_name, "block",
+                                        "sql_injection_detected", request_id,
+                                        {"blocked_field": _k, "blocked_value": _v[:100]},
+                                    )
+                                    await self._emit_groq_event(
+                                        event_id=request_id, tenant_id=t_id_str,
+                                        agent_id=str(agent_id), tool=tool_name,
+                                        decision="block", risk_score=1.0,
+                                        signals={"blocked_field": _k},
+                                        reasons=["sql_injection_detected"],
+                                        source="sql_injection_hard_deny",
+                                    )
+                                    _flight_final["decision"] = "block"
+                                    _flight_final["risk"]     = 1.0
+                                    _flight_final["status"]   = "failed"
+                                    return resp
+
+                        # Populate tool_metadata for downstream signals
+                        if "path" in _all_params:
+                            tool_metadata["path"] = _all_params["path"]
+                        for _sk in _SQL_FIELDS:
+                            if _sk in _all_params:
+                                tool_metadata["sql"] = _all_params[_sk]
+                                break
             except json.JSONDecodeError:
                 pass
 

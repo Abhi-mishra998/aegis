@@ -219,17 +219,22 @@ export default function NotificationCenter() {
           </div>
 
           {/* Footer */}
-          {alerts.length > 0 && (
-            <div className="px-4 py-2 border-t border-[var(--border-subtle)] shrink-0 flex items-center justify-between">
-              <span className="text-[10px] text-neutral-600">{alerts.length} total</span>
+          <div className="px-4 py-2 border-t border-[var(--border-subtle)] shrink-0 flex items-center justify-between">
+            <button
+              onClick={() => { setOpen(false); navigate('/notifications') }}
+              className="text-[10px] text-neutral-400 hover:text-white transition-colors flex items-center gap-1"
+            >
+              View all notifications <ChevronRight size={10} />
+            </button>
+            {alerts.length > 0 && (
               <button
                 onClick={() => { setAlerts([]); setOpen(false) }}
                 className="text-[10px] text-neutral-600 hover:text-red-400 transition-colors"
               >
-                Clear all
+                Clear
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
