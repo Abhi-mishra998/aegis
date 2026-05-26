@@ -8,11 +8,10 @@ Run: python3 scripts/e2e_full_test.py [BASE_URL]
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
-import uuid
-import os
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -235,7 +234,7 @@ def run():
         print("\n[9] Execute — Behavioral Loop (6+ same tool, expect anomalous_behavior)")
         loop_findings = []
         last_action = ""
-        for i in range(8):
+        for _i in range(8):
             r = post(c, "/execute",
                      json={"tool": "execute_command",
                            "payload": {"cmd": "ls"},

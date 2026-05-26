@@ -147,7 +147,7 @@ async def get_summary(
             func.sum(sa_case((sa.cast(AuditLog.metadata_json["risk_score"].astext, sa.Float) < 0.30, 1), else_=0)).label("low"),
         ).where(
             AuditLog.tenant_id == tenant_id,
-            AuditLog.metadata_json["risk_score"] != None,
+            AuditLog.metadata_json["risk_score"].isnot(None),
         )
     )
     try:
