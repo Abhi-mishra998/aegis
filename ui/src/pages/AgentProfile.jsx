@@ -326,19 +326,11 @@ export default function AgentProfile() {
 
   useEffect(() => { load() }, [load])
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-neutral-500" size={24} />
-      </div>
-    )
-  }
-
   const p = profile || {}
   const a = agent || {}
   const riskTrend = useMemo(
     () => (p.risk_trend || []).map((v, i) => ({ day: `D-${6 - i}`, risk: Number(v.toFixed(3)) })),
-    [profile],
+    [profile], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const avgRisk = useMemo(
     () => riskTrend.reduce((s, r) => s + r.risk, 0) / Math.max(riskTrend.length, 1),
@@ -346,6 +338,14 @@ export default function AgentProfile() {
   )
   const blockRate = Number(p.block_rate || 0).toFixed(1)
   const isDrifting = p.behavioral_drift === true
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="animate-spin text-neutral-500" size={24} />
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
