@@ -18,7 +18,6 @@ from fastapi import HTTPException, Request
 from starlette.responses import Response
 
 from sdk.common.background import safe_bg as _safe_bg
-from sdk.common.exceptions import ACPAuthError
 from sdk.utils import IDEMPOTENCY_HITS_TOTAL
 from services.gateway.auth import REDIS_REVOKE_PREFIX
 from services.gateway.client import service_client
@@ -138,7 +137,7 @@ class _AuthMixin:
                         else:
                             from services.gateway.auth import LocalTokenValidator
                             auth_data = LocalTokenValidator()._validate_signature(token)
-                    except Exception as exc:
+                    except Exception:
                         try:
                             await self.redis.incr(auth_fail_key)
                             await self.redis.expire(auth_fail_key, 300)
