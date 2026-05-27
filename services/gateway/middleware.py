@@ -105,6 +105,19 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/graph",
     "/flight",
     "/autonomy",
+    # Management/reporting surfaces — human operator paths, not agent execution
+    "/compliance",
+    "/notifications",
+    "/playbooks",
+    "/reports",
+    "/security",
+    "/siem",
+    "/threat-intel",
+    "/users",
+    "/webhooks",
+    "/admin",
+    "/dashboard",
+    "/policy",
 )
 
 # Configuration from global settings
