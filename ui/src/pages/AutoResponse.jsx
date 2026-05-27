@@ -87,7 +87,6 @@ function RuleFormModal({ initial, onSave, onClose }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr]     = useState('')
 
-  const setField  = (path, val) => setForm(prev => deepSet({ ...prev }, path, val))
   const setCond   = (k, v)      => setForm(prev => ({ ...prev, conditions: { ...prev.conditions, [k]: v } }))
 
   const addAction = () => setForm(prev => ({ ...prev, actions: [...prev.actions, { type: 'ALERT' }] }))
@@ -328,7 +327,6 @@ function RuleFormModal({ initial, onSave, onClose }) {
   )
 }
 
-function deepSet(obj, path, val) { obj[path] = val; return obj }
 
 // ─── Simulate Modal ───────────────────────────────────────────────────────────
 

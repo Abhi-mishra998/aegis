@@ -145,8 +145,7 @@ class _AuthMixin:
                         except Exception as _re:
                             logger.debug("auth_fail_counter_error", error=str(_re))
 
-                        detail = str(exc) if isinstance(exc, ACPAuthError) else "Invalid token"
-                        raise HTTPException(status_code=401, detail=detail)
+                        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
                     # Active RBAC Mapping
                     role = auth_data.get("role", "VIEWER")

@@ -259,6 +259,9 @@ function App() {
 
               <Route path="*" element={<Navigate to="/flight-recorder" />} />
             </Routes>
+
+            {/* Command palette — inside BrowserRouter so useNavigate() has context */}
+            <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
           </BrowserRouter>
         </AgentProvider>
 
@@ -278,9 +281,6 @@ function App() {
 
         {/* SOC Incident Overlay — renders above everything including ErrorBoundary siblings */}
         <IncidentOverlay incident={incident} onDismiss={handleIncidentDismiss} />
-
-        {/* Command palette — triggered by mod+k */}
-        <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
 
         {/* Keyboard cheatsheet — triggered by `?` */}
         <KeyboardCheatsheet
