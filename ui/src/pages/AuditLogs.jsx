@@ -331,6 +331,7 @@ export default function AuditLogs() {
   const [integrityStatus,  setIntegrityStatus]  = useState(null)
   const [integrityMessage, setIntegrityMessage] = useState('')
   const [autoRefresh,      setAutoRefresh]      = useState(false)
+  const [exporting,        setExporting]        = useState(false)
 
   const autoRefreshRef = useRef(null)
   const mountedRef     = useRef(true)
@@ -468,8 +469,6 @@ export default function AuditLogs() {
       <SkeletonLoader variant="row" count={6} />
     </div>
   )
-
-  const [exporting, setExporting] = useState(false)
 
   const handleExport = async (format) => {
     setExporting(true)

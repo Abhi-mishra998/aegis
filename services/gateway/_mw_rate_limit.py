@@ -79,6 +79,42 @@ class _RateLimitMixin:
             return self._deny("IP-based rate limit exceeded", 429)
         return None
 
+    async def _check_execute_sliding_window(
+        self,
+        tenant_id_str: str,
+        jti: str | None,
+    ) -> Response | None:
+        """
+        10-second sliding window applied to POST /execute only.
+        Catches sequential burst that the 60-second token-bucket misses
+        because 10 000 rpm limits are too coarse for sequential probing.
+        Limits: 30 req/10 s per tenant (3 rps) + 15 req/10 s per JTI.
+        Fail-open on Redis errors — a cache blip must not drop real traffic.
+        """
+        _WINDOW    = 10
+        _T_LIMIT   = 30
+        _JTI_LIMIT = 15
+        try:
+            t_key = f"acp:ratelimit:execute_sw:tenant:{tenant_id_str}"
+            t_cnt = await self.redis.incr(t_key)
+            if t_cnt == 1:
+                await self.redis.expire(t_key, _WINDOW)
+            if t_cnt > _T_LIMIT:
+                RATE_LIMIT_EXCEEDED_TOTAL.labels(layer="execute_sw_tenant", tier="none").inc()
+                return self._deny("Rate limit exceeded: request volume too high", 429)
+
+            if jti:
+                j_key = f"acp:ratelimit:execute_sw:token:{jti}"
+                j_cnt = await self.redis.incr(j_key)
+                if j_cnt == 1:
+                    await self.redis.expire(j_key, _WINDOW)
+                if j_cnt > _JTI_LIMIT:
+                    RATE_LIMIT_EXCEEDED_TOTAL.labels(layer="execute_sw_token", tier="none").inc()
+                    return self._deny("Rate limit exceeded: token request volume too high", 429)
+        except Exception:
+            pass  # fail-open
+        return None
+
     # Read-only endpoints that stay accessible even when a tenant has
     # exhausted its monthly cap — so customers can pull their audit /
     # transparency / billing data to investigate. The list is a *prefix*

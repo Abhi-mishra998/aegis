@@ -250,6 +250,41 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 action = "kill"
                 raise HTTPException(status_code=403, detail="Tenant blocked due to security violation")
 
+            # --- 5a. /execute sliding-window rate limit (sequential burst) ---
+            # The 60-second token bucket (10 000 rpm) is too coarse to catch
+            # rapid sequential probing. This 10-second INCR window fires first
+            # so an attacker sending 31+ requests in 10 seconds gets a 429
+            # before any governance CPU is spent. Fail-open on Redis errors.
+            if request.url.path.rstrip("/") in ("/execute", "/v1/execute"):
+                jti = getattr(request.state, "jti", None)
+                sw_resp = await self._check_execute_sliding_window(t_id_str, jti)
+                if sw_resp is not None:
+                    return sw_resp
+
+            # --- 5b. Agent ID body validation ---
+            # Validate that the agent_id in the request body is registered.
+            # Uses a 150ms timeout and fails-open (registry downtime must not
+            # block real governance traffic). Unregistered agent → 403.
+            if request.url.path.rstrip("/") in ("/execute", "/v1/execute") and raw_body:
+                try:
+                    _bd = json.loads(raw_body)
+                    _body_agent_id = _bd.get("agent_id") if isinstance(_bd, dict) else None
+                    if _body_agent_id and isinstance(_body_agent_id, str):
+                        import uuid as _uuid
+                        try:
+                            _parsed_aid = _uuid.UUID(_body_agent_id)
+                        except (ValueError, AttributeError):
+                            _parsed_aid = None
+                        if _parsed_aid is None or _parsed_aid == _uuid.UUID(int=0):
+                            return self._deny("Invalid agent_id format", 400)
+                        _reg_data = await service_client.get_agent_metadata(
+                            _parsed_aid, tenant_id, jwt_claims={}
+                        )
+                        if _reg_data is None:
+                            return self._deny("Unknown agent — not registered in this tenant", 403)
+                except Exception:
+                    pass  # fail-open — don't block on registry timeout
+
             tool_name = await self._get_tool_name(request)
             logger.info("policy_check_called", agent_id=str(agent_id), tool=tool_name, tenant_id=t_id_str)
 
@@ -339,6 +374,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
 
                         _PATH_FIELDS = ("path", "file_path", "filename", "src", "dst", "destination", "target", "uri", "url")
                         _SQL_FIELDS  = ("query", "sql", "statement", "command", "q")
+                        _CODE_FIELDS = ("code", "script", "source", "program", "exec", "cmd", "shell", "bash", "python", "js")
+                        _TEXT_FIELDS = ("body", "content", "text", "message", "subject", "description", "note", "email_body", "payload")
 
                         for _k, _v in _all_params.items():
                             if not isinstance(_v, str) or not _v:
@@ -415,6 +452,79 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                                         signals={"blocked_field": _k},
                                         reasons=["sql_injection_detected"],
                                         source="sql_injection_hard_deny",
+                                    )
+                                    _flight_final["decision"] = "block"
+                                    _flight_final["risk"]     = 1.0
+                                    _flight_final["status"]   = "failed"
+                                    return resp
+
+                            # --- RCE / DANGEROUS CODE HARD DENY ---
+                            _looks_code = _k.lower() in _CODE_FIELDS
+                            if _looks_code:
+                                _RCE_PATTERN = _re.compile(
+                                    r"(os\.system\s*\(|subprocess\.|exec\s*\(|eval\s*\(|__import__\s*\(|"
+                                    r"rm\s+-rf\s+/|mkfs\s*\.|dd\s+if=/dev/zero|curl\s+.*\|\s*sh|wget\s+.*\|\s*sh|"
+                                    r"chmod\s+777|/etc/shadow|/etc/sudoers|nc\s+-[lnvke]|netcat\s+-|"
+                                    r"base64\s+-d\s*\||python\s+-c\s*['\"]import\s+os|"
+                                    r"powershell\s+-[eE]|cmd\.exe\s*/[cC]|&\s*\w+\s*=\s*\w+\s*&)",
+                                    _re.IGNORECASE | _re.DOTALL,
+                                )
+                                if _RCE_PATTERN.search(_v):
+                                    logger.warning(
+                                        "rce_blocked",
+                                        tool=tool_name, field=_k, value=_v[:80], request_id=request_id,
+                                    )
+                                    resp = self._deny("Security: Dangerous code pattern detected in tool input", 403)
+                                    await self._log_audit(
+                                        t_id_str, agent_id, "execute_tool", tool_name, "block",
+                                        "rce_pattern_detected", request_id,
+                                        {"blocked_field": _k, "blocked_value": _v[:80]},
+                                    )
+                                    await self._emit_groq_event(
+                                        event_id=request_id, tenant_id=t_id_str,
+                                        agent_id=str(agent_id), tool=tool_name,
+                                        decision="block", risk_score=1.0,
+                                        signals={"blocked_field": _k},
+                                        reasons=["rce_pattern_detected"],
+                                        source="rce_hard_deny",
+                                    )
+                                    _flight_final["decision"] = "block"
+                                    _flight_final["risk"]     = 1.0
+                                    _flight_final["status"]   = "failed"
+                                    return resp
+
+                            # --- PII EXFILTRATION HARD DENY ---
+                            _looks_text = _k.lower() in _TEXT_FIELDS or tool_name.lower() in ("send_email", "send_message", "post_slack", "webhook", "http_request", "send_notification")
+                            if _looks_text:
+                                _PII_PATTERN = _re.compile(
+                                    r"(\b\d{3}-\d{2}-\d{4}\b"                           # SSN
+                                    r"|\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b"  # credit card
+                                    r"|\b[A-Z]{2}\d{6}[A-Z]?\b"                          # passport-like
+                                    r"|(?:password|passwd|secret|api[_\-]?key)\s*[:=]\s*\S+"  # credential leak
+                                    r"|\bDOB\s*:\s*\d{2}[/-]\d{2}[/-]\d{4}\b"           # DOB
+                                    r"|\b(?:SSN|social.security)\s*:?\s*\d{3}[-\s]\d{2}[-\s]\d{4}\b"  # SSN label
+                                    r"|\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b.*\b(?:password|pwd|token)\b"  # email+password combo
+                                    r")",
+                                    _re.IGNORECASE | _re.DOTALL,
+                                )
+                                if _PII_PATTERN.search(_v):
+                                    logger.warning(
+                                        "pii_exfiltration_blocked",
+                                        tool=tool_name, field=_k, request_id=request_id,
+                                    )
+                                    resp = self._deny("Security: PII or credential data detected in tool output", 403)
+                                    await self._log_audit(
+                                        t_id_str, agent_id, "execute_tool", tool_name, "block",
+                                        "pii_exfiltration_detected", request_id,
+                                        {"blocked_field": _k},
+                                    )
+                                    await self._emit_groq_event(
+                                        event_id=request_id, tenant_id=t_id_str,
+                                        agent_id=str(agent_id), tool=tool_name,
+                                        decision="block", risk_score=1.0,
+                                        signals={"blocked_field": _k},
+                                        reasons=["pii_exfiltration_detected"],
+                                        source="pii_hard_deny",
                                     )
                                     _flight_final["decision"] = "block"
                                     _flight_final["risk"]     = 1.0

@@ -8,7 +8,7 @@
 
 <!-- TYPING ANIMATION -->
 <a href="https://github.com/Abhi-mishra998/aegis">
-  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;18+services.+2044%2B+tests.+Sub-30ms+p95." alt="Aegis tagline"/>
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2800&pause=600&color=00E5A0&center=true&vCenter=true&width=900&lines=Block+prompt+injection+before+it+executes.;Prove+every+decision+with+ed25519+%2B+Merkle.;Stop+rogue+agents+in+%3C+5+seconds%2C+tenant-wide.;12+services.+24+containers.+5409%2B+decisions+logged." alt="Aegis tagline"/>
 </a>
 
 <br/>
@@ -64,12 +64,12 @@ and <strong>cryptographically proves</strong> what happened after.
 
 <!-- BADGES ROW 2 — Project Health -->
 <p>
-  <img src="https://img.shields.io/badge/services-18-1f2937?style=flat-square&labelColor=111827" alt="services"/>
-  <img src="https://img.shields.io/badge/containers-28-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
+  <img src="https://img.shields.io/badge/services-12-1f2937?style=flat-square&labelColor=111827" alt="services"/>
+  <img src="https://img.shields.io/badge/containers-24-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
   <img src="https://img.shields.io/badge/tests-2044%2B-22c55e?style=flat-square&labelColor=111827" alt="tests"/>
-  <img src="https://img.shields.io/badge/p95_latency-27ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
+  <img src="https://img.shields.io/badge/p95_latency-639ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
   <img src="https://img.shields.io/badge/attack_block_rate-100%25-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
-  <img src="https://img.shields.io/badge/audit_chain-verified-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
+  <img src="https://img.shields.io/badge/audit_chain-5409%2B_decisions-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square&labelColor=111827" alt="license"/>
   <a href="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml"><img src="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml/badge.svg" alt="Tests"/></a>
 </p>
@@ -164,6 +164,47 @@ and <strong>cryptographically proves</strong> what happened after.
 
 > Everything below was **shipped, tested, and verified against the live AWS deployment** in the most recent development sprint. This section is the canonical record of what moved from roadmap to production.
 
+---
+
+### UI Stability Sprint — 2026-05-27 (Most Recent)
+
+> All changes deployed live to both EC2 instances (`i-066b1e9043c465dfd`, `i-09ae67ea75ef88991`) via SSM hot-swap — zero downtime, no container restart needed.
+
+#### Critical Bug Fixes
+
+| Bug | Root Cause | Fix |
+|---|---|---|
+| **SYSTEM INTEGRITY VIOLATION — React crash on every page** | `CommandPalette` component used `useNavigate()` but was rendered **outside `<BrowserRouter>`** in `App.jsx`. Router context = null → empty `Error` thrown → ErrorBoundary triggered on every render | Moved `<CommandPalette>` inside `<BrowserRouter>`, just after `</Routes>` |
+| **React error #310 on Audit Logs page** | `const [exporting, setExporting] = useState(false)` was declared on line 472 — **after** the loading skeleton early return on line 462. Hook count differs between loading/loaded renders → React error #310 crash | Moved `exporting` state to line 334, before the early return, with all other `useState` declarations |
+| **"Failed to fetch" on login — nobody could log in** | `.env` had `VITE_GATEWAY_URL=http://localhost:8000` which Vite baked into every production bundle. The browser tried to reach `localhost:8000` — which doesn't exist on the visitor's machine | Created `.env.production` with `VITE_GATEWAY_URL=` (empty). Confirmed `const Fs=""` in bundle — all API calls now use relative URLs proxied by nginx |
+| **Compliance page: "Tool name is required"** | 12 API route prefixes missing from `_MANAGEMENT_PATH_PREFIXES` in `gateway/middleware.py`. Requests to `/compliance`, `/notifications`, `/playbooks`, `/reports`, `/security`, `/siem`, `/threat-intel`, `/users`, `/webhooks`, `/admin`, `/dashboard`, `/policy` were hitting the agent execution pipeline which demands `X-ACP-Tool` header | Added all 12 missing prefixes to the management bypass list; restarted gateway on both EC2 instances |
+| **Compliance page: "Validation failed" (HTTP 422)** | `Compliance.jsx` was sending `start_date`/`end_date` but the GET endpoints require `period_start`/`period_end` as FastAPI query params. FastAPI returns 422 when required params are missing | Fixed the 3 param names in `Compliance.jsx:51-53` |
+| **10 UI pages returning HTML instead of JSON** | nginx proxy regex was missing 10 API path prefixes (`notifications`, `compliance/`, `playbooks`, `reports/`, `security/`, `siem/`, `threat-intel/`, `users`, `webhooks/`, `admin/`). Requests fell through to the SPA `try_files` fallback returning `index.html` | Extended nginx proxy regex with all 10 missing paths |
+
+#### Dead Code Removed
+
+| File | Removed | Why |
+|---|---|---|
+| `AutoResponse.jsx:90` | `const setField = (path, val) => setForm(...)` | Defined but never called anywhere in the component |
+| `AutoResponse.jsx:331` | `function deepSet(obj, path, val)` | Only called by `setField` which is itself dead code |
+
+#### Production Measurements (2026-05-27)
+
+| Metric | Value |
+|---|---|
+| Containers healthy (both EC2 instances) | **24 / 24** |
+| Services healthy | **12 / 12** |
+| Audit decisions in chain | **5,409** |
+| Audit chain violations | **0** |
+| Gateway latency p50 | **72ms** |
+| Gateway latency p95 | **639ms** |
+| SQL injection block | **HTTP 403** — "Security: SQL injection detected" |
+| Path traversal block | **HTTP 403** — blocked by OPA rule |
+| Unauthenticated access | **HTTP 401** |
+| Demo logins | `admin@acp.local` + `demo@aegisagent.in` both **200 OK** |
+
+---
+
 ### New Features Shipped
 
 | Feature | What it does |
@@ -245,7 +286,8 @@ Existing security tools — IAM, WAFs, SIEMs, API gateways — were built for hu
 
 **📦 What's in the box**
 
-- 18 microservices across 28 containers (incl. Postgres streaming replica)
+- **12 microservices across 24 containers** per EC2 instance (2 instances live in production)
+- **38 React UI pages** — all wired to live APIs, zero mocked data
 - **2044+ pytest tests** (44 adversarial crypto tests, 82 roadmap source-contract tests)
 - 3 end-to-end demo scenarios + 1 autonomous agent demo
 - Offline chain verifier — no trust in running system required
@@ -263,8 +305,8 @@ Existing security tools — IAM, WAFs, SIEMs, API gateways — were built for hu
 - **Visual Policy Builder** — GUI → Rego with live traffic simulation
 - **Auto-remediation playbooks** — 5 pre-built response chains
 - **SSE live feed** — exponential backoff, channel demux, 2s debounce
-- Python, FastAPI, Postgres, Redis, OPA
-- Decision latency: **< 30ms p95** on the deny path
+- Python 3.11, FastAPI 0.115, PostgreSQL 15, Redis 7, OPA/Rego, React 18, Vite 5, Tailwind CSS
+- Measured production latency: **p50 = 72ms, p95 = 639ms**
 - Full stack runs locally with **one `docker compose up`**
 
 </td>
@@ -358,7 +400,7 @@ The interesting design choices live in three places:
 
 [![Aegis Full System Architecture](screenshot/architecture-diagram.png)](screenshot/architecture-diagram.png)
 
-*18 services · 28 containers · single entry point · fail-closed at every gate*
+*12 services · 24 containers · 2 EC2 instances · ALB load balanced · fail-closed at every gate*
 
 </div>
 
@@ -1000,75 +1042,118 @@ The most expensive operations on the allow path: OPA bundle evaluation (~8ms) an
 
 ## ☁️ AWS Production Deployment
 
-> **Aegis is live at [aegisagent.in](https://aegisagent.in)** — running the full 28-container stack on AWS in ap-south-1 (Mumbai), serving real HTTPS traffic with automatic SSL, multi-AZ failover, and encrypted managed databases.
+> **Aegis is live at [aegisagent.in](https://aegisagent.in)** — running **24 containers across 2 EC2 instances** in AWS ap-south-1 (Mumbai), behind an ALB with ACM SSL, connected to managed RDS PostgreSQL and ElastiCache Redis on private subnets.
 
 ### Cloud Infrastructure
 
 ```
-                        INTERNET
-                            │
-              ┌─────────────▼──────────────┐
-              │  GoDaddy DNS → Route 53    │
-              │  aegisagent.in             │
-              │  ALIAS record → ALB DNS    │
-              └─────────────┬──────────────┘
-                            │
-    ┌───────────────────────▼──────────────────────────────────┐
-    │            Application Load Balancer (ALB)               │
-    │  • ACM SSL/TLS certificate — free, auto-renews           │
-    │  • HTTP :80  → 301 redirect → HTTPS :443                 │
-    │  • HTTPS :443 → Target Group → EC2 :5173                │
-    │  • SNS Notifications — CloudWatch alarms → email alerts  │
-    │  Spans: ap-south-1a + ap-south-1b  (high availability)   │
-    └───────────────────────┬──────────────────────────────────┘
-                            │
-    ┌───────────────────────▼──────────────────────────────────┐
-    │              Auto Scaling Group (ASG)                    │
-    │  min=1 · desired=1 · max=3                               │
-    │  Scale out: CPU > 70% for 5 min                          │
-    │  Scale in:  CPU < 30% for 15 min                         │
-    └───────────────────────┬──────────────────────────────────┘
-                            │
-    ┌───────────────────────▼──────────────────────────────────┐
-    │       EC2 t3.2xlarge — ap-south-1a (public subnet)       │
-    │       28 Docker containers · all ACP microservices       │
-    │                                                          │
-    │  acp_gateway      :8000  (4 workers — API entry point)   │
-    │  acp_ui           :5173  (React SPA — Nginx)             │
-    │  acp_identity     :8001  (2 workers — JWT + auth)        │
-    │  acp_registry     :8002  (2 workers — agent registry)    │
-    │  acp_policy       :8003  (2 workers — OPA evaluation)    │
-    │  acp_decision     :8010  (4 workers — risk scoring)      │
-    │  acp_behavior     :8007  (4 workers — anomaly detection) │
-    │  acp_audit        :8004  (append-only audit chain)       │
-    │  acp_forensics    :8012  (2 workers — investigation)     │
-    │  acp_are          :8005  (auto-response engine)          │
-    │  acp_billing      :8006  (transactional outbox)          │
-    │  acp_insight      :8011  (Groq threat intelligence)      │
-    │  acp_graph        :8013  (identity graph)                │
-    │  acp_flight       :8014  (flight recorder)               │
-    │  acp_autonomy     :8015  (contract enforcement)          │
-    │  + Prometheus, Grafana, Jaeger, OPA, PgBouncer …        │
-    └──────────┬────────────────────────┬───────────────────────┘
-               │                        │
-  ┌────────────▼───────────┐  ┌─────────▼──────────────────┐
-  │  RDS PostgreSQL 15     │  │  ElastiCache Redis 7 TLS   │
-  │  db.t3.micro           │  │  cache.t3.micro             │
-  │  Private subnet        │  │  Private subnet             │
-  │  Managed backups       │  │  AOF persistence enabled    │
-  │  acp_identity schema   │  │  TLS: rediss:// required    │
-  │  acp_audit schema      │  │  JWT revocation + rate      │
-  │  acp_registry schema   │  │  limiting + kill-switch     │
-  │  acp_usage schema      │  │  hot-path cache             │
-  └────────────┬───────────┘  └────────────────────────────┘
-               │
-  ┌────────────▼───────────┐   ┌──────────────────────────┐
-  │  S3 — acp-backups-prod │   │  CloudWatch + SNS        │
-  │  • Daily DB dumps      │   │  • CPU > 80% alarm       │
-  │  • Config snapshots    │   │  • EC2 instance down     │
-  │  • age-encrypted       │   │  • ALB 5xx spike > 10    │
-  └────────────────────────┘   │  → Email via SNS topic   │
-                                └──────────────────────────┘
+                              INTERNET
+                                  │
+                ┌─────────────────▼────────────────┐
+                │         GoDaddy DNS               │
+                │   aegisagent.in → Route 53        │
+                │   ALIAS record  → ALB DNS         │
+                └─────────────────┬────────────────┘
+                                  │ HTTPS :443 / HTTP :80
+                ┌─────────────────▼────────────────────────────┐
+                │       Application Load Balancer (ALB)         │
+                │  • ACM TLS certificate — free, auto-renews    │
+                │  • HTTP :80 → 301 redirect → HTTPS :443       │
+                │  • HTTPS :443 → Target Group → EC2 :80        │
+                │  • Health check: GET /health (nginx responds)  │
+                │  • CloudWatch alarms → SNS email on failure    │
+                │  • Spans ap-south-1a + ap-south-1b            │
+                └──────────┬──────────────────┬─────────────────┘
+                           │                  │
+         ┌─────────────────▼──────┐  ┌───────▼──────────────────────┐
+         │  EC2 — PRIMARY         │  │  EC2 — SECONDARY              │
+         │  i-066b1e9043c465dfd   │  │  i-09ae67ea75ef88991          │
+         │  t3.2xlarge            │  │  t3.2xlarge                   │
+         │  ap-south-1a           │  │  ap-south-1a                  │
+         │  43.205.42.5 (public)  │  │  (public)                     │
+         │                        │  │                               │
+         │  24 Docker containers  │  │  24 Docker containers         │
+         │  (identical stack)     │  │  (identical stack)            │
+         │                        │  │                               │
+         │  acp_ui          :80   │  │  acp_ui          :80          │
+         │  acp_gateway     :8000 │  │  acp_gateway     :8000        │
+         │  acp_identity    :8001 │  │  acp_identity    :8001        │
+         │  acp_registry    :8002 │  │  acp_registry    :8002        │
+         │  acp_policy      :8003 │  │  acp_policy      :8003        │
+         │  acp_audit       :8004 │  │  acp_audit       :8004        │
+         │  acp_usage       :8006 │  │  acp_usage       :8006        │
+         │  acp_behavior    :8007 │  │  acp_behavior    :8007        │
+         │  acp_decision    :8010 │  │  acp_decision    :8010        │
+         │  acp_insight     :8011 │  │  acp_insight     :8011        │
+         │  acp_forensics   :8012 │  │  acp_forensics   :8012        │
+         │  acp_identity_graph    │  │  acp_identity_graph           │
+         │  acp_flight_recorder   │  │  acp_flight_recorder          │
+         │  acp_autonomy    :8015 │  │  acp_autonomy    :8015        │
+         │  acp_groq_worker       │  │  acp_groq_worker              │
+         │  acp_insight_worker    │  │  acp_insight_worker           │
+         │  acp_bundle_server     │  │  acp_bundle_server            │
+         │  acp_opa         :8181 │  │  acp_opa         :8181        │
+         │  acp_pgbouncer   :6432 │  │  acp_pgbouncer   :6432        │
+         │  acp_prometheus  :9090 │  │  acp_prometheus  :9090        │
+         │  acp_grafana     :3000 │  │  acp_grafana     :3000        │
+         │  acp_jaeger      :16686│  │  acp_jaeger      :16686       │
+         │  acp_alertmanager:9093 │  │  acp_alertmanager:9093        │
+         │  acp_api               │  │  acp_api                      │
+         └──────────┬─────────────┘  └───────┬──────────────────────┘
+                    │                         │
+                    └──────────┬──────────────┘
+                               │  (private subnet only)
+          ┌────────────────────▼──────────────────────────────┐
+          │                                                    │
+   ┌──────▼──────────────────┐    ┌──────────────────────────┐│
+   │  RDS PostgreSQL 15      │    │  ElastiCache Redis 7      ││
+   │  db.t3.micro            │    │  cache.t3.micro           ││
+   │  Private subnet         │    │  Private subnet           ││
+   │  Automated backups      │    │  TLS (rediss://) required ││
+   │  acp_identity DB        │    │  AOF persistence on       ││
+   │  acp_audit DB           │    │  JWT revocation list      ││
+   │  acp_registry DB        │    │  Rate limit counters      ││
+   │  acp_usage DB           │    │  Kill-switch hot path     ││
+   │  acp_behavior DB        │    │  Session cache (60s LRU)  ││
+   │  (PgBouncer pooler :6432│    └──────────────────────────┘│
+   │   sits in front of RDS) │                                 │
+   └─────────────────────────┘                                 │
+                                                               │
+   ┌─────────────────────────┐    ┌──────────────────────────┐│
+   │  S3 Buckets             │    │  CloudWatch + SNS        ││
+   │  acp-backups-prod-am    │    │  3 alarms → SNS email    ││
+   │  • Daily age-encrypted  │    │  ACP-HighCPU >80% 5min   ││
+   │    DB dumps             │    │  ACP-InstanceDown        ││
+   │  acp-fix-1779860735     │    │  ACP-ALB5xxSpike >10/min ││
+   │  • Hot-deploy bundles   │    └──────────────────────────┘│
+   │    (SSM-based deploys)  │                                 │
+   └─────────────────────────┘                                 │
+          └─────────────────────────────────────────────────── ┘
+```
+
+### Hot-Deploy Pattern (No Container Rebuild)
+
+Production UI fixes are deployed without rebuilding Docker images — a technique that keeps zero downtime:
+
+```bash
+# 1. Build locally with .env.production (VITE_GATEWAY_URL empty → relative URLs)
+npm run build
+
+# 2. Upload bundle to S3 hot-deploy bucket
+aws s3 cp dist/assets/index-XYZ.js s3://acp-fix-1779860735/index-XYZ.js
+aws s3 cp dist/index.html          s3://acp-fix-1779860735/index.html
+
+# 3. SSM sends command to both EC2 instances simultaneously
+aws ssm send-command \
+  --instance-ids "i-066b1e9043c465dfd" "i-09ae67ea75ef88991" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":[
+    "aws s3 cp s3://acp-fix-1779860735/index-XYZ.js /tmp/index-XYZ.js",
+    "docker cp /tmp/index-XYZ.js acp_ui:/usr/share/nginx/html/assets/index-XYZ.js",
+    "docker cp /tmp/index.html   acp_ui:/usr/share/nginx/html/index.html",
+    "docker exec acp_ui nginx -s reload"
+  ]}'
+# nginx reload: ~35ms. Zero container restart. Zero downtime.
 ```
 
 ### VPC Layout
@@ -1076,28 +1161,28 @@ The most expensive operations on the allow path: OPA bundle evaluation (~8ms) an
 ```
 VPC: 10.0.0.0/16 (acp-vpc) — ap-south-1, Mumbai
 ├── ap-south-1a
-│   ├── acp-public-1a   10.0.1.0/24  ← ALB node, EC2, NAT Gateway
-│   └── acp-private-1a  10.0.3.0/24  ← RDS primary, ElastiCache
+│   ├── acp-public-1a   10.0.1.0/24  ← ALB node, both EC2s, NAT Gateway
+│   └── acp-private-1a  10.0.3.0/24  ← RDS primary, ElastiCache primary
 └── ap-south-1b
-    ├── acp-public-1b   10.0.2.0/24  ← ALB node (high availability)
+    ├── acp-public-1b   10.0.2.0/24  ← ALB node (HA)
     └── acp-private-1b  10.0.4.0/24  ← RDS standby (Multi-AZ ready)
 ```
 
 ### AWS Services at a Glance
 
-| AWS Service | Tier | Role |
+| AWS Service | Role | Detail |
 |---|---|---|
-| **Route 53** | DNS | ALIAS record → ALB. Health-check routing. Failover ready. |
-| **ACM (Certificate Manager)** | Edge | TLS/SSL certificate for `aegisagent.in`. Free. Auto-renews. |
-| **ALB (Application Load Balancer)** | Edge | SSL termination, HTTP→HTTPS redirect, target group health checks |
-| **SNS (Simple Notification Service)** | Alerting | CloudWatch alarm → SNS topic → email notifications (CPU, downtime, 5xx spikes) |
-| **CloudWatch** | Observability | EC2 + ALB + RDS metrics. 3 alarm rules wired to SNS. |
-| **Auto Scaling Group** | Resilience | min=1, max=3. CPU >70% 5min → scale out. CPU <30% 15min → scale in. |
-| **EC2 t3.2xlarge** | Compute | 28 Docker containers. 8 vCPU, 32 GB RAM. ap-south-1a public subnet. |
-| **RDS PostgreSQL 15** | Data | 4 logical schemas, service-scoped roles, no cross-schema writes. Private subnet. |
-| **ElastiCache Redis 7** | Cache | TLS required (`rediss://`). JWT revocation, rate limiting, kill-switch hot path. |
-| **S3** | Storage | `acp-backups-prod` — daily `age`-encrypted DB dumps + config snapshots. |
-| **VPC + Security Groups** | Network | EC2 ↔ RDS/ElastiCache on private subnets only. ALB → EC2 :5173 only. |
+| **Route 53** | DNS | ALIAS record → ALB DNS. GoDaddy nameservers point to Route 53. |
+| **ACM** | TLS | Auto-renewing SSL cert for `aegisagent.in` and `*.aegisagent.in`. |
+| **ALB** | Edge | SSL termination. HTTP→HTTPS redirect. Target group health checks on `/health`. |
+| **EC2 × 2** | Compute | `t3.2xlarge` (8 vCPU, 32 GB RAM). 24 Docker containers each. `i-066b1e9043c465dfd` (primary), `i-09ae67ea75ef88991` (secondary). |
+| **RDS PostgreSQL 15** | Relational data | `db.t3.micro`. Private subnet. 5 logical databases behind PgBouncer (`:6432`). |
+| **ElastiCache Redis 7** | Cache + pub/sub | `cache.t3.micro`. TLS enforced (`rediss://`). AOF persistence on. |
+| **S3** | Storage | `acp-backups-prod-am` (daily encrypted DB dumps + config). `acp-fix-1779860735` (hot-deploy bundles via SSM). |
+| **SSM** | Ops | `AWS-RunShellScript` commands sent to both EC2s simultaneously for hot-deploys and emergency fixes. No SSH key required. |
+| **CloudWatch** | Metrics | EC2 + ALB + RDS metrics. 3 alarms auto-wired to SNS. |
+| **SNS** | Alerting | Email delivery for `ACP-HighCPU`, `ACP-InstanceDown`, `ACP-ALB5xxSpike`. |
+| **VPC + SGs** | Network isolation | EC2 → RDS/ElastiCache on private subnets only. ALB → EC2 `:80` only. No direct RDS internet path. |
 
 ### Alerting — CloudWatch + SNS
 
@@ -1144,13 +1229,24 @@ aws s3 cp infra/pgbouncer.aws.ini s3://acp-backups-prod-am/config/pgbouncer.aws.
 
 | Component | Instance | Cost/mo |
 |---|---|---|
-| EC2 | t3.2xlarge (1 instance) | ~$120 |
+| EC2 × 2 | t3.2xlarge (2 instances) | ~$240 |
 | RDS | db.t3.micro PostgreSQL 15 | ~$15 |
 | ElastiCache | cache.t3.micro Redis 7 | ~$15 |
 | ALB | Application Load Balancer | ~$18 |
 | Route 53 | Hosted zone + queries | ~$0.50 |
-| S3 + CloudWatch | Storage + metrics | ~$5 |
-| **Total** | | **~$174/mo** |
+| S3 + CloudWatch | Storage + metrics + SSM | ~$5 |
+| **Total** | | **~$293/mo** |
+
+### Security Group Rules
+
+| Traffic | From | To | Port | Notes |
+|---|---|---|---|---|
+| HTTPS | Internet (0.0.0.0/0) | ALB | 443 | ACM cert terminates here |
+| HTTP | Internet (0.0.0.0/0) | ALB | 80 | 301 redirect to 443 |
+| App traffic | ALB (`acp-alb-sg`) | EC2 | 80 | nginx inside container listens :80 |
+| Database | EC2 (`acp-ec2-sg`) | RDS | 5432 | Direct + via PgBouncer :6432 |
+| Cache | EC2 (`acp-ec2-sg`) | ElastiCache | 6379 | TLS required (`rediss://`) |
+| SSH | Admin IP only | EC2 | 22 | Key pair: `acp-prod-key.pem` |
 
 <br/>
 
@@ -1163,12 +1259,16 @@ aws s3 cp infra/pgbouncer.aws.ini s3://acp-backups-prod-am/config/pgbouncer.aws.
 The fastest path is the running system. No Docker required.
 
 ```
-URL:      https://aegisagent.in
-Login:    demo@aegisagent.in
-Password: demo1234
+URL:           https://aegisagent.in
+
+Admin login:   admin@acp.local    /  password      (full access)
+Demo login:    demo@aegisagent.in /  demo1234       (read-only — safe to hand to a client)
+
+Auth endpoint: POST /auth/token  (NOT /auth/login — that returns 404)
+Default tenant: 00000000-0000-0000-0000-000000000001
 ```
 
-All features are live — kill switches, audit chain verification, blast-radius simulation, behavioral analytics, autonomy contracts.
+All features are live — kill switches, audit chain verification, blast-radius simulation, behavioral analytics, autonomy contracts, compliance export, flight recorder.
 
 ### Option B — Run Locally (Full Stack)
 
@@ -1237,6 +1337,92 @@ All 18/18 services operational. Audit stream: 0 depth. DLQ: 0.
 ```
 
 📘 **Full setup guide** with environment variables, Slack webhooks, S3 backup, and troubleshooting: [`setup.md`](setup.md)
+
+<br/>
+
+---
+
+## 🖥️ UI — 38 Pages, All Wired to Live APIs
+
+> Built with **React 18 + Vite + Tailwind CSS**. No Next.js, no shadcn. Every page hits a real backend endpoint — no mocked data, no static fixtures.
+
+### Navigation / Sidebar Pages
+
+| Page | Route | What it shows |
+|---|---|---|
+| **Flight Recorder** | `/flight-recorder` | Step-by-step execution timeline for every agent session. Pre/post snapshots. 2/5/15/60-min replay windows. Default landing page. |
+| **Policy Builder** | `/policy-builder` | Visual GUI → OPA Rego. Configure risk threshold, tool blocklist, deny hours, tenant scope. Live traffic simulation panel. |
+| **Audit Logs** | `/audit-logs` | Scrollable timeline of every governance decision. Signed receipts. Integrity verify button. CSV/JSON export. Real-time SSE refresh. |
+| **Incidents** | `/incidents` | Incident tracker with severity, status, assignee. Filter + search. |
+| **Settings** | `/settings` | Hub page linking to all admin sub-pages. |
+
+### Operations Pages
+
+| Page | Route | What it shows |
+|---|---|---|
+| **Agents** | `/agents` | Registered AI agents list with status, last active, policy config. Click to view profile. |
+| **Agent Profile** | `/agents/:id/profile` | Per-agent: risk trend, behavioral drift indicator, block rate, tool call history. |
+| **Identity Graph** | `/identity-graph` | Agent ↔ user ↔ tool ↔ resource relationship graph. Compromise simulation with BFS blast radius. |
+| **Autonomy Contracts** | `/autonomy` | Active contracts: max_runtime, max_cost, deny-lists, approval-required tools. |
+| **Forensics** | `/forensics` | Incident investigation: timeline reconstruction, blast-radius, cross-source replay. |
+| **Playground** | `/playground` | Interactive agent execution sandbox — fire a tool call and watch it go through the governance pipeline live. |
+| **Auto-Response** | `/auto-response` | ARE rule builder. IF condition → THEN action (KILL / ISOLATE / THROTTLE / ALERT). |
+| **Compliance** | `/compliance` | EU AI Act, NIST AI RMF, SOC 2 evidence bundles. Date range picker. Export PDF. |
+| **Attack Simulation** | `/attack-sim` | Simulate SQL injection, path traversal, PII leak, privilege escalation — watch them get blocked in real time. |
+| **Kill Switch** | `/kill-switch` | Emergency kill switch — engage/disengage per tenant or per agent. Durable: survives Redis flush. |
+
+### Analytics Pages
+
+| Page | Route | What it shows |
+|---|---|---|
+| **Observability** | `/observability` | Total decisions / allowed / blocked summary tiles. Decision trend chart. Risk score histogram. Active agents count. |
+| **Risk Engine** | `/risk` | Risk summary, timeline, top threats. Per-detector signal breakdown. Behavioral flow diagram. |
+| **Security Ops** | `/security` | SOC dashboard. Live threat feed. Attack heatmap. Signal severity breakdown. |
+| **Live Feed** | `/live-feed` | Real-time SSE stream of every governance decision as it happens. |
+| **Billing** | `/billing` | API call volume trend. Per-tenant usage. Cost cap indicators. Billing reconciliation. |
+| **Executive Summary** | `/executive-summary` | C-level view: top-line metrics, risk posture, compliance status, cost savings. |
+
+### Admin / Configuration Pages
+
+| Page | Route | What it shows |
+|---|---|---|
+| **RBAC Manager** | `/rbac` | Role-based access control. Assign roles to users. View permission matrix. |
+| **Developer Panel** | `/developer` | API key management (create / list / revoke `acp_` prefix keys). SDK code snippets. |
+| **System Health** | `/system-health` | All 12 services health status with latency. Operational queues panel. DLQ counts. |
+| **User Management** | `/users` | List all users, roles, tenant assignments. |
+| **Admin Console** | `/admin` | Tenant management, system-wide config, maintenance actions. |
+| **SIEM Integration** | `/siem` | Splunk / Elastic / Sentinel / Chronicle connector config. |
+| **Policy Analytics** | `/policy-analytics` | Policy evaluation stats, rule hit rates, override history. |
+| **Scheduled Reports** | `/scheduled-reports` | Create / manage recurring compliance and audit reports. |
+| **Threat Intelligence** | `/threat-intel` | Threat intel feed integration. IOC matching. |
+| **Quota Management** | `/quota` | Per-tenant rate limits, daily/monthly caps, current usage. |
+| **SSO Configuration** | `/sso` | Google / Microsoft / Okta OIDC setup. Test connection. |
+| **Webhook Settings** | `/webhook-settings` | Configure outbound webhooks for governance events. |
+| **Notifications** | `/notifications` | Notification center — mark read, filter by severity. |
+| **Playbooks** | `/playbooks` | 5 pre-built auto-remediation chains. Enable/disable. Manual trigger. |
+| **Policy Simulation** | `/policy-sim` | Replay any date range of real traffic against a draft policy rule before saving. |
+
+### Marketing / Pricing
+
+| Page | Route | What it shows |
+|---|---|---|
+| **Pricing** | `/pricing` | Starter $299/mo · Professional $999/mo · Enterprise custom. Feature matrix. |
+
+### Technical Stack
+
+| Layer | Technology |
+|---|---|
+| Build | Vite 5 |
+| Framework | React 18 |
+| Styling | Tailwind CSS |
+| Charts | Recharts |
+| Icons | Lucide React |
+| Router | React Router v6 |
+| State | Context API (no Redux) |
+| Real-time | SSE via `useSSE` hook — exponential backoff 1s→30s, channel demux via `eventBus` |
+| Keyboard nav | `useHotkeys` — `g <letter>` sequences + `?` cheatsheet + `mod+k` command palette |
+| Auth | httpOnly cookie JWT — token never in localStorage, no XSS theft vector |
+| API | Relative URLs (`/api-path`) — nginx proxies to gateway. `VITE_GATEWAY_URL` empty in `.env.production` |
 
 <br/>
 
