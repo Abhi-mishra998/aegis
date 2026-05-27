@@ -48,9 +48,9 @@ export default function Compliance() {
     setLoading(prev => ({ ...prev, [fw]: true }))
     try {
       let data
-      if (fw === 'EU_AI_ACT')   data = await complianceService.getEuAiAct({ start_date: startDate, end_date: endDate })
-      else if (fw === 'NIST_AI_RMF') data = await complianceService.getNist({ start_date: startDate, end_date: endDate })
-      else if (fw === 'SOC2')   data = await complianceService.getSoc2({ start_date: startDate, end_date: endDate })
+      if (fw === 'EU_AI_ACT')   data = await complianceService.getEuAiAct({ period_start: startDate, period_end: endDate })
+      else if (fw === 'NIST_AI_RMF') data = await complianceService.getNist({ period_start: startDate, period_end: endDate })
+      else if (fw === 'SOC2')   data = await complianceService.getSoc2({ period_start: startDate, period_end: endDate })
       setEvidence(prev => ({ ...prev, [fw]: data?.data || data }))
     } catch (err) {
       setError(`Failed to load ${fw} evidence: ${err.message}`)
