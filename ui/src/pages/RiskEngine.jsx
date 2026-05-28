@@ -252,6 +252,7 @@ export default function RiskEngine() {
   const [highRiskEvents, setHighRiskEvents] = useState(null)
   const [toolRisk,           setToolRisk]           = useState(null)
   const [riskPercentileTrend, setRiskPercentileTrend] = useState(null)
+  const [signalWeights, setSignalWeights] = useState(WEIGHTS)
   const [loading,      setLoading]     = useState(true)
   const [error,        setError]       = useState(null)
   const [lastRefresh,  setLastRefresh] = useState(null)
@@ -259,7 +260,7 @@ export default function RiskEngine() {
   const load = async () => {
     try {
       const aid = selectedAgentId || undefined
-      const [sumRes, timeRes, threatRes, insightRes, findingsRes, histRes, highRes, toolRiskRes, pctTrendRes] = await Promise.allSettled([
+      const [sumRes, timeRes, threatRes, insightRes, findingsRes, histRes, highRes, toolRiskRes, pctTrendRes, weightsRes] = await Promise.allSettled([
         riskService.getSummary(aid),
         riskService.getTimeline(aid),
         riskService.getTopThreats(aid),
@@ -269,6 +270,7 @@ export default function RiskEngine() {
         auditService.getHighRiskEvents(7, 20, 0.7, aid),
         auditService.getToolRisk(30, 20, aid),
         auditService.getRiskPercentileTrend(30, aid),
+        riskService.getSignalWeights(),
       ])
       if (!mounted.current) return
 
@@ -295,6 +297,20 @@ export default function RiskEngine() {
       }
       if (pctTrendRes.status === 'fulfilled') {
         setRiskPercentileTrend(pctTrendRes.value?.data || pctTrendRes.value)
+      }
+      if (weightsRes.status === 'fulfilled') {
+        const live = weightsRes.value?.data?.signals || weightsRes.value?.signals
+        if (Array.isArray(live) && live.length) {
+          // Map the backend shape {key,label,weight} → UI WEIGHTS shape
+          // {key,label,pct,color} preserving the existing colour palette.
+          const colourFor = (key) => (WEIGHTS.find((w) => w.key === key)?.color) || '#94a3b8'
+          setSignalWeights(live.map((w) => ({
+            key:   w.key.replace(/_risk$/, ''),
+            label: w.label,
+            pct:   Math.round((w.weight ?? 0) * 100),
+            color: colourFor(w.key.replace(/_risk$/, '')),
+          })))
+        }
       }
 
       setLastRefresh(new Date())
@@ -552,7 +568,7 @@ export default function RiskEngine() {
         {/* Risk formula */}
         <Card title="Risk Scoring Formula" icon={Brain}>
           <div className="space-y-3">
-            {WEIGHTS.map((w) => (
+            {signalWeights.map((w) => (
               <div key={w.key} className="space-y-1.5">
                 <div className="flex justify-between">
                   <span className="text-xs text-neutral-400">{w.label}</span>

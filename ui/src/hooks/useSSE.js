@@ -162,15 +162,22 @@ export function useSSE({
     }
 
     es.onerror = () => {
-      // Classify the failure reason so the UI badge can show something
-      // meaningful. readyState===2 (CLOSED) after a 401 looks identical
-      // to a network drop from the EventSource API; we infer based on
-      // whether we ever reached the 'open' state in this attempt.
+      // Classify the failure reason for the UI badge. EventSource onerror
+      // doesn't expose the underlying HTTP status, so we use heuristics:
+      // - never reached 'open' AND session is still valid (cookie/token
+      //   present, expiry in the future) → likely network or transient
+      //   server unavailability, NOT auth.
+      // - never reached 'open' AND no session signal → genuine auth_expired.
+      // - was open before erroring → network drop.
       const wasOpen = es.readyState === EventSource.OPEN
-      if (!wasOpen && attemptsRef.current === 0) {
-        // First attempt failed before connected → likely auth or CORS.
-        setLastError(getCurrentToken() ? 'cors' : 'auth_expired')
-      } else if (!wasOpen) {
+      const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10)
+      const sessionLooksValid = expiry > Date.now()
+      if (wasOpen) {
+        setLastError('network')
+      } else if (sessionLooksValid) {
+        setLastError('network')
+      } else if (getCurrentToken() || localStorage.getItem("tenant_id")) {
+        // Session metadata present but expiry past → really expired.
         setLastError('auth_expired')
       } else {
         setLastError('network')

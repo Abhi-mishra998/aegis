@@ -1261,8 +1261,8 @@ The fastest path is the running system. No Docker required.
 ```
 URL:           https://aegisagent.in
 
-Admin login:   admin@acp.local    /  password      (full access)
-Demo login:    demo@aegisagent.in /  demo1234       (read-only — safe to hand to a client)
+Admin login:   admin@acp.local    /  admin1234     (full access)
+Demo login:    demo@aegisagent.in /  demo1234      (read-only — safe to hand to a client)
 
 Auth endpoint: POST /auth/token  (NOT /auth/login — that returns 404)
 Default tenant: 00000000-0000-0000-0000-000000000001
@@ -1297,7 +1297,7 @@ ACP_DRY_RUN=1 .venv/bin/python demos/run_all_demos.py
 # Open the UI
 open http://localhost:5173      # macOS
 # xdg-open http://localhost:5173  # Linux
-# Login: admin@acp.local / password
+# Login: admin@acp.local / admin1234
 ```
 
 ### What you'll see after boot

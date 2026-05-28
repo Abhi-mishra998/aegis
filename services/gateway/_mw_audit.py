@@ -247,11 +247,31 @@ class _AuditMixin:
         # SLO & Audit
         self._record_slo(request, start, response.status_code)
 
-        meta = {"status": response.status_code, "risk_score": risk}
+        meta: dict[str, object] = {"status": response.status_code, "risk_score": risk}
 
         action_val = "allow"
         if hasattr(request.state, "decision"):
-            action_val = request.state.decision.action.value if hasattr(request.state.decision.action, "value") else str(request.state.decision.action)
+            dec = request.state.decision
+            action_val = dec.action.value if hasattr(dec.action, "value") else str(dec.action)
+            # Persist the full decision signals + findings + confidence + reasons so
+            # Observability's Risk Signal Breakdown, Risk Engine, and forensics can
+            # reconstruct exactly which signals fired without re-running inference.
+            signals = getattr(dec, "signals", None)
+            if signals:
+                # Decision.signals may be a Pydantic model, a dict, or None.
+                if hasattr(signals, "dict"):
+                    meta["signals"] = signals.dict()
+                elif isinstance(signals, dict):
+                    meta["signals"] = signals
+            confidence = getattr(dec, "confidence", None)
+            if confidence is not None:
+                meta["confidence"] = float(confidence)
+            findings = getattr(dec, "findings", None)
+            if findings:
+                meta["findings"] = [str(f) for f in findings][:8]
+            reasons = getattr(dec, "reasons", None)
+            if reasons:
+                meta["reasons"] = [str(r) for r in reasons][:5]
 
         await self._log_audit(
             t_id, a_id, "execute_tool", tool, action_val, None, req_id, meta

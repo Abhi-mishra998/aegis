@@ -1,10 +1,12 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useRef, useCallback, useMemo, useEffect, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Radio, Wifi, WifiOff, Loader2, Trash2, Pause, Play,
   AlertTriangle, Shield, Activity, Filter, ChevronRight,
 } from 'lucide-react'
 import { useSSE } from '../hooks/useSSE'
+import { auditService } from '../services/api'
+import { AgentContext } from '../context/AgentContext'
 
 const EVENT_META = {
   risk_updated:       { label: 'Risk Update',      color: 'text-amber-400',  dot: 'bg-amber-500',  border: 'border-amber-500/20' },
@@ -106,21 +108,83 @@ function EventRow({ ev, onInvestigate }) {
 
 export default function LiveFeed() {
   const navigate = useNavigate()
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext)
   const [events, setEvents] = useState([])
   const [paused, setPaused] = useState(false)
   const [filterTypes, setFilterTypes] = useState(new Set())
+  const [backfillLoading, setBackfillLoading] = useState(true)
   const pausedRef = useRef(false)
 
   pausedRef.current = paused
 
+  // Backfill the last N decisions on mount + when the agent scope changes.
+  // Without this, the feed sits empty until a new event is published — users
+  // wait minutes thinking the stream is broken when really nothing has
+  // happened yet. We pull from /audit/logs which is the same source of
+  // truth tool_executed events are derived from.
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setBackfillLoading(true)
+      try {
+        const res = await auditService.getLogs(50, 0, selectedAgentId || undefined)
+        const items = res?.data?.items || res?.items || []
+        if (cancelled) return
+        const seeded = items
+          .map((row) => {
+            const eventType = row.decision === 'block' || row.decision === 'deny'
+              ? 'policy_decision'
+              : 'tool_executed'
+            return {
+              id:    `bf-${row.id || crypto.randomUUID()}`,
+              type:  eventType,
+              data: {
+                request_id: row.request_id,
+                agent_id:   row.agent_id,
+                tool:       row.tool,
+                action:     row.decision,
+                decision:   row.decision,
+                risk:       row.metadata_json?.risk_score,
+                risk_score: row.metadata_json?.risk_score,
+                reason:     row.reason || (row.metadata_json?.reasons || [])[0],
+                reasons:    row.metadata_json?.reasons || [],
+              },
+              ts:    row.timestamp ? new Date(row.timestamp).getTime() : Date.now(),
+              fresh: false,
+            }
+          })
+          .filter((e) => e.data.agent_id && e.data.agent_id !== '00000000-0000-0000-0000-000000000000')
+        setEvents(seeded)
+      } catch (_e) {
+        // backfill is best-effort; SSE will still populate live events
+      } finally {
+        if (!cancelled) setBackfillLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [selectedAgentId])
+
   const handleMessage = useCallback((raw) => {
     if (pausedRef.current) return
     const type = raw?.type || raw?.event || 'alert'
-    if (!ALL_TYPES.includes(type) && !raw?.risk_score && !raw?.decision) return
+    // Backend SSE wraps the actual payload as {type, data:{...}, ts}.
+    // Unwrap the inner object so EventRow can read fields like agent_id,
+    // tool, action, risk directly. Keep the outer wrapper for legacy
+    // event shapes that came in flat (e.g. raw alerts from older publishers).
+    const inner = (raw && typeof raw === 'object' && raw.data && typeof raw.data === 'object') ? raw.data : raw
+    // Normalise action → decision so existing display logic works.
+    const normalised = {
+      ...inner,
+      decision: inner?.decision ?? inner?.action,
+      // Surface the numeric risk as risk_score so the colour helper hits.
+      risk_score: inner?.risk_score ?? inner?.risk,
+    }
+    if (!ALL_TYPES.includes(type) && !normalised?.risk_score && !normalised?.decision) return
     const entry = {
       id:    crypto.randomUUID(),
       type:  ALL_TYPES.includes(type) ? type : 'alert',
-      data:  raw,
+      data:  normalised,
       ts:    Date.now(),
       fresh: true,
     }
@@ -140,7 +204,11 @@ export default function LiveFeed() {
     return ch
   }, [handleMessage])
 
-  const { state, reconnect, lastError } = useSSE({ onMessage: handleMessage, channels })
+  const { state, reconnect, lastError } = useSSE({
+    onMessage: handleMessage,
+    channels,
+    agentId: selectedAgentId || undefined,
+  })
 
   const visible = filterTypes.size > 0
     ? events.filter((e) => filterTypes.has(e.type))
@@ -177,6 +245,22 @@ export default function LiveFeed() {
               Live Event Feed
             </h1>
             <p className="text-sm text-neutral-400">Real-time security events from the gateway SSE stream.</p>
+            <div className="flex items-center gap-2 mt-1.5">
+              {selectedAgent ? (
+                <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                  <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-neutral-500">
+                  <Filter size={9} /> Scope: All agents (tenant-wide)
+                </span>
+              )}
+              {backfillLoading && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-neutral-500">
+                  <Loader2 size={9} className="animate-spin" /> Loading recent events…
+                </span>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">

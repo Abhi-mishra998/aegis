@@ -521,7 +521,7 @@ class TestMultiTenantIsolationE2E:
         gw = "http://localhost:8000"
         async with httpx.AsyncClient() as c:
             resp = await c.post(f"{gw}/auth/token", json={
-                "email": "admin@acp.local", "password": "password"
+                "email": "admin@acp.local", "password": "admin1234"
             }, headers={"X-Tenant-ID": "00000000-0000-0000-0000-000000000001"})
             if resp.status_code != 200:
                 pytest.skip("Live stack not available")
@@ -546,7 +546,7 @@ class TestMultiTenantIsolationE2E:
         gw = "http://localhost:8000"
         async with httpx.AsyncClient() as c:
             resp = await c.post(f"{gw}/auth/token", json={
-                "email": "admin@acp.local", "password": "password"
+                "email": "admin@acp.local", "password": "admin1234"
             }, headers={"X-Tenant-ID": "00000000-0000-0000-0000-000000000001"})
             if resp.status_code != 200:
                 pytest.skip("Live stack not available")

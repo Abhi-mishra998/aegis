@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useContext } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { forensicsService } from '../services/api'
+import { AgentContext } from '../context/AgentContext'
 import {
   Search, BrainCircuit, Activity, ShieldAlert,
   FileText, ChevronRight, Database, Fingerprint,
@@ -172,6 +173,7 @@ function ReplayStep({ step, idx, isActive, onClick }) {
 export default function Forensics() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext)
   const [agentId, setAgentId]         = useState('')
   const [profile, setProfile]         = useState(null)
   const [loading, setLoading]         = useState(false)
@@ -210,12 +212,15 @@ export default function Forensics() {
     loadRecent()
   }, [])
 
-  // Auto-investigate when navigated here with ?agent=<id>
+  // Auto-investigate when navigated here with ?agent=<id>, OR when the
+  // user selects an agent in the Topbar/Sidebar scope picker. URL takes
+  // precedence so deep links work; context selection seeds the field when
+  // no URL param is present so "click agent → see forensics" works.
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    const id = params.get('agent')
+    const id = params.get('agent') || selectedAgentId
     if (id) { setAgentId(id); triggerInvestigation(id) }
-  }, [location.search]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.search, selectedAgentId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const triggerInvestigation = async (id) => {
     if (!id?.trim()) return

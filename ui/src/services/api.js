@@ -32,6 +32,7 @@ export const clearSessionMetadata = () => {
   localStorage.removeItem("acp_token_expiry");
   localStorage.removeItem("user_role");
   localStorage.removeItem("agent_id");
+  localStorage.removeItem("sse_query_token");
 };
 
 export const isSessionValid = () => {
@@ -205,6 +206,16 @@ export const authService = {
     const tenantId = json?.tenant_id || json?.data?.tenant_id;
     const expiresIn = json?.expires_in || json?.data?.expires_in || 900;
     const role = json?.role || json?.data?.role;
+
+    // Browser EventSource API cannot set custom headers, so /events/stream
+    // falls back to a query-string token when the httpOnly cookie isn't
+    // available cross-origin or hasn't propagated yet. Persist the access
+    // token here in same-origin localStorage so useSSE picks it up. Storage
+    // is wiped on logout via clearSessionMetadata().
+    const accessToken = json?.access_token || json?.data?.access_token;
+    if (accessToken) {
+      try { localStorage.setItem("sse_query_token", accessToken); } catch (_) {}
+    }
 
     setSessionMetadata({ tenant_id: tenantId, expires_in: expiresIn, role });
 

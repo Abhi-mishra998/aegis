@@ -50,7 +50,7 @@ echo "[2/6] User Authentication"
 LOGIN=$(curl -s -X POST "$HOST/auth/token" \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: $TENANT" \
-  -d '{"email":"admin@acp.local","password":"password"}')
+  -d '{"email":"admin@acp.local","password": "admin1234"}')
 
 check_contains "User Login (/auth/token)" "$LOGIN" '"success":true'
 

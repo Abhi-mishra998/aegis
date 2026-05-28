@@ -85,7 +85,7 @@ def _provision_tenants(
     try:
         ar = httpx.post(
             f"{gateway_url.rstrip('/')}/auth/token",
-            json={"email": "admin@acp.local", "password": "password"},
+            json={"email": "admin@acp.local", "password": "admin1234"},
             headers={"X-Tenant-ID": "00000000-0000-0000-0000-000000000001",
                      "Content-Type": "application/json"},
             timeout=10.0,
@@ -173,7 +173,7 @@ def _teardown_tenants(
     try:
         ar = httpx.post(
             f"{gateway_url.rstrip('/')}/auth/token",
-            json={"email": "admin@acp.local", "password": "password"},
+            json={"email": "admin@acp.local", "password": "admin1234"},
             headers={"X-Tenant-ID": "00000000-0000-0000-0000-000000000001",
                      "Content-Type": "application/json"},
             timeout=10.0,

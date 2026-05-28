@@ -269,7 +269,7 @@ async def list_logs(
     agent_id: uuid.UUID | None = None,
     action: str | None = None,
     decision: str | None = None,
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(10, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> APIResponse[AuditLogListResponse]:
     """List audit logs with filtering and pagination."""

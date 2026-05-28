@@ -380,6 +380,6 @@ if __name__ == "__main__":
     parser.add_argument("--agents", type=int, default=100)
     parser.add_argument("--rounds", type=int, default=5, help="Execute rounds after login")
     parser.add_argument("--admin-email", default="admin@acp.local")
-    parser.add_argument("--admin-password", default="password")
+    parser.add_argument("--admin-password", default="admin1234")
     parser.add_argument("--tenant-id", default="00000000-0000-0000-0000-000000000001")
     asyncio.run(main(parser.parse_args()))

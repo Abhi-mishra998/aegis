@@ -36,7 +36,7 @@ async def seed_admin_user() -> bool:
         print(f"🔗 Using DB: {db_url}")
 
         engine = create_async_engine(db_url, echo=False)
-        hashed_password = bcrypt.hashpw(b"password", bcrypt.gensalt()).decode("utf-8")
+        hashed_password = bcrypt.hashpw(b"admin1234", bcrypt.gensalt()).decode("utf-8")
         admin_id = str(uuid.uuid4())
 
         async with engine.connect() as conn:
@@ -104,7 +104,7 @@ async def seed_admin_user() -> bool:
 
         await engine.dispose()
         print("\n✅ Admin user created successfully")
-        print("   Credentials: admin@acp.local / password")
+        print("   Credentials: admin@acp.local / admin1234")
         return True
 
     except Exception as e:

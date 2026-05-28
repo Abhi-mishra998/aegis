@@ -30,7 +30,7 @@ from redis.asyncio import Redis
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
-from services.gateway.auth import init_token_validator, token_validator
+from services.gateway.auth import init_token_validator
 from services.gateway.client import service_client
 from services.gateway.middleware import SecurityMiddleware
 
@@ -1642,11 +1642,21 @@ async def explain_decision_proxy(audit_id: str, request: Request) -> Any:
 
 @app.post("/audit/logs/{audit_id}/notes", tags=["audit"])
 async def add_audit_note_proxy(audit_id: str, request: Request) -> Any:
-    """Proxy → Audit service — add analyst note to an audit entry."""
+    """Proxy → Audit service — add analyst note to an audit entry.
+
+    Must forward Content-Type so FastAPI on the audit side knows to parse
+    the body as JSON into the Pydantic _NoteCreate model. Without the
+    header, the request body is treated as raw bytes and validation fails
+    with "Input should be a valid dictionary or object".
+    """
+    headers = _internal_headers(request)
+    ctype = request.headers.get("content-type")
+    if ctype:
+        headers["Content-Type"] = ctype
     resp = await request.app.state.client.post(
         f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/{audit_id}/notes",
         content=await request.body(),
-        headers=_internal_headers(request),
+        headers=headers,
     )
     return _passthrough(resp)
 
@@ -3567,10 +3577,16 @@ async def events_stream(request: Request) -> Response:
         )
 
     try:
-        # token_validator is the live singleton initialised in lifespan().
-        if token_validator is None:
+        # token_validator is a module-level global in services.gateway.auth
+        # that is mutated by init_token_validator() during lifespan(). Importing
+        # the NAME (`from .auth import token_validator`) binds at import time
+        # to None and never sees the later reassignment. Re-resolve through the
+        # module here so we always read the live singleton.
+        from services.gateway import auth as _auth_mod
+        tv = _auth_mod.token_validator
+        if tv is None:
             raise RuntimeError("token_validator not initialised")
-        payload = await token_validator.validate(token)
+        payload = await tv.validate(token)
     except Exception as exc:
         # Narrow logging so debuggers can tell "no validator" apart from
         # "bad signature" apart from "expired". Was previously a bare
@@ -3616,19 +3632,23 @@ async def events_stream(request: Request) -> Response:
     )
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        tenant_q = await pubsub_manager.subscribe(tenant_channel)
-        agent_q = (
-            await pubsub_manager.subscribe(agent_channel) if agent_channel else None
-        )
+        # Bypass the shared module-level PubSubManager. With uvicorn
+        # `--workers 4`, the module-level Redis client + pubsub_manager are
+        # instantiated at import time, before uvicorn forks. The 4 child
+        # workers inherit the same socket FD and corrupt each other's
+        # pub/sub stream — publishes reach Redis (verified via PSUBSCRIBE
+        # monitor) but the shared subscriber's reader never delivers
+        # messages to the per-client queue. Fix: each SSE handler builds
+        # a fresh Redis pubsub connection from a fresh client so there is
+        # no cross-worker FD sharing.
+        from sdk.common.redis import get_redis_client
+        local_redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
+        pubsub = local_redis.pubsub()
+        channels_to_subscribe = [tenant_channel]
+        if agent_channel:
+            channels_to_subscribe.append(agent_channel)
+        await pubsub.subscribe(*channels_to_subscribe)
 
-        # Long-lived getter tasks survive across loop iterations so a
-        # value pulled from one queue is never lost to cancellation.
-        # When a task completes we yield its data and replace it with a
-        # fresh `.get()` task on the same queue.
-        tenant_task: asyncio.Task = asyncio.create_task(tenant_q.get())
-        agent_task: asyncio.Task | None = (
-            asyncio.create_task(agent_q.get()) if agent_q is not None else None
-        )
         try:
             connected_payload = {
                 "status": "connected",
@@ -3638,42 +3658,32 @@ async def events_stream(request: Request) -> Response:
                 connected_payload["agent_id"] = agent_filter
             yield f"event: connected\ndata: {json.dumps(connected_payload)}\n\n"
 
+            last_heartbeat = time.time()
             while True:
                 if await request.is_disconnected():
                     break
-                waiters: list[asyncio.Task] = [tenant_task]
-                if agent_task is not None:
-                    waiters.append(agent_task)
-                done, _pending = await asyncio.wait(
-                    waiters, timeout=15.0, return_when=asyncio.FIRST_COMPLETED,
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0,
                 )
-                if not done:
-                    yield f"event: heartbeat\ndata: {json.dumps({'ts': int(time.time())})}\n\n"
-                    continue
-                for d in done:
-                    try:
-                        data = d.result()
-                    except Exception:
-                        data = None
-                    if data is not None:
-                        yield f"data: {data}\n\n"
-                    # Replace the finished task so the next iteration
-                    # can keep listening on the same queue.
-                    if d is tenant_task:
-                        tenant_task = asyncio.create_task(tenant_q.get())
-                    elif d is agent_task and agent_q is not None:
-                        agent_task = asyncio.create_task(agent_q.get())
+                now = time.time()
+                if msg and msg.get("type") in ("message", "pmessage"):
+                    data = msg.get("data", b"")
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8", errors="replace")
+                    yield f"data: {data}\n\n"
+                    last_heartbeat = now
+                elif now - last_heartbeat >= 15.0:
+                    yield f"event: heartbeat\ndata: {json.dumps({'ts': int(now)})}\n\n"
+                    last_heartbeat = now
         except asyncio.CancelledError:
             raise
         finally:
-            for t in (tenant_task, agent_task):
-                if t is not None and not t.done():
-                    t.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await t
-            await pubsub_manager.unsubscribe(tenant_channel, tenant_q)
-            if agent_channel and agent_q is not None:
-                await pubsub_manager.unsubscribe(agent_channel, agent_q)
+            with suppress(Exception):
+                await pubsub.unsubscribe(*channels_to_subscribe)
+            with suppress(Exception):
+                await pubsub.aclose()
+            with suppress(Exception):
+                await local_redis.aclose()
 
     return StreamingResponse(
         event_generator(),

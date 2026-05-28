@@ -43,7 +43,7 @@ def _extract_tenant_from_jwt(token: str) -> str:
         return ""
 
 
-def _generate_fresh_token(host: str, email: str = "admin@acp.local", password: str = "password", tenant_id: str = "00000000-0000-0000-0000-000000000001") -> tuple[str, str] | None:
+def _generate_fresh_token(host: str, email: str = "admin@acp.local", password: str = "admin1234", tenant_id: str = "00000000-0000-0000-0000-000000000001") -> tuple[str, str] | None:
     """
     Generate a fresh JWT token by calling the /auth/token endpoint.
     Returns (token, tenant_id) on success, None on failure.

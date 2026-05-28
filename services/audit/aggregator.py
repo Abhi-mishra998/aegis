@@ -726,13 +726,20 @@ class AuditAggregator:
         """
         Returns a zero-filled ``days``-length daily series with counts split by
         decision outcome: allow, deny, escalate, monitor, kill.
+
+        2026-05-28: bind the `date_trunc('day', ts)` expression to a CTE column
+        so the parameterised expression isn't re-emitted at GROUP BY/ORDER BY
+        time. The previous shape produced PG GroupingError because asyncpg
+        emits a fresh `$N` placeholder per call site even when the literal
+        argument is identical, and PG considers them distinct expressions.
         """
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        day_expr = func.date_trunc("day", AuditLog.timestamp)
         stmt = (
             select(
-                func.date_trunc("day", AuditLog.timestamp).label("day"),
+                day_expr.label("day"),
                 AuditLog.decision,
                 func.count().label("count"),
             )
@@ -741,11 +748,8 @@ class AuditAggregator:
                 AuditLog.timestamp >= since,
                 AuditLog.decision.isnot(None),
             )
-            .group_by(
-                func.date_trunc("day", AuditLog.timestamp),
-                AuditLog.decision,
-            )
-            .order_by(func.date_trunc("day", AuditLog.timestamp))
+            .group_by(day_expr, AuditLog.decision)
+            .order_by(day_expr)
         )
         if agent_id is not None:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
@@ -997,14 +1001,9 @@ class AuditAggregator:
                     sa.case((AuditLog.decision.in_(["deny", "kill"]), 1), else_=0)
                 ).label("deny_count"),
                 func.avg(
-                    func.cast(
-                        func.nullif(
-                            func.cast(
-                                func.json_extract_path_text(
-                                    AuditLog.metadata_json, "risk_score"
-                                ),
-                                sa.String,
-                            ),
+                    sa.cast(
+                        sa.func.nullif(
+                            AuditLog.metadata_json["risk_score"].astext,
                             "",
                         ),
                         sa.Float,
@@ -1062,15 +1061,15 @@ class AuditAggregator:
                     sa.case((AuditLog.decision.in_(["deny", "kill"]), 1), else_=0)
                 ).label("deny_count"),
                 func.count(AuditLog.agent_id.distinct()).label("agent_count"),
+                # PG `metadata_json` is `jsonb`. The previous version called
+                # `json_extract_path_text(jsonb, varchar)` which does NOT
+                # exist (only the `json_*` family for the `json` type). Use
+                # the JSONB `->>` accessor (`.astext`), null-out empty strings,
+                # then cast to Float.
                 func.avg(
-                    func.cast(
-                        func.nullif(
-                            func.cast(
-                                func.json_extract_path_text(
-                                    AuditLog.metadata_json, "risk_score"
-                                ),
-                                sa.String,
-                            ),
+                    sa.cast(
+                        sa.func.nullif(
+                            AuditLog.metadata_json["risk_score"].astext,
                             "",
                         ),
                         sa.Float,
@@ -1179,9 +1178,10 @@ class AuditAggregator:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        day_expr = func.date_trunc("day", AuditLog.timestamp)
         stmt = (
             select(
-                func.date_trunc("day", AuditLog.timestamp).label("day"),
+                day_expr.label("day"),
                 func.count(AuditLog.agent_id.distinct()).label("active_agents"),
                 func.count().label("total_calls"),
             )
@@ -1190,8 +1190,8 @@ class AuditAggregator:
                 AuditLog.timestamp >= since,
                 AuditLog.agent_id.isnot(None),
             )
-            .group_by(func.date_trunc("day", AuditLog.timestamp))
-            .order_by(func.date_trunc("day", AuditLog.timestamp))
+            .group_by(day_expr)
+            .order_by(day_expr)
         )
         if agent_id is not None:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
@@ -1289,9 +1289,10 @@ class AuditAggregator:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        day_expr = func.date_trunc("day", AuditLog.timestamp)
         stmt = (
             select(
-                func.date_trunc("day", AuditLog.timestamp).label("day"),
+                day_expr.label("day"),
                 func.count().label("total"),
                 func.sum(
                     sa.case((AuditLog.decision == "allow", 1), else_=0)
@@ -1305,8 +1306,8 @@ class AuditAggregator:
                 AuditLog.tenant_id == tenant_id,
                 AuditLog.timestamp >= since,
             )
-            .group_by(func.date_trunc("day", AuditLog.timestamp))
-            .order_by(func.date_trunc("day", AuditLog.timestamp))
+            .group_by(day_expr)
+            .order_by(day_expr)
         )
 
         rows = (await db.execute(stmt)).all()

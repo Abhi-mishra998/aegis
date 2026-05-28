@@ -479,6 +479,24 @@ export default function Observability() {
           idx,
         }))
         setRiskTimeline((prev) => prev.length > 0 ? prev : timeline)
+
+        // Seed the Risk Signal Breakdown panel from the most recent row that
+        // actually carries `signals` in metadata_json. Without this the panel
+        // stays empty after a page reload until the next SSE `tool_executed`
+        // event arrives — confusing because the rest of the page already
+        // shows live numbers. New audit rows persist `signals` via
+        // _mw_audit._finalize_request → meta.signals.
+        const withSignals = items.find((i) => {
+          const m = i.metadata_json || i.metadata || {}
+          return m?.signals && typeof m.signals === 'object' && Object.keys(m.signals).length > 0
+        })
+        if (withSignals) {
+          const m = withSignals.metadata_json || withSignals.metadata || {}
+          setLastSignals((prev) => prev || m.signals)
+          setLastComposite((prev) => prev || (m.risk_score ?? withSignals.risk ?? 0))
+          setLastTool((prev) => prev || withSignals.tool || null)
+          setLastAgentId((prev) => prev || withSignals.agent_id || null)
+        }
       }).catch(() => {})
 
       riskService.getInsights(selectedAgentId).then((res) => {

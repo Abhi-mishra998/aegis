@@ -44,7 +44,7 @@ test_login() {
   
   RESPONSE=$(curl -s -X POST http://localhost:8000/auth/token \
     -H "Content-Type: application/json" \
-    -d '{"email":"admin@acp.local","password":"password"}')
+    -d '{"email":"admin@acp.local","password": "admin1234"}')
   
   if echo "$RESPONSE" | grep -q "access_token"; then
     echo -e "${GREEN}✓${NC}"
