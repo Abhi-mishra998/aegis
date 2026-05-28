@@ -507,10 +507,29 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                                     return resp
 
                             # --- SQL INJECTION HARD DENY ---
+                            # Targets real injection signatures only, not every
+                            # SELECT ... FROM (which would block any legit query).
+                            # Patterns:
+                            #   1. Stacked statement: ; followed by DROP/DELETE/UNION/EXEC/etc
+                            #   2. UNION-based: UNION (ALL) SELECT
+                            #   3. Boolean blind: OR/AND <digit>=<digit>  or  OR '1'='1'
+                            #   4. Comment evasion: -- or /* */ followed by destructive keyword
+                            #   5. Quote-break with terminator: '; or "; followed by --/SQL keyword
+                            #   6. Explicit DROP/TRUNCATE TABLE/DATABASE/SCHEMA
+                            #   7. SQL Server extended procs: xp_cmdshell, sp_executesql
                             _looks_sql = _k.lower() in _SQL_FIELDS
                             if _looks_sql:
                                 _SQL_PATTERN = _re.compile(
-                                    r"(--|\b(DROP|TRUNCATE|DELETE|INSERT|UPDATE|UNION|SELECT|ALTER|CREATE|EXEC|EXECUTE|CAST|CONVERT)\b.*\b(TABLE|DATABASE|FROM|INTO|SET|WHERE|SCHEMA)\b|';\s*(--|\w)|xp_\w+)",
+                                    r"(;\s*(DROP|TRUNCATE|DELETE|INSERT|UPDATE|UNION|EXEC|EXECUTE|CREATE|ALTER|SHUTDOWN|GRANT|REVOKE)\b"
+                                    r"|\bUNION\s+(ALL\s+)?SELECT\b"
+                                    r"|\b(OR|AND)\b\s+['\"]?\s*\d+\s*['\"]?\s*=\s*['\"]?\s*\d+\s*['\"]?"
+                                    r"|\b(OR|AND)\b\s+['\"]\s*\w*\s*['\"]\s*=\s*['\"]\s*\w*\s*['\"]"
+                                    r"|--[^\n]*\b(DROP|TRUNCATE|DELETE|UNION|EXEC|CREATE|ALTER|GRANT)\b"
+                                    r"|/\*.*?\*/.*?\b(DROP|TRUNCATE|DELETE|UNION|EXEC|CREATE|ALTER)\b"
+                                    r"|['\"];\s*(--|DROP|TRUNCATE|DELETE|INSERT|UNION|EXEC|EXECUTE|CREATE|ALTER)"
+                                    r"|\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|INDEX)\b"
+                                    r"|\b(xp_cmdshell|sp_executesql|xp_regwrite|xp_regread)\b"
+                                    r"|\bSELECT\b[^;]*\bFROM\b\s+\w+\s+WHERE\s+1\s*=\s*1\b)",
                                     _re.IGNORECASE | _re.DOTALL,
                                 )
                                 if _SQL_PATTERN.search(_v):
@@ -531,6 +550,63 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                                         signals={"blocked_field": _k},
                                         reasons=["sql_injection_detected"],
                                         source="sql_injection_hard_deny",
+                                    )
+                                    _flight_final["decision"] = "block"
+                                    _flight_final["risk"]     = 1.0
+                                    _flight_final["status"]   = "failed"
+                                    return resp
+
+                            # --- K8S DESTRUCTIVE OPS ON PRODUCTION HARD DENY ---
+                            # Fires when a kubectl/k8s delete tool targets a
+                            # production-class namespace OR a broad resource
+                            # selector ("all", "*", "deployments"+namespace).
+                            # Catches the "delete all in production" demo case
+                            # and any future DevOps-agent destructive blast-radius
+                            # attempt regardless of OPA bundle state.
+                            _tool_l = tool_name.lower()
+                            _is_k8s_destructive = (
+                                _tool_l in ("kubectl_delete", "k8s_delete", "kubectl_drain")
+                                or _tool_l.startswith("k8s.delete.")
+                                or _tool_l.startswith("kubectl.delete")
+                            )
+                            if _is_k8s_destructive:
+                                # Aggregate the WHOLE payload so we catch nested params
+                                _payload_str = json.dumps(body_dict, default=str).lower()
+                                _PROD_NS_PATTERN = _re.compile(
+                                    r'"namespace"\s*:\s*"[^"]*(prod(uction)?|prd|live)[^"]*"',
+                                    _re.IGNORECASE,
+                                )
+                                _BROAD_RESOURCE_PATTERN = _re.compile(
+                                    r'"resource"\s*:\s*"(all|\*|deployments|services|nodes|namespaces|secrets)"',
+                                    _re.IGNORECASE,
+                                )
+                                _hits_prod = bool(_PROD_NS_PATTERN.search(_payload_str))
+                                _hits_broad = bool(_BROAD_RESOURCE_PATTERN.search(_payload_str))
+                                if _hits_prod or _hits_broad:
+                                    reason_summary = (
+                                        "destructive k8s op on production namespace" if _hits_prod
+                                        else "destructive k8s op with broad resource selector"
+                                    )
+                                    logger.warning(
+                                        "k8s_destructive_blocked",
+                                        tool=tool_name,
+                                        prod_namespace=_hits_prod,
+                                        broad_resource=_hits_broad,
+                                        request_id=request_id,
+                                    )
+                                    resp = self._deny(f"Security: {reason_summary}", 403)
+                                    await self._log_audit(
+                                        t_id_str, agent_id, "execute_tool", tool_name, "block",
+                                        "k8s_destructive_pattern_detected", request_id,
+                                        {"prod_namespace": _hits_prod, "broad_resource": _hits_broad},
+                                    )
+                                    await self._emit_groq_event(
+                                        event_id=request_id, tenant_id=t_id_str,
+                                        agent_id=str(agent_id), tool=tool_name,
+                                        decision="block", risk_score=1.0,
+                                        signals={"prod_namespace": _hits_prod, "broad_resource": _hits_broad},
+                                        reasons=["k8s_destructive_pattern_detected"],
+                                        source="k8s_destructive_hard_deny",
                                     )
                                     _flight_final["decision"] = "block"
                                     _flight_final["risk"]     = 1.0
