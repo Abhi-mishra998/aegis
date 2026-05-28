@@ -101,9 +101,15 @@ export default function DeveloperPanel() {
   const [keysError,   setKeysError]   = useState('')
   const [createError, setCreateError] = useState('')
 
-  const tid              = tenant_id || 'YOUR_TENANT_ID'
-  // Token is stored in httpOnly cookie — not accessible from JS (XSS protection)
-  const tokenPlaceholder = '<httpOnly cookie — not exposed to JS>'
+  const tid              = tenant_id || '00000000-0000-0000-0000-000000000001'
+  // Demo agent IDs from the production seed — keep in sync with seed_demo_data.py.
+  const DEMO_AGENT       = 'a245cc68-19aa-48a7-8862-f3d7f0332ff6'   // demo-agent
+  const DB_AGENT         = 'a0c1849b-3b60-40aa-a7ef-35557a7ceef6'   // db-copilot-demo
+  const SUPPORT_AGENT    = 'd4f0fbfc-d629-4acd-ac82-30787f0c0f2a'   // support-agent-demo
+  const DEVOPS_AGENT     = '37533cba-54a2-475c-94e2-319c3dfdf69e'   // devops-agent-demo
+  // For copy-paste safety we use a placeholder in headers — the user pipes it
+  // in from Step 1 (the login response) via the $TOKEN env var.
+  const tokenPlaceholder = '$TOKEN'
 
   const loadKeys = () => {
     setKeysLoading(true)

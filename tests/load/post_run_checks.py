@@ -422,7 +422,7 @@ def _attach_admin_jwt(headers: dict[str, str], *, gateway_url: str) -> None:
     try:
         resp = httpx.post(
             f"{gateway_url.rstrip('/')}/auth/token",
-            json={"email": "admin@acp.local", "password": "password"},
+            json={"email": "admin@acp.local", "password": "admin1234"},
             headers={"X-Tenant-ID": _DEFAULT_TENANT, "Content-Type": "application/json"},
             timeout=5.0,
         )

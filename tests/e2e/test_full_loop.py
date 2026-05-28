@@ -11,7 +11,7 @@ GATEWAY_URL  = os.getenv("GATEWAY_URL",  "http://localhost:8000")
 IDENTITY_URL = os.getenv("IDENTITY_URL", "http://localhost:8002")
 
 ADMIN_EMAIL    = os.getenv("ADMIN_EMAIL",    "admin@acp.local")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "password")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
 ADMIN_TENANT   = os.getenv("ADMIN_TENANT",   "00000000-0000-0000-0000-000000000001")
 
 

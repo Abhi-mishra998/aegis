@@ -398,7 +398,7 @@ def observe(token: str, agent_id: str) -> None:
               f"{(insight.get('narrative') or '')[:80]}")
 
     print("\n  → Open http://localhost:5173 to see all of this in the UI")
-    print("    Login: admin@acp.local / password")
+    print("    Login: admin@acp.local / admin1234")
     print("    Flight Recorder: G F | Audit Trail: G A | Observability: G O")
 
 
