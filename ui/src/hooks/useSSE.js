@@ -2,6 +2,8 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || ''
 const MAX_BACKOFF_MS = 32_000
+const HEARTBEAT_TIMEOUT_MS = 45_000
+const HEARTBEAT_WATCHDOG_INTERVAL_MS = 10_000
 
 /**
  * useSSE — hardened SSE consumer.
@@ -20,40 +22,95 @@ const MAX_BACKOFF_MS = 32_000
  *   - per-channel `addEventListener` demux via `channels` option
  *   - exposes connection state (connecting | open | closed)
  *   - heartbeat-aware (silent ping every 15s from backend keeps the stream alive)
+ *   - Sprint 2: re-reads the query-token on EVERY reconnect (refresh-token aware)
+ *   - Sprint 2: heartbeat-freshness watchdog — force-close if backend goes quiet
+ *   - Sprint 2: surfaces `lastError` ('auth_expired' | 'network' | 'cors' | 'unknown')
  *   - reduced-motion safe (no auto-scroll triggered from here)
  */
+
+// Read the current SSE token at call time so reconnects always pick up a
+// freshly refreshed session token, not the one captured at hook init.
+function getCurrentToken() {
+  try {
+    return localStorage.getItem('sse_query_token') || null
+  } catch {
+    return null
+  }
+}
+
 export function useSSE({
   enabled = true,
   onMessage,
   onConnected,
   onError,
   channels = {},
+  agentId,
 } = {}) {
   const esRef              = useRef(null)
   const reconnectTimerRef  = useRef(null)
+  const watchdogTimerRef   = useRef(null)
+  const lastHeartbeatAtRef = useRef(Date.now())
   const attemptsRef        = useRef(0)
   const mountedRef         = useRef(true)
   const onMessageRef       = useRef(onMessage)
   const onConnectedRef     = useRef(onConnected)
   const onErrorRef         = useRef(onError)
   const channelsRef        = useRef(channels)
+  const agentIdRef         = useRef(agentId)
 
   const [state, setState] = useState('connecting')
+  // Sprint 2: surface the most recent failure reason so a UI badge can
+  // render something more useful than "Disconnected".
+  const [lastError, setLastError] = useState(null)
 
   useEffect(() => { onMessageRef.current   = onMessage   }, [onMessage])
   useEffect(() => { onConnectedRef.current = onConnected }, [onConnected])
   useEffect(() => { onErrorRef.current     = onError     }, [onError])
   useEffect(() => { channelsRef.current    = channels    }, [channels])
+  useEffect(() => { agentIdRef.current     = agentId     }, [agentId])
 
   const buildUrl = () => {
     // Optional query-token override for environments where cookies are not
     // shared with the API origin (cross-origin SaaS, mobile webviews).
-    let qs = ''
-    try {
-      const t = localStorage.getItem('sse_query_token')
-      if (t) qs = `?token=${encodeURIComponent(t)}`
-    } catch { /* localStorage unavailable */ }
-    return `${API_BASE}/events/stream${qs}`
+    // IMPORTANT: read at call-time so reconnects use refreshed tokens.
+    const params = new URLSearchParams()
+    const tok = getCurrentToken()
+    if (tok) params.set('token', tok)
+    if (agentIdRef.current) params.set('agent_id', String(agentIdRef.current))
+    const qs = params.toString()
+    return `${API_BASE}/events/stream${qs ? `?${qs}` : ''}`
+  }
+
+  const clearWatchdog = () => {
+    if (watchdogTimerRef.current) {
+      clearInterval(watchdogTimerRef.current)
+      watchdogTimerRef.current = null
+    }
+  }
+
+  // Forward declaration so the watchdog can call connect() once it expires.
+  const connectRef = useRef(null)
+
+  const startWatchdog = () => {
+    clearWatchdog()
+    lastHeartbeatAtRef.current = Date.now()
+    watchdogTimerRef.current = setInterval(() => {
+      if (!mountedRef.current) return
+      const elapsed = Date.now() - lastHeartbeatAtRef.current
+      if (elapsed > HEARTBEAT_TIMEOUT_MS) {
+        // No heartbeat for > 45s — the TCP socket may be half-open. Force
+        // a fresh EventSource so the browser actually re-resolves DNS and
+        // (more importantly) re-reads our possibly-refreshed query token.
+        setLastError('heartbeat_timeout')
+        try { esRef.current?.close() } catch { /* ignore */ }
+        esRef.current = null
+        clearWatchdog()
+        if (mountedRef.current) {
+          attemptsRef.current = 0
+          connectRef.current?.()
+        }
+      }
+    }, HEARTBEAT_WATCHDOG_INTERVAL_MS)
   }
 
   const connect = useCallback(() => {
@@ -67,16 +124,26 @@ export function useSSE({
     es.addEventListener('connected', (e) => {
       attemptsRef.current = 0
       setState('open')
-      onConnectedRef.current?.(e.data)
+      setLastError(null)
+      lastHeartbeatAtRef.current = Date.now()
+      startWatchdog()
+      try {
+        onConnectedRef.current?.(JSON.parse(e.data))
+      } catch {
+        onConnectedRef.current?.(e.data)
+      }
     })
 
     es.addEventListener('heartbeat', () => {
-      // Keep-alive only — no payload. Presence is enough.
+      // Keep-alive — refresh the watchdog timestamp so we don't kill a
+      // healthy connection on the next interval tick.
+      lastHeartbeatAtRef.current = Date.now()
     })
 
     // Channel demux: subscribers can listen to named server events.
     for (const [name, fn] of Object.entries(channelsRef.current || {})) {
       es.addEventListener(name, (e) => {
+        lastHeartbeatAtRef.current = Date.now()
         try {
           fn(JSON.parse(e.data))
         } catch {
@@ -86,6 +153,7 @@ export function useSSE({
     }
 
     es.onmessage = (event) => {
+      lastHeartbeatAtRef.current = Date.now()
       try {
         onMessageRef.current?.(JSON.parse(event.data))
       } catch {
@@ -94,8 +162,23 @@ export function useSSE({
     }
 
     es.onerror = () => {
+      // Classify the failure reason so the UI badge can show something
+      // meaningful. readyState===2 (CLOSED) after a 401 looks identical
+      // to a network drop from the EventSource API; we infer based on
+      // whether we ever reached the 'open' state in this attempt.
+      const wasOpen = es.readyState === EventSource.OPEN
+      if (!wasOpen && attemptsRef.current === 0) {
+        // First attempt failed before connected → likely auth or CORS.
+        setLastError(getCurrentToken() ? 'cors' : 'auth_expired')
+      } else if (!wasOpen) {
+        setLastError('auth_expired')
+      } else {
+        setLastError('network')
+      }
+
       es.close()
       esRef.current = null
+      clearWatchdog()
       attemptsRef.current += 1
       setState('closed')
       onErrorRef.current?.()
@@ -105,12 +188,15 @@ export function useSSE({
     }
   }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { connectRef.current = connect }, [connect])
+
   useEffect(() => {
     mountedRef.current = true
     if (enabled) connect()
     return () => {
       mountedRef.current = false
       clearTimeout(reconnectTimerRef.current)
+      clearWatchdog()
       esRef.current?.close()
       esRef.current = null
     }
@@ -118,11 +204,13 @@ export function useSSE({
 
   const reconnect = useCallback(() => {
     clearTimeout(reconnectTimerRef.current)
+    clearWatchdog()
     esRef.current?.close()
     esRef.current = null
     attemptsRef.current = 0
+    setLastError(null)
     connect()
   }, [connect])
 
-  return { reconnect, state }
+  return { reconnect, state, lastError }
 }

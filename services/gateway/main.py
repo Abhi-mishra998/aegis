@@ -125,6 +125,44 @@ class PubSubManager:
 pubsub_manager = PubSubManager(redis)
 
 
+async def _publish_event(
+    r: Any, tenant_id: str, event_type: str, data: dict, *, agent_id: str | None = None
+) -> None:
+    """Publish a single SSE event to the per-tenant Redis Pub/Sub channel.
+
+    Sprint 2 — helper around the previous `redis.publish(f"acp:events:{tid}", json.dumps(...))`
+    pattern at 4 emit sites. Best-effort; never raises. SSE is a side channel and a
+    publish failure must NOT bring down the originating handler.
+
+    If `agent_id` is provided, the event is ALSO published on the per-agent channel
+    `acp:events:{tenant_id}:{agent_id}` so EventSource clients scoped to one agent
+    receive a filtered stream alongside the tenant-wide subscription.
+    """
+    if not tenant_id:
+        return
+    try:
+        payload = json.dumps({
+            "type": event_type,
+            "data": data,
+            "ts": int(time.time()),
+        })
+    except Exception as exc:
+        logger.warning("sse_publish_serialise_failed", event_type=event_type, error=str(exc))
+        return
+    try:
+        await r.publish(f"acp:events:{tenant_id}", payload)
+    except Exception as exc:
+        logger.warning("sse_publish_failed", event_type=event_type, error=str(exc))
+    if agent_id:
+        try:
+            await r.publish(f"acp:events:{tenant_id}:{agent_id}", payload)
+        except Exception as exc:
+            logger.warning(
+                "sse_publish_agent_channel_failed",
+                event_type=event_type, agent_id=agent_id, error=str(exc),
+            )
+
+
 def _clamp_int(value: str | None, default: int, lo: int, hi: int) -> int:
     """Parse and clamp a numeric query param to a safe range."""
     try:
@@ -711,6 +749,40 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
         tenant_id=str(tenant_id),
         agent_id=str(getattr(request.state, "agent_id", "") or ""),
     )
+
+    # Sprint 2 — at-most-once-per-month SSE quota_warning publish when
+    # the tenant crosses 80% of its monthly request cap. The
+    # `acp:quota_warning_sent:{tenant_id}:{YYYYMM}` SETNX guard makes
+    # this idempotent even if /tenant/quota is polled every few seconds.
+    monthly_cap = usage.get("monthly_cap") if isinstance(usage, dict) else None
+    monthly_used = usage.get("monthly_used") if isinstance(usage, dict) else None
+    if monthly_cap and monthly_used is not None:
+        try:
+            cap_int = int(monthly_cap)
+            used_int = int(monthly_used)
+        except (TypeError, ValueError):
+            cap_int, used_int = 0, 0
+        if cap_int > 0 and used_int >= int(cap_int * 0.80):
+            now = datetime.now(UTC)
+            guard_key = f"acp:quota_warning_sent:{tenant_id}:{now.strftime('%Y%m')}"
+            try:
+                first_time = await redis.set(guard_key, "1", nx=True, ex=35 * 24 * 3600)
+            except Exception as _e:
+                logger.warning("quota_warning_guard_failed", error=str(_e))
+                first_time = False
+            if first_time:
+                await _publish_event(
+                    redis, str(tenant_id), "quota_warning",
+                    {
+                        "tenant_id":         str(tenant_id),
+                        "monthly_used":      used_int,
+                        "monthly_cap":       cap_int,
+                        "percent":           round(used_int / cap_int * 100.0, 2),
+                        "monthly_resets_at": usage.get("monthly_resets_at"),
+                        "threshold":         80,
+                    },
+                )
+
     return {
         "limits": {
             "requests_per_second":           int(limits.get("requests_per_second", 50)),
@@ -807,13 +879,12 @@ async def create_agent(request: Request, response: Response) -> Any:
     result = resp.json()
     tenant_id_str = request.headers.get("X-Tenant-ID", "")
     if tenant_id_str and resp.status_code in (200, 201):
-        try:
-            await redis.publish(  # type: ignore[union-attr]
-                f"acp:events:{tenant_id_str}",
-                json.dumps({"type": "agent_created", "data": result.get("data", result)}),
-            )
-        except Exception as _e:
-            logger.debug("sse_publish_failed", event="agent_created", error=str(_e))
+        agent_data = result.get("data", result) if isinstance(result, dict) else {}
+        new_agent_id = str(agent_data.get("id", "")) if isinstance(agent_data, dict) else ""
+        await _publish_event(
+            redis, tenant_id_str, "agent_created", agent_data,
+            agent_id=new_agent_id or None,
+        )
     return result
 
 
@@ -821,6 +892,12 @@ async def create_agent(request: Request, response: Response) -> Any:
 async def agents_summary(request: Request) -> Any:
     """Proxy → Registry fleet summary (count by status + high-risk count)."""
     return await _trust_proxy(settings.REGISTRY_SERVICE_URL, "/agents/summary", request)
+
+
+@app.get("/registry/tools", tags=["registry"])
+async def registry_tools(request: Request) -> Any:
+    """Proxy → Registry service: deduplicated tool names across all registered agents."""
+    return await _trust_proxy(settings.REGISTRY_SERVICE_URL, "/agents/tools", request)
 
 
 @app.get("/agents/{agent_id}", tags=["agents"])
@@ -854,13 +931,10 @@ async def delete_agent(agent_id: str, request: Request) -> Any:
     )
     tenant_id_str = request.headers.get("X-Tenant-ID", "")
     if tenant_id_str and resp.status_code in (200, 204):
-        try:
-            await redis.publish(  # type: ignore[union-attr]
-                f"acp:events:{tenant_id_str}",
-                json.dumps({"type": "agent_deleted", "data": {"agent_id": agent_id}}),
-            )
-        except Exception as _e:
-            logger.debug("sse_publish_failed", event="agent_deleted", error=str(_e))
+        await _publish_event(
+            redis, tenant_id_str, "agent_deleted", {"agent_id": agent_id},
+            agent_id=agent_id,
+        )
     return _passthrough(resp)
 
 
@@ -1435,6 +1509,33 @@ async def threat_intel_summary_proxy(request: Request) -> Any:
     return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/threat-intel/summary", request)
 
 
+def _is_nontrivial_policy_decision(decision_data: Any) -> bool:
+    """True when a policy result is worth notifying the LiveFeed about.
+
+    Allowed decisions are noisy and not actionable — only surface deny /
+    escalate / approval_required style outcomes.
+    """
+    if not isinstance(decision_data, dict):
+        return False
+    if decision_data.get("allowed") is False:
+        return True
+    action = str(decision_data.get("action", "")).lower()
+    if action in {"deny", "escalate", "approval_required", "block"}:
+        return True
+    return False
+
+
+def _extract_policy_reasons(decision_data: Any) -> list[str]:
+    """Normalise the heterogeneous policy reason shapes into list[str]."""
+    if not isinstance(decision_data, dict):
+        return []
+    reasons = decision_data.get("reasons")
+    if isinstance(reasons, list) and reasons:
+        return [str(r) for r in reasons[:3]]
+    reason = decision_data.get("reason")
+    return [str(reason)] if reason else []
+
+
 @app.post("/policy/simulate", tags=["policy"])
 async def simulate_policy(request: Request) -> Any:
     """Proxy → Policy service dry-run simulation."""
@@ -1444,6 +1545,30 @@ async def simulate_policy(request: Request) -> Any:
         json=body,
         headers=_internal_headers(request),
     )
+    if resp.status_code == 200:
+        tenant_id_str = request.headers.get("X-Tenant-ID", "") or (
+            str(getattr(request.state, "tenant_id", "") or "")
+        )
+        try:
+            result = resp.json()
+        except Exception:
+            result = None
+        data = result.get("data", result) if isinstance(result, dict) else None
+        if tenant_id_str and _is_nontrivial_policy_decision(data):
+            body_dict = body if isinstance(body, dict) else {}
+            agent_id_val = str(body_dict.get("agent_id", "") or "")
+            reasons_list = _extract_policy_reasons(data)
+            await _publish_event(
+                redis, tenant_id_str, "policy_decision",
+                {
+                    "agent_id": agent_id_val or None,
+                    "action": body_dict.get("tool") or body_dict.get("action"),
+                    "allowed": bool(data.get("allowed", False)) if isinstance(data, dict) else False,
+                    "reasons": reasons_list,
+                    "source": "simulate",
+                },
+                agent_id=agent_id_val or None,
+            )
     return _passthrough(resp)
 
 
@@ -1456,6 +1581,30 @@ async def test_policy_proxy(request: Request) -> Any:
         json=body,
         headers=_internal_headers(request),
     )
+    if resp.status_code == 200:
+        tenant_id_str = request.headers.get("X-Tenant-ID", "") or (
+            str(getattr(request.state, "tenant_id", "") or "")
+        )
+        try:
+            result = resp.json()
+        except Exception:
+            result = None
+        data = result.get("data", result) if isinstance(result, dict) else None
+        if tenant_id_str and _is_nontrivial_policy_decision(data):
+            body_dict = body if isinstance(body, dict) else {}
+            agent_id_val = str(body_dict.get("agent_id", "") or "")
+            reasons_list = _extract_policy_reasons(data)
+            await _publish_event(
+                redis, tenant_id_str, "policy_decision",
+                {
+                    "agent_id": agent_id_val or None,
+                    "action": body_dict.get("tool") or body_dict.get("action"),
+                    "allowed": bool(data.get("allowed", False)) if isinstance(data, dict) else False,
+                    "reasons": reasons_list,
+                    "source": "test",
+                },
+                agent_id=agent_id_val or None,
+            )
     return _passthrough(resp)
 
 
@@ -1554,6 +1703,16 @@ async def risk_summary(request: Request) -> Any:
     """Proxy → Audit service summary for risk dashboard."""
     resp = await request.app.state.client.get(
         f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/summary",
+        headers=_internal_headers(request),
+    )
+    return _passthrough(resp)
+
+
+@app.get("/risk/signal-weights", tags=["risk"])
+async def risk_signal_weights(request: Request) -> Any:
+    """Proxy → Decision service signal weights."""
+    resp = await request.app.state.client.get(
+        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/signal-weights",
         headers=_internal_headers(request),
     )
     return _passthrough(resp)
@@ -1836,6 +1995,16 @@ async def toggle_kill_switch(tenant_id: str, request: Request) -> Any:
         json=body,
         headers=_internal_headers(request),
     )
+    if resp.status_code in (200, 201, 204):
+        await _publish_event(
+            redis, tenant_id, "kill_switch",
+            {
+                "tenant_id": tenant_id,
+                "engaged": True,
+                "tenant_wide": True,
+                "reason": (body or {}).get("reason") if isinstance(body, dict) else None,
+            },
+        )
     return _passthrough(resp)
 
 
@@ -1846,6 +2015,15 @@ async def disengage_kill_switch(tenant_id: str, request: Request) -> Any:
         f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/kill-switch/{tenant_id}",
         headers=_internal_headers(request),
     )
+    if resp.status_code in (200, 204):
+        await _publish_event(
+            redis, tenant_id, "kill_switch",
+            {
+                "tenant_id": tenant_id,
+                "engaged": False,
+                "tenant_wide": True,
+            },
+        )
     return _passthrough(resp)
 
 
@@ -1939,6 +2117,25 @@ async def billing_record_event(request: Request) -> Any:
         json=body,
         headers=_internal_headers(request),
     )
+    if resp.status_code in (200, 201):
+        tenant_id_str = request.headers.get("X-Tenant-ID", "") or (
+            str(getattr(request.state, "tenant_id", "") or "")
+        )
+        if tenant_id_str:
+            body_dict = body if isinstance(body, dict) else {}
+            agent_id_val = str(body_dict.get("agent_id", "") or "")
+            await _publish_event(
+                redis, tenant_id_str, "billing_updated",
+                {
+                    "agent_id": agent_id_val or None,
+                    "tool": body_dict.get("tool"),
+                    "action": body_dict.get("action"),
+                    "cost": body_dict.get("cost") or body_dict.get("amount"),
+                    "units": body_dict.get("units") or body_dict.get("quantity"),
+                    "audit_id": body_dict.get("audit_id"),
+                },
+                agent_id=agent_id_val or None,
+            )
     return _passthrough(resp)
 
 
@@ -2115,6 +2312,12 @@ async def create_incident(request: Request) -> Any:
     return _passthrough(resp)
 
 
+@app.get("/incidents/transitions", tags=["Incidents"])
+async def incidents_transitions(request: Request) -> Any:
+    """Proxy → Audit service: valid state machine transitions for incidents."""
+    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/incidents/transitions", request)
+
+
 @app.get("/incidents/summary", tags=["Incidents"])
 async def incident_summary(request: Request) -> Any:
     """Proxy → API service incident summary (security score, MTTR, open counts)."""
@@ -2161,13 +2364,12 @@ async def update_incident(incident_id: str, request: Request) -> Any:
     result = resp.json()
     tenant_id_str = request.headers.get("X-Tenant-ID", "")
     if tenant_id_str and resp.status_code == 200:
-        try:
-            await redis.publish(  # type: ignore[union-attr]
-                f"acp:events:{tenant_id_str}",
-                json.dumps({"type": "incident_updated", "data": result.get("data", {})}),
-            )
-        except Exception as _e:
-            logger.debug("sse_publish_failed", event="incident_updated", error=str(_e))
+        incident_data = result.get("data", {}) if isinstance(result, dict) else {}
+        inc_agent_id = str(incident_data.get("agent_id", "")) if isinstance(incident_data, dict) else ""
+        await _publish_event(
+            redis, tenant_id_str, "incident_updated", incident_data,
+            agent_id=inc_agent_id or None,
+        )
     return result
 
 
@@ -3282,26 +3484,40 @@ async def execute_tool(request: Request, tool_name: str | None = None) -> Any:
             # 3. Publish tool_executed event to SSE bus
             if tenant_id_str:
                 action_val = data.get("action", "allow")
-                try:
-                    await redis.publish(  # type: ignore[union-attr]
-                        f"acp:events:{tenant_id_str}",
-                        json.dumps({
-                            "type": "tool_executed",
-                            "data": {
-                                "request_id": request_id,
-                                "agent_id": agent_id_str,
-                                "tool": tool,
-                                "action": action_val,
-                                "risk": data.get("risk", 0.0),
-                                "confidence": data.get("confidence", 1.0),
-                                "signals": data.get("signals", {}),
-                                "reasons": (data.get("reasons") or [])[:3],
-                                "ts": int(time.time()),
-                            },
-                        }),
+                risk_val = float(data.get("risk", 0.0) or 0.0)
+                exec_payload = {
+                    "request_id": request_id,
+                    "agent_id": agent_id_str,
+                    "tool": tool,
+                    "action": action_val,
+                    "risk": risk_val,
+                    "confidence": data.get("confidence", 1.0),
+                    "signals": data.get("signals", {}),
+                    "reasons": (data.get("reasons") or [])[:3],
+                }
+                await _publish_event(
+                    redis, tenant_id_str, "tool_executed", exec_payload,
+                    agent_id=agent_id_str or None,
+                )
+
+                # Sprint 2 — fork a `risk_updated` event when this execution
+                # crossed the elevated-risk threshold so the LiveFeed +
+                # RiskEngine dashboards can react in real time. Cheap (one
+                # extra publish) and avoids us inventing a separate hook
+                # in /risk/summary which has no write path.
+                if risk_val > 0.5:
+                    await _publish_event(
+                        redis, tenant_id_str, "risk_updated",
+                        {
+                            "agent_id": agent_id_str,
+                            "tool": tool,
+                            "risk": risk_val,
+                            "action": action_val,
+                            "request_id": request_id,
+                            "reasons": (data.get("reasons") or [])[:3],
+                        },
+                        agent_id=agent_id_str or None,
                     )
-                except Exception as _e:
-                    logger.debug("sse_publish_failed", event="tool_executed", error=str(_e))
 
             return result
 
@@ -3380,22 +3596,84 @@ async def events_stream(request: Request) -> Response:
             media_type="application/json",
         )
 
-    channel = f"acp:events:{tenant_id_str}"
+    # Sprint 2 — optional per-agent SSE filter. When ?agent_id=<uuid> is
+    # supplied the stream merges messages from both the tenant-wide channel
+    # and the per-agent channel so consumers scoped to one agent get the
+    # tenant-level signals (kill_switch, quota_warning) plus that agent's
+    # own events (tool_executed, risk_updated, billing_updated, …).
+    agent_filter_raw = request.query_params.get("agent_id")
+    agent_filter: str | None = None
+    if agent_filter_raw:
+        try:
+            agent_filter = str(uuid.UUID(agent_filter_raw))
+        except (ValueError, AttributeError):
+            logger.warning("sse_invalid_agent_id", value=agent_filter_raw[:64])
+            agent_filter = None
+
+    tenant_channel = f"acp:events:{tenant_id_str}"
+    agent_channel = (
+        f"acp:events:{tenant_id_str}:{agent_filter}" if agent_filter else None
+    )
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        q = await pubsub_manager.subscribe(channel)
+        tenant_q = await pubsub_manager.subscribe(tenant_channel)
+        agent_q = (
+            await pubsub_manager.subscribe(agent_channel) if agent_channel else None
+        )
+
+        # Long-lived getter tasks survive across loop iterations so a
+        # value pulled from one queue is never lost to cancellation.
+        # When a task completes we yield its data and replace it with a
+        # fresh `.get()` task on the same queue.
+        tenant_task: asyncio.Task = asyncio.create_task(tenant_q.get())
+        agent_task: asyncio.Task | None = (
+            asyncio.create_task(agent_q.get()) if agent_q is not None else None
+        )
         try:
-            yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'tenant_id': tenant_id_str})}\n\n"
+            connected_payload = {
+                "status": "connected",
+                "tenant_id": tenant_id_str,
+            }
+            if agent_filter:
+                connected_payload["agent_id"] = agent_filter
+            yield f"event: connected\ndata: {json.dumps(connected_payload)}\n\n"
+
             while True:
                 if await request.is_disconnected():
                     break
-                try:
-                    data = await asyncio.wait_for(q.get(), timeout=15.0)
-                    yield f"data: {data}\n\n"
-                except TimeoutError:
+                waiters: list[asyncio.Task] = [tenant_task]
+                if agent_task is not None:
+                    waiters.append(agent_task)
+                done, _pending = await asyncio.wait(
+                    waiters, timeout=15.0, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
                     yield f"event: heartbeat\ndata: {json.dumps({'ts': int(time.time())})}\n\n"
+                    continue
+                for d in done:
+                    try:
+                        data = d.result()
+                    except Exception:
+                        data = None
+                    if data is not None:
+                        yield f"data: {data}\n\n"
+                    # Replace the finished task so the next iteration
+                    # can keep listening on the same queue.
+                    if d is tenant_task:
+                        tenant_task = asyncio.create_task(tenant_q.get())
+                    elif d is agent_task and agent_q is not None:
+                        agent_task = asyncio.create_task(agent_q.get())
+        except asyncio.CancelledError:
+            raise
         finally:
-            await pubsub_manager.unsubscribe(channel, q)
+            for t in (tenant_task, agent_task):
+                if t is not None and not t.done():
+                    t.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await t
+            await pubsub_manager.unsubscribe(tenant_channel, tenant_q)
+            if agent_channel and agent_q is not None:
+                await pubsub_manager.unsubscribe(agent_channel, agent_q)
 
     return StreamingResponse(
         event_generator(),

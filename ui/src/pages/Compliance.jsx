@@ -227,7 +227,7 @@ function EvidenceKpis({ framework, evidence }) {
     return (
       <>
         <KpiRow label="Total evaluated" value={measure.total_evaluated ?? '—'} />
-        <KpiRow label="Avg risk score"  value={measure.avg_risk_score != null ? measure.avg_risk_score.toFixed(3) : '—'} />
+        <KpiRow label="Avg risk score"  value={measure.avg_risk_score != null ? (measure.avg_risk_score?.toFixed?.(3) ?? measure.avg_risk_score) : '—'} />
         <KpiRow label="Escalations"     value={manage.total_escalations ?? 0} warn />
         <KpiRow label="Functions covered" value={(evidence?.functions_covered || []).join(', ') || '—'} />
       </>

@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {
   Database, Server, CheckCircle2, XCircle, Play,
   Save, Eye, EyeOff, Loader2, AlertCircle, Upload,
-  RefreshCw,
+  RefreshCw, AlertTriangle,
 } from 'lucide-react'
 import { siemService } from '../services/api'
 
@@ -72,22 +72,27 @@ export default function SiemSettings() {
   const [pushing, setPushing] = useState(false)
   const [pushResult, setPushResult] = useState(null)
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
+  const loadConfig = useCallback(() => {
+    setLoading(true)
+    setLoadError(false)
     siemService.getConfig()
       .then(d => {
         const c = d?.data || d || {}
         setCfg(prev => ({
           ...prev,
-          splunk_url: c.splunk_url || '',
-          splunk_token: c.splunk_token || '',
-          datadog_key: c.datadog_key || '',
-          datadog_site: c.datadog_site || 'datadoghq.com',
+          splunk_url: c.splunk_url ?? prev.splunk_url,
+          splunk_token: c.splunk_token ?? prev.splunk_token,
+          datadog_key: c.datadog_key ?? prev.datadog_key,
+          datadog_site: c.datadog_site ?? prev.datadog_site,
         }))
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => { loadConfig() }, [loadConfig])
 
   const save = async () => {
     setSaving(true)
@@ -161,6 +166,22 @@ export default function SiemSettings() {
       {error && (
         <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
           <AlertCircle size={14} /> {error}
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} />
+            <span>Failed to load configuration. Form fields may be stale.</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadConfig}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10"
+          >
+            <RefreshCw size={11} /> Retry
+          </button>
         </div>
       )}
 

@@ -195,6 +195,7 @@ export default function UserManagement() {
   const [users,    setUsers]    = useState([])
   const [loading,  setLoading]  = useState(true)
   const [inviting, setInviting] = useState(false)
+  const [error,    setError]    = useState('')
   const [roleFilter,   setRoleFilter]   = useState('all')
   const [activeFilter, setActiveFilter] = useState('all')
 
@@ -210,12 +211,12 @@ export default function UserManagement() {
   useEffect(() => { load() }, [load])
 
   const handleUpdate = async (id, data) => {
-    await userService.update(id, data).catch(() => {})
+    await userService.update(id, data).catch(err => setError(err?.response?.data?.detail || err?.message || 'Failed to update user'))
     await load()
   }
 
   const handleDeactivate = async (id) => {
-    await userService.deactivate(id).catch(() => {})
+    await userService.deactivate(id).catch(err => setError(err?.response?.data?.detail || err?.message || 'Failed to deactivate user'))
     await load()
   }
 
@@ -251,6 +252,14 @@ export default function UserManagement() {
           </button>
         </div>
       </header>
+
+      {/* Inline error banner */}
+      {error && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="shrink-0 hover:text-red-200"><X size={13} /></button>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">

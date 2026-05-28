@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {
   Shield, Save, Play, CheckCircle2, XCircle,
   Loader2, AlertCircle, Eye, EyeOff, ChevronDown,
-  Lock, Globe, Key,
+  Lock, Globe, Key, AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { ssoService } from '../services/api'
 
@@ -66,9 +66,12 @@ export default function SsoSettings() {
   const [testResult, setTestResult] = useState(null)
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState('')
+  const [loadError, setLoadError] = useState(false)
   const [providerTypes, setProviderTypes] = useState(PROVIDER_TYPES)
 
-  useEffect(() => {
+  const loadConfig = useCallback(() => {
+    setLoading(true)
+    setLoadError(false)
     ssoService.getProviders()
       .then(d => {
         const list = d?.data || d || []
@@ -80,9 +83,11 @@ export default function SsoSettings() {
         const c = d?.data || d || {}
         if (c.provider_type) setCfg(prev => ({ ...prev, ...c }))
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => { loadConfig() }, [loadConfig])
 
   const save = async () => {
     setSaving(true)
@@ -146,6 +151,22 @@ export default function SsoSettings() {
       {error && (
         <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
           <AlertCircle size={14} /> {error}
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} />
+            <span>Failed to load configuration. Form fields may be stale.</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadConfig}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10"
+          >
+            <RefreshCw size={11} /> Retry
+          </button>
         </div>
       )}
 

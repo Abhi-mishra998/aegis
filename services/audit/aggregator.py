@@ -18,7 +18,7 @@ class AuditAggregator:
     """
 
     @staticmethod
-    async def get_top_risky_agents(db: AsyncSession, tenant_id: uuid.UUID, limit: int = 10) -> list[dict[str, Any]]:
+    async def get_top_risky_agents(db: AsyncSession, tenant_id: uuid.UUID, limit: int = 10, agent_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
         """
         Identify agents with the highest density of security blocks/escalations.
         """
@@ -43,6 +43,8 @@ class AuditAggregator:
             .order_by(desc("threat_count"))
             .limit(limit)
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         result = await db.execute(stmt)
         return [
@@ -55,7 +57,7 @@ class AuditAggregator:
         ]
 
     @staticmethod
-    async def get_anomaly_trends(db: AsyncSession, tenant_id: uuid.UUID, days: int = 7) -> list[dict[str, Any]]:
+    async def get_anomaly_trends(db: AsyncSession, tenant_id: uuid.UUID, days: int = 7, agent_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
         """
         2026-05-13 (Run-3): Returns ALL days in the window, zero-filling buckets
         with no traffic. The previous SQL only emitted days that had matching
@@ -94,6 +96,8 @@ class AuditAggregator:
             .group_by("day")
             .order_by("day")
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         result = await db.execute(stmt)
         by_day: dict[str, dict[str, Any]] = {}
@@ -294,6 +298,7 @@ class AuditAggregator:
         tenant_id: uuid.UUID,
         limit: int = 20,
         days: int = 30,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Per-tool aggregation over the last N days.
 
@@ -324,6 +329,8 @@ class AuditAggregator:
             .order_by(desc("denied_calls"), desc("total_calls"))
             .limit(limit)
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         result = await db.execute(stmt)
         tools = []
@@ -470,6 +477,7 @@ class AuditAggregator:
         tenant_id: uuid.UUID,
         days: int = 30,
         limit: int = 15,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Frequency distribution of canonical security findings over the past N days.
 
@@ -483,8 +491,12 @@ class AuditAggregator:
         # Use a raw SQL CTE to unnest the JSONB array then aggregate.
         # SQLAlchemy core doesn't have a clean abstraction for jsonb_array_elements_text,
         # so we use text() for the subquery portion only.
+        agent_clause = "AND agent_id = :agent_id" if agent_id is not None else ""
+        params = {"tenant_id": str(tenant_id), "since": since, "limit": limit}
+        if agent_id is not None:
+            params["agent_id"] = str(agent_id)
         raw = await db.execute(
-            text("""
+            text(f"""
                 SELECT finding, COUNT(*) AS cnt
                 FROM audit_logs,
                      jsonb_array_elements_text(
@@ -496,11 +508,12 @@ class AuditAggregator:
                 WHERE tenant_id = :tenant_id
                   AND timestamp  >= :since
                   AND finding   <> ''
+                  {agent_clause}
                 GROUP BY finding
                 ORDER BY cnt DESC
                 LIMIT :limit
             """),
-            {"tenant_id": str(tenant_id), "since": since, "limit": limit},
+            params,
         )
 
         findings = [
@@ -521,6 +534,7 @@ class AuditAggregator:
         db: AsyncSession,
         tenant_id: uuid.UUID,
         days: int = 7,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Returns 24 hour-of-day buckets (0–23) with request count, deny count,
@@ -551,6 +565,8 @@ class AuditAggregator:
             .group_by(func.extract("hour", AuditLog.timestamp))
             .order_by(func.extract("hour", AuditLog.timestamp))
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
         by_hour = {int(r.hour): r for r in rows}
@@ -577,6 +593,7 @@ class AuditAggregator:
         tenant_id: uuid.UUID,
         days: int = 30,
         bins: int = 10,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Distributes audit log risk scores into ``bins`` equal-width buckets over [0, 1].
@@ -586,8 +603,12 @@ class AuditAggregator:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        agent_clause = "AND agent_id = :agent_id" if agent_id is not None else ""
+        params = {"tenant_id": str(tenant_id), "since": since, "bins": bins}
+        if agent_id is not None:
+            params["agent_id"] = str(agent_id)
         raw = await db.execute(
-            text("""
+            text(f"""
                 SELECT
                     FLOOR(CAST(metadata_json->>'risk_score' AS FLOAT) * :bins) / :bins AS bucket,
                     COUNT(*) AS cnt
@@ -596,10 +617,11 @@ class AuditAggregator:
                   AND timestamp  >= :since
                   AND metadata_json->>'risk_score' IS NOT NULL
                   AND metadata_json->>'risk_score' ~ '^[0-9]*\\.?[0-9]+$'
+                  {agent_clause}
                 GROUP BY bucket
                 ORDER BY bucket
             """),
-            {"tenant_id": str(tenant_id), "since": since, "bins": bins},
+            params,
         )
 
         by_bucket: dict[float, int] = {}
@@ -633,6 +655,7 @@ class AuditAggregator:
         db: AsyncSession,
         tenant_id: uuid.UUID,
         days: int = 28,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Returns a 7×24 grid of request counts by day-of-week × hour-of-day.
@@ -658,6 +681,8 @@ class AuditAggregator:
                 func.extract("hour", AuditLog.timestamp),
             )
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -696,6 +721,7 @@ class AuditAggregator:
         db: AsyncSession,
         tenant_id: uuid.UUID,
         days: int = 30,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Returns a zero-filled ``days``-length daily series with counts split by
@@ -721,6 +747,8 @@ class AuditAggregator:
             )
             .order_by(func.date_trunc("day", AuditLog.timestamp))
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -820,6 +848,7 @@ class AuditAggregator:
         days: int = 7,
         limit: int = 20,
         threshold: float = 0.7,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Returns the most recent high-risk audit events where the stored risk_score
@@ -849,6 +878,8 @@ class AuditAggregator:
             )
             .limit(limit)
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -882,6 +913,7 @@ class AuditAggregator:
         tenant_id: uuid.UUID,
         days: int = 30,
         limit: int = 15,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Returns the most frequent ``reason`` strings from deny/kill decisions,
@@ -913,6 +945,8 @@ class AuditAggregator:
             .order_by(desc(func.count()))
             .limit(limit)
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -1014,6 +1048,7 @@ class AuditAggregator:
         tenant_id: uuid.UUID,
         days: int = 30,
         limit: int = 20,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Cross-agent ranking of tools by deny rate over the given window."""
         now = datetime.now(UTC)
@@ -1053,6 +1088,8 @@ class AuditAggregator:
             )))
             .limit(limit)
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -1136,6 +1173,7 @@ class AuditAggregator:
         db: AsyncSession,
         tenant_id: uuid.UUID,
         days: int = 30,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Count of distinct agents active each day over the given window."""
         now = datetime.now(UTC)
@@ -1155,6 +1193,8 @@ class AuditAggregator:
             .group_by(func.date_trunc("day", AuditLog.timestamp))
             .order_by(func.date_trunc("day", AuditLog.timestamp))
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -1187,12 +1227,14 @@ class AuditAggregator:
         tenant_id: uuid.UUID,
         days: int = 30,
         limit: int = 20,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Ranked frequency of each canonical finding type over the given window."""
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
-        stmt = text("""
+        agent_clause = "AND agent_id = :agent_id" if agent_id is not None else ""
+        stmt = text(f"""
             SELECT
                 finding,
                 count(*) AS count
@@ -1205,14 +1247,18 @@ class AuditAggregator:
                  ) AS finding
             WHERE tenant_id = :tenant_id
               AND timestamp  >= :since
+              {agent_clause}
             GROUP BY finding
             ORDER BY count DESC
             LIMIT :limit
         """)
 
+        params = {"tenant_id": str(tenant_id), "since": since, "limit": limit}
+        if agent_id is not None:
+            params["agent_id"] = str(agent_id)
         rows = (await db.execute(
             stmt,
-            {"tenant_id": str(tenant_id), "since": since, "limit": limit},
+            params,
         )).all()
 
         total = sum(int(r.count) for r in rows)
@@ -1356,6 +1402,7 @@ class AuditAggregator:
         db: AsyncSession,
         tenant_id: uuid.UUID,
         days: int = 30,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """
         Daily tenant posture score: round((allow / total) * 100, 1).
@@ -1382,6 +1429,8 @@ class AuditAggregator:
             .group_by(func.date_trunc("day", AuditLog.timestamp))
             .order_by(func.date_trunc("day", AuditLog.timestamp))
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 
@@ -1417,6 +1466,7 @@ class AuditAggregator:
         db: AsyncSession,
         tenant_id: uuid.UUID,
         days: int = 30,
+        agent_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Daily escalation rate: (escalate_count / total) * 100, zero-filled."""
         now = datetime.now(UTC)
@@ -1437,6 +1487,8 @@ class AuditAggregator:
             .group_by(func.date_trunc("day", AuditLog.timestamp))
             .order_by(func.date_trunc("day", AuditLog.timestamp))
         )
+        if agent_id is not None:
+            stmt = stmt.where(AuditLog.agent_id == agent_id)
 
         rows = (await db.execute(stmt)).all()
 

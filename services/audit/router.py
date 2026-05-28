@@ -111,9 +111,12 @@ async def get_summary(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
 ) -> APIResponse[AuditSummaryResponse]:
     """Fast dashboard summary from Redis counters + Deep DB insights."""
     tid = str(tenant_id)
+    # Sprint 1 BE — optional per-agent scope filter
+    _agent_filter = (AuditLog.agent_id == agent_id) if agent_id is not None else sa.true()
 
     # Aggregate totals directly from DB so counts are always accurate,
     # regardless of whether Redis counters were populated (they're only
@@ -126,7 +129,7 @@ async def get_summary(
             func.sum(sa_case((AuditLog.decision.in_(["deny", "block"]), 1), else_=0)).label("blocked"),
             func.sum(sa_case((AuditLog.decision == "allow", 1), else_=0)).label("allowed"),
             func.sum(sa_case((AuditLog.action.in_(execute_actions), 1), else_=0)).label("exec_total"),
-        ).where(AuditLog.tenant_id == tenant_id)
+        ).where(AuditLog.tenant_id == tenant_id).where(_agent_filter)
     )
     row = count_q.one()
     total_reqs  = int(row.exec_total or 0)
@@ -162,14 +165,14 @@ async def get_summary(
         risk_dist = {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
     # Deep Insights from AuditAggregator (DB)
-    top_risky = await AuditAggregator.get_top_risky_agents(db, tenant_id, limit=5)
-    trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=7)
+    top_risky = await AuditAggregator.get_top_risky_agents(db, tenant_id, limit=5, agent_id=agent_id)
+    trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=7, agent_id=agent_id)
 
     # Avg risk score from DB
     avg_risk_result = await db.execute(
         select(func.avg(
             sa.cast(AuditLog.metadata_json["risk_score"], sa.Float)
-        )).where(AuditLog.tenant_id == tenant_id)
+        )).where(AuditLog.tenant_id == tenant_id).where(_agent_filter)
     )
     avg_risk = float(avg_risk_result.scalar_one_or_none() or 0.0)
 
@@ -197,16 +200,19 @@ async def get_summary(
 async def get_heatmap(
     db: Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
 ) -> APIResponse[dict]:
     """Return request-volume heatmap: {day_name: [count_h0..count_h23]} for last 7 days."""
     import datetime as _dt
     cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=7)
+    _agent_filter = (AuditLog.agent_id == agent_id) if agent_id is not None else sa.true()
     dow_col  = func.extract("dow",  AuditLog.timestamp).label("dow")
     hour_col = func.extract("hour", AuditLog.timestamp).label("hour")
     q = (
         select(dow_col, hour_col, func.count().label("cnt"))
         .where(AuditLog.tenant_id == tenant_id)
         .where(AuditLog.timestamp >= cutoff)
+        .where(_agent_filter)
         .group_by(dow_col, hour_col)
     )
     rows = (await db.execute(q)).all()
@@ -224,10 +230,11 @@ async def get_heatmap(
 async def get_trends(
     db: Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days: int = Query(7, ge=1, le=30),
 ) -> APIResponse[list[dict]]:
     """Get time-series anomaly trends for UI charts."""
-    trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=days)
+    trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=trends)
 
 
@@ -235,10 +242,11 @@ async def get_trends(
 async def risk_timeline(
     db: Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days: int = Query(7, ge=1, le=30),
 ) -> APIResponse[list[dict]]:
     """Return 7-day risk timeline trends."""
-    trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=days)
+    trends = await AuditAggregator.get_anomaly_trends(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=trends)
 
 
@@ -249,7 +257,7 @@ async def risk_top_threats(
     limit: int = Query(10, ge=1, le=50),
 ) -> APIResponse[list[dict]]:
     """Return top high-risk agents in the specified window."""
-    agents = await AuditAggregator.get_top_risky_agents(db, tenant_id, limit=limit)
+    agents = await AuditAggregator.get_top_risky_agents(db, tenant_id, limit=limit, agent_id=agent_id)
     return APIResponse(data=agents)
 
 
@@ -426,7 +434,14 @@ async def verify_integrity(
     db: Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
-    """Perform a cryptographic integrity check on the audit log chain."""
+    """Perform a cryptographic integrity check on the audit log chain.
+
+    Always returns 200; the boolean result lives in the payload as `valid`
+    (mirrored to `is_integrous` for back-compat). The UI uses these fields
+    to render "Chain Valid" vs "Chain Broken" — returning a non-2xx status
+    causes generic error handling to mask the violation count, so we keep
+    the HTTP semantics and let the body carry the verdict.
+    """
     result = await verify_audit_chain(db, tenant_id)
     return APIResponse(data=result)
 
@@ -869,6 +884,7 @@ async def get_agent_peer_benchmark(
 async def get_tool_risk_breakdown(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=1, le=90),
     limit:     int = Query(20, ge=1, le=100),
 ) -> APIResponse[dict]:
@@ -877,7 +893,7 @@ async def get_tool_risk_breakdown(
     Response: list of tools with total_calls, denied_calls, deny_rate, avg_risk.
     """
     breakdown = await AuditAggregator.get_tool_risk_breakdown(
-        db, tenant_id=tenant_id, limit=limit, days=days,
+        db, tenant_id=tenant_id, limit=limit, days=days, agent_id=agent_id,
     )
     return APIResponse(data=breakdown)
 
@@ -916,10 +932,11 @@ async def get_agent_risk_trend(
 async def get_hourly_activity(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(7, ge=1, le=30),
 ) -> APIResponse[dict]:
     """24-bucket hour-of-day activity breakdown — request count, deny count, avg risk."""
-    result = await AuditAggregator.get_hourly_activity(db, tenant_id, days=days)
+    result = await AuditAggregator.get_hourly_activity(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -927,11 +944,12 @@ async def get_hourly_activity(
 async def get_risk_histogram(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=1, le=90),
     bins:      int = Query(10, ge=5, le=20),
 ) -> APIResponse[dict]:
     """Risk score frequency distribution — equal-width histogram over [0, 1]."""
-    result = await AuditAggregator.get_risk_histogram(db, tenant_id, days=days, bins=bins)
+    result = await AuditAggregator.get_risk_histogram(db, tenant_id, days=days, bins=bins, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -939,10 +957,11 @@ async def get_risk_histogram(
 async def get_weekly_heatmap(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(28, ge=7, le=90),
 ) -> APIResponse[dict]:
     """7×24 request count grid by day-of-week × hour-of-day."""
-    result = await AuditAggregator.get_weekly_heatmap(db, tenant_id, days=days)
+    result = await AuditAggregator.get_weekly_heatmap(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -950,10 +969,11 @@ async def get_weekly_heatmap(
 async def get_decision_trend(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=7, le=90),
 ) -> APIResponse[dict]:
     """Daily decision outcome breakdown — allow/deny/escalate/monitor/kill."""
-    result = await AuditAggregator.get_decision_trend(db, tenant_id, days=days)
+    result = await AuditAggregator.get_decision_trend(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -972,13 +992,14 @@ async def get_agent_activity(
 async def get_high_risk_events(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int   = Query(7,   ge=1,   le=30),
     limit:     int   = Query(20,  ge=5,   le=100),
     threshold: float = Query(0.7, ge=0.0, le=1.0),
 ) -> APIResponse[dict]:
     """Most recent audit events at or above the risk score threshold."""
     result = await AuditAggregator.get_high_risk_events(
-        db, tenant_id, days=days, limit=limit, threshold=threshold,
+        db, tenant_id, days=days, limit=limit, threshold=threshold, agent_id=agent_id,
     )
     return APIResponse(data=result)
 
@@ -987,11 +1008,12 @@ async def get_high_risk_events(
 async def get_deny_reasons(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=1, le=90),
     limit:     int = Query(15, ge=5, le=50),
 ) -> APIResponse[dict]:
     """Top deny/kill reason strings by frequency."""
-    result = await AuditAggregator.get_deny_reasons(db, tenant_id, days=days, limit=limit)
+    result = await AuditAggregator.get_deny_reasons(db, tenant_id, days=days, limit=limit, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -1011,11 +1033,12 @@ async def get_agent_tool_usage(
 async def get_tool_risk_leaderboard(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=1, le=90),
     limit:     int = Query(20, ge=5, le=50),
 ) -> APIResponse[dict]:
     """Cross-agent tool risk leaderboard ordered by deny count."""
-    result = await AuditAggregator.get_tool_risk_leaderboard(db, tenant_id, days=days, limit=limit)
+    result = await AuditAggregator.get_tool_risk_leaderboard(db, tenant_id, days=days, limit=limit, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -1034,10 +1057,11 @@ async def get_risk_percentile_trend(
 async def get_daily_active_agents(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=7, le=90),
 ) -> APIResponse[dict]:
     """Distinct active agents per day over the given window."""
-    result = await AuditAggregator.get_daily_active_agents(db, tenant_id, days=days)
+    result = await AuditAggregator.get_daily_active_agents(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -1045,11 +1069,12 @@ async def get_daily_active_agents(
 async def get_finding_breakdown(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=1, le=90),
     limit:     int = Query(20, ge=5, le=50),
 ) -> APIResponse[dict]:
     """Ranked frequency of canonical finding types."""
-    result = await AuditAggregator.get_finding_breakdown(db, tenant_id, days=days, limit=limit)
+    result = await AuditAggregator.get_finding_breakdown(db, tenant_id, days=days, limit=limit, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -1084,10 +1109,11 @@ async def get_agent_finding_breakdown(
 async def get_posture_score_trend(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=7, le=90),
 ) -> APIResponse[dict]:
     """Daily tenant posture score (allow% of total decisions)."""
-    result = await AuditAggregator.get_posture_score_trend(db, tenant_id, days=days)
+    result = await AuditAggregator.get_posture_score_trend(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=result)
 
 
@@ -1095,10 +1121,11 @@ async def get_posture_score_trend(
 async def get_escalation_rate_trend(
     db:        Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     days:      int = Query(30, ge=7, le=90),
 ) -> APIResponse[dict]:
     """Daily escalation rate (escalate% of total decisions)."""
-    result = await AuditAggregator.get_escalation_rate_trend(db, tenant_id, days=days)
+    result = await AuditAggregator.get_escalation_rate_trend(db, tenant_id, days=days, agent_id=agent_id)
     return APIResponse(data=result)
 
 

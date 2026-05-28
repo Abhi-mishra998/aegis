@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
+import { useAgents } from '../../hooks/useAgents'
 import { useRole } from '../../hooks/useRole'
 
 // Primary nav — the 5 items every buyer should see first.
@@ -44,6 +45,7 @@ export default function Sidebar({ isOpen, onClose }) {
   const location  = useLocation()
   const navigate  = useNavigate()
   const { updateAuth, isAuthenticated } = useAuth()
+  const { agents, selectedAgentId, setSelectedAgentId, agentsLoading } = useAgents()
   const { canViewKillSwitch } = useRole()
   const navRef    = useRef(null)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -200,6 +202,40 @@ export default function Sidebar({ isOpen, onClose }) {
           <p className="text-[10px] leading-snug text-neutral-500 font-mono">
             Tamper-evident replay + runtime deny<br />for AI agents.
           </p>
+        </div>
+
+        {/* Agent scope picker — mirrors Topbar; sources AgentContext via useAgents */}
+        <div className="px-3 py-2.5 border-b border-[var(--border-subtle)] shrink-0">
+          <div className="flex items-center gap-2">
+            <Users size={11} className="text-neutral-500 shrink-0" aria-hidden="true" />
+            <span className="text-[10px] uppercase tracking-wider text-neutral-500 shrink-0">Scope:</span>
+            {agentsLoading ? (
+              <span className="text-[10px] text-neutral-600 font-mono truncate">Loading…</span>
+            ) : agents.length === 0 ? (
+              <span className="text-[10px] text-neutral-600 italic truncate">No agents</span>
+            ) : (
+              <select
+                value={selectedAgentId || ''}
+                onChange={(e) => setSelectedAgentId(e.target.value)}
+                aria-label="Select active agent"
+                className="
+                  flex-1 min-w-0 text-[11px] font-mono
+                  bg-[var(--bg-surface-elevated)]
+                  border border-[var(--border-subtle)]
+                  rounded-md px-1.5 py-1
+                  focus:outline-none focus:border-white/30
+                  cursor-pointer truncate
+                "
+                style={{ color: '#d4d4d4', WebkitTextFillColor: '#d4d4d4', colorScheme: 'dark' }}
+              >
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id} style={{ backgroundColor: '#111', color: '#fff' }}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
 
         {/* Nav */}

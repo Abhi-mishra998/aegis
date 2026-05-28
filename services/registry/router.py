@@ -145,6 +145,49 @@ async def get_agent_summary(
     })
 
 
+@router.get("/tools", response_model=APIResponse[list[str]])
+async def list_registered_tools(
+    request: Request,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[list[str]]:
+    """Return deduplicated list of tool names across all registered agents for this tenant."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from services.registry.models import Agent  # noqa: PLC0415
+
+    stmt = select(Agent).where(Agent.tenant_id == tenant_id, Agent.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    agents = result.scalars().all()
+
+    tools: set[str] = set()
+    for agent in agents:
+        meta = agent.metadata_data or {}
+        for t in (meta.get("tools") or meta.get("allowed_tools") or []):
+            if isinstance(t, str) and t.strip():
+                tools.add(t.strip())
+        for t in (meta.get("tool_names") or []):
+            if isinstance(t, str) and t.strip():
+                tools.add(t.strip())
+
+    # Also pull from the permissions table (tool_name column)
+    from services.registry.models import AgentPermission  # noqa: PLC0415
+    perm_stmt = select(AgentPermission.tool_name).where(AgentPermission.tenant_id == tenant_id)
+    perm_result = await db.execute(perm_stmt)
+    for (tool_name,) in perm_result.all():
+        if tool_name and tool_name.strip():
+            tools.add(tool_name.strip())
+
+    DEFAULT_TOOLS = [
+        "read_file", "write_file", "execute_code", "web_search",
+        "send_email", "query_database", "call_api", "list_files",
+    ]
+    for t in DEFAULT_TOOLS:
+        tools.add(t)
+
+    return APIResponse(data=sorted(tools))
+
+
 @router.get(
     "/{agent_id}",
     response_model=APIResponse[AgentResponse],

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { billingService } from '../services/api';
+import { AgentContext } from '../context/AgentContext';
 import Modal from '../components/Common/Modal';
 import { useAuth } from '../hooks/useAuth';
 import { eventBus } from '../lib/eventBus';
@@ -21,6 +22,7 @@ import {
   Download,
   Plus,
   X,
+  Filter,
 } from 'lucide-react';
 import {
   XAxis,
@@ -118,7 +120,7 @@ function BudgetRequestsSection() {
       if (approved) await billingService.approveBudgetRequest(id, { approved: true })
       else          await billingService.rejectBudgetRequest(id, { approved: false })
       fetchRequests()
-    } catch { /* silent */ }
+    } catch (err) { setError(err?.response?.data?.detail || err?.message || 'Failed to save budget decision') }
   }
 
   const statusCls = (s) => s === 'pending' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
@@ -234,6 +236,7 @@ function BudgetRequestsSection() {
 export default function Billing() {
   useAuth();
   const navigate = useNavigate();
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext);
 
   const [summary, setSummary] = useState(null);
   const [invoices, setInvoices] = useState([]);
@@ -255,7 +258,7 @@ export default function Billing() {
     setSumLoad(true);
     setSumError('');
     try {
-      const res = await billingService.getSummary();
+      const res = await billingService.getSummary(selectedAgentId);
       if (!mountedRef.current) return;
       setSummary(res?.data || res || {});
       setLastUpdated(new Date());
@@ -264,13 +267,13 @@ export default function Billing() {
     } finally {
       if (mountedRef.current) setSumLoad(false);
     }
-  }, []);
+  }, [selectedAgentId]);
 
   const fetchInvoices = useCallback(async () => {
     setInvLoad(true);
     setInvError('');
     try {
-      const res = await billingService.getInvoices();
+      const res = await billingService.getInvoices(selectedAgentId);
       if (!mountedRef.current) return;
       const d = res?.data || res || {};
       setInvoices(Array.isArray(d) ? d : (d.invoices || []));
@@ -279,7 +282,7 @@ export default function Billing() {
     } finally {
       if (mountedRef.current) setInvLoad(false);
     }
-  }, []);
+  }, [selectedAgentId]);
 
   const fetchDashboard = useCallback(async () => {
     setDashLoad(true);
@@ -315,9 +318,9 @@ export default function Billing() {
     fetchInvoices();
     fetchDashboard();
     fetchAnomalies();
-    billingService.getCostAttribution(4)
+    billingService.getCostAttribution(4, selectedAgentId)
       .then(r => { if (mountedRef.current) setCostAttribution(r?.data || r) })
-      .catch(() => {});
+      .catch(err => console.warn('getCostAttribution failed:', err?.message));
     const interval = setInterval(() => {
       fetchSummary(); fetchInvoices(); fetchDashboard(); fetchAnomalies();
     }, 30_000);
@@ -398,7 +401,14 @@ export default function Billing() {
       {/* ── Page header ── */}
       <div className="page-header">
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight text-white">Billing & Usage</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight text-white">Billing & Usage</h1>
+            {selectedAgent && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-neutral-500">ROI analytics, cost intelligence and invoice ledger</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

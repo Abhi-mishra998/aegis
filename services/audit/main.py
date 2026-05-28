@@ -382,6 +382,10 @@ setup_app(app, "audit")
 app.include_router(router)
 app.include_router(pending_router)
 
+from services.audit.reports import router as reports_router  # noqa: E402
+
+app.include_router(reports_router)
+
 # Daily Merkle transparency log — root commitment over signed receipts.
 from services.audit.transparency import transparency_router  # noqa: E402
 

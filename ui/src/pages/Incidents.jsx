@@ -11,6 +11,7 @@ import Button from '../components/Common/Button';
 import SkeletonLoader from '../components/Common/SkeletonLoader';
 import Modal from '../components/Common/Modal';
 import { incidentService, socService } from '../services/api';
+import { AgentContext } from '../context/AgentContext';
 
 async function _exportIncidentPdf(incidentId, incidentNumber) {
   const blob = await incidentService.exportPdf(incidentId)
@@ -41,8 +42,9 @@ const STATUS_CONFIG = {
   RESOLVED:      { cls: 'text-green-400 bg-green-500/10 border-green-500/20', label: 'Resolved' },
 };
 
-// Must mirror backend _ALLOWED_TRANSITIONS exactly
-const VALID_TRANSITIONS = {
+// Must mirror backend _ALLOWED_TRANSITIONS exactly — used as fallback until
+// the live /incidents/transitions response replaces it at runtime.
+const VALID_TRANSITIONS_FALLBACK = {
   OPEN:          ['INVESTIGATING'],
   INVESTIGATING: ['MITIGATED', 'ESCALATED', 'RESOLVED'],
   ESCALATED:     ['MITIGATED', 'RESOLVED'],
@@ -101,7 +103,7 @@ function ScoreGauge({ score }) {
 
 // ── Detail Modal ──────────────────────────────────────────────────────────────
 
-function IncidentDetail({ incident, onClose, onRefresh }) {
+function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
   const { addToast } = useContext(AuthContext);
   const navigate = useNavigate();
   const [loading,    setLoading]    = useState(false);
@@ -110,7 +112,7 @@ function IncidentDetail({ incident, onClose, onRefresh }) {
   const [by,         setBy]         = useState('');
   const [exporting,  setExporting]  = useState(false);
 
-  const transitions = VALID_TRANSITIONS[incident.status] || [];
+  const transitions = validTransitions[incident.status] || [];
 
   const handleStatus = async (newStatus) => {
     try {
@@ -412,9 +414,11 @@ const STATUS_OPTIONS   = ['', 'OPEN', 'INVESTIGATING', 'ESCALATED', 'MITIGATED',
 
 export default function Incidents() {
   const { addToast } = useContext(AuthContext);
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext);
 
   const [activeTab, setActiveTab] = useState('incidents');
 
+  const [validTransitions, setValidTransitions] = useState(VALID_TRANSITIONS_FALLBACK);
   const [summary,  setSummary]  = useState(null);
   const [items,    setItems]    = useState([]);
   const [total,    setTotal]    = useState(0);
@@ -430,12 +434,13 @@ export default function Incidents() {
     setLoading(true);
     try {
       const [sumRes, listRes] = await Promise.all([
-        incidentService.getSummary(),
+        incidentService.getSummary(selectedAgentId),
         incidentService.list({
           status:   filterStatus   || undefined,
           severity: filterSeverity || undefined,
           limit:    PAGE_SIZE,
           offset:   page * PAGE_SIZE,
+          agentId:  selectedAgentId || undefined,
         }),
       ]);
       setSummary(sumRes?.data || sumRes || null);
@@ -447,9 +452,15 @@ export default function Incidents() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterSeverity, page, addToast]);
+  }, [filterStatus, filterSeverity, page, selectedAgentId, addToast]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+    incidentService.getTransitions().then((res) => {
+      const t = res?.data?.transitions ?? res?.transitions;
+      if (t && typeof t === 'object') setValidTransitions(t);
+    }).catch(() => {});
+  }, [fetchAll]);
 
   // Real-time updates: SSE events + 30-second polling fallback
   useEffect(() => {
@@ -475,7 +486,14 @@ export default function Incidents() {
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-white">Incident Management</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-lg font-semibold text-white">Incident Management</h1>
+            {selectedAgent && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-neutral-500 mt-0.5">Security incidents auto-created from policy denials and agent kills</p>
         </div>
         <Button variant="secondary" size="sm" onClick={fetchAll} disabled={loading}>
@@ -712,6 +730,7 @@ export default function Incidents() {
           incident={selected}
           onClose={() => setSelected(null)}
           onRefresh={fetchAll}
+          validTransitions={validTransitions}
         />
       )}
     </div>

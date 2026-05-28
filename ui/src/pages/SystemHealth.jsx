@@ -12,6 +12,21 @@ import {
 } from 'lucide-react'
 import { dashboardService } from '../services/api'
 
+// Queue depth thresholds — keep in sync with infra/prometheus-rules.yml.
+// audit_stream crit matches: max_over_time(acp_audit_stream_length[1m]) > 45000
+// DLQ thresholds are depth guards (Alertmanager fires on age > 60s, not depth,
+// but we surface depth as the visible UI signal for on-call engineers).
+const QUEUE_THRESHOLDS = {
+  AUDIT_STREAM_WARN: 40_000,
+  AUDIT_STREAM_CRIT: 45_000, // matches prometheus-rules.yml
+  AUDIT_DLQ_WARN:       1,
+  AUDIT_DLQ_CRIT:      50,
+  BILLING_RETRY_WARN:   1,
+  BILLING_RETRY_CRIT:  50,
+  BILLING_DLQ_WARN:     1,
+  BILLING_DLQ_CRIT:    20,
+}
+
 const STATUS_CONFIG = {
   healthy:     { icon: CheckCircle,   color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/20',  label: 'Healthy' },
   degraded:    { icon: AlertTriangle, color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/20', label: 'Degraded' },
@@ -215,29 +230,29 @@ export default function SystemHealth() {
             <QueueTile
               label="Audit Stream"
               value={queues.audit_stream_length ?? 0}
-              warn={40_000}
-              crit={45_000}
+              warn={QUEUE_THRESHOLDS.AUDIT_STREAM_WARN}
+              crit={QUEUE_THRESHOLDS.AUDIT_STREAM_CRIT}
               hint="depth of acp:audit_stream"
             />
             <QueueTile
               label="Audit DLQ"
               value={queues.audit_dlq_length ?? 0}
-              warn={1}
-              crit={50}
+              warn={QUEUE_THRESHOLDS.AUDIT_DLQ_WARN}
+              crit={QUEUE_THRESHOLDS.AUDIT_DLQ_CRIT}
               hint="terminal-failed audit events"
             />
             <QueueTile
               label="Billing Retry Queue"
               value={queues.billing_retry_queue ?? 0}
-              warn={1}
-              crit={50}
+              warn={QUEUE_THRESHOLDS.BILLING_RETRY_WARN}
+              crit={QUEUE_THRESHOLDS.BILLING_RETRY_CRIT}
               hint="failed billing events awaiting heal"
             />
             <QueueTile
               label="Billing DLQ"
               value={queues.billing_dlq_length ?? 0}
-              warn={1}
-              crit={20}
+              warn={QUEUE_THRESHOLDS.BILLING_DLQ_WARN}
+              crit={QUEUE_THRESHOLDS.BILLING_DLQ_CRIT}
               hint="exhausted retries — manual review"
             />
           </div>

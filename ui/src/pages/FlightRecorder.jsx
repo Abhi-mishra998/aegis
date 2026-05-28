@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { RefreshCw, Play, Pause, SkipForward, SkipBack, Search, Film, ShieldCheck, Download, Anchor } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useMemo, useContext } from 'react'
+import { RefreshCw, Play, Pause, SkipForward, SkipBack, Search, Film, ShieldCheck, Download, Anchor, Filter } from 'lucide-react'
 import { flightService, receiptService, transparencyService } from '../services/api'
+import { AgentContext } from '../context/AgentContext'
 
 const STEP_COLOR = {
   prompt:    '#a78bfa',
@@ -18,9 +19,10 @@ function fmtMs(ms) {
 }
 
 export default function FlightRecorder() {
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext)
   const [timelines, setTimelines] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState({ minutes: 5, status: '', tool: '' })
+  const [filter, setFilter] = useState({ minutes: 60, status: '', tool: '' })
   const [selected, setSelected] = useState(null)
   const [replay, setReplay] = useState(null)
   const [stepIdx, setStepIdx] = useState(0)
@@ -35,15 +37,30 @@ export default function FlightRecorder() {
     setLoading(true)
     setError('')
     try {
-      const res = await flightService.listTimelines(filter)
-      setTimelines(res?.data || [])
+      const params = { ...filter }
+      if (selectedAgentId) params.agent_id = selectedAgentId
+      const res = await flightService.listTimelines(params)
+      // 2026-05-28 (Audit-28 §1.5/§2.4 fix): the upstream returns
+      //   { success, data: TimelineOut[], error, meta }
+      // but earlier rev wrote `setTimelines(res?.data?.items || [])` (the
+      // paginated-list shape used elsewhere), so the array was always [].
+      // Normalize defensively across all known shapes.
+      const raw = res?.data ?? res ?? []
+      const list = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.items)
+          ? raw.items
+          : Array.isArray(raw?.timelines)
+            ? raw.timelines
+            : []
+      setTimelines(list)
     } catch (e) {
       // 2026-05-14: surface fetch failures so the operator sees them; previous
       // console.warn made flight-recorder look frozen on a backend outage.
       setError(e?.message || 'Flight recorder unreachable')
     }
     finally { setLoading(false) }
-  }, [filter])
+  }, [filter, selectedAgentId])
 
   useEffect(() => {
     fetchTimelines()
@@ -115,7 +132,14 @@ export default function FlightRecorder() {
     <div className="space-y-4 animate-fade-in">
       <div className="page-header">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2"><Film size={20} /> Flight Recorder</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2"><Film size={20} /> Flight Recorder</h1>
+            {selectedAgent && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-neutral-500 mt-1">Replayable runtime execution timelines · step-by-step playback</p>
         </div>
         <button onClick={fetchTimelines} disabled={loading}

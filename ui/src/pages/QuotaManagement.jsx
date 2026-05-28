@@ -59,6 +59,7 @@ export default function QuotaManagement() {
   const [loading, setLoading]   = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(null)
+  const [fetchError, setFetchError] = useState(false)
 
   const load = useCallback(async () => {
     setRefreshing(true)
@@ -66,7 +67,10 @@ export default function QuotaManagement() {
       const res = await tenantService.getQuota()
       setQuota(res?.data || res)
       setLastRefresh(new Date())
-    } catch {}
+      setFetchError(false)
+    } catch {
+      setFetchError(true)
+    }
     setRefreshing(false)
     setLoading(false)
   }, [])
@@ -126,8 +130,21 @@ export default function QuotaManagement() {
         </div>
       </header>
 
+      {/* Fallback banner — quota fetch failed */}
+      {fetchError && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border bg-amber-500/10 border-amber-500/20 text-amber-400">
+          <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+          <div>
+            <div className="text-sm font-medium">Live quota unavailable. Showing default limits — may not match enforcement.</div>
+            <div className="text-xs mt-0.5 opacity-80">
+              Could not reach the tenant quota service. Values shown below are fallback defaults; actual rate limiting may differ.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Alert banner */}
-      {monthlyPct >= 80 && (
+      {!fetchError && monthlyPct >= 80 && (
         <div className={`flex items-start gap-3 p-4 rounded-xl border ${monthlyPct >= 100 ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
           <AlertTriangle size={16} className="shrink-0 mt-0.5" />
           <div>
