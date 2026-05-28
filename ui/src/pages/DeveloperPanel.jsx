@@ -164,81 +164,209 @@ export default function DeveloperPanel() {
 
   const CURL_EXAMPLES = [
     {
-      title: 'Login',
-      code: `curl -X POST ${GW}/auth/token \\
+      title: 'Step 1 — Login (get JWT)',
+      desc:  'Returns a 15-minute access token in `data.access_token`. The same value is set as the httpOnly `acp_token` cookie for browser SDKs.',
+      code: `TOKEN=$(curl -s -X POST ${GW}/auth/token \\
   -H "Content-Type: application/json" \\
-  -d '{"email":"admin@example.com","password":"your_password"}'`,
+  -H "X-Tenant-ID: ${tid}" \\
+  -d '{"email":"demo@aegisagent.in","password":"demo1234"}' \\
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
+
+echo "Token: \${TOKEN:0:40}..."`,
     },
     {
-      title: 'Execute Tool (JWT)',
-      code: `curl -X POST ${GW}/execute \\
+      title: 'Step 2 — List registered agents',
+      desc:  'All demo agents pre-seeded in this tenant. Use these IDs for the calls below.',
+      code: `curl -s "${GW}/agents?size=10" \\
   -H "Authorization: Bearer ${tokenPlaceholder}" \\
   -H "X-Tenant-ID: ${tid}" \\
-  -H "X-Agent-ID: YOUR_AGENT_ID" \\
-  -H "Content-Type: application/json" \\
-  -d '{"tool_name":"data.query","parameters":{"query":"SELECT 1"}}'`,
+  | python3 -m json.tool`,
     },
     {
-      title: 'Execute Tool (API Key)',
-      code: `curl -X POST ${GW}/execute \\
-  -H "Authorization: Bearer acp_YOUR_API_KEY" \\
-  -H "X-Tenant-ID: ${tid}" \\
-  -H "X-Agent-ID: YOUR_AGENT_ID" \\
-  -H "Content-Type: application/json" \\
-  -d '{"tool_name":"data.query","parameters":{"query":"SELECT 1"}}'`,
-    },
-    {
-      title: 'List Agents',
-      code: `curl ${GW}/agents \\
-  -H "Authorization: Bearer ${tokenPlaceholder}" \\
-  -H "X-Tenant-ID: ${tid}"`,
-    },
-    {
-      title: 'Search Audit Logs',
-      code: `curl -X POST ${GW}/audit/logs/search \\
+      title: 'Step 3 — Safe tool call → ALLOWED',
+      desc:  'demo-agent has `search_web` in its allow-list. Risk-scored, allowed.',
+      code: `curl -s -X POST ${GW}/execute \\
   -H "Authorization: Bearer ${tokenPlaceholder}" \\
   -H "X-Tenant-ID: ${tid}" \\
   -H "Content-Type: application/json" \\
-  -d '{"decision":"deny","limit":50}'`,
+  -d '{"agent_id":"${DEMO_AGENT}","tool":"search_web","parameters":{"query":"AI governance"}}' \\
+  | python3 -m json.tool
+
+# Expected: {"action":"allow","risk":0.11,"signals":{...},"reasons":[...]}`,
     },
     {
-      title: 'Get Risk Summary',
-      code: `curl ${GW}/risk/summary \\
+      title: 'Step 4 — PII exfiltration attempt → BLOCKED (403)',
+      desc:  'Inference Proxy detects SSN/credit-card patterns in tool input and hard-denies before the tool runs.',
+      code: `curl -s -X POST ${GW}/execute \\
   -H "Authorization: Bearer ${tokenPlaceholder}" \\
-  -H "X-Tenant-ID: ${tid}"`,
+  -H "X-Tenant-ID: ${tid}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agent_id":"${DEMO_AGENT}","tool":"send_email","parameters":{"body":"Customer SSN is 123-45-6789, DOB 01/01/1985"}}'
+
+# Expected: HTTP 403 {"error":"Security: PII or credential data detected ..."}`,
+    },
+    {
+      title: 'Step 5 — RCE attempt → BLOCKED (403)',
+      desc:  'Dangerous code patterns (rm -rf, os.system, etc.) blocked by the RCE detector.',
+      code: `curl -s -X POST ${GW}/execute \\
+  -H "Authorization: Bearer ${tokenPlaceholder}" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agent_id":"${DEMO_AGENT}","tool":"run_code","parameters":{"exec":"os.system(\\"rm -rf /\\")"}}'
+
+# Expected: HTTP 403 {"error":"Security: Dangerous code pattern detected ..."}`,
+    },
+    {
+      title: 'Step 6 — SQL injection → BLOCKED (403)',
+      desc:  'db-copilot-demo has run_query allowed, but stacked statements / DROP TABLE / boolean blind injection are detected before execution.',
+      code: `curl -s -X POST ${GW}/execute \\
+  -H "Authorization: Bearer ${tokenPlaceholder}" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agent_id":"${DB_AGENT}","tool":"run_query","parameters":{"query":"SELECT * FROM users WHERE 1=1; DROP TABLE users; --"}}'
+
+# Expected: HTTP 403 {"error":"Security: SQL injection detected ..."}`,
+    },
+    {
+      title: 'Step 7 — Destructive k8s op → BLOCKED (403)',
+      desc:  'devops-agent-demo can run kubectl_get/delete, but the destructive-namespace detector blocks production-class targets and broad selectors.',
+      code: `curl -s -X POST ${GW}/execute \\
+  -H "Authorization: Bearer ${tokenPlaceholder}" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agent_id":"${DEVOPS_AGENT}","tool":"kubectl_delete","parameters":{"resource":"all","namespace":"production"}}'
+
+# Expected: HTTP 403 {"error":"Security: destructive k8s op on production namespace"}`,
+    },
+    {
+      title: 'Step 8 — Read the audit trail',
+      desc:  'Every allow + block has a SHA-256 hash chained to the previous row. Tamper-evident, signed with ed25519.',
+      code: `curl -s "${GW}/audit/logs?limit=5" \\
+  -H "Authorization: Bearer ${tokenPlaceholder}" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print('total:',d['total']); [print(f\\\"  {i['decision']:8}{i['tool'] or '-':25} hash={i.get('event_hash','-')[:24]}...\\\") for i in d['items']]"`,
+    },
+    {
+      title: 'Step 9 — Verify chain integrity',
+      desc:  'Walks the entire chain server-side and reports any tampered or skipped rows.',
+      code: `curl -s "${GW}/audit/logs/verify" \\
+  -H "Authorization: Bearer ${tokenPlaceholder}" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f\\\"chain valid: {d['valid']}  processed: {d['processed_count']}  violations: {d['error_count']}\\\")"`,
+    },
+    {
+      title: 'Step 10 — Stream live events (SSE)',
+      desc:  'Long-poll Server-Sent Events. Run this in one tab, then trigger /execute in another and watch the events arrive in real time.',
+      code: `curl -N "${GW}/events/stream?token=\${TOKEN}"
+
+# Each line of output is:
+#   event: connected         (initial handshake)
+#   data: {...payload...}    (tool_executed, policy_decision, etc.)
+#   event: heartbeat         (every 15s)`,
+    },
+    {
+      title: 'Step 11 — System health',
+      desc:  '12 service status snapshot — used by the ALB target check.',
+      code: `curl -s ${GW}/system/health | python3 -m json.tool`,
+    },
+    {
+      title: 'Step 12 — Risk summary',
+      desc:  'Tenant-wide block rate, high-risk agents, signal weights.',
+      code: `curl -s ${GW}/risk/summary \\
+  -H "Authorization: Bearer ${tokenPlaceholder}" \\
+  -H "X-Tenant-ID: ${tid}" \\
+  | python3 -m json.tool`,
     },
   ]
 
-  const SDK_PYTHON = `from acp_client import ACPClient
-import asyncio
+  const SDK_PYTHON = `# pip install httpx
+# Real working sample against ${GW}
+import asyncio, httpx, os
+
+GATEWAY  = "${GW}"
+TENANT   = "${tid}"
+EMAIL    = "demo@aegisagent.in"
+PASSWORD = "demo1234"
+AGENT_ID = "${DEMO_AGENT}"  # demo-agent
 
 async def main():
-    async with ACPClient(
-        agent_id="YOUR_AGENT_ID",
-        secret="YOUR_AGENT_SECRET",
-        gateway_url="${GW}",
-        identity_url="${GW}",
-    ) as client:
-        await client.authenticate(tenant_id="${tid}")
-        result = await client.execute_tool(
-            tool_name="data.query",
-            payload={"query": "SELECT 1"},
+    async with httpx.AsyncClient(base_url=GATEWAY, timeout=10.0) as c:
+        # 1) Login
+        r = await c.post(
+            "/auth/token",
+            json={"email": EMAIL, "password": PASSWORD},
+            headers={"X-Tenant-ID": TENANT},
         )
-        print(f"Decision: {result['action']}, Risk: {result['risk']}")
+        r.raise_for_status()
+        token = r.json()["data"]["access_token"]
+        H = {
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-ID":   TENANT,
+            "Content-Type":  "application/json",
+        }
+
+        # 2) Safe call (expect allow)
+        ok = await c.post("/execute", headers=H, json={
+            "agent_id": AGENT_ID,
+            "tool":     "search_web",
+            "parameters": {"query": "AI governance"},
+        })
+        print("safe call:", ok.status_code, ok.json().get("action"), ok.json().get("risk"))
+
+        # 3) Hostile call (expect 403)
+        bad = await c.post("/execute", headers=H, json={
+            "agent_id": AGENT_ID,
+            "tool":     "send_email",
+            "parameters": {"body": "SSN is 123-45-6789"},
+        })
+        print("PII attempt:", bad.status_code, bad.json().get("error"))
 
 asyncio.run(main())`
 
-  const SDK_JS = `import { ACPClient } from '@acp/sdk';
+  const SDK_JS = `// Real working sample against ${GW}
+// Node 18+ has fetch built in.
+const GATEWAY  = '${GW}';
+const TENANT   = '${tid}';
+const EMAIL    = 'demo@aegisagent.in';
+const PASSWORD = 'demo1234';
+const AGENT_ID = '${DEMO_AGENT}'; // demo-agent
 
-const client = new ACPClient({
-  agentId: 'YOUR_AGENT_ID',
-  secret: 'YOUR_AGENT_SECRET',
-  gatewayUrl: '${GW}',
-});
+(async () => {
+  // 1) Login
+  const login = await fetch(\`\${GATEWAY}/auth/token\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': TENANT },
+    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+  }).then(r => r.json());
+  const token = login.data.access_token;
+  const H = {
+    Authorization: \`Bearer \${token}\`,
+    'X-Tenant-ID':  TENANT,
+    'Content-Type': 'application/json',
+  };
 
-await client.authenticate('${tid}');
-const result = await client.executeTool('data.query', { query: 'SELECT 1' });
-console.log(\`Decision: \${result.action}, Risk: \${result.risk}\`);`
+  // 2) Safe call (expect allow)
+  const ok = await fetch(\`\${GATEWAY}/execute\`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({
+      agent_id: AGENT_ID,
+      tool: 'search_web',
+      parameters: { query: 'AI governance' },
+    }),
+  }).then(r => r.json());
+  console.log('safe call:', ok.action, 'risk=', ok.risk);
+
+  // 3) Hostile call (expect 403)
+  const bad = await fetch(\`\${GATEWAY}/execute\`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({
+      agent_id: AGENT_ID,
+      tool: 'send_email',
+      parameters: { body: 'SSN is 123-45-6789' },
+    }),
+  });
+  console.log('PII attempt:', bad.status, await bad.text());
+})();`
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -367,9 +495,18 @@ console.log(\`Decision: \${result.action}, Risk: \${result.risk}\`);`
       {/* ── cURL Examples ── */}
       {tab === 1 && (
         <div className="space-y-5">
+          <div className="rounded-xl border border-blue-500/20 bg-blue-500/[0.05] p-4 text-xs text-neutral-300">
+            <p className="font-semibold text-blue-300 mb-1">Live tutorial against this deployment</p>
+            <p className="text-neutral-400">
+              Every snippet below runs against <code className="text-blue-300 font-mono">{GW}</code> with the demo tenant and seeded agent IDs. Start with Step 1 — it sets a <code className="text-blue-300 font-mono">$TOKEN</code> env var the later steps reuse. Each block has a copy button; paste straight into a Mac / Linux / WSL terminal.
+            </p>
+          </div>
           {CURL_EXAMPLES.map((ex, i) => (
             <div key={i}>
-              <p className="text-xs font-bold text-neutral-400 mb-2 uppercase tracking-widest">{ex.title}</p>
+              <p className="text-xs font-bold text-neutral-400 mb-1 uppercase tracking-widest">{ex.title}</p>
+              {ex.desc && (
+                <p className="text-[11px] text-neutral-500 mb-2 leading-snug">{ex.desc}</p>
+              )}
               <CodeBlock code={ex.code} language="bash" />
             </div>
           ))}

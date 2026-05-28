@@ -927,12 +927,17 @@ class AuditAggregator:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        # Bind the COALESCE/NULLIF expression once so the asyncpg-parameterised
+        # version is identical at SELECT and GROUP BY time (PG considers
+        # `coalesce($1, ...)` and `coalesce($2, ...)` distinct expressions
+        # even when both bind to the same literal).
+        reason_expr = func.coalesce(
+            func.nullif(func.trim(AuditLog.reason), ""),
+            "unspecified",
+        )
         stmt = (
             select(
-                func.coalesce(
-                    func.nullif(func.trim(AuditLog.reason), ""),
-                    "unspecified",
-                ).label("reason"),
+                reason_expr.label("reason"),
                 func.count().label("count"),
             )
             .where(
@@ -940,12 +945,7 @@ class AuditAggregator:
                 AuditLog.timestamp >= since,
                 AuditLog.decision.in_(["deny", "kill"]),
             )
-            .group_by(
-                func.coalesce(
-                    func.nullif(func.trim(AuditLog.reason), ""),
-                    "unspecified",
-                )
-            )
+            .group_by(reason_expr)
             .order_by(desc(func.count()))
             .limit(limit)
         )
@@ -1412,9 +1412,10 @@ class AuditAggregator:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        day_expr = func.date_trunc("day", AuditLog.timestamp)
         stmt = (
             select(
-                func.date_trunc("day", AuditLog.timestamp).label("day"),
+                day_expr.label("day"),
                 func.count().label("total"),
                 func.sum(
                     sa.case((AuditLog.decision == "allow", 1), else_=0)
@@ -1427,8 +1428,8 @@ class AuditAggregator:
                 AuditLog.tenant_id == tenant_id,
                 AuditLog.timestamp >= since,
             )
-            .group_by(func.date_trunc("day", AuditLog.timestamp))
-            .order_by(func.date_trunc("day", AuditLog.timestamp))
+            .group_by(day_expr)
+            .order_by(day_expr)
         )
         if agent_id is not None:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
@@ -1473,9 +1474,10 @@ class AuditAggregator:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        day_expr = func.date_trunc("day", AuditLog.timestamp)
         stmt = (
             select(
-                func.date_trunc("day", AuditLog.timestamp).label("day"),
+                day_expr.label("day"),
                 func.count().label("total"),
                 func.sum(
                     sa.case((AuditLog.decision == "escalate", 1), else_=0)
@@ -1485,8 +1487,8 @@ class AuditAggregator:
                 AuditLog.tenant_id == tenant_id,
                 AuditLog.timestamp >= since,
             )
-            .group_by(func.date_trunc("day", AuditLog.timestamp))
-            .order_by(func.date_trunc("day", AuditLog.timestamp))
+            .group_by(day_expr)
+            .order_by(day_expr)
         )
         if agent_id is not None:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
