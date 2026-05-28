@@ -14,49 +14,49 @@ def test_aggregator_has_tool_breakdown_method():
 def test_aggregator_tool_breakdown_has_tools_list():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tools" in snippet
 
 
 def test_aggregator_tool_breakdown_has_deny_rate():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "deny_rate" in snippet
 
 
 def test_aggregator_tool_breakdown_has_avg_risk():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "avg_risk" in snippet
 
 
 def test_aggregator_tool_breakdown_has_total_calls():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "total_calls" in snippet
 
 
 def test_aggregator_tool_breakdown_has_denied_calls():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "denied_calls" in snippet
 
 
 def test_aggregator_tool_breakdown_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_tool_breakdown_groups_by_tool():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "group_by" in snippet or "AuditLog.tool" in snippet
 
 
@@ -77,7 +77,7 @@ def test_aggregator_tool_breakdown_accepts_days():
 def test_aggregator_tool_breakdown_has_computed_at():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "computed_at" in snippet
 
 

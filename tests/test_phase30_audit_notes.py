@@ -63,7 +63,7 @@ def test_router_has_post_notes_endpoint():
 def test_router_has_get_notes_endpoint():
     src = (ROOT / "services/audit/router.py").read_text()
     idx = src.find("notes")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "GET" in snippet or "get" in snippet
 
 

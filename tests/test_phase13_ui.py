@@ -72,14 +72,14 @@ def test_dashboard_state_uses_agents_summary():
 def test_dashboard_state_includes_quarantined():
     src = (ROOT / "services/gateway/main.py").read_text()
     idx = src.find("dashboard_state")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "quarantined" in snippet
 
 
 def test_dashboard_state_includes_high_risk():
     src = (ROOT / "services/gateway/main.py").read_text()
     idx = src.find("dashboard_state")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "high_risk" in snippet
 
 

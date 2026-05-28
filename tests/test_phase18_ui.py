@@ -31,8 +31,11 @@ def test_policy_sim_falls_back_to_text_input():
 
 def test_rbac_tool_dropdown_merges_permissions():
     src = (ROOT / "ui/src/pages/RBAC.jsx").read_text()
-    # Dropdown options are the union of TOOL_OPTIONS and existing permission tool names
-    assert "new Set([...TOOL_OPTIONS" in src
+    # Dropdown options are the union of the live tool list (sourced from
+    # /registry/tools, falls back to TOOL_OPTIONS_FALLBACK) and the tool
+    # names already attached as permissions on each agent.
+    assert "new Set([...toolOptions" in src
+    assert "TOOL_OPTIONS_FALLBACK" in src  # fallback still defined
 
 
 def test_rbac_tool_dropdown_uses_permission_tool_names():

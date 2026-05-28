@@ -254,6 +254,7 @@ async def risk_timeline(
 async def risk_top_threats(
     db: Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    agent_id: uuid.UUID | None = Query(None),
     limit: int = Query(10, ge=1, le=50),
 ) -> APIResponse[list[dict]]:
     """Return top high-risk agents in the specified window."""

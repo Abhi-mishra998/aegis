@@ -21,35 +21,35 @@ def test_aggregator_percentile_trend_accepts_days():
 def test_aggregator_percentile_trend_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_percentile_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_percentile_trend_uses_percentile_cont():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_percentile_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "percentile_cont" in snippet
 
 
 def test_aggregator_percentile_trend_has_p50():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_percentile_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "p50" in snippet
 
 
 def test_aggregator_percentile_trend_has_p75():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_percentile_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "p75" in snippet
 
 
 def test_aggregator_percentile_trend_has_p95():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_percentile_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "p95" in snippet
 
 

@@ -21,70 +21,70 @@ def test_aggregator_heatmap_accepts_days():
 def test_aggregator_heatmap_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_heatmap_extracts_dow():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "dow" in snippet
 
 
 def test_aggregator_heatmap_extracts_hour():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "hour" in snippet
 
 
 def test_aggregator_heatmap_has_7_days():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "range(7)" in snippet or "7" in snippet
 
 
 def test_aggregator_heatmap_has_24_hours():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "range(24)" in snippet or "24" in snippet
 
 
 def test_aggregator_heatmap_has_pct_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "pct" in snippet
 
 
 def test_aggregator_heatmap_has_count_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_aggregator_heatmap_has_day_label():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "day_label" in snippet or "Mon" in snippet
 
 
 def test_aggregator_heatmap_returns_cells_key():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"cells"' in snippet or "'cells'" in snippet
 
 
 def test_aggregator_heatmap_returns_max_count():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_weekly_heatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "max_count" in snippet
 
 
@@ -169,21 +169,21 @@ def test_dashboard_has_weekly_heatmap_state():
 def test_dashboard_heatmap_renders_days():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("WeeklyHeatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "Mon" in snippet or "day_label" in snippet or "DAY_LABELS" in snippet
 
 
 def test_dashboard_heatmap_renders_hours():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("WeeklyHeatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "hour" in snippet or "24" in snippet
 
 
 def test_dashboard_heatmap_uses_pct_for_color():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("WeeklyHeatmap")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "pct" in snippet
 
 

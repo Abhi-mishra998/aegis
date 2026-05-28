@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -310,8 +310,9 @@ async def put_signal_weights(
     are merged on top of DEFAULT_WEIGHTS so callers can override one signal
     without resending the whole table.
     """
-    from services.decision.engine import DEFAULT_WEIGHTS
     import json as _json
+
+    from services.decision.engine import DEFAULT_WEIGHTS
 
     cleaned = dict(DEFAULT_WEIGHTS)
     for k, v in (payload.weights or {}).items():

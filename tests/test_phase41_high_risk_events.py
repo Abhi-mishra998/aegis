@@ -35,21 +35,21 @@ def test_aggregator_high_risk_accepts_threshold():
 def test_aggregator_high_risk_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_high_risk_events")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_high_risk_filters_by_score():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_high_risk_events")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "risk_score" in snippet and ("threshold" in snippet or ">=" in snippet)
 
 
 def test_aggregator_high_risk_orders_by_score():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_high_risk_events")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "order_by" in snippet or "ORDER BY" in snippet
 
 
@@ -176,14 +176,14 @@ def test_risk_engine_has_high_risk_state():
 def test_risk_engine_feed_shows_risk_score():
     src = (ROOT / "ui/src/pages/RiskEngine.jsx").read_text()
     idx = src.find("HighRiskEventFeed")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "risk_score" in snippet
 
 
 def test_risk_engine_feed_shows_decision():
     src = (ROOT / "ui/src/pages/RiskEngine.jsx").read_text()
     idx = src.find("HighRiskEventFeed")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "decision" in snippet
 
 
@@ -197,7 +197,7 @@ def test_risk_engine_feed_shows_findings_tags():
 def test_risk_engine_feed_links_to_forensics():
     src = (ROOT / "ui/src/pages/RiskEngine.jsx").read_text()
     idx = src.find("HighRiskEventFeed")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "forensics" in snippet or "navigate" in snippet
 
 

@@ -318,8 +318,10 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         except (TypeError, ValueError):
                             cap_usd = 0.0
                         if cap_usd > 0:
-                            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-                            _now = _dt.now(_tz.utc)
+                            from datetime import UTC
+                            from datetime import datetime as _dt
+                            from datetime import timedelta as _td
+                            _now = _dt.now(UTC)
                             _day_key = _now.strftime("%Y%m%d")
                             spent_raw = await self.redis.get(
                                 f"acp:agent_cost_today:{agent_id}:{_day_key}"

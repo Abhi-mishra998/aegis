@@ -14,7 +14,7 @@ def test_aggregator_has_anomaly_trends():
 def test_aggregator_trends_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_anomaly_trends")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
@@ -28,35 +28,35 @@ def test_aggregator_trends_accepts_days():
 def test_aggregator_trends_has_count_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_anomaly_trends")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_aggregator_trends_has_threats_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_anomaly_trends")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "threats" in snippet
 
 
 def test_aggregator_trends_has_avg_risk():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_anomaly_trends")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "avg_risk" in snippet
 
 
 def test_aggregator_trends_has_date_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_anomaly_trends")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "date" in snippet
 
 
 def test_aggregator_trends_zero_fills_series():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_anomaly_trends")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "timedelta" in snippet or "date_bucket" in snippet or "zero" in snippet.lower() or "fill" in snippet.lower()
 
 

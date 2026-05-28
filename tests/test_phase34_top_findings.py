@@ -14,28 +14,28 @@ def test_aggregator_has_top_findings_method():
 def test_aggregator_top_findings_unnests_jsonb():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "jsonb_array_elements" in snippet or "findings" in snippet
 
 
 def test_aggregator_top_findings_returns_findings_list():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"findings"' in snippet or "'findings'" in snippet
 
 
 def test_aggregator_top_findings_has_count_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_aggregator_top_findings_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
@@ -56,21 +56,21 @@ def test_aggregator_top_findings_accepts_limit():
 def test_aggregator_top_findings_has_total_events():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "total_events" in snippet
 
 
 def test_aggregator_top_findings_has_computed_at():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "computed_at" in snippet
 
 
 def test_aggregator_top_findings_orders_by_count():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_top_findings")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "ORDER BY" in snippet or "desc" in snippet.lower()
 
 

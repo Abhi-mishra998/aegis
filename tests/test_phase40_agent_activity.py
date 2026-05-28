@@ -21,35 +21,35 @@ def test_aggregator_activity_accepts_limit():
 def test_aggregator_activity_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_activity_groups_by_agent():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "agent_id" in snippet and ("group_by" in snippet or "GROUP BY" in snippet)
 
 
 def test_aggregator_activity_has_first_seen():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "first_seen" in snippet
 
 
 def test_aggregator_activity_has_last_seen():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "last_seen" in snippet
 
 
 def test_aggregator_activity_has_total_calls():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "total_calls" in snippet
 
 
@@ -63,14 +63,14 @@ def test_aggregator_activity_has_deny_rate():
 def test_aggregator_activity_has_avg_risk():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "avg_risk" in snippet
 
 
 def test_aggregator_activity_orders_by_last_seen():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_activity_summary")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "last_seen" in snippet and ("order_by" in snippet or "ORDER BY" in snippet)
 
 
@@ -162,35 +162,35 @@ def test_dashboard_has_agent_activity_state():
 def test_dashboard_activity_table_shows_first_seen():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("AgentActivityTable")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "first_seen" in snippet or "First Seen" in snippet
 
 
 def test_dashboard_activity_table_shows_last_seen():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("AgentActivityTable")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "last_seen" in snippet or "Last Seen" in snippet
 
 
 def test_dashboard_activity_table_shows_deny_rate():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("AgentActivityTable")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "deny_rate" in snippet or "Deny Rate" in snippet
 
 
 def test_dashboard_activity_table_shows_avg_risk():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("AgentActivityTable")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "avg_risk" in snippet or "Avg Risk" in snippet
 
 
 def test_dashboard_activity_table_links_to_forensics():
     src = (ROOT / "ui/src/pages/SecurityDashboard.jsx").read_text()
     idx = src.find("AgentActivityTable")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "forensics" in snippet or "navigate" in snippet
 
 

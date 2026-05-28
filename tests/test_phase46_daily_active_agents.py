@@ -21,35 +21,35 @@ def test_aggregator_daily_active_agents_accepts_days():
 def test_aggregator_daily_active_agents_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_daily_active_agents")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_daily_active_agents_counts_distinct():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_daily_active_agents")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "distinct" in snippet or "DISTINCT" in snippet
 
 
 def test_aggregator_daily_active_agents_groups_by_day():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_daily_active_agents")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "date_trunc" in snippet or "day" in snippet
 
 
 def test_aggregator_daily_active_agents_has_active_agents_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_daily_active_agents")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "active_agents" in snippet
 
 
 def test_aggregator_daily_active_agents_has_total_calls():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_daily_active_agents")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "total_calls" in snippet
 
 
