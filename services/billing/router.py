@@ -51,10 +51,15 @@ async def get_billing_summary(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     engine: Annotated[BillingValueEngine, Depends(get_billing_engine)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    agent_id: uuid.UUID | None = Query(None),
 ) -> APIResponse[dict]:
     """
     Returns full billing ROI summary for the tenant + a 7-day daily_trend
     derived from usage_records (drives the API Call Volume chart in the UI).
+
+    Sprint 1 BE — optional `agent_id` filters the daily trend (and total
+    tokens/calls overlay) to a single agent. The tenant-level Redis ROI
+    counters are still returned alongside.
     """
     data = await engine.get_tenant_billing_summary(str(tenant_id))
 
@@ -74,6 +79,8 @@ async def get_billing_summary(
         .group_by("day")
         .order_by("day")
     )
+    if agent_id is not None:
+        stmt = stmt.where(UsageRecord.agent_id == agent_id)
     rows = (await db.execute(stmt)).all()
     daily_trend = [
         {
@@ -96,6 +103,7 @@ async def get_billing_invoices(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     engine: Annotated[BillingValueEngine, Depends(get_billing_engine)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    agent_id: uuid.UUID | None = Query(None),
 ) -> APIResponse[dict]:
     """
     Per-month invoice rollup derived from usage_records (last 6 months).
@@ -123,6 +131,8 @@ async def get_billing_invoices(
         .group_by(month_expr)
         .order_by(month_expr.desc())
     )
+    if agent_id is not None:
+        stmt = stmt.where(UsageRecord.agent_id == agent_id)
     rows = (await db.execute(stmt)).all()
 
     # Overlay live ROI counters (Redis) onto the current-month row so the

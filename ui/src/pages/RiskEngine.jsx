@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Zap, AlertTriangle, TrendingUp, Brain, RefreshCw, ExternalLink } from 'lucide-react'
+import { Zap, AlertTriangle, TrendingUp, Brain, RefreshCw, ExternalLink, Filter } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
 import Card from '../components/Common/Card'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { riskService, auditService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { AgentContext } from '../context/AgentContext'
 import { eventBus } from '../lib/eventBus'
 
 /* ── Risk badge ────────────────────────────────────────────────────────────── */
@@ -240,6 +241,7 @@ export default function RiskEngine() {
   useAuth()
   const navigate = useNavigate()
   const mounted  = useRef(true)
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext)
 
   const [summary,      setSummary]     = useState(null)
   const [timeline,     setTimeline]    = useState([])
@@ -256,16 +258,17 @@ export default function RiskEngine() {
 
   const load = async () => {
     try {
+      const aid = selectedAgentId || undefined
       const [sumRes, timeRes, threatRes, insightRes, findingsRes, histRes, highRes, toolRiskRes, pctTrendRes] = await Promise.allSettled([
-        riskService.getSummary(),
-        riskService.getTimeline(),
-        riskService.getTopThreats(),
-        riskService.getInsights(),
-        auditService.getTopFindings(),
-        auditService.getRiskHistogram(),
-        auditService.getHighRiskEvents(),
-        auditService.getToolRisk(),
-        auditService.getRiskPercentileTrend(),
+        riskService.getSummary(aid),
+        riskService.getTimeline(aid),
+        riskService.getTopThreats(aid),
+        riskService.getInsights(aid),
+        auditService.getTopFindings(30, 15, aid),
+        auditService.getRiskHistogram(30, aid),
+        auditService.getHighRiskEvents(7, 20, 0.7, aid),
+        auditService.getToolRisk(30, 20, aid),
+        auditService.getRiskPercentileTrend(30, aid),
       ])
       if (!mounted.current) return
 
@@ -274,7 +277,8 @@ export default function RiskEngine() {
       if (threatRes.status  === 'fulfilled') setThreats(threatRes.value?.data || threatRes.value || [])
       if (insightRes.status === 'fulfilled') {
         const ins = insightRes.value
-        const list = ins?.data?.insights || (Array.isArray(ins?.data) ? ins.data : null) || ins?.insights || []
+        const raw = ins?.data ?? ins
+        const list = Array.isArray(raw?.insights) ? raw.insights : (Array.isArray(raw) ? raw : [])
         setInsights(Array.isArray(list) ? list : [])
       }
       if (findingsRes.status === 'fulfilled') {
@@ -307,7 +311,7 @@ export default function RiskEngine() {
     load()
     const interval = setInterval(load, 30_000)
     return () => { mounted.current = false; clearInterval(interval) }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedAgentId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trigger an immediate refresh when live decisions arrive via SSE.
   // Debounced to 2s so a burst of events causes a single load, not N.
@@ -342,7 +346,14 @@ export default function RiskEngine() {
       {/* ── Header ── */}
       <div className="page-header">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Risk Engine</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold text-white tracking-tight">Risk Engine</h1>
+            {selectedAgent && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-neutral-500 mt-0.5">Weighted risk scoring, AI insights, and threat intelligence</p>
         </div>
         <div className="flex items-center gap-3">

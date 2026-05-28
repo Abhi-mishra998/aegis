@@ -124,48 +124,69 @@ export default function AdminConsole() {
   const [services, setServices] = useState([])
   const [lastRefresh, setLastRefresh] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  // 2026-05-28: per-endpoint error tracking replaces silent Promise.allSettled
+  // swallowing. Each key maps to either null (ok) or a short error string
+  // surfaced in the banner near the top of the page.
+  const [errors, setErrors] = useState({ health: null, summary: null, tenants: null, heatmap: null })
+
+  const errMsg = (reason) => {
+    const r = reason
+    if (!r) return 'error'
+    if (r?.response?.status) return String(r.response.status)
+    if (r?.code === 'ECONNABORTED' || /timeout/i.test(r?.message || '')) return 'timeout'
+    return r?.message?.slice(0, 60) || 'error'
+  }
 
   const load = useCallback(async () => {
     setRefreshing(true)
-    try {
-      const [healthRes, summaryRes] = await Promise.allSettled([
-        dashboardService.getSystemHealth(),
-        auditService.getSummary(),
-      ])
+    const nextErrors = { health: null, summary: null, tenants: null, heatmap: null }
+    const [healthRes, summaryRes, tenantsRes, heatmapRes] = await Promise.allSettled([
+      dashboardService.getSystemHealth(),
+      auditService.getSummary(),
+      adminService.listTenants(),
+      auditService.getHeatmap(),
+    ])
 
-      if (healthRes.status === 'fulfilled') {
-        const h = healthRes.value?.data || healthRes.value || {}
-        const svcList = Object.entries(h.services || {}).map(([name, info]) => ({
-          name,
-          status: typeof info === 'string' ? info : info?.status || 'unknown',
-          latency: info?.latency_ms,
-        }))
-        setServices(svcList)
-        setKpis(prev => ({ ...(prev || {}), services_healthy: svcList.filter(s => s.status === 'ok' || s.status === 'healthy').length, services_total: svcList.length }))
-      }
+    if (healthRes.status === 'fulfilled') {
+      const h = healthRes.value?.data || healthRes.value || {}
+      const svcList = Object.entries(h.services || {}).map(([name, info]) => ({
+        name,
+        status: typeof info === 'string' ? info : info?.status || 'unknown',
+        latency: info?.latency_ms,
+      }))
+      setServices(svcList)
+      setKpis(prev => ({ ...(prev || {}), services_healthy: svcList.filter(s => s.status === 'ok' || s.status === 'healthy').length, services_total: svcList.length }))
+    } else {
+      nextErrors.health = errMsg(healthRes.reason)
+    }
 
-      if (summaryRes.status === 'fulfilled') {
-        const s = summaryRes.value?.data || summaryRes.value || {}
-        setKpis(prev => ({
-          ...(prev || {}),
-          total_decisions: s.total ?? 0,
-          allowed: s.allowed ?? 0,
-          blocked: s.blocked ?? 0,
-          block_rate: s.total > 0 ? ((s.blocked / s.total) * 100).toFixed(1) : '0.0',
-        }))
-      }
+    if (summaryRes.status === 'fulfilled') {
+      const s = summaryRes.value?.data || summaryRes.value || {}
+      setKpis(prev => ({
+        ...(prev || {}),
+        total_decisions: s.total ?? 0,
+        allowed: s.allowed ?? 0,
+        blocked: s.blocked ?? 0,
+        block_rate: s.total > 0 ? ((s.blocked / s.total) * 100).toFixed(1) : '0.0',
+      }))
+    } else {
+      nextErrors.summary = errMsg(summaryRes.reason)
+    }
 
-      const tenantsRes = await adminService.listTenants().catch(() => null)
-      if (tenantsRes) {
-        setTenants(tenantsRes?.data || tenantsRes || [])
-      }
+    if (tenantsRes.status === 'fulfilled') {
+      setTenants(tenantsRes.value?.data || tenantsRes.value || [])
+    } else {
+      nextErrors.tenants = errMsg(tenantsRes.reason)
+    }
 
-      const heatmapRes = await auditService.getHeatmap().catch(() => null)
-      if (heatmapRes) {
-        setHeatmap(heatmapRes?.data || heatmapRes || null)
-      }
-      setLastRefresh(new Date())
-    } catch {}
+    if (heatmapRes.status === 'fulfilled') {
+      setHeatmap(heatmapRes.value?.data || heatmapRes.value || null)
+    } else {
+      nextErrors.heatmap = errMsg(heatmapRes.reason)
+    }
+
+    setErrors(nextErrors)
+    setLastRefresh(new Date())
     setRefreshing(false)
   }, [])
 
@@ -203,33 +224,54 @@ export default function AdminConsole() {
         </div>
       </header>
 
+      {/* Per-endpoint error banner — surfaces partial failures instead of
+          silently zeroing out tiles. Retry button calls the same loader. */}
+      {Object.values(errors).some(Boolean) && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300" role="alert">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <strong className="text-amber-200">Some metrics unavailable:</strong>{' '}
+            {Object.entries(errors).filter(([, v]) => v).map(([k, v]) => `${k} (${v})`).join(', ')}
+          </div>
+          <button
+            onClick={load}
+            disabled={refreshing}
+            className="text-amber-200 underline hover:text-amber-100 disabled:opacity-50"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           icon={Activity}
           label="Total Decisions"
-          value={(kpis?.total_decisions ?? 0).toLocaleString()}
-          sub="all time"
+          value={errors.summary ? 'Unavailable' : (kpis?.total_decisions ?? 0).toLocaleString()}
+          color={errors.summary ? 'text-neutral-500' : 'text-white'}
+          sub={errors.summary ? `audit summary: ${errors.summary}` : 'all time'}
         />
         <KpiCard
           icon={CheckCircle2}
           label="Allowed"
-          value={(kpis?.allowed ?? 0).toLocaleString()}
-          color="text-green-400"
+          value={errors.summary ? 'Unavailable' : (kpis?.allowed ?? 0).toLocaleString()}
+          color={errors.summary ? 'text-neutral-500' : 'text-green-400'}
+          sub={errors.summary ? `audit summary: ${errors.summary}` : undefined}
         />
         <KpiCard
           icon={ShieldAlert}
           label="Blocked"
-          value={(kpis?.blocked ?? 0).toLocaleString()}
-          color={blockRate > 20 ? 'text-amber-400' : 'text-red-400'}
-          sub={`${kpis?.block_rate ?? '0.0'}% block rate`}
+          value={errors.summary ? 'Unavailable' : (kpis?.blocked ?? 0).toLocaleString()}
+          color={errors.summary ? 'text-neutral-500' : (blockRate > 20 ? 'text-amber-400' : 'text-red-400')}
+          sub={errors.summary ? `audit summary: ${errors.summary}` : `${kpis?.block_rate ?? '0.0'}% block rate`}
         />
         <KpiCard
           icon={Database}
           label="Services"
-          value={kpis ? `${kpis.services_healthy}/${kpis.services_total}` : '—'}
-          color={kpis && kpis.services_healthy === kpis.services_total ? 'text-green-400' : 'text-amber-400'}
-          sub="healthy"
+          value={errors.health ? 'Unavailable' : (kpis ? `${kpis.services_healthy}/${kpis.services_total}` : '—')}
+          color={errors.health ? 'text-neutral-500' : (kpis && kpis.services_healthy === kpis.services_total ? 'text-green-400' : 'text-amber-400')}
+          sub={errors.health ? `system health: ${errors.health}` : 'healthy'}
         />
       </div>
 

@@ -175,6 +175,50 @@ export default function ThreatIntel() {
         <KpiTile icon={AlertTriangle} label="High risk found"  value={summary?.high_risk_count ?? highRisk} accent={highRisk > 0 ? 'text-red-400' : 'text-white'} />
       </div>
 
+      {/* Summary feed — renders array fields from /threat-intel/summary or
+          falls back to a friendly awaiting message when the backend has
+          nothing yet. Iterates any array on `summary` defensively. */}
+      <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5">
+        <h2 className="text-sm font-medium text-white flex items-center gap-2 mb-3">
+          <Activity size={13} className="text-neutral-500" /> Threat Intel Feed
+          {summary && (
+            <span className="ml-auto text-[10px] font-mono text-neutral-600">
+              {Object.keys(summary || {}).length} field{Object.keys(summary || {}).length !== 1 ? 's' : ''}
+            </span>
+          )}
+        </h2>
+        {(!summary || Object.keys(summary).length === 0) ? (
+          <p className="text-xs text-neutral-600 text-center py-6">Awaiting threat intel data — run a lookup or wait for the next refresh.</p>
+        ) : (
+          <div className="space-y-3">
+            {Object.entries(summary)
+              .filter(([, v]) => Array.isArray(v) && v.length > 0)
+              .map(([key, arr]) => (
+                <div key={key} className="bg-white/[0.03] rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-2 flex items-center gap-1.5">
+                    <AlertTriangle size={10} /> {key.replace(/_/g, ' ')} <span className="text-neutral-600">({arr.length})</span>
+                  </div>
+                  <div className="divide-y divide-white/5">
+                    {arr.slice(0, 8).map((item, i) => (
+                      <div key={i} className="py-1.5 flex items-center justify-between gap-2 text-[11px] font-mono">
+                        <span className="text-neutral-300 truncate">
+                          {typeof item === 'object' ? (item?.value || item?.ip || item?.domain || item?.indicator || JSON.stringify(item)) : String(item)}
+                        </span>
+                        {typeof item === 'object' && (item?.score != null || item?.abuse_score != null) && (
+                          <ScoreBadge score={item.score ?? item.abuse_score} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            {!Object.values(summary).some(v => Array.isArray(v) && v.length > 0) && (
+              <p className="text-xs text-neutral-600 text-center py-4">No IOC lists in summary — counters only.</p>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Search */}
       <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5">
         <div className="flex gap-2">

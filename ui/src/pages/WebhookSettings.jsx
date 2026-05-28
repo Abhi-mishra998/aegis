@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {
   Webhook, Slack, Bell, Globe, CheckCircle2, XCircle,
   Save, Play, Eye, EyeOff, Loader2, AlertCircle,
+  AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { webhookService } from '../services/api'
 
@@ -73,20 +74,25 @@ export default function WebhookSettings() {
   const [testing, setTesting] = useState({})
   const [results, setResults] = useState({})
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
+  const loadConfig = useCallback(() => {
+    setLoading(true)
+    setLoadError(false)
     webhookService.getConfig()
       .then(d => {
         const c = d?.data || d || {}
-        setCfg({
-          slack_url: c.slack_url || '',
-          pagerduty_key: c.pagerduty_key || '',
-          generic_url: c.generic_url || '',
-        })
+        setCfg(prev => ({
+          slack_url: c.slack_url ?? prev.slack_url,
+          pagerduty_key: c.pagerduty_key ?? prev.pagerduty_key,
+          generic_url: c.generic_url ?? prev.generic_url,
+        }))
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => { loadConfig() }, [loadConfig])
 
   const save = async () => {
     setSaving(true)
@@ -152,6 +158,22 @@ export default function WebhookSettings() {
       {error && (
         <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
           <AlertCircle size={14} /> {error}
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} />
+            <span>Failed to load configuration. Form fields may be stale.</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadConfig}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10"
+          >
+            <RefreshCw size={11} /> Retry
+          </button>
         </div>
       )}
 

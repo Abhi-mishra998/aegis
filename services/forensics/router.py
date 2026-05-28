@@ -358,10 +358,27 @@ async def _fetch_decision_history(
 
 
 def _extract_risk_score(entry: dict[str, Any]) -> float:
-    """Pull risk_score from an audit log entry — checks multiple locations."""
+    """Pull risk_score from an audit log entry — checks multiple locations.
+
+    Hard-deny blocks (PII/RCE/SQL/kill-switch) bypass the ML risk pipeline
+    and therefore have no computed risk_score. They are by definition the
+    highest-severity events (gateway rejected them outright), so we assign
+    a synthetic floor:
+      • "block"/"blocked"/"kill" (gateway hard-deny) → 0.9
+      • "deny"/"denied"/"escalate" with low score   → 0.7 floor
+
+    This ensures all security-relevant decisions surface in forensics views
+    regardless of whether the ML scorer ran before the rejection.
+    """
     meta = entry.get("metadata_json") or entry.get("metadata") or {}
     score = meta.get("risk_score") or meta.get("risk") or entry.get("risk_score") or entry.get("risk", 0.0)
-    return _safe_float(score)
+    computed = _safe_float(score)
+    decision = (entry.get("decision") or "").lower()
+    if decision in {"block", "blocked", "kill"}:
+        return max(computed, 0.9)
+    if decision in {"deny", "denied", "escalate"} and computed < 0.5:
+        return max(computed, 0.7)
+    return computed
 
 
 def _extract_findings(entry: dict[str, Any]) -> list[str]:
@@ -399,7 +416,7 @@ async def list_investigations(
             client,
             tenant_id=tenant_id,
             action="execute_tool",
-            limit=min(limit * 4, 200),  # over-fetch to allow client-side filtering
+            limit=1000,  # fetch wide — management_api records dominate small windows
         )
         if err:
             source_errors.append(err)
@@ -416,15 +433,16 @@ async def list_investigations(
         raise HTTPException(status_code=400, detail=f"Invalid time format: {exc}") from exc
 
     for entry in logs:
+        # Skip internal management API calls — they flood the execute_tool stream
+        # but are never what investigators want to see
+        tool_field = (entry.get("tool") or "").lower()
+        if tool_field == "management_api":
+            continue
+
         decision = (entry.get("decision") or "").lower()
-        action_field = (entry.get("action") or "").lower()
 
         # Only surface denied or blocked events
         is_denial = decision in {"deny", "denied", "block", "blocked", "kill", "escalate"}
-        is_execute = "execute" in action_field or action_field == ""  # empty = all
-
-        if not is_denial and not is_execute:
-            continue
         if not is_denial:
             continue
 

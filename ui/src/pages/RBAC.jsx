@@ -9,7 +9,7 @@ import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { registryService } from '../services/api'
 import { eventBus } from '../lib/eventBus'
 
-const TOOL_OPTIONS = [
+const TOOL_OPTIONS_FALLBACK = [
   'read_file', 'write_file', 'delete_file',
   'execute_command', 'network_request', 'database_query',
   'send_email', 'list_directory', '*',
@@ -31,7 +31,7 @@ const ROLE_BADGE = {
   VIEWER:           'text-neutral-400 bg-white/[0.04] border-white/[0.08]',
 }
 
-function AgentRow({ agent }) {
+function AgentRow({ agent, toolOptions }) {
   const [expanded,    setExpanded]    = useState(false)
   const [permissions, setPermissions] = useState([])
   const [permLoading, setPermLoading] = useState(false)
@@ -213,7 +213,7 @@ function AgentRow({ agent }) {
                     onChange={(e) => setForm(f => ({ ...f, tool_name: e.target.value }))}
                     className="input-standard input-compact h-8 text-xs"
                   >
-                    {[...new Set([...TOOL_OPTIONS, ...permissions.map(p => p.tool_name).filter(Boolean)])].map(t => (
+                    {[...new Set([...toolOptions, ...permissions.map(p => p.tool_name).filter(Boolean)])].map(t => (
                       <option key={t} value={t} className="bg-[#080808]">{t}</option>
                     ))}
                   </select>
@@ -248,7 +248,8 @@ function AgentRow({ agent }) {
 }
 
 export default function RBAC() {
-  const [agents,  setAgents]  = useState([])
+  const [agents,      setAgents]      = useState([])
+  const [toolOptions, setToolOptions] = useState(TOOL_OPTIONS_FALLBACK)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
   const [search,  setSearch]  = useState('')
@@ -275,6 +276,10 @@ export default function RBAC() {
   useEffect(() => {
     mountedRef.current = true
     load()
+    registryService.getTools().then((res) => {
+      const tools = res?.data || res
+      if (Array.isArray(tools) && tools.length) setToolOptions(tools)
+    }).catch(() => {})
     // 30-second polling to keep agent/permission list current
     const interval = setInterval(load, 30_000)
     return () => { mountedRef.current = false; clearInterval(interval) }
@@ -357,7 +362,7 @@ export default function RBAC() {
       ) : (
         <div className="space-y-3">
           {filtered.map(agent => (
-            <AgentRow key={agent.id} agent={agent} />
+            <AgentRow key={agent.id} agent={agent} toolOptions={toolOptions} />
           ))}
         </div>
       )}

@@ -103,10 +103,18 @@ const request = async (url, options = {}, retry = 1) => {
       let parsedError = errorText;
       try {
         const parsed = JSON.parse(errorText);
-        parsedError = parsed.error || parsed.detail || errorText;
-      } catch (e) {}
+        parsedError = parsed.error || parsed.detail || parsed.message || errorText;
+      } catch (e) {
+        // Non-JSON body. If it looks like an HTML error page (nginx default,
+        // load-balancer block, WAF rejection), collapse it to a short string so
+        // downstream renders ("Decision: <HTML>…") don't leak raw markup.
+        if (typeof errorText === "string" && /^\s*<(!doctype|html|head|body|center)/i.test(errorText)) {
+          parsedError = `Upstream returned HTML ${res.status}`;
+        }
+      }
       console.error(`API_ERROR [${res.status}] ${url}:`, parsedError);
       const apiErr = new Error(parsedError || "API Error");
+      apiErr._status = res.status;
       // 4xx client errors are not retryable (the request was wrong, not transient)
       if (res.status >= 400 && res.status < 500) apiErr._noRetry = true;
       throw apiErr;
@@ -237,9 +245,16 @@ export const api = {
     .catch(() => ({ providers: [] })),
 };
 
+// Helper to append agent_id to existing URLs.
+const _withAgent = (url, agentId) => {
+  if (!agentId) return url;
+  return url + (url.includes("?") ? "&" : "?") + `agent_id=${encodeURIComponent(agentId)}`;
+};
+
 export const auditService = {
-  getSummary: () => request("/audit/logs/summary"),
-  getLogs: (limit = 10, offset = 0) => request(`/audit/logs?limit=${limit}&offset=${offset}`),
+  getSummary: (agentId) => request(_withAgent("/audit/logs/summary", agentId)),
+  getLogs: (limit = 10, offset = 0, agentId) =>
+    request(_withAgent(`/audit/logs?limit=${limit}&offset=${offset}`, agentId)),
   getAgentLogs: (agentId, limit = 15) => request(`/audit/logs?agent_id=${agentId}&limit=${limit}`),
   getKillSwitchHistory: (limit = 20) => request(`/audit/logs?action=kill&limit=${limit}`),
   searchLogs: (params) => request("/audit/logs/search", { method: "POST", body: JSON.stringify(params) }),
@@ -254,30 +269,30 @@ export const auditService = {
     request(`/audit/tool-breakdown?days=${days}&limit=${limit}`),
   getPeerBenchmark: (agentId, days = 30) =>
     request(`/audit/peer-benchmark/${encodeURIComponent(agentId)}?days=${days}`),
-  getTopFindings: (days = 30, limit = 15) =>
-    request(`/audit/top-findings?days=${days}&limit=${limit}`),
+  getTopFindings: (days = 30, limit = 15, agentId) =>
+    request(_withAgent(`/audit/top-findings?days=${days}&limit=${limit}`, agentId)),
   getAnomalyTrends: (days = 30) =>
     request(`/audit/trends?days=${days}`),
   getHourlyActivity: (days = 7) =>
     request(`/audit/hourly-activity?days=${days}`),
-  getRiskHistogram: (days = 30) =>
-    request(`/audit/risk-histogram?days=${days}`),
+  getRiskHistogram: (days = 30, agentId) =>
+    request(_withAgent(`/audit/risk-histogram?days=${days}`, agentId)),
   getWeeklyHeatmap: (days = 28) =>
     request(`/audit/weekly-heatmap?days=${days}`),
   getDecisionTrend: (days = 30) =>
     request(`/audit/decision-trend?days=${days}`),
   getAgentActivity: (limit = 20) =>
     request(`/audit/agent-activity?limit=${limit}`),
-  getHighRiskEvents: (days = 7, limit = 20, threshold = 0.7) =>
-    request(`/audit/high-risk-events?days=${days}&limit=${limit}&threshold=${threshold}`),
+  getHighRiskEvents: (days = 7, limit = 20, threshold = 0.7, agentId) =>
+    request(_withAgent(`/audit/high-risk-events?days=${days}&limit=${limit}&threshold=${threshold}`, agentId)),
   getDenyReasons: (days = 30, limit = 15) =>
     request(`/audit/deny-reasons?days=${days}&limit=${limit}`),
   getAgentToolUsage: (agentId, days = 30) =>
     request(`/audit/tool-usage/${encodeURIComponent(agentId)}?days=${days}`),
-  getToolRisk: (days = 30, limit = 20) =>
-    request(`/audit/tool-risk?days=${days}&limit=${limit}`),
-  getRiskPercentileTrend: (days = 30) =>
-    request(`/audit/risk-percentile-trend?days=${days}`),
+  getToolRisk: (days = 30, limit = 20, agentId) =>
+    request(_withAgent(`/audit/tool-risk?days=${days}&limit=${limit}`, agentId)),
+  getRiskPercentileTrend: (days = 30, agentId) =>
+    request(_withAgent(`/audit/risk-percentile-trend?days=${days}`, agentId)),
   getDailyActiveAgents: (days = 30) =>
     request(`/audit/daily-active-agents?days=${days}`),
   getFindingBreakdown: (days = 30, limit = 20) =>
@@ -301,6 +316,7 @@ export const registryService = {
     const query = new URLSearchParams(params).toString();
     return request(`/agents${query ? "?" + query : ""}`);
   },
+  getTools: () => request("/registry/tools"),
   getAgent: (id) => request(`/agents/${id}`),
   createAgent: (data) => request("/agents", { method: "POST", body: JSON.stringify(data) }),
   updateAgent: (id, data) => request(`/agents/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
@@ -314,26 +330,41 @@ export const registryService = {
 };
 
 export const riskService = {
-  getSummary: () => request("/risk/summary"),
-  getTimeline: () => request("/risk/timeline"),
-  getTopThreats: () => request("/risk/top-threats"),
-  getInsights: () => request("/insights/recent"),
+  getSummary: (agentId) => request(_withAgent("/risk/summary", agentId)),
+  getTimeline: (agentId) => request(_withAgent("/risk/timeline", agentId)),
+  getTopThreats: (agentId) => request(_withAgent("/risk/top-threats", agentId)),
+  getInsights: (agentId) => request(_withAgent("/insights/recent", agentId)),
+  getSignalWeights: () => request("/risk/signal-weights"),
 };
 
 export const forensicsService = {
-  getInvestigation: (id) => request(`/forensics/investigation/${id}`),
+  listInvestigations: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.min_risk != null) q.set('min_risk', params.min_risk);
+    if (params.limit)    q.set('limit',    params.limit);
+    if (params.start_time) q.set('start_time', params.start_time);
+    if (params.end_time)   q.set('end_time',   params.end_time);
+    const qs = q.toString();
+    return request(`/forensics/investigation${qs ? `?${qs}` : ''}`);
+  },
+  getInvestigation: (id, window_hours = 24) =>
+    request(`/forensics/investigation/${id}?window_hours=${window_hours}`),
+  getReplay:       (id, limit = 50) => request(`/forensics/replay/${id}?limit=${limit}`),
+  getTimeline:     (id) => request(`/forensics/timeline/${id}`),
+  getBlastRadius:  (id, depth = 3) => request(`/forensics/blast-radius/${id}?depth=${depth}`),
+  exportInvestigation: (id) => request(`/forensics/export/${id}`, { method: 'POST' }),
 };
 
 export const billingService = {
-  getSummary: () => request("/billing/summary"),
-  getInvoices: () => request("/billing/invoices"),
+  getSummary: (agentId) => request(_withAgent("/billing/summary", agentId)),
+  getInvoices: (agentId) => request(_withAgent("/billing/invoices", agentId)),
   getDashboard: () => request("/usage/dashboard"),
   getAnomalies: () => request("/usage/anomalies"),
   listBudgetRequests: (status) => request(`/billing/budget-requests${status ? `?status=${status}` : ''}`),
   createBudgetRequest: (data) => request('/billing/budget-requests', { method: 'POST', body: JSON.stringify(data) }),
   approveBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
   rejectBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
-  getCostAttribution: (weeks = 4) => request(`/billing/cost-attribution?weeks=${weeks}`),
+  getCostAttribution: (weeks = 4, agentId) => request(_withAgent(`/billing/cost-attribution?weeks=${weeks}`, agentId)),
 };
 
 export const playgroundService = {
@@ -351,7 +382,7 @@ export const playgroundService = {
 };
 
 export const decisionService = {
-  getHistory: (limit = 20) => request(`/decision/history?limit=${limit}`),
+  getHistory: (limit = 20, agentId) => request(_withAgent(`/decision/history?limit=${limit}`, agentId)),
 };
 
 export const dashboardService = {
@@ -373,13 +404,15 @@ export const socService = {
 };
 
 export const incidentService = {
-  getSummary: () => request("/incidents/summary"),
+  getSummary: (agentId) => request(_withAgent("/incidents/summary", agentId)),
+  getTransitions: () => request("/incidents/transitions"),
   list: (params = {}) => {
     const q = new URLSearchParams();
     if (params.status)   q.set("status",   params.status);
     if (params.severity) q.set("severity", params.severity);
     if (params.limit)    q.set("limit",    params.limit);
     if (params.offset)   q.set("offset",   params.offset);
+    if (params.agentId)  q.set("agent_id", params.agentId);
     const qs = q.toString();
     return request(`/incidents${qs ? `?${qs}` : ""}`);
   },

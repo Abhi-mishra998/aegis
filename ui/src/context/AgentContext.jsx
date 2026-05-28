@@ -66,6 +66,13 @@ export function AgentProvider({ children }) {
     else { setAgents([]); setSelectedAgentId(null) }
   }, [isAuthenticated, fetchAgents])
 
+  // AgentContext only emits to eventBus — it never calls eventBus.on() — so
+  // there is no listener leak here. Child components that call eventBus.on()
+  // in their own useEffects MUST return the unsubscribe function (or call
+  // eventBus.off()) in the cleanup to prevent listener accumulation on
+  // hot-reload and page navigation. The eventBus.on() API returns an
+  // unsubscribe function for exactly this purpose:
+  //   useEffect(() => eventBus.on('risk_updated', handler), [handler])
   const handleSSEMessage = useCallback((msg) => {
     switch (msg.type) {
       case 'agent_created':

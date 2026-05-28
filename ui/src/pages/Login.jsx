@@ -227,10 +227,11 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Demo hint */}
-        <p className="text-center text-[10px] text-neutral-800 mt-4">
-          Demo: demo@aegisagent.in / demo1234
-        </p>
+        {/* Credentials hint */}
+        <div className="text-center text-[10px] text-neutral-600 mt-4 space-y-0.5">
+          <p>Admin: admin@acp.local / admin1234</p>
+          <p>Demo: demo@aegisagent.in / demo1234</p>
+        </div>
       </div>
     </div>
   );

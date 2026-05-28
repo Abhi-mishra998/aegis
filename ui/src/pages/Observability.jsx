@@ -4,9 +4,17 @@ import {
 } from 'recharts'
 import {
   Activity, Shield, Zap, Brain, AlertTriangle, CheckCircle,
-  XCircle, TrendingUp, Users, Radio,
+  XCircle, TrendingUp, Users, Radio, Filter,
 } from 'lucide-react'
 import { auditService, decisionService, riskService } from '../services/api'
+
+const SIGNAL_DEFS_FALLBACK = [
+  { key: 'inference_risk',   label: 'Inference',    weight: 0.35 },
+  { key: 'behavior_risk',    label: 'Behavior',     weight: 0.30 },
+  { key: 'anomaly_score',    label: 'Anomaly',      weight: 0.15 },
+  { key: 'cost_risk',        label: 'Cost',         weight: 0.10 },
+  { key: 'cross_agent_risk', label: 'Cross-Agent',  weight: 0.10 },
+]
 import { useAgents } from '../hooks/useAgents'
 import { useAuth } from '../hooks/useAuth'
 import { AgentContext } from '../context/AgentContext'
@@ -35,13 +43,6 @@ const THREAT_STYLE = {
   BENIGN:             { color: 'text-neutral-400', bg: 'bg-neutral-500/10', border: 'border-neutral-500/20' },
 }
 
-const SIGNAL_DEFS = [
-  { key: 'inference_risk',   label: 'Inference',    weight: 0.35 },
-  { key: 'behavior_risk',    label: 'Behavior',     weight: 0.30 },
-  { key: 'anomaly_score',    label: 'Anomaly',      weight: 0.15 },
-  { key: 'cost_risk',        label: 'Cost',         weight: 0.10 },
-  { key: 'cross_agent_risk', label: 'Cross-Agent',  weight: 0.10 },
-]
 
 const STATUS_STYLE = {
   active:      { color: 'text-green-400',   dot: 'bg-green-500',   label: 'ACTIVE' },
@@ -171,7 +172,7 @@ function LiveDecisionFeed({ decisions, agentMap }) {
 
 // ── RiskSignalPanel ─────────────────────────────────────────────────────────────
 
-function RiskSignalPanel({ signals, composite, tool, agentId }) {
+function RiskSignalPanel({ signals, composite, tool, agentId, signalDefs }) {
   return (
     <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl flex flex-col">
       <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center gap-2">
@@ -192,7 +193,7 @@ function RiskSignalPanel({ signals, composite, tool, agentId }) {
       )}
 
       <div className="p-4 space-y-3">
-        {SIGNAL_DEFS.map(({ key, label, weight }) => {
+        {signalDefs.map(({ key, label, weight }) => {
           const val = signals ? (signals[key] ?? 0) : 0
           const pct = Math.min(Math.round(val * 100), 100)
           return (
@@ -414,8 +415,9 @@ function RiskTimeline({ data }) {
 export default function Observability() {
   const { agents } = useAgents()
   const { isAuthenticated } = useAuth()
-  const { sseConnected } = useContext(AgentContext)
+  const { sseConnected, selectedAgentId, selectedAgent } = useContext(AgentContext)
 
+  const [signalDefs, setSignalDefs]     = useState(SIGNAL_DEFS_FALLBACK)
   const [metrics, setMetrics]           = useState({ total: 0, allowed: 0, blocked: 0, escalated: 0, kill: 0 })
   const [flashSet, setFlashSet]         = useState(new Set())
   const [decisions, setDecisions]       = useState([])
@@ -444,7 +446,7 @@ export default function Observability() {
     if (!isAuthenticated) return
 
     const loadMetrics = () => {
-      auditService.getSummary().then((res) => {
+      auditService.getSummary(selectedAgentId).then((res) => {
         const d = res?.data || res || {}
         setMetrics((prev) => ({
           // Only reset from DB when SSE hasn't delivered any events yet.
@@ -458,7 +460,7 @@ export default function Observability() {
     }
 
     const loadHistory = () => {
-      decisionService.getHistory(50).then((res) => {
+      decisionService.getHistory(50, selectedAgentId).then((res) => {
         const items = res?.data?.items || res?.items || []
         const feed = items.map((i) => ({
           ...i,
@@ -479,7 +481,7 @@ export default function Observability() {
         setRiskTimeline((prev) => prev.length > 0 ? prev : timeline)
       }).catch(() => {})
 
-      riskService.getInsights().then((res) => {
+      riskService.getInsights(selectedAgentId).then((res) => {
         const raw  = res?.data
         const list = Array.isArray(raw) ? raw : Array.isArray(raw?.insights) ? raw.insights : Array.isArray(res) ? res : []
         setInsights((prev) => prev.length > 0 ? prev : list.map((i) => ({ ...i, _ts: Date.now(), _live: false })))
@@ -489,10 +491,15 @@ export default function Observability() {
     loadMetrics()
     loadHistory()
 
+    riskService.getSignalWeights().then((res) => {
+      const weights = res?.data?.signals || res?.signals
+      if (Array.isArray(weights) && weights.length) setSignalDefs(weights)
+    }).catch(() => {})
+
     const metricsInterval = setInterval(loadMetrics, 300_000)
 
     const insightsInterval = setInterval(() => {
-      riskService.getInsights().then((res) => {
+      riskService.getInsights(selectedAgentId).then((res) => {
         const raw = res?.data
         const list = Array.isArray(raw) ? raw : Array.isArray(raw?.insights) ? raw.insights : Array.isArray(res) ? res : []
         if (list.length > 0) {
@@ -509,7 +516,7 @@ export default function Observability() {
     }, 60_000)
 
     return () => { clearInterval(metricsInterval); clearInterval(insightsInterval) }
-  }, [isAuthenticated])
+  }, [isAuthenticated, selectedAgentId])
 
   // ── SSE: tool_executed (via eventBus from AgentContext) ───────────────────
   useEffect(() => {
@@ -608,7 +615,14 @@ export default function Observability() {
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-sm font-bold text-white tracking-tight">Real-Time Observability</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-sm font-bold text-white tracking-tight">Real-Time Observability</h1>
+            {selectedAgent && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <p className="text-[10px] text-neutral-500 mt-0.5 font-mono">
             Live decisions · risk signals · AI threat intelligence
           </p>
@@ -700,6 +714,7 @@ export default function Observability() {
             composite={lastComposite}
             tool={lastTool}
             agentId={lastAgentId}
+            signalDefs={signalDefs}
           />
         </div>
       </div>

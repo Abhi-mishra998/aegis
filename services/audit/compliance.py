@@ -1865,6 +1865,22 @@ async def list_incidents(
     return APIResponse(data=[_serialize_incident(r) for r in rows])
 
 
+@incidents_router.get("/transitions", response_model=APIResponse[dict])
+async def get_incident_transitions() -> APIResponse[dict]:
+    """Return the valid state machine transitions for incidents."""
+    return APIResponse(data={
+        "transitions": {
+            "OPEN":          ["INVESTIGATING"],
+            "INVESTIGATING": ["MITIGATED", "ESCALATED", "RESOLVED"],
+            "ESCALATED":     ["INVESTIGATING", "RESOLVED"],
+            "MITIGATED":     ["RESOLVED", "OPEN"],
+            "RESOLVED":      [],
+        },
+        "terminal_states": ["RESOLVED"],
+        "initial_state": "OPEN",
+    })
+
+
 @incidents_router.get("/{incident_id}", response_model=APIResponse[dict])
 async def get_incident(
     incident_id: str,

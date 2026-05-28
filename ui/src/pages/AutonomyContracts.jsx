@@ -128,39 +128,50 @@ export default function AutonomyContracts() {
             <span className="text-sm font-semibold text-white">Active Contracts</span>
             <span className="ml-auto text-[10px] font-mono text-neutral-600">{contracts.length}</span>
           </div>
-          <div className="divide-y divide-white/5">
-            {contracts.map((c) => (
-              <div key={c.id} className="py-3 flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full ${c.enabled ? 'bg-green-500' : 'bg-neutral-600'}`} />
-                    <span className="text-sm text-white font-semibold">{c.name}</span>
-                    <span className="text-[10px] font-mono text-neutral-500">v{c.version}</span>
-                  </div>
-                  <div className="text-[10px] font-mono text-neutral-500 mt-0.5 truncate">
-                    agent {c.agent_id?.slice(0, 14)} · max_runtime {c.max_runtime_seconds ?? '∞'}s · max_cost ${c.max_cost_usd ?? '∞'}
-                  </div>
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {(c.denied_actions || []).slice(0, 5).map((a) => (
-                      <span key={a} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 border border-red-500/20">deny:{a}</span>
-                    ))}
-                    {(c.approval_required || []).slice(0, 5).map((a) => (
-                      <span key={a} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">approval:{a}</span>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => setEditing({ ...c })} className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1">Edit</button>
-                  <button onClick={() => disable(c.id)} className="text-xs text-red-400 hover:text-red-300 px-2 py-1 flex items-center gap-1">
-                    <Trash2 size={12} /> Disable
-                  </button>
-                </div>
-              </div>
-            ))}
-            {!contracts.length && (
-              <p className="text-xs text-neutral-600 text-center py-6">No contracts yet — create one to start enforcing bounded autonomy.</p>
-            )}
-          </div>
+          {!contracts.length ? (
+            <p className="text-xs text-neutral-600 text-center py-6">No autonomy contracts yet. Click <span className="text-blue-300">New Contract</span> above to start enforcing bounded autonomy.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 text-[10px] uppercase tracking-wider text-neutral-500">
+                    <th className="text-left py-2 pr-3">Contract</th>
+                    <th className="text-left py-2 pr-3">Agent</th>
+                    <th className="text-left py-2 pr-3">Allowed Actions</th>
+                    <th className="text-left py-2 pr-3">Status</th>
+                    <th className="text-left py-2 pr-3">Expires</th>
+                    <th className="text-left py-2 pr-3">Created</th>
+                    <th className="text-right py-2"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {contracts.map((c) => (
+                    <tr key={c.id}>
+                      <td className="py-2 pr-3 font-mono text-neutral-300" title={c.id}>{(c.id || '').slice(0, 8)}…</td>
+                      <td className="py-2 pr-3 font-mono text-neutral-400" title={c.agent_id}>{(c.agent_id || '').slice(0, 10)}…</td>
+                      <td className="py-2 pr-3 text-neutral-400 max-w-[220px] truncate" title={(c.allowed_actions || []).join(', ')}>
+                        {(c.allowed_actions || []).slice(0, 4).join(', ') || <span className="text-neutral-700">—</span>}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${c.enabled ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${c.enabled ? 'bg-green-500' : 'bg-neutral-600'}`} />
+                          {c.enabled ? 'active' : 'disabled'}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 text-neutral-500">{c.expires_at ? new Date(c.expires_at).toLocaleDateString() : <span className="text-neutral-700">never</span>}</td>
+                      <td className="py-2 pr-3 text-neutral-500">{c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
+                      <td className="py-2 text-right whitespace-nowrap">
+                        <button onClick={() => setEditing({ ...c })} className="text-blue-400 hover:text-blue-300 px-2">Edit</button>
+                        <button onClick={() => disable(c.id)} className="text-red-400 hover:text-red-300 px-2 inline-flex items-center gap-1">
+                          <Trash2 size={11} /> Disable
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">

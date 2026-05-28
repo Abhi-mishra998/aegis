@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,23 +179,47 @@ async def get_risk_summary(
     high_risk = _safe_int(await redis.get(f"acp:metrics:risk_distribution:{tid}:high"))
     critical_risk = _safe_int(await redis.get(f"acp:metrics:risk_distribution:{tid}:critical"))
 
-    import datetime
-
-    # A-6 FIX: Generate dynamic time series based on recent risk profile instead of hardcoded values
-    now = datetime.datetime.now()
-    metrics = []
-
-    # Simple dynamic trend based on total threats blocked and high risk agents
-    base_score = blocked / 10 + high_risk + critical_risk * 2
-    for i in range(4, -1, -1):
-        dt = now - datetime.timedelta(hours=i*4)
-        hour_str = dt.strftime("%H:00")
-
-        # Add some variation based on the time and base score
-        variance = (i % 3) * (high_risk or 1)
-        score = max(0, int(base_score + variance)) if i != 0 else max(0, int(base_score))
-
-        metrics.append({"time": hour_str, "score": score})
+    # Sprint 3 — replaced synthetic `variance = (i % 3) * (high_risk or 1)` formula
+    # with a real call to the audit service's /logs/risk/timeline endpoint
+    # (24h window, hourly buckets). Falls back to [] on any error so the
+    # dashboard renders cleanly instead of showing fabricated trends.
+    metrics: list[dict] = []
+    try:
+        audit_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/risk/timeline"
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(
+                audit_url,
+                params={"days": 1},
+                headers={
+                    "X-Tenant-ID": tid,
+                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                },
+            )
+        if resp.status_code == 200:
+            payload = resp.json()
+            rows = payload.get("data") or []
+            if isinstance(rows, list):
+                import datetime
+                for row in rows:
+                    date_str = row.get("date") or ""
+                    try:
+                        dt = datetime.datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                        time_label = dt.strftime("%H:00")
+                    except (ValueError, TypeError):
+                        time_label = (date_str[:13] + ":00") if date_str else "00:00"
+                    # avg_risk is a 0..1 float; the UI legend uses an integer
+                    # score so we scale to 0..100 to keep the chart readable.
+                    avg_risk = row.get("avg_risk")
+                    threats = row.get("threats") or 0
+                    try:
+                        score = int(round(float(avg_risk or 0.0) * 100)) if avg_risk else int(threats)
+                    except (TypeError, ValueError):
+                        score = 0
+                    metrics.append({"time": time_label, "score": max(0, score)})
+        else:
+            logger.warning("risk_summary_timeline_non_200", status=resp.status_code)
+    except Exception as exc:
+        logger.warning("risk_summary_timeline_error", error=str(exc))
 
     return APIResponse(
         data={
@@ -205,6 +229,106 @@ async def get_risk_summary(
             "metrics": metrics,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# SIGNAL WEIGHTS
+# ---------------------------------------------------------------------------
+
+_SIGNAL_WEIGHTS_KEY = "acp:signal_weights:{tenant_id}"
+_SIGNAL_WEIGHT_KEYS = frozenset(["inference", "behavior", "anomaly", "cost", "cross_agent"])
+
+
+async def _load_tenant_weights(tenant_id: str) -> dict[str, float]:
+    """Sprint 5 — per-tenant signal weights from Redis with DEFAULT_WEIGHTS fallback.
+
+    Storage: `acp:signal_weights:{tenant_id}` JSON-encoded dict. Missing /
+    malformed values silently fall back to the engine defaults so a config
+    blip can't poison the live decision pipeline.
+    """
+    from services.decision.engine import DEFAULT_WEIGHTS
+    try:
+        raw = await _get_redis().get(_SIGNAL_WEIGHTS_KEY.format(tenant_id=tenant_id))
+    except Exception as exc:
+        logger.warning("signal_weights_read_failed", error=str(exc), tenant_id=tenant_id)
+        return dict(DEFAULT_WEIGHTS)
+    if not raw:
+        return dict(DEFAULT_WEIGHTS)
+    try:
+        import json as _json
+        parsed = _json.loads(raw)
+        if not isinstance(parsed, dict):
+            return dict(DEFAULT_WEIGHTS)
+        merged = dict(DEFAULT_WEIGHTS)
+        for k, v in parsed.items():
+            if k in _SIGNAL_WEIGHT_KEYS:
+                try:
+                    merged[k] = float(v)
+                except (TypeError, ValueError):
+                    continue
+        return merged
+    except Exception as exc:
+        logger.warning("signal_weights_parse_failed", error=str(exc), tenant_id=tenant_id)
+        return dict(DEFAULT_WEIGHTS)
+
+
+class SignalWeightsPayload(BaseModel):
+    weights: dict[str, float]
+
+
+@router.get("/signal-weights", response_model=APIResponse[dict])
+async def get_signal_weights(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Return the risk signal weights used by the decision engine.
+
+    Loads per-tenant overrides from Redis (`acp:signal_weights:{tenant_id}`)
+    and falls back to the in-code DEFAULT_WEIGHTS when no override exists.
+    """
+    weights = await _load_tenant_weights(str(tenant_id))
+    return APIResponse(data={
+        "weights": weights,
+        "signals": [
+            {"key": "inference_risk",   "label": "Inference",   "weight": weights["inference"]},
+            {"key": "behavior_risk",    "label": "Behavior",    "weight": weights["behavior"]},
+            {"key": "anomaly_risk",     "label": "Anomaly",     "weight": weights["anomaly"]},
+            {"key": "cost_risk",        "label": "Cost",        "weight": weights["cost"]},
+            {"key": "cross_agent_risk", "label": "Cross-Agent", "weight": weights["cross_agent"]},
+        ],
+    })
+
+
+@router.put("/signal-weights", response_model=APIResponse[dict])
+async def put_signal_weights(
+    payload: SignalWeightsPayload,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    _role: Annotated[str, Depends(_require_admin_or_security)],
+) -> APIResponse[dict]:
+    """Persist per-tenant signal weights (ADMIN/SECURITY only).
+
+    Unknown keys are dropped; values are coerced to float; partial updates
+    are merged on top of DEFAULT_WEIGHTS so callers can override one signal
+    without resending the whole table.
+    """
+    from services.decision.engine import DEFAULT_WEIGHTS
+    import json as _json
+
+    cleaned = dict(DEFAULT_WEIGHTS)
+    for k, v in (payload.weights or {}).items():
+        if k in _SIGNAL_WEIGHT_KEYS:
+            try:
+                cleaned[k] = float(v)
+            except (TypeError, ValueError):
+                continue
+    try:
+        await _get_redis().set(
+            _SIGNAL_WEIGHTS_KEY.format(tenant_id=str(tenant_id)),
+            _json.dumps(cleaned),
+        )
+    except Exception as exc:
+        logger.error("signal_weights_write_failed", error=str(exc), tenant_id=str(tenant_id))
+        raise HTTPException(status_code=503, detail="Unable to persist signal weights") from exc
+    return APIResponse(data={"weights": cleaned})
 
 
 # ---------------------------------------------------------------------------

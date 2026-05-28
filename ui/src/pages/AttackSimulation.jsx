@@ -228,20 +228,51 @@ export default function AttackSimulation() {
     }]);
   };
 
+  // Sanitize a server-returned message so HTML / multi-line payloads never
+  // make it into the rendered "Decision" line. The api.js layer already
+  // collapses raw nginx error pages to "Upstream returned HTML <code>"; this
+  // is a belt-and-braces strip for anything else that slipped through.
+  const cleanMessage = (raw) => {
+    if (!raw || typeof raw !== 'string') return raw;
+    const stripped = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return stripped.length > 240 ? stripped.slice(0, 237) + '…' : stripped;
+  };
+
+  // The "Baseline" scenario uses `read_config`, which won't be in every
+  // agent's allow-list. Substitute the first tool actually allowed on the
+  // selected agent so the baseline ALLOW expectation can pass for any agent.
+  const resolveScenarioTool = (scenario) => {
+    if (scenario.expectedDecision !== 'allow') return scenario.tool;
+    const ag = agents.find(a => a.id === agentId);
+    const allowed = ag?.metadata?.tools || ag?.metadata?.allowed_tools || ag?.tools || [];
+    const safeFirst = Array.isArray(allowed) ? allowed.find(t => typeof t === 'string' && t.trim()) : null;
+    return safeFirst || scenario.tool;
+  };
+
   const runScenario = async (scenario) => {
     setRunning(r => ({ ...r, [scenario.id]: true }));
     const start = Date.now();
+    const effectiveTool = resolveScenarioTool(scenario);
     try {
-      const data = await playgroundService.execute(agentId, scenario.tool, scenario.payload, {
+      const data = await playgroundService.execute(agentId, effectiveTool, scenario.payload, {
         headers: { 'X-Request-ID': `sim-${scenario.id}-${Date.now()}` }
       });
       const latency = Date.now() - start;
-      setResults(r => ({ ...r, [scenario.id]: { ...data, latency, httpStatus: 200, ts: new Date() } }));
-      appendLog(scenario, data, latency);
+      setResults(r => ({ ...r, [scenario.id]: { ...data, latency, httpStatus: 200, effectiveTool, ts: new Date() } }));
+      appendLog({ ...scenario, tool: effectiveTool }, data, latency);
     } catch (err) {
       const latency = Date.now() - start;
-      setResults(r => ({ ...r, [scenario.id]: { error: err.message, latency, ts: new Date() } }));
-      appendLog(scenario, { action: 'deny', risk: null }, latency);
+      setResults(r => ({
+        ...r,
+        [scenario.id]: {
+          error: cleanMessage(err.message),
+          httpStatus: err._status,
+          latency,
+          effectiveTool,
+          ts: new Date(),
+        },
+      }));
+      appendLog({ ...scenario, tool: effectiveTool }, { action: 'deny', risk: null }, latency);
     } finally {
       setRunning(r => ({ ...r, [scenario.id]: false }));
     }
@@ -379,7 +410,7 @@ export default function AttackSimulation() {
                   <div className="flex items-center gap-4 text-xs flex-wrap">
                     <span className="text-neutral-500">
                       Decision: <span className={`font-medium ${result.action === 'allow' ? 'text-green-400' : 'text-red-400'}`}>
-                        {(result.action || result.error || 'error').toUpperCase()}
+                        {(result.action ? result.action : (result.httpStatus ? `HTTP ${result.httpStatus}` : 'ERROR')).toString().toUpperCase()}
                       </span>
                     </span>
                     {result.risk !== undefined && (
@@ -388,7 +419,10 @@ export default function AttackSimulation() {
                       </span>
                     )}
                     <span className="text-neutral-600 font-mono">{result.latency}ms</span>
-                    <span className="text-neutral-700">HTTP {result.httpStatus}</span>
+                    {result.httpStatus && <span className="text-neutral-700">HTTP {result.httpStatus}</span>}
+                    {result.effectiveTool && result.effectiveTool !== scenario.tool && (
+                      <span className="text-neutral-700">tool: <span className="text-neutral-500 font-mono">{result.effectiveTool}</span></span>
+                    )}
                     <span className="text-neutral-700 ml-auto">
                       Control: <span className="text-neutral-500">{scenario.control}</span>
                     </span>

@@ -27,7 +27,15 @@ function timeAgo(ts) {
   return `${Math.floor(diff / 3_600_000)}h`
 }
 
-function ConnectionBadge({ state }) {
+const SSE_REASON_LABEL = {
+  auth_expired:       'session expired',
+  cors:               'cookie blocked',
+  network:            'network error',
+  heartbeat_timeout:  'stream stalled',
+  unknown:            null,
+}
+
+function ConnectionBadge({ state, lastError }) {
   if (state === 'open') return (
     <span className="flex items-center gap-1.5 text-[11px] text-green-400">
       <Wifi size={12} /> Live
@@ -38,9 +46,11 @@ function ConnectionBadge({ state }) {
       <Loader2 size={12} className="animate-spin" /> Connecting
     </span>
   )
+  const reason = SSE_REASON_LABEL[lastError]
   return (
-    <span className="flex items-center gap-1.5 text-[11px] text-neutral-500">
-      <WifiOff size={12} /> Disconnected
+    <span className="flex items-center gap-1.5 text-[11px] text-neutral-500" title={lastError || ''}>
+      <WifiOff size={12} />
+      <span>Disconnected{reason ? ` — ${reason}` : ''}</span>
     </span>
   )
 }
@@ -130,7 +140,7 @@ export default function LiveFeed() {
     return ch
   }, [handleMessage])
 
-  const { state, reconnect } = useSSE({ onMessage: handleMessage, channels })
+  const { state, reconnect, lastError } = useSSE({ onMessage: handleMessage, channels })
 
   const visible = filterTypes.size > 0
     ? events.filter((e) => filterTypes.has(e.type))
@@ -170,7 +180,7 @@ export default function LiveFeed() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <ConnectionBadge state={state} />
+          <ConnectionBadge state={state} lastError={lastError} />
           {state !== 'open' && (
             <button
               onClick={reconnect}

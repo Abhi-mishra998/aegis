@@ -1,16 +1,36 @@
 import asyncio
+import json
 import time
 
 import httpx
 import structlog
 
 from sdk.common.config import settings
+from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
 
 # Constants for minimal, production-ready implementation
 _TIMEOUT = httpx.Timeout(5.0)
 _OPA_URL = f"{settings.OPA_URL.rstrip('/')}/v1/data/acp/v1/agent"
+
+# Sprint 2 — Lazy Redis client for SSE policy_decision publishes. The
+# OPAClient itself is a singleton; we share one redis connection across
+# all check_policy calls. Best-effort: failures must NOT break policy
+# evaluation, which is the hot path of /execute.
+_redis_client = None
+
+
+def _get_publish_redis():
+    """Return a cached Redis client for SSE publishing; None on failure."""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            _redis_client = get_redis_client(settings.REDIS_URL, decode_responses=False)
+        except Exception as exc:
+            logger.warning("opa_redis_init_failed", error=str(exc))
+            _redis_client = False  # sentinel: do not retry every call
+    return _redis_client if _redis_client else None
 
 
 class OPAClient:
@@ -93,6 +113,43 @@ class OPAClient:
                 risk_adjustment=adjustment,
                 duration_ms=duration_ms
             )
+
+            # Sprint 2 — best-effort SSE publish so the dashboard LiveFeed
+            # can render policy decisions in near-real-time. Keeps a single
+            # cached Redis client across calls. Failures are swallowed — a
+            # publish error must never break the policy hot path.
+            tenant_id = str(input_data.get("tenant_id", "") or "")
+            if tenant_id:
+                agent_ctx = input_data.get("agent") or {}
+                agent_id = str(agent_ctx.get("id", "") or "") if isinstance(agent_ctx, dict) else ""
+                tool = str(input_data.get("tool", "") or "")
+                redis_client = _get_publish_redis()
+                if redis_client is not None:
+                    payload = json.dumps({
+                        "type": "policy_decision",
+                        "data": {
+                            "agent_id": agent_id or None,
+                            "action": tool or None,
+                            "allowed": allowed,
+                            "reason": reason,
+                            "reasons": [reason] if reason else [],
+                            "risk_adjustment": adjustment,
+                        },
+                        "ts": int(time.time()),
+                    })
+                    try:
+                        await redis_client.publish(
+                            f"acp:events:{tenant_id}", payload,
+                        )
+                        if agent_id:
+                            await redis_client.publish(
+                                f"acp:events:{tenant_id}:{agent_id}", payload,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "policy_decision_publish_failed",
+                            error=str(exc),
+                        )
 
             return allowed, reason, adjustment
 

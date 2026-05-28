@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useContext } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { auditService, auditExportService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { AgentContext } from '../context/AgentContext'
 import { eventBus } from '../lib/eventBus'
 import {
   ShieldCheck, ShieldAlert, AlertCircle, Search, RefreshCw,
@@ -307,9 +308,15 @@ const DECISION_OPTIONS = ['all', 'allow', 'deny', 'monitor', 'throttle', 'escala
 export default function AuditLogs() {
   useAuth()
   const navigate = useNavigate()
+  const { selectedAgentId, selectedAgent } = useContext(AgentContext)
 
   const [searchParams] = useSearchParams()
   const urlAgent = searchParams.get('agent') || ''
+
+  // Resolve the effective agent filter: prefer URL ?agent override; otherwise
+  // fall back to AgentContext's selected agent. Unified so the sidebar picker
+  // and deep-links both drive the same filter.
+  const effectiveAgentId = urlAgent || selectedAgentId || ''
 
   const [summary,        setSummary]        = useState(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
@@ -319,7 +326,6 @@ export default function AuditLogs() {
   const [totalCount,     setTotalCount]     = useState(0)
   const [page,           setPage]           = useState(0)
 
-  const [filterAgentId,  setFilterAgentId]  = useState(urlAgent)
   const [filterDecision, setFilterDecision] = useState('all')
   const [filterTool,     setFilterTool]     = useState('')
   const [filterFrom,     setFilterFrom]     = useState('')
@@ -338,18 +344,18 @@ export default function AuditLogs() {
 
   const fetchSummary = useCallback(async () => {
     try {
-      const res = await auditService.getSummary()
+      const res = await auditService.getSummary(effectiveAgentId || undefined)
       if (mountedRef.current) { setSummary(res?.data || res || {}); setSummaryLoading(false) }
     } catch {
       if (mountedRef.current) setSummaryLoading(false)
     }
-  }, [])
+  }, [effectiveAgentId])
 
   const fetchLogs = useCallback(async (currentPage = 0) => {
     setLogsLoading(true)
     setLogsError('')
     try {
-      const res = await auditService.getLogs(PAGE_SIZE, currentPage * PAGE_SIZE)
+      const res = await auditService.getLogs(PAGE_SIZE, currentPage * PAGE_SIZE, effectiveAgentId || undefined)
       if (!mountedRef.current) return
       const data  = res?.data || res || {}
       const items = Array.isArray(data) ? data : (data.logs || data.items || [])
@@ -360,7 +366,7 @@ export default function AuditLogs() {
     } finally {
       if (mountedRef.current) setLogsLoading(false)
     }
-  }, [])
+  }, [effectiveAgentId])
 
   const handleSearch = useCallback(async (currentPage = 0) => {
     setIsSearching(true)
@@ -368,7 +374,7 @@ export default function AuditLogs() {
     setHasSearched(true)
     try {
       const params = { limit: PAGE_SIZE, offset: currentPage * PAGE_SIZE }
-      if (filterAgentId.trim())      params.agent_id   = filterAgentId.trim()
+      if (effectiveAgentId)          params.agent_id   = effectiveAgentId
       if (filterDecision !== 'all')  params.decision   = filterDecision
       if (filterTool.trim())         params.tool       = filterTool.trim()
       if (filterFrom)                params.start_date = filterFrom
@@ -385,7 +391,7 @@ export default function AuditLogs() {
     } finally {
       if (mountedRef.current) setIsSearching(false)
     }
-  }, [filterAgentId, filterDecision, filterTool, filterFrom, filterTo])
+  }, [effectiveAgentId, filterDecision, filterTool, filterFrom, filterTo])
 
   const handleVerifyIntegrity = async () => {
     setIntegrityStatus('checking')
@@ -447,6 +453,14 @@ export default function AuditLogs() {
     if (urlAgent) handleSearch(0)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Re-fire fetches when the agent scope from AgentContext (or URL) changes.
+  useEffect(() => {
+    fetchSummary()
+    setPage(0)
+    if (effectiveAgentId) { setHasSearched(true); handleSearch(0) } else { fetchLogs(0) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveAgentId])
+
   // Real-time: refresh summary + latest page when the SSE bus fires a new decision/tool event
   useEffect(() => {
     const refresh = () => {
@@ -475,7 +489,7 @@ export default function AuditLogs() {
     try {
       const params = {
         format,
-        ...(filterAgentId  ? { agent_id:  filterAgentId  } : {}),
+        ...(effectiveAgentId ? { agent_id: effectiveAgentId } : {}),
         ...(filterDecision && filterDecision !== 'all' ? { action: filterDecision } : {}),
         ...(filterFrom     ? { start_date: filterFrom    } : {}),
         ...(filterTo       ? { end_date:   filterTo      } : {}),
@@ -508,7 +522,14 @@ export default function AuditLogs() {
       {/* ── Header ── */}
       <div className="page-header">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Audit Logs</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold text-white tracking-tight">Audit Logs</h1>
+            {selectedAgent && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
+                <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-neutral-500 mt-0.5">Immutable chain-verified event stream</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -593,16 +614,12 @@ export default function AuditLogs() {
       <Card title="Search &amp; Filter" icon={Filter}>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           <div className="space-y-1.5">
-            <label htmlFor="filter-agent" className="label-standard">Agent ID</label>
-            <input
-              id="filter-agent"
-              type="text"
-              value={filterAgentId}
-              onChange={e => setFilterAgentId(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch(0)}
-              placeholder="UUID or partial…"
-              className="input-standard h-9 font-mono"
-            />
+            <label className="label-standard">Agent Scope</label>
+            <div className="input-standard h-9 font-mono flex items-center text-xs text-neutral-300">
+              {effectiveAgentId
+                ? (selectedAgent?.name || effectiveAgentId.slice(0, 8) + '…')
+                : <span className="text-neutral-600">all agents (use sidebar to scope)</span>}
+            </div>
           </div>
           <div className="space-y-1.5">
             <label htmlFor="filter-decision" className="label-standard">Decision</label>
@@ -664,7 +681,6 @@ export default function AuditLogs() {
             variant="ghost"
             size="sm"
             onClick={() => {
-              setFilterAgentId('')
               setFilterDecision('all')
               setFilterTool('')
               setFilterFrom('')

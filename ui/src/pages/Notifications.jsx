@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useContext } from 'react'
 import {
   Bell, Check, CheckCheck, RefreshCw, Info,
   AlertTriangle, CheckCircle2, XCircle, Loader2,
   ExternalLink, Filter,
 } from 'lucide-react'
 import { notificationService } from '../services/api'
+import { AuthContext } from '../context/AuthContext'
 
 const LEVEL_CONFIG = {
   info:    { icon: Info,          color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/20' },
@@ -66,6 +67,7 @@ function NotificationItem({ notif, onRead }) {
 }
 
 export default function Notifications() {
+  const { addToast } = useContext(AuthContext)
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading]   = useState(true)
   const [markingAll, setMarkingAll] = useState(false)
@@ -94,17 +96,26 @@ export default function Notifications() {
   useEffect(() => { fetchCount() }, [fetchCount])
 
   const handleRead = async (id) => {
-    await notificationService.markRead(id).catch(() => {})
-    setNotifications(ns => ns.map(n => n.id === id ? { ...n, is_read: true } : n))
-    fetchCount()
+    try {
+      await notificationService.markRead(id)
+      setNotifications(ns => ns.map(n => n.id === id ? { ...n, is_read: true } : n))
+      fetchCount()
+    } catch (err) {
+      addToast?.(`Failed to mark notification as read: ${err?.message || 'unknown error'}`, 'error')
+    }
   }
 
   const handleMarkAll = async () => {
     setMarkingAll(true)
-    await notificationService.markAllRead().catch(() => {})
-    setNotifications(ns => ns.map(n => ({ ...n, is_read: true })))
-    setTotalUnread(0)
-    setMarkingAll(false)
+    try {
+      await notificationService.markAllRead()
+      setNotifications(ns => ns.map(n => ({ ...n, is_read: true })))
+      setTotalUnread(0)
+    } catch (err) {
+      addToast?.(`Failed to mark all as read: ${err?.message || 'unknown error'}`, 'error')
+    } finally {
+      setMarkingAll(false)
+    }
   }
 
   const derivedUnread = notifications.filter(n => !n.is_read).length
