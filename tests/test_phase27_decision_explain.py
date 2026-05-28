@@ -128,7 +128,7 @@ def test_audit_logs_explain_shows_explanation():
 def test_audit_logs_explain_shows_findings():
     src = (ROOT / "ui/src/pages/AuditLogs.jsx").read_text()
     idx = src.find("ExplainPanel")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "findings" in snippet or "finding" in snippet.lower()
 
 

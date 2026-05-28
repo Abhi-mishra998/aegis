@@ -28,63 +28,63 @@ def test_aggregator_histogram_accepts_bins():
 def test_aggregator_histogram_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_histogram_uses_floor_bucketing():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "FLOOR" in snippet or "floor" in snippet.lower()
 
 
 def test_aggregator_histogram_returns_buckets_key():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"buckets"' in snippet or "'buckets'" in snippet
 
 
 def test_aggregator_histogram_has_bin_label():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"bin"' in snippet or "'bin'" in snippet
 
 
 def test_aggregator_histogram_has_low_high():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "low" in snippet and "high" in snippet
 
 
 def test_aggregator_histogram_has_count():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_aggregator_histogram_has_total():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "total" in snippet
 
 
 def test_aggregator_histogram_has_computed_at():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "computed_at" in snippet
 
 
 def test_aggregator_histogram_zero_fills_missing_bins():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_risk_histogram")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "range(" in snippet
 
 

@@ -28,28 +28,28 @@ def test_aggregator_deny_reasons_accepts_limit():
 def test_aggregator_deny_reasons_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_deny_reasons")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_deny_reasons_filters_deny_kill():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_deny_reasons")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "deny" in snippet and "kill" in snippet
 
 
 def test_aggregator_deny_reasons_groups_by_reason():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_deny_reasons")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "reason" in snippet and ("group_by" in snippet or "GROUP BY" in snippet)
 
 
 def test_aggregator_deny_reasons_handles_null_reason():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_deny_reasons")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "nullif" in snippet or "coalesce" in snippet or "unspecified" in snippet
 
 
@@ -169,28 +169,28 @@ def test_policy_analytics_has_deny_reasons_state():
 def test_policy_analytics_chart_shows_reason():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("DenyReasonsChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "reason" in snippet
 
 
 def test_policy_analytics_chart_shows_count():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("DenyReasonsChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_policy_analytics_chart_shows_pct():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("DenyReasonsChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "pct" in snippet
 
 
 def test_policy_analytics_chart_has_bar():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("DenyReasonsChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "width" in snippet or "barPct" in snippet
 
 

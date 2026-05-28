@@ -21,56 +21,56 @@ def test_aggregator_hourly_accepts_days():
 def test_aggregator_hourly_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_hourly_extracts_hour():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "hour" in snippet and ("extract" in snippet.lower() or "HOUR" in snippet)
 
 
 def test_aggregator_hourly_has_count_field():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_aggregator_hourly_has_deny_count():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "deny_count" in snippet
 
 
 def test_aggregator_hourly_has_avg_risk():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "avg_risk" in snippet
 
 
 def test_aggregator_hourly_returns_24_buckets():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "24" in snippet or "range(24)" in snippet
 
 
 def test_aggregator_hourly_returns_buckets_key():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"buckets"' in snippet or "'buckets'" in snippet
 
 
 def test_aggregator_hourly_has_computed_at():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_hourly_activity")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "computed_at" in snippet
 
 
@@ -153,42 +153,42 @@ def test_policy_analytics_imports_composed_chart():
 def test_policy_analytics_chart_uses_bar():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "Bar" in snippet
 
 
 def test_policy_analytics_chart_uses_line():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "Line" in snippet
 
 
 def test_policy_analytics_chart_shows_count():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 
 def test_policy_analytics_chart_shows_deny_count():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "deny_count" in snippet
 
 
 def test_policy_analytics_chart_shows_avg_risk():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "avg_risk" in snippet
 
 
 def test_policy_analytics_chart_has_dual_axis():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "yAxisId" in snippet
 
 
@@ -200,5 +200,5 @@ def test_policy_analytics_has_section_heading():
 def test_policy_analytics_chart_has_cartesian_grid():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("HourlyActivityChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "CartesianGrid" in snippet

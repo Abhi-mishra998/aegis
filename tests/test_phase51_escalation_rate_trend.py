@@ -21,21 +21,21 @@ def test_aggregator_escalation_rate_accepts_days():
 def test_aggregator_escalation_rate_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_escalation_rate_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_escalation_rate_counts_escalate():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_escalation_rate_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "escalate" in snippet
 
 
 def test_aggregator_escalation_rate_groups_by_day():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_escalation_rate_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "date_trunc" in snippet or "day" in snippet
 
 

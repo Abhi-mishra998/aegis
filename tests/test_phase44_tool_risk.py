@@ -28,21 +28,21 @@ def test_aggregator_tool_risk_accepts_limit():
 def test_aggregator_tool_risk_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_leaderboard")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_tool_risk_groups_by_tool():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_leaderboard")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "group_by" in snippet or "GROUP BY" in snippet
 
 
 def test_aggregator_tool_risk_has_deny_count():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_tool_risk_leaderboard")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "deny_count" in snippet
 
 

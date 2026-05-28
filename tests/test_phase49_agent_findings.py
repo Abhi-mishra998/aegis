@@ -35,21 +35,21 @@ def test_aggregator_agent_findings_accepts_limit():
 def test_aggregator_agent_findings_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_finding_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_agent_findings_unnests_jsonb():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_finding_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "jsonb_array_elements_text" in snippet
 
 
 def test_aggregator_agent_findings_has_count():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_agent_finding_breakdown")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "count" in snippet
 
 

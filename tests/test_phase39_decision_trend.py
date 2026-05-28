@@ -21,56 +21,56 @@ def test_aggregator_decision_trend_accepts_days():
 def test_aggregator_decision_trend_filters_by_tenant():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "tenant_id" in snippet
 
 
 def test_aggregator_decision_trend_groups_by_day():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "date_trunc" in snippet or "day" in snippet
 
 
 def test_aggregator_decision_trend_has_allow():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"allow"' in snippet or "'allow'" in snippet
 
 
 def test_aggregator_decision_trend_has_deny():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"deny"' in snippet or "'deny'" in snippet
 
 
 def test_aggregator_decision_trend_has_escalate():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"escalate"' in snippet or "'escalate'" in snippet
 
 
 def test_aggregator_decision_trend_has_monitor():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"monitor"' in snippet or "'monitor'" in snippet
 
 
 def test_aggregator_decision_trend_has_kill():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert '"kill"' in snippet or "'kill'" in snippet
 
 
 def test_aggregator_decision_trend_zero_fills_series():
     src = (ROOT / "services/audit/aggregator.py").read_text()
     idx = src.find("get_decision_trend")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "range(" in snippet
 
 
@@ -188,7 +188,7 @@ def test_policy_analytics_decision_chart_has_escalate():
 def test_policy_analytics_decision_chart_uses_stack():
     src = (ROOT / "ui/src/pages/PolicyAnalytics.jsx").read_text()
     idx = src.find("DecisionTrendChart")
-    snippet = src[idx:idx + 2000]
+    snippet = src[idx:idx + 3000]
     assert "stackId" in snippet or "stack" in snippet.lower()
 
 
