@@ -1,7 +1,7 @@
 {
   "name": "acp",
   "version": "1.0.0",
-  "description": "",
+  "description": "Aegis — runtime governance and security control plane for AI agents.",
   "main": "index.js",
   "directories": {
     "test": "tests"
@@ -11,16 +11,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Abhi-mishra998/ACP_Agent.git"
+    "url": "git+https://github.com/Abhi-mishra998/aegis.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["ai", "agents", "governance", "security", "audit", "compliance", "open-source"],
+  "author": "Abhishek Mishra <abhishekmishra09896@gmail.com>",
+  "license": "Apache-2.0",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/Abhi-mishra998/ACP_Agent/issues"
+    "url": "https://github.com/Abhi-mishra998/aegis/issues"
   },
-  "homepage": "https://github.com/Abhi-mishra998/ACP_Agent#readme",
+  "homepage": "https://github.com/Abhi-mishra998/aegis#readme",
   "dependencies": {
     "dotenv": "^17.4.2"
   }

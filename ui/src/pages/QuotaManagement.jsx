@@ -213,14 +213,14 @@ export default function QuotaManagement() {
         </div>
       </div>
 
-      {/* Upgrade CTA */}
+      {/* Self-host CTA */}
       <div className="flex items-center justify-between p-4 bg-white/[0.02] border border-[var(--border-subtle)] rounded-xl">
         <div>
           <div className="text-sm font-medium text-white">Need higher limits?</div>
-          <div className="text-xs text-neutral-500 mt-0.5">Upgrade your plan or contact sales to increase rate limits and monthly caps.</div>
+          <div className="text-xs text-neutral-500 mt-0.5">Aegis is Apache 2.0. Self-host on your own infrastructure to set limits to whatever your hardware can handle.</div>
         </div>
-        <a href="/pricing" className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200">
-          View Plans
+        <a href="/open-source" className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200">
+          Self-host
         </a>
       </div>
     </div>

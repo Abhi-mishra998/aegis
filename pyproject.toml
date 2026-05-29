@@ -7,10 +7,10 @@ name = "acp"
 version = "0.2.0"
 description = "Tamper-evident replay + runtime deny for AI agents."
 readme = "README.md"
-license = {text = "Commercial"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 authors = [
-    {name = "ACP"},
+    {name = "Abhishek Mishra", email = "abhishekmishra09896@gmail.com"},
 ]
 keywords = ["ai", "agents", "audit", "policy", "security", "compliance", "ed25519", "merkle"]
 classifiers = [
@@ -35,11 +35,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage      = "https://acp.example.com"
-Documentation = "https://acp.example.com/docs"
-Repository    = "https://github.com/acp/acp"
-Issues        = "https://github.com/acp/acp/issues"
-Changelog     = "https://github.com/acp/acp/releases"
+Homepage      = "https://github.com/Abhi-mishra998/aegis"
+Documentation = "https://github.com/Abhi-mishra998/aegis#readme"
+Repository    = "https://github.com/Abhi-mishra998/aegis"
+Issues        = "https://github.com/Abhi-mishra998/aegis/issues"
+Changelog     = "https://github.com/Abhi-mishra998/aegis/releases"
 
 [project.scripts]
 acp         = "acp.cli:main"
