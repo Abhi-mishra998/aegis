@@ -70,7 +70,7 @@ and <strong>cryptographically proves</strong> what happened after.
   <img src="https://img.shields.io/badge/p95_latency-639ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
   <img src="https://img.shields.io/badge/attack_block_rate-100%25-22c55e?style=flat-square&labelColor=111827" alt="block rate"/>
   <img src="https://img.shields.io/badge/audit_chain-5409%2B_decisions-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
-  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square&labelColor=111827" alt="license"/>
+  <img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square&labelColor=111827" alt="license"/>
   <a href="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml"><img src="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml/badge.svg" alt="Tests"/></a>
 </p>
 
@@ -215,7 +215,7 @@ and <strong>cryptographically proves</strong> what happened after.
 | **PDF Compliance Export** | Download signed PDF bundles: EU AI Act Article 9/13/72 evidence, NIST AI RMF Govern/Map/Measure/Manage, SOC 2 CC6/CC7/CC8 controls. Powered by `reportlab>=4.0`. Endpoints: `/audit/compliance/pdf/eu-ai-act`, `/audit/compliance/pdf/nist-ai-rmf`, `/audit/compliance/pdf/soc2`. |
 | **Visual Policy Builder** | GUI → OPA Rego translation. Configure risk threshold, max tools/hour, tool blocklist, deny hours (UTC), tenant scope — see the generated Rego + JSON preview live. Simulation panel replays the last 24h of real traffic against your draft rule before saving. |
 | **Auto-Remediation Playbooks** | 5 pre-built automated response playbooks: Contain Data Breach, Emergency Credential Rotation, Aggressive Rate Limiting, Agent Isolation, Full Incident Response. Each playbook chains ARE rules + audit trail + Slack notification. Trigger manually or set to auto-fire on ARE match. |
-| **Pricing Page** | Starter ($299/mo · 3 agents · 100K calls), Professional ($999/mo · 25 agents · 1M calls · SSO + SIEM), Enterprise (custom · unlimited · Vault + compliance audit). Fully wired in UI at `/pricing`. |
+| **Open Source landing** | Apache 2.0 positioning at `/open-source`: clone, self-host, the architecture diagram, the BibTeX cite block. No paid tiers, no closed-source teasers. |
 | **Autonomous Agent Demo** | Multi-step agent that runs 5 sequential tool calls (data fetch → analysis → risk assessment → report generation → notification) and narrates its own governance via transparency receipts. Demonstrates autonomous operation under Aegis control end-to-end. |
 | **SSE Live Feed** | EventSource hook (`useSSE.js`) with exponential backoff reconnect (1s → 2s → 4s → 8s → 30s cap), channel demux via `eventBus`, query-token fallback for CORS-restricted origins. SecurityDashboard subscribes to `risk_updated`, `tool_executed`, `policy_decision` channels with 2s debounce to prevent UI thrashing during bursts. |
 
@@ -245,7 +245,7 @@ and <strong>cryptographically proves</strong> what happened after.
 | Total passing tests | 530+ | **2044+** |
 | New source-contract tests | — | +82 (15-day roadmap coverage) |
 | Crypto tests | 44 adversarial | 44 adversarial (retained) |
-| Coverage: roadmap features | partial | API keys, SSO, SDK adapters, PDF export, policy builder, playbooks, pricing, autonomous agent, SSE |
+| Coverage: roadmap features | partial | API keys, SSO, SDK adapters, PDF export, policy builder, playbooks, autonomous agent, SSE |
 
 <br/>
 
@@ -1402,11 +1402,11 @@ All 18/18 services operational. Audit stream: 0 depth. DLQ: 0.
 | **Playbooks** | `/playbooks` | 5 pre-built auto-remediation chains. Enable/disable. Manual trigger. |
 | **Policy Simulation** | `/policy-sim` | Replay any date range of real traffic against a draft policy rule before saving. |
 
-### Marketing / Pricing
+### Open Source landing
 
 | Page | Route | What it shows |
 |---|---|---|
-| **Pricing** | `/pricing` | Starter $299/mo · Professional $999/mo · Enterprise custom. Feature matrix. |
+| **Open Source** | `/open-source` (alias `/pricing`) | Apache 2.0 positioning, clone-and-self-host instructions, architecture diagram, BibTeX cite. |
 
 ### Technical Stack
 
@@ -1474,7 +1474,7 @@ I'm being explicit here because *"production-grade"* claims on side projects are
 - **Visual Policy Builder** — GUI → Rego with live traffic simulation against last 24h
 - **Auto-remediation playbooks** — 5 pre-built chains: data breach, credential rotation, rate limit, isolation, full IR
 - **Autonomous agent demo** — 5-stage multi-step agent with governance receipts
-- **Pricing page** — 3 tiers: Starter $299/mo, Professional $999/mo, Enterprise custom
+- **Open Source landing** — Apache 2.0, self-host story, architecture diagram, citation block
 - Multi-LLM router — Groq / OpenAI / Anthropic / Azure (19 passing tests)
 - Forensics — 6 real endpoints: timeline, blast-radius, cross-source replay, agent profile, JSON export
 - Identity graph — compromise simulation, BFS blast-radius, node/edge CRUD
@@ -1642,7 +1642,7 @@ aegis/
 │   ├── docker-compose.prod.yml     Formal prod with Docker Secrets + all 11 migration jobs
 │   ├── pgbouncer.aws.ini           RDS-pointed PgBouncer (TLS required)
 │   └── .env.aws.template           Complete env template for EC2 deployment
-├── 🎨 ui/               React 18 SPA — 38 pages (SOC, audit, policy builder, pricing, ...)
+├── 🎨 ui/               React 18 SPA — 38 pages (SOC, audit, policy builder, open source, ...)
 ├── 📦 sdk/              Python SDK + framework integrations
 │   ├── acp_client.py    Core client — @acp.protect decorator, acp.guard()
 │   └── integrations/    LangChain (AegisToolkit), Anthropic, OpenAI adapters
@@ -1650,7 +1650,7 @@ aegis/
 ├── 🔧 scripts/          Ops scripts (backup, reconcile, export, redact, playbooks)
 ├── 🎭 demos/            Three scripted demos + autonomous agent demo
 ├── 🧪 tests/            2044+ pytest tests (unit → integration → E2E → source-contract)
-├── 📜 LICENSE           MIT
+├── 📜 LICENSE           Apache 2.0
 ├── ⚙️ pyproject.toml    Package + dependency management (incl. reportlab>=4.0)
 └── 📖 README.md         You are here
 ```
@@ -1717,7 +1717,7 @@ Working on AI safety, platform security, or infrastructure? Below is the deepest
 
 ## 🤝 Contributing
 
-Aegis is MIT-licensed and built in the open. PRs welcome:
+Aegis is Apache 2.0-licensed and built in the open. PRs welcome:
 
 - 🐛 **Report bugs** — use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md)
 - 💡 **Propose features** — use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
@@ -1802,7 +1802,7 @@ If you're working on agent infrastructure, AI safety, or platform security — o
 
 ## 📜 License
 
-[MIT](LICENSE) — use it, fork it, build on it. If it ends up saving you from an incident, drop me a note. I'd love to hear the story.
+[Apache 2.0](LICENSE) — use it, fork it, build on it. Commercial use, modification, distribution, patent grant. No royalty. No vendor lock. If it ends up saving you from an incident, drop me a note. I'd love to hear the story.
 
 <br/>
 

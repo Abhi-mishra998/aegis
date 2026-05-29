@@ -394,8 +394,8 @@ app = FastAPI(
         "for the dashboard but should not be used by integrations."
     ),
     version="1.0.0",
-    contact={"name": "ACP", "url": "https://acp.example.com"},
-    license_info={"name": "Commercial", "url": "https://acp.example.com/license"},
+    contact={"name": "Aegis Maintainers", "url": "https://github.com/Abhi-mishra998/aegis"},
+    license_info={"name": "Apache-2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0"},
     servers=[
         {"url": "/v1", "description": "Stable v1 API (recommended for integrations)"},
         {"url": "/",   "description": "Unversioned — for the dashboard; do not pin"},
