@@ -403,6 +403,40 @@ async def list_playbook_templates() -> APIResponse[list[dict]]:
     return APIResponse(data=get_playbook_templates())
 
 
+@router.get("/playbooks/autotrigger-stats", response_model=APIResponse[list[dict]])
+async def get_autotrigger_stats(
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[list[dict]]:
+    """Return per-playbook auto-trigger counts (runs with triggered_by='auto').
+
+    Declared *before* /playbooks/{playbook_id} so the literal "autotrigger-stats"
+    segment is not parsed as a UUID path parameter.
+    """
+    from sqlalchemy import func, select  # noqa: F811
+    stmt = (
+        select(
+            PlaybookRun.playbook_id,
+            func.count().label("auto_count"),
+            func.max(PlaybookRun.started_at).label("last_auto_at"),
+        )
+        .where(
+            PlaybookRun.tenant_id == tenant_id,
+            PlaybookRun.triggered_by == "auto",
+        )
+        .group_by(PlaybookRun.playbook_id)
+    )
+    rows = (await db.execute(stmt)).all()
+    return APIResponse(data=[
+        {
+            "playbook_id":  str(r.playbook_id),
+            "auto_count":   r.auto_count,
+            "last_auto_at": r.last_auto_at.isoformat() if r.last_auto_at else None,
+        }
+        for r in rows
+    ])
+
+
 @router.get("/playbooks", response_model=APIResponse[list[PlaybookOut]])
 async def list_playbooks(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
@@ -566,36 +600,6 @@ async def trigger_playbook(
     asyncio.create_task(_safe_bg(_bg_execute()))
 
     return APIResponse(data={"run_id": str(run_id), "status": "triggered"})
-
-
-@router.get("/playbooks/autotrigger-stats", response_model=APIResponse[list[dict]])
-async def get_autotrigger_stats(
-    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> APIResponse[list[dict]]:
-    """Return per-playbook auto-trigger counts (runs with triggered_by='auto')."""
-    from sqlalchemy import func, select  # noqa: F811
-    stmt = (
-        select(
-            PlaybookRun.playbook_id,
-            func.count().label("auto_count"),
-            func.max(PlaybookRun.started_at).label("last_auto_at"),
-        )
-        .where(
-            PlaybookRun.tenant_id == tenant_id,
-            PlaybookRun.triggered_by == "auto",
-        )
-        .group_by(PlaybookRun.playbook_id)
-    )
-    rows = (await db.execute(stmt)).all()
-    return APIResponse(data=[
-        {
-            "playbook_id":  str(r.playbook_id),
-            "auto_count":   r.auto_count,
-            "last_auto_at": r.last_auto_at.isoformat() if r.last_auto_at else None,
-        }
-        for r in rows
-    ])
 
 
 @router.get("/playbooks/{playbook_id}/runs", response_model=APIResponse[list[PlaybookRunOut]])

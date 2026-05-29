@@ -11,12 +11,12 @@ keywords:
   - security
   - compliance
   - audit
-home: https://github.com/acp-platform/acp
+home: https://github.com/Abhi-mishra998/aegis
 sources:
-  - https://github.com/acp-platform/acp
+  - https://github.com/Abhi-mishra998/aegis
 maintainers:
-  - name: ACP Platform Team
-    email: platform@acp.io
+  - name: Abhishek Mishra
+    email: abhishekmishra09896@gmail.com
 annotations:
   artifacthub.io/changes: |
     - kind: added

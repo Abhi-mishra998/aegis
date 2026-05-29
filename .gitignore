@@ -55,6 +55,19 @@ ui/.env.local
 **/*.pub
 **/*.cert
 
+# Private operator notes — NOT for public GitBook.
+# Reasons:
+#   client01.md       contains demo passwords (admin1234 / demo1234)
+#   ops_metrics.md    contains SSH key paths + EC2 IPs + RDS internal hostname
+#   SECRETS.md        filename alone is a red flag; superseded by docs/security/secret-management.md
+#   docs/quickstart.md  superseded by docs/introduction/quickstart.md
+#   docs/runbooks/    superseded by docs/operations/runbooks/
+docs/client01.md
+docs/ops_metrics.md
+docs/SECRETS.md
+docs/quickstart.md
+docs/runbooks/
+
 # ==========================================
 # IDEs / Editors / OS
 # ==========================================
