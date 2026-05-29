@@ -1697,7 +1697,7 @@ async def billing_cost_attribution(request: Request) -> Any:
 async def playbook_autotrigger_stats(request: Request) -> Any:
     """Proxy → Autonomy service per-playbook auto-trigger counts."""
     resp = await request.app.state.client.get(
-        f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/playbooks/autotrigger-stats",
+        f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/playbooks/autotrigger-stats",
         headers=_internal_headers(request),
     )
     return _passthrough(resp)

@@ -5,7 +5,7 @@ import {
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
-  CreditCard, Radio, Bell, BookOpen,
+  CreditCard, Radio, Bell, BookOpen, Github,
 } from 'lucide-react'
 import { authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
@@ -35,7 +35,7 @@ const operationsNav = [
   { path: '/playbooks',       label: 'Playbooks',         icon: BookOpen    },
   { path: '/auto-response',   label: 'Auto Response',    icon: Bot         },
   { path: '/compliance',      label: 'Compliance',       icon: Shield      },
-  { path: '/pricing',         label: 'Pricing',          icon: CreditCard  },
+  { path: '/open-source',     label: 'Open Source',      icon: Github      },
   { path: '/attack-sim',      label: 'Attack Sim',       icon: Crosshair   },
 ]
 

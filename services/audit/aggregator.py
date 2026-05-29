@@ -149,7 +149,7 @@ class AuditAggregator:
                     func.avg(
                         sa.cast(AuditLog.metadata_json["risk_score"].as_string(), sa.Float)
                     ).label("avg_risk"),
-                    func.count(sa.distinct(AuditLog.tool_name)).label("unique_tools"),
+                    func.count(sa.distinct(AuditLog.tool)).label("unique_tools"),
                 )
                 .where(AuditLog.agent_id == agent_id)
                 .where(AuditLog.tenant_id == tenant_id)

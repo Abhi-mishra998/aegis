@@ -227,6 +227,7 @@ function App() {
               <Route path="/playground"      element={<ProtectedRoute><AgentPlayground /></ProtectedRoute>} />
               <Route path="/auto-response"   element={<ProtectedRoute><AutoResponse /></ProtectedRoute>} />
               <Route path="/compliance"      element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
+              <Route path="/open-source"     element={<Pricing />} />
               <Route path="/pricing"         element={<Pricing />} />
               <Route path="/attack-sim"      element={<ProtectedRoute><AttackSimulation /></ProtectedRoute>} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
