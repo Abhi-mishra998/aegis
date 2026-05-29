@@ -403,15 +403,24 @@ def test_pricing_page_is_public():
 
 
 def test_pricing_page_has_three_tiers():
+    # 2026-05-29 rewrite: the Pricing.jsx component is now the Open Source
+    # landing page. The three-tier paywall (Starter/Professional/Enterprise)
+    # was removed in favor of Apache 2.0 / self-host positioning. The test
+    # is retained under the old name to keep CI history continuous; the
+    # assertion now validates the OSS reframing.
     src = (UI / "pages/Pricing.jsx").read_text()
-    tier_count = sum(1 for t in ["Starter", "Professional", "Enterprise"] if t in src)
-    assert tier_count == 3
+    assert "Apache 2.0" in src
+    assert "Self-hostable" in src or "self-host" in src.lower()
+    assert "github.com/Abhi-mishra998/aegis" in src
 
 
 def test_pricing_page_has_monthly_prices():
+    # 2026-05-29 rewrite: dollar prices removed with the paywall. The page
+    # now shows the self-host quickstart instead. Test validates the OSS
+    # quickstart is present.
     src = (UI / "pages/Pricing.jsx").read_text()
-    assert "299" in src
-    assert "999" in src
+    assert "git clone" in src
+    assert "docker compose" in src
 
 
 def test_pricing_page_mentions_eu_ai_act():

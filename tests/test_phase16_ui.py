@@ -35,19 +35,25 @@ def test_playground_fetches_permissions_on_agent_change():
 
 
 def test_playground_has_tool_suggestions_state():
+    # 2026-05-29 rewrite: `toolSuggestions` was replaced by `allowedTools` —
+    # the playground now drives a dropdown from the agent's permission list
+    # rather than a separate suggestions array. Same functional intent.
     src = (ROOT / "ui/src/pages/AgentPlayground.jsx").read_text()
-    assert "toolSuggestions" in src
+    assert "allowedTools" in src
 
 
 def test_playground_renders_suggestion_buttons():
+    # 2026-05-29 rewrite: suggestion buttons replaced by a tool dropdown
+    # populated from `allowedTools`. Selecting a tool still calls `setTool(...)`.
     src = (ROOT / "ui/src/pages/AgentPlayground.jsx").read_text()
-    # Clicking a suggestion button sets the tool value
-    assert "setTool(t)" in src
+    assert "setTool(" in src
+    assert "allowedTools" in src
 
 
 def test_playground_clears_suggestions_when_no_agent():
+    # 2026-05-29 rewrite: `setToolSuggestions([])` is now `setAllowedTools([])`.
     src = (ROOT / "ui/src/pages/AgentPlayground.jsx").read_text()
-    assert "setToolSuggestions([])" in src
+    assert "setAllowedTools([])" in src
 
 
 def test_playground_deduplicates_tool_suggestions():
