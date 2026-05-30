@@ -1,14 +1,5 @@
-import asyncio
-from logging.config import fileConfig
-
-from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
-# Service-specific imports
-from sdk.common.config import settings
-from sdk.common.db import Base
+"""Identity service Alembic env — thin shim over sdk.common.alembic_env."""
+from sdk.common.alembic_env import run
 from services.identity.models import (  # noqa: F401
     AgentCredential,
     Organization,
@@ -16,59 +7,12 @@ from services.identity.models import (  # noqa: F401
     User,
 )
 
-target_metadata = Base.metadata
-VERSION_TABLE = "alembic_version_identity"
-OWNED_TABLES = {"users", "agent_credentials", "credential_status_enum", "user_role_enum"}
-
-def include_object(obj, name, type_, reflected, compare_to):
-    if type_ in {"table", "type"}:
-        return name in OWNED_TABLES or name == VERSION_TABLE
-    return True
-
-config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-def run_migrations_offline() -> None:
-    context.configure(
-        url=settings.DATABASE_URL,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-        version_table=VERSION_TABLE,
-        include_object=include_object,
-        compare_type=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        version_table=VERSION_TABLE,
-        include_object=include_object,
-        compare_type=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-async def run_async_migrations() -> None:
-    configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
-    connectable = async_engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+run(
+    version_table="alembic_version_identity",
+    owned_tables={
+        "users",
+        "agent_credentials",
+        "credential_status_enum",
+        "user_role_enum",
+    },
+)
