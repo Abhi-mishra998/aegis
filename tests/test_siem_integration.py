@@ -108,11 +108,13 @@ def test_compliance_router_has_siem_endpoints():
 
 
 def test_gateway_proxies_siem_routes():
+    # /siem/* extracted from main.py to routers/compliance.py in sprint-5.
     base = Path(__file__).parent.parent
-    gateway_path = base / "services" / "gateway" / "main.py"
-    assert gateway_path.exists(), "gateway/main.py not found"
-    content = gateway_path.read_text(encoding="utf-8")
-    assert "/siem/config" in content, "Expected /siem/config proxy in gateway/main.py"
+    gw_main = base / "services" / "gateway" / "main.py"
+    gw_compl = base / "services" / "gateway" / "routers" / "compliance.py"
+    assert gw_main.exists() and gw_compl.exists()
+    content = gw_main.read_text(encoding="utf-8") + gw_compl.read_text(encoding="utf-8")
+    assert "/siem/config" in content, "Expected /siem/config proxy in gateway"
 
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,12 @@ def test_audit_main_has_board_report_endpoint():
 
 
 def test_gateway_proxies_board_report():
-    src = _GATEWAY.read_text()
+    # /compliance/board-report was extracted from main.py to
+    # routers/compliance.py in sprint-5; scan both.
+    src = (
+        _GATEWAY.read_text()
+        + (_GATEWAY.parent / "routers" / "compliance.py").read_text()
+    )
     assert "board-report" in src
     assert "board_report" in src
 
