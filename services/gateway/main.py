@@ -912,6 +912,9 @@ from services.gateway.routers.stripe_webhook import (
 from services.gateway.routers.tenant_admin import (
     router as _tenant_admin_router,  # noqa: E402
 )
+from services.gateway.routers.transparency import (
+    router as _transparency_router,  # noqa: E402
+)
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
@@ -925,6 +928,7 @@ app.include_router(_audit_router)
 app.include_router(_incidents_router)
 app.include_router(_billing_router)
 app.include_router(_compliance_router)
+app.include_router(_transparency_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1089,169 +1093,8 @@ async def revoke_agent_permission(agent_id: str, permission_id: str, request: Re
 # ─────────────────────────────────────────────────────────────
 
 
-# ─────────────────────────────────────────────────────────────
-# RECEIPTS PROXY — /receipts/{id}, /receipts/key
-# Cryptographic execution receipts (ed25519). Customers verify offline.
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/receipts/key", tags=["receipts"])
-async def receipts_public_key(request: Request) -> Any:
-    """Proxy → Audit signer public key. Cache this client-side."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/receipts/key",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/receipts/{execution_id}", tags=["receipts"])
-async def get_execution_receipt(execution_id: str, request: Request) -> Any:
-    """Proxy → Audit service signed receipt for one audit row.
-
-    The execution_id is the audit row id (matches what Flight Recorder
-    surfaces and what the SDK's `protect()` decorator records).
-
-    2026-05-15: the upstream returns `APIResponse(data={receipt, signature,
-    algorithm, public_key_fingerprint})`. External auditors curl this
-    endpoint and want those fields at the top level (the customer-reported
-    Gap 1 symptom was `{algorithm: null, fingerprint: null, sig_len: 0}` —
-    that came from probing the wrapper, not the inner payload). Flatten the
-    envelope here so direct-HTTP probes see the signed shape immediately
-    while SDK consumers (which already unwrap `data`) are unaffected.
-    """
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/{execution_id}/receipt",
-        headers=_internal_headers(request),
-    )
-    if resp.status_code >= 400:
-        return _passthrough(resp)
-    try:
-        body = resp.json()
-    except Exception:
-        return _passthrough(resp)
-    if isinstance(body, dict) and isinstance(body.get("data"), dict):
-        inner = body["data"]
-        return JSONResponse(
-            status_code=resp.status_code,
-            content={
-                **inner,
-                # Expose a sibling `fingerprint` alias so historical probe
-                # scripts that check `payload.fingerprint` resolve, while
-                # `public_key_fingerprint` (the canonical field for offline
-                # verifiers) is preserved.
-                "fingerprint": inner.get("public_key_fingerprint"),
-            },
-        )
-    return _passthrough(resp)
-
-
-# ─────────────────────────────────────────────────────────────
-# TRANSPARENCY LOG PROXY — /transparency/*
-# Daily Merkle root commitment over signed receipts.
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/transparency/key", tags=["transparency"])
-async def transparency_root_public_key(request: Request) -> Any:
-    """Proxy → Audit root-signing public key.
-
-    Separate from /v1/receipts/key. Customers archive both: the receipt-signing
-    key for verifying receipts, the root-signing key for verifying daily roots.
-    """
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/key",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/transparency/roots", tags=["transparency"])
-async def transparency_list_roots(request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/roots",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/transparency/roots/{root_date}", tags=["transparency"])
-async def transparency_get_root(root_date: str, request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/roots/{root_date}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/transparency/compute", tags=["transparency"])
-async def transparency_compute_root(request: Request) -> Any:
-    """Trigger (re)computation of a daily root. Idempotent.
-
-    Typical use: a daily cron at 00:05 UTC calls this with no body to
-    commit yesterday's events. Operators may also call ad-hoc for backfill.
-    """
-    resp = await request.app.state.client.post(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/compute",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/transparency/inclusion/{execution_id}", tags=["transparency"])
-async def transparency_inclusion(execution_id: str, request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/inclusion/{execution_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/transparency/consistency", tags=["transparency"])
-async def transparency_consistency(request: Request) -> Any:
-    """Proxy → Audit consistency proof. Returns the chain of root_hash +
-    prev_root_hash records so the caller can verify the log is append-only
-    between two snapshots."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/consistency",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/transparency/verify-root", tags=["transparency"])
-async def transparency_verify_root(request: Request) -> Any:
-    """Proxy → Audit signed-root verifier. Body is the signed root payload."""
-    body = await request.body()
-    resp = await request.app.state.client.post(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/verify-root",
-        content=body,
-        headers={**_internal_headers(request), "Content-Type": "application/json"},
-    )
-    return _passthrough(resp)
-
-
-@app.get("/transparency/keys", tags=["transparency"])
-async def transparency_keys(request: Request) -> Any:
-    """Proxy → Audit root-signing key directory (active + historical)."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/transparency/keys",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/receipts/verify", tags=["receipts"])
-async def receipts_verify(request: Request) -> Any:
-    """Proxy → Audit receipt verifier. Body is the signed receipt payload."""
-    body = await request.body()
-    resp = await request.app.state.client.post(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/receipts/verify",
-        content=body,
-        headers={**_internal_headers(request), "Content-Type": "application/json"},
-    )
-    return _passthrough(resp)
+# All /receipts/* (3 routes) and /transparency/* (8 routes) extracted to
+# routers/transparency.py.
 
 
 # /audit/export (GET+POST), /audit/logs/soc-timeline, /audit/logs/heatmap
