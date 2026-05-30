@@ -55,7 +55,16 @@ def test_gateway_heatmap_proxies_to_audit_service():
 
 
 def test_gateway_heatmap_uses_trust_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    # /audit/logs/heatmap was extracted from main.py to routers/audit.py in
+    # sprint-5. Search the new file first so .find() lands on the real
+    # handler body (which calls `trust_proxy`) instead of the pointer
+    # comment in main.py.
+    src = (
+        (ROOT / "services/gateway/routers/audit.py").read_text()
+        + (ROOT / "services/gateway/main.py").read_text()
+    )
     heatmap_idx = src.find("/audit/logs/heatmap")
     snippet = src[heatmap_idx:heatmap_idx + 300]
-    assert "_trust_proxy" in snippet or "AUDIT_SERVICE_URL" in snippet
+    assert ("_trust_proxy" in snippet
+            or "trust_proxy" in snippet
+            or "AUDIT_SERVICE_URL" in snippet)

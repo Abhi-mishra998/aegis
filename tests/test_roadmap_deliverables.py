@@ -247,7 +247,12 @@ def test_compliance_router_has_export_endpoint():
 
 
 def test_gateway_proxies_compliance_export():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    # /compliance/export extracted from main.py to routers/compliance.py
+    # in sprint-5.
+    src = (
+        (ROOT / "services/gateway/main.py").read_text()
+        + (ROOT / "services/gateway/routers/compliance.py").read_text()
+    )
     assert "compliance/export" in src
 
 

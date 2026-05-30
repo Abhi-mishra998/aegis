@@ -1,0 +1,222 @@
+"""Gateway proxy routes for compliance, SIEM integration, and scheduled
+reports.
+
+All 18 routes lifted out of services/gateway/main.py in the sprint-5
+audit cleanup. Three related concerns share this module because they
+all proxy to the audit service's compliance sub-router:
+
+  /compliance/*                 — framework bundles + exports
+  /siem/*                       — Splunk / Datadog credentials + push
+  /reports/scheduled/*          — CRUD + run + history
+
+Streaming endpoints (``POST /compliance/export``, ``POST /compliance/
+board-report``) build their own ``StreamingResponse`` because the
+upstream returns binary PDFs.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Request, Response
+from fastapi.responses import StreamingResponse
+
+from sdk.common.config import settings
+from services.gateway._helpers import (
+    internal_headers,
+    passthrough,
+    trust_proxy,
+)
+
+router = APIRouter()
+
+
+def _base() -> str:
+    return settings.AUDIT_SERVICE_URL.rstrip("/")
+
+
+# ── Compliance framework bundles ─────────────────────────────────────────
+
+@router.get("/compliance/eu-ai-act", tags=["compliance"])
+async def compliance_eu_ai_act(request: Request) -> Any:
+    """Proxy → Audit service EU AI Act compliance bundle."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/eu-ai-act", request)
+
+
+@router.get("/compliance/nist-ai-rmf", tags=["compliance"])
+async def compliance_nist_ai_rmf(request: Request) -> Any:
+    """Proxy → Audit service NIST AI RMF compliance bundle."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/nist-ai-rmf", request)
+
+
+@router.get("/compliance/soc2", tags=["compliance"])
+async def compliance_soc2(request: Request) -> Any:
+    """Proxy → Audit service SOC 2 Type II compliance bundle."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/soc2", request)
+
+
+@router.get("/compliance/tool-ledger", tags=["compliance"])
+async def compliance_tool_ledger(request: Request) -> Any:
+    """Proxy → Audit service per-agent tamper-evident tool-call ledger."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/tool-ledger", request)
+
+
+# ── PDF exports (streamed) ───────────────────────────────────────────────
+
+@router.post("/compliance/export", tags=["compliance"])
+async def compliance_export(request: Request) -> Response:
+    """Proxy → Audit service compliance PDF/JSON export.
+
+    Streams the upstream response bytes directly so PDF downloads work
+    correctly. Query params: ``framework`` (EU_AI_ACT|NIST_AI_RMF|SOC2),
+    ``start_date``, ``end_date``, ``format`` (pdf|json).
+    """
+    upstream_req = request.app.state.client.build_request(
+        "POST",
+        f"{_base()}/compliance/export",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    upstream = await request.app.state.client.send(upstream_req, stream=True)
+
+    async def _relay() -> Any:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    forward_headers: dict[str, str] = {}
+    if "content-disposition" in upstream.headers:
+        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
+    if "content-length" in upstream.headers:
+        forward_headers["Content-Length"] = upstream.headers["content-length"]
+
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
+        headers=forward_headers,
+    )
+
+
+@router.post("/compliance/board-report", tags=["compliance"])
+async def board_report_proxy(request: Request) -> Response:
+    """Proxy → Audit service board-level executive PDF report (streamed)."""
+    body = await request.body()
+    upstream_req = request.app.state.client.build_request(
+        "POST",
+        f"{_base()}/board-report",
+        content=body,
+        headers=internal_headers(request),
+    )
+    upstream = await request.app.state.client.send(upstream_req, stream=True)
+
+    async def _relay() -> Any:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    forward_headers: dict[str, str] = {}
+    if "content-disposition" in upstream.headers:
+        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
+
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/pdf"),
+        headers=forward_headers,
+    )
+
+
+# ── SIEM integration (proxies to audit /compliance/siem/*) ───────────────
+
+@router.get("/siem/config", tags=["siem"])
+async def get_siem_config_proxy(request: Request) -> Any:
+    """Proxy → Audit service SIEM config (masked)."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/siem/config", request)
+
+
+@router.post("/siem/config", tags=["siem"])
+async def save_siem_config_proxy(request: Request) -> Any:
+    """Proxy → Audit service — save Splunk/Datadog credentials."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/siem/config", request)
+
+
+@router.post("/siem/test/splunk", tags=["siem"])
+async def test_splunk_proxy(request: Request) -> Any:
+    """Proxy → Audit service — test Splunk HEC connectivity."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/siem/test/splunk", request)
+
+
+@router.post("/siem/test/datadog", tags=["siem"])
+async def test_datadog_proxy(request: Request) -> Any:
+    """Proxy → Audit service — test Datadog Logs connectivity."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/siem/test/datadog", request)
+
+
+@router.post("/siem/push", tags=["siem"])
+async def siem_push_proxy(request: Request) -> Any:
+    """Proxy → Audit service — manually push last N audit events to SIEM."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/siem/push", request)
+
+
+# ── Scheduled reports ────────────────────────────────────────────────────
+
+@router.get("/reports/scheduled", tags=["reports"])
+async def list_scheduled_reports_proxy(request: Request) -> Any:
+    """Proxy → Audit service — list scheduled reports for tenant."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/scheduled-reports", request)
+
+
+@router.post("/reports/scheduled", tags=["reports"])
+async def create_scheduled_report_proxy(request: Request) -> Any:
+    """Proxy → Audit service — create a new scheduled report config."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/scheduled-reports", request)
+
+
+# /reports/scheduled/{report_id}/run + /history must precede the catch-all
+# /reports/scheduled/{report_id} (same shape as the /playbooks ordering fix).
+
+@router.post("/reports/scheduled/{report_id}/run", tags=["reports"])
+async def run_scheduled_report_proxy(report_id: str, request: Request) -> Any:
+    """Proxy → Audit service — trigger immediate report run (queues to Redis)."""
+    return await trust_proxy(
+        settings.AUDIT_SERVICE_URL, f"/compliance/scheduled-reports/{report_id}/run", request
+    )
+
+
+@router.get("/reports/scheduled/{report_id}/history", tags=["reports"])
+async def report_delivery_history_proxy(report_id: str, request: Request) -> Any:
+    """Proxy → Audit service — delivery history for one scheduled report."""
+    resp = await request.app.state.client.get(
+        f"{_base()}/compliance/scheduled-reports/{report_id}/history",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/reports/scheduled/{report_id}", tags=["reports"])
+async def get_scheduled_report_proxy(report_id: str, request: Request) -> Any:
+    """Proxy → Audit service — fetch a single scheduled report."""
+    return await trust_proxy(
+        settings.AUDIT_SERVICE_URL, f"/compliance/scheduled-reports/{report_id}", request
+    )
+
+
+@router.patch("/reports/scheduled/{report_id}", tags=["reports"])
+async def update_scheduled_report_proxy(report_id: str, request: Request) -> Any:
+    """Proxy → Audit service — update a scheduled report."""
+    return await trust_proxy(
+        settings.AUDIT_SERVICE_URL, f"/compliance/scheduled-reports/{report_id}", request
+    )
+
+
+@router.delete("/reports/scheduled/{report_id}", tags=["reports"])
+async def delete_scheduled_report_proxy(report_id: str, request: Request) -> Any:
+    """Proxy → Audit service — delete a scheduled report."""
+    return await trust_proxy(
+        settings.AUDIT_SERVICE_URL, f"/compliance/scheduled-reports/{report_id}", request
+    )

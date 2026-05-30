@@ -106,15 +106,22 @@ def test_compliance_run_now_records_manual_trigger():
 
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
+def _gateway_src() -> str:
+    """/reports/scheduled/* extracted to routers/compliance.py in sprint-5."""
+    return (
+        (ROOT / "services/gateway/routers/compliance.py").read_text()
+        + (ROOT / "services/gateway/main.py").read_text()
+    )
+
+
 def test_gateway_has_history_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = _gateway_src()
     assert "history" in src
     assert "reports/scheduled" in src
 
 
 def test_gateway_history_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
-    # Find the reports/scheduled history proxy (not the ARE rule history proxy)
+    src = _gateway_src()
     idx = src.find("reports/scheduled/{report_id}/history")
     assert idx != -1, "Gateway should have reports/scheduled history proxy"
     snippet = src[idx:idx + 800]
