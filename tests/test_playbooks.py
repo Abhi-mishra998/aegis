@@ -161,17 +161,18 @@ def test_runs_route_exists():
 # ---------------------------------------------------------------------------
 
 def test_gateway_proxies_playbooks():
-    """gateway/main.py contains /playbooks proxy routes."""
-    source = _read("services/gateway/main.py")
+    """gateway contains /playbooks proxy routes (main.py or the
+    routers/proxies sub-router after the sprint-2.10 split)."""
+    source = _read("services/gateway/main.py") + "\n" + _read("services/gateway/routers/proxies.py")
     assert "/playbooks" in source, (
-        "gateway/main.py does not contain /playbooks proxy routes"
+        "gateway does not contain /playbooks proxy routes"
     )
     # Verify both list and parameterised forms
     assert '"/playbooks"' in source or "'/playbooks'" in source, (
-        "gateway/main.py missing /playbooks endpoint"
+        "gateway missing /playbooks endpoint"
     )
     assert "/playbooks/{pid}" in source or "/playbooks/{" in source, (
-        "gateway/main.py missing parameterised /playbooks/{...} endpoint"
+        "gateway missing parameterised /playbooks/{...} endpoint"
     )
 
 

@@ -76,12 +76,14 @@ def test_compliance_router_has_notification_endpoints():
 # ---------------------------------------------------------------------------
 
 def test_gateway_proxies_notifications():
-    gateway_path = str(
-        Path(__file__).parent.parent / "services" / "gateway" / "main.py"
-    )
-    assert _grep(gateway_path, "/notifications"), \
-        "No '/notifications' proxy found in gateway/main.py"
-    assert _grep(gateway_path, "AUDIT_SERVICE_URL"), \
+    # /notifications was extracted out of main.py into the gateway's
+    # proxies sub-router in sprint-2.10. Search the union of both files.
+    gateway_root = Path(__file__).parent.parent / "services" / "gateway"
+    files = [gateway_root / "main.py", gateway_root / "routers" / "proxies.py"]
+    src = "\n".join(f.read_text(encoding="utf-8") for f in files if f.exists())
+    assert "/notifications" in src, \
+        "No '/notifications' proxy found in gateway main.py or routers/proxies.py"
+    assert "AUDIT_SERVICE_URL" in src, \
         "AUDIT_SERVICE_URL not referenced for notifications proxy"
 
 
