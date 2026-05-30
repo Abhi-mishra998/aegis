@@ -5,7 +5,10 @@ THROTTLE, REVOKE_KEY) to the registry and api services via internal HTTP.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
+import socket
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -18,7 +21,47 @@ WEBHOOK_TIMEOUT       = 10.0
 
 _REGISTRY_URL     = os.environ.get("REGISTRY_SERVICE_URL", "http://registry:8001")
 _API_URL          = os.environ.get("API_SERVICE_URL", "http://api:8005")
-_INTERNAL_SECRET  = os.environ.get("INTERNAL_SECRET", "change_me_internal")
+_INTERNAL_SECRET  = os.environ["INTERNAL_SECRET"]  # fail-fast: no placeholder default
+
+
+class _SSRFBlocked(Exception):
+    """Raised when a webhook URL targets a forbidden IP range."""
+
+
+_FORBIDDEN_HOSTS = frozenset({
+    "localhost",
+    "metadata.google.internal",
+    "metadata.aws.internal",
+})
+
+
+def _assert_safe_webhook_url(url: str) -> None:
+    """Reject URLs that target loopback, RFC1918, link-local, or cloud-metadata IPs.
+
+    Resolves the hostname and validates every returned address. Prevents an
+    authenticated user from supplying e.g. http://169.254.169.254/... and
+    exfiltrating EC2 IAM credentials through the autonomy webhook surface.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise _SSRFBlocked(f"forbidden scheme: {parsed.scheme!r}")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise _SSRFBlocked("missing host")
+    if host in _FORBIDDEN_HOSTS:
+        raise _SSRFBlocked(f"forbidden host: {host}")
+    try:
+        addrinfo = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise _SSRFBlocked(f"hostname resolution failed: {exc}") from exc
+    for _family, _type, _proto, _canon, sockaddr in addrinfo:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            raise _SSRFBlocked(f"forbidden IP {ip} for host {host}")
 
 
 async def fire_slack(message: str, webhook_url: str = "", context: dict | None = None) -> dict:
@@ -32,6 +75,12 @@ async def fire_slack(message: str, webhook_url: str = "", context: dict | None =
     if not url:
         logger.info("slack_alert_skipped", reason="no_webhook_url_configured")
         return {"status": "skipped", "reason": "no Slack webhook configured"}
+
+    try:
+        _assert_safe_webhook_url(url)
+    except _SSRFBlocked as exc:
+        logger.warning("slack_alert_blocked_ssrf", url=url, reason=str(exc))
+        return {"status": "error", "reason": f"webhook url blocked: {exc}"}
 
     ctx = context or {}
     blocks: list[dict] = [
@@ -109,6 +158,12 @@ async def fire_generic_webhook(
     if not url:
         logger.info("generic_webhook_skipped", reason="no_url_provided")
         return {"status": "skipped", "reason": "no webhook URL"}
+
+    try:
+        _assert_safe_webhook_url(url)
+    except _SSRFBlocked as exc:
+        logger.warning("generic_webhook_blocked_ssrf", url=url, reason=str(exc))
+        return {"status": "error", "reason": f"webhook url blocked: {exc}"}
 
     hdrs = {"Content-Type": "application/json", **(headers or {})}
     try:
