@@ -35,9 +35,16 @@ def test_audit_export_endpoint_in_compliance():
 # ── 2. gateway has POST /audit/export proxy ────────────────────────────────
 
 def test_gateway_has_audit_export_post_proxy():
-    src = _read(GATEWAY)
-    assert 'app.post("/audit/export"' in src, \
-        'POST /audit/export proxy not found in services/gateway/main.py'
+    # POST /audit/export was extracted from main.py to routers/audit.py in
+    # sprint-5; the decorator changed from `@app.post(...)` to
+    # `@router.post(...)`. Scan both files for either decorator form.
+    src = (
+        _read(GATEWAY)
+        + (GATEWAY.parent / "routers" / "audit.py").read_text(encoding="utf-8")
+    )
+    assert ('app.post("/audit/export"' in src
+            or '@router.post("/audit/export"' in src), \
+        'POST /audit/export proxy not found in gateway main.py or routers/audit.py'
 
 
 # ── 3. identity/router.py has GET /users endpoint ─────────────────────────

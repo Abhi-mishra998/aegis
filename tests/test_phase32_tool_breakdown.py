@@ -110,12 +110,12 @@ def test_router_tool_breakdown_accepts_limit():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_tool_breakdown_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "tool-breakdown" in src
 
 
 def test_gateway_tool_breakdown_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("tool-breakdown")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/tool-breakdown" in snippet

@@ -96,12 +96,12 @@ def test_router_hourly_accepts_days():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_hourly_activity_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "hourly-activity" in src
 
 
 def test_gateway_hourly_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("hourly-activity")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/hourly-activity" in snippet

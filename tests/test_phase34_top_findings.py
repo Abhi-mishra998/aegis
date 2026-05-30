@@ -103,12 +103,12 @@ def test_router_top_findings_accepts_limit():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_top_findings_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "top-findings" in src
 
 
 def test_gateway_top_findings_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("top-findings")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/top-findings" in snippet

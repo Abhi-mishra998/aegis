@@ -117,12 +117,12 @@ def test_router_tool_usage_accepts_days():
 # ── gateway/main.py: proxy ───────────────────────────────────────────────────
 
 def test_gateway_has_tool_usage_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "tool-usage" in src
 
 
 def test_gateway_tool_usage_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("tool-usage")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/tool-usage" in snippet

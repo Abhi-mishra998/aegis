@@ -117,12 +117,12 @@ def test_router_peer_benchmark_validates_uuid():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_peer_benchmark_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "peer-benchmark" in src
 
 
 def test_gateway_peer_benchmark_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("peer-benchmark")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/peer-benchmark" in snippet

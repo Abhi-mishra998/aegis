@@ -124,12 +124,12 @@ def test_router_high_risk_accepts_days():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_high_risk_events_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "high-risk-events" in src
 
 
 def test_gateway_high_risk_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("high-risk-events")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/high-risk-events" in snippet

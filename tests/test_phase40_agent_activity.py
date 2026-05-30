@@ -110,12 +110,12 @@ def test_router_agent_activity_accepts_limit():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_agent_activity_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "agent-activity" in src
 
 
 def test_gateway_agent_activity_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("agent-activity")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/agent-activity" in snippet
