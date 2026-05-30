@@ -13,8 +13,10 @@ const safeObjectList = z.preprocess(
 )
 
 // ── ARE Conditions ────────────────────────────────────────────────────────────
+// Schemas are intentionally not exported — they are an implementation detail
+// of parseRule() / parseRuleList() and not part of the module's public API.
 
-export const AREConditionsSchema = z.object({
+const AREConditionsSchema = z.object({
   window:          z.string().default('5m'),
   min_violations:  z.number().int().min(1).default(1),
   severity_in:     safeStringList,
@@ -26,7 +28,7 @@ export const AREConditionsSchema = z.object({
 
 // ── ARE Rule ──────────────────────────────────────────────────────────────────
 
-export const AutoResponseRuleSchema = z.object({
+const AutoResponseRuleSchema = z.object({
   id:                    z.string(),
   tenant_id:             z.string().optional(),
   name:                  z.string(),

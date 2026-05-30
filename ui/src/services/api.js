@@ -35,7 +35,11 @@ export const clearSessionMetadata = () => {
   localStorage.removeItem("sse_query_token");
 };
 
-export const isSessionValid = () => {
+// Module-local: only the request() / blobRequest() helpers consume this.
+// External callers should rely on the response of those helpers (or watch
+// the AUTH_EVENTS.FAILURE event from authEvents.js) instead of mirroring
+// the gate logic themselves.
+const isSessionValid = () => {
   // Mirror App.jsx readSessionState: require tenant_id AND a non-expired expiry.
   // The httpOnly cookie remains the server-side source of truth, but client-side
   // gating must match the App-level redirect predicate or we leak requests with
@@ -49,9 +53,12 @@ const request = async (url, options = {}, retry = 1) => {
   try {
     const tenantId = localStorage.getItem("tenant_id");
 
-    // AUTH GATE: Block requests (except auth/health) if session is expired or missing
+    // AUTH GATE: Block requests (except auth/health) if session is expired or missing.
+    // /auth/sso/providers is public — Login page fetches it before any token
+    // exists, so it must be exempt or the gate throws before we even reach login.
     const isAuthPath =
       url.includes("/auth/token") ||
+      url.includes("/auth/sso/providers") ||
       url.includes("/health");
 
     if (!isSessionValid() && !isAuthPath) {
@@ -207,15 +214,12 @@ export const authService = {
     const expiresIn = json?.expires_in || json?.data?.expires_in || 900;
     const role = json?.role || json?.data?.role;
 
-    // Browser EventSource API cannot set custom headers, so /events/stream
-    // falls back to a query-string token when the httpOnly cookie isn't
-    // available cross-origin or hasn't propagated yet. Persist the access
-    // token here in same-origin localStorage so useSSE picks it up. Storage
-    // is wiped on logout via clearSessionMetadata().
-    const accessToken = json?.access_token || json?.data?.access_token;
-    if (accessToken) {
-      try { localStorage.setItem("sse_query_token", accessToken); } catch (_) {}
-    }
+    // SSE auth is cookie-only (httpOnly acp_token set by the gateway). Query-
+    // string fallback was retired in gateway sprint-1 because the token leaks
+    // via nginx/ALB access logs, browser history, and Referer headers. Clear
+    // any leftover value so useSSE doesn't append a ?token= that the gateway
+    // would now reject with 401.
+    try { localStorage.removeItem("sse_query_token"); } catch (_) {}
 
     setSessionMetadata({ tenant_id: tenantId, expires_in: expiresIn, role });
 
@@ -251,9 +255,7 @@ export const api = {
   revokeApiKey: (id) => request(`/api-keys/${id}`, { method: "DELETE" }),
   getBilling: () => request("/billing/summary"),
   getRisk: () => request("/risk/summary"),
-  getSSOProviders: () => fetch(`${API_BASE}/auth/sso/providers`, { credentials: "include" })
-    .then(r => r.ok ? r.json() : { providers: [] })
-    .catch(() => ({ providers: [] })),
+  getSSOProviders: () => request("/auth/sso/providers").catch(() => ({ providers: [] })),
 };
 
 // Helper to append agent_id to existing URLs.
