@@ -10,13 +10,30 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT     = Path(__file__).parent.parent
-GATEWAY  = ROOT / "services/gateway/main.py"
-IDENTITY = ROOT / "services/identity/router.py"
+# Gateway routes live in main.py + a number of sub-router files. Read all
+# of them as a single concatenation so route-existence checks survive
+# sub-router splits.
+GATEWAY_FILES = [
+    ROOT / "services/gateway/main.py",
+    ROOT / "services/gateway/routers/proxies.py",
+    ROOT / "services/gateway/routers/admin.py",
+    ROOT / "services/gateway/routers/decision.py",
+    ROOT / "services/gateway/routers/sso.py",
+    ROOT / "services/gateway/routers/tenant_admin.py",
+    ROOT / "services/gateway/routers/stripe_webhook.py",
+    ROOT / "services/gateway/routers/dashboard.py",
+]
+GATEWAY   = GATEWAY_FILES[0]  # legacy alias for any tests calling _read(GATEWAY)
+IDENTITY  = ROOT / "services/identity/router.py"
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
-def _read(path: Path) -> str:
+def _read(path: Path | None = None) -> str:
+    """Read a single file, or the union of gateway files when path is None
+    or the legacy `GATEWAY` Path (which we now treat as a sentinel)."""
+    if path is None or path == GATEWAY:
+        return "\n".join(p.read_text(encoding="utf-8") for p in GATEWAY_FILES if p.exists())
     return path.read_text(encoding="utf-8")
 
 

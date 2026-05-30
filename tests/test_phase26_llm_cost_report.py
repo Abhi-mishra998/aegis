@@ -73,12 +73,12 @@ def test_generate_llm_cost_email_empty_data():
 # ── billing/router.py: cost-attribution endpoint ─────────────────────────────
 
 def test_billing_router_has_cost_attribution():
-    src = (ROOT / "services/billing/router.py").read_text()
+    src = (ROOT / "services/usage/billing_routes/router.py").read_text()
     assert "cost-attribution" in src
 
 
 def test_billing_router_cost_attribution_returns_agents():
-    src = (ROOT / "services/billing/router.py").read_text()
+    src = (ROOT / "services/usage/billing_routes/router.py").read_text()
     idx = src.find("cost-attribution")
     snippet = src[idx:idx + 1000]
     assert "agents" in snippet
@@ -86,14 +86,14 @@ def test_billing_router_cost_attribution_returns_agents():
 
 
 def test_billing_router_cost_attribution_groups_by_week():
-    src = (ROOT / "services/billing/router.py").read_text()
+    src = (ROOT / "services/usage/billing_routes/router.py").read_text()
     idx = src.find("cost-attribution")
     snippet = src[idx:idx + 1000]
     assert "iso_week" in snippet or "IYYY" in snippet or "date_trunc" in snippet or "week" in snippet.lower()
 
 
 def test_billing_router_cost_attribution_accepts_weeks_param():
-    src = (ROOT / "services/billing/router.py").read_text()
+    src = (ROOT / "services/usage/billing_routes/router.py").read_text()
     idx = src.find("cost-attribution")
     snippet = src[idx:idx + 800]
     assert "weeks" in snippet

@@ -137,19 +137,20 @@ def test_webhook_config_routes_in_router():
 # ---------------------------------------------------------------------------
 
 def test_gateway_proxies_webhook_config():
-    """gateway/main.py contains proxy routes for /webhooks/config."""
-    source = _read("services/gateway/main.py")
+    """gateway contains proxy routes for /webhooks/config (in main.py or
+    in the routers/proxies sub-router since the sprint-2.10 split)."""
+    source = _read("services/gateway/main.py") + "\n" + _read("services/gateway/routers/proxies.py")
     assert "/webhooks/config" in source, (
-        "gateway/main.py does not proxy /webhooks/config"
+        "gateway does not proxy /webhooks/config"
     )
     assert "/webhooks/test/slack" in source, (
-        "gateway/main.py does not proxy /webhooks/test/slack"
+        "gateway does not proxy /webhooks/test/slack"
     )
     assert "/webhooks/test/pagerduty" in source, (
-        "gateway/main.py does not proxy /webhooks/test/pagerduty"
+        "gateway does not proxy /webhooks/test/pagerduty"
     )
     assert "/webhooks/test/webhook" in source, (
-        "gateway/main.py does not proxy /webhooks/test/webhook"
+        "gateway does not proxy /webhooks/test/webhook"
     )
 
 
