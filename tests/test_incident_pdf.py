@@ -101,16 +101,15 @@ def test_incident_pdf_export_route_exists():
 # ---------------------------------------------------------------------------
 
 def test_gateway_proxies_incident_export():
-    """gateway/main.py must define a proxy route for /incidents/{incident_id}/export."""
-    src = _src(_GATEWAY)
-    # The route path pattern must appear in the gateway
+    """The gateway must define a proxy route for /incidents/{incident_id}/export.
+    The route was extracted from main.py to routers/incidents.py in sprint-5."""
+    src = _src(_GATEWAY) + _src(_GATEWAY.parent / "routers" / "incidents.py")
     assert "incident_id}/export" in src, (
-        "gateway/main.py does not proxy '/incidents/{incident_id}/export'.\n"
+        "gateway does not proxy '/incidents/{incident_id}/export'.\n"
         "Add a POST route that streams the PDF from the audit service."
     )
-    # Verify it proxies to the audit service (compliance prefix)
     assert "/compliance/incidents/" in src, (
-        "gateway/main.py proxy for incident export must forward to "
+        "gateway proxy for incident export must forward to "
         "'/compliance/incidents/{incident_id}/export' on the audit service."
     )
 
