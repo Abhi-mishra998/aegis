@@ -20,8 +20,8 @@ import pathlib
 
 REPO = pathlib.Path(__file__).parent.parent
 
-BUDGET_REQUESTS_PY = REPO / "services/billing/budget_requests.py"
-BILLING_ROUTER_PY = REPO / "services/billing/router.py"
+BUDGET_REQUESTS_PY = REPO / "services/usage/billing_routes/budget_requests.py"
+BILLING_ROUTER_PY = REPO / "services/usage/billing_routes/router.py"
 GATEWAY_MAIN_PY = REPO / "services/gateway/main.py"
 API_JS = REPO / "ui/src/services/api.js"
 
@@ -99,10 +99,10 @@ def test_approve_route_exists():
 
 
 def test_gateway_proxies_budget_requests():
-    """services/gateway/main.py must proxy /billing/budget-requests."""
-    src = _src(GATEWAY_MAIN_PY)
+    """Gateway must proxy /billing/budget-requests. Extracted from main.py to
+    routers/billing.py in sprint-5; scan both."""
+    src = _src(GATEWAY_MAIN_PY) + _src(GATEWAY_MAIN_PY.parent / "routers" / "billing.py")
     assert "budget-requests" in src, "gateway does not proxy /billing/budget-requests"
-    # Verify approve and reject are also proxied
     assert "approve" in src
     assert "reject" in src
 
