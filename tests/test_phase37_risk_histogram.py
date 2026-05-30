@@ -117,12 +117,12 @@ def test_router_histogram_accepts_bins():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_risk_histogram_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "risk-histogram" in src
 
 
 def test_gateway_histogram_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("risk-histogram")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/risk-histogram" in snippet

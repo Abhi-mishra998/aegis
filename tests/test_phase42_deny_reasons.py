@@ -117,12 +117,12 @@ def test_router_deny_reasons_accepts_limit():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_deny_reasons_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "deny-reasons" in src
 
 
 def test_gateway_deny_reasons_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("deny-reasons")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/deny-reasons" in snippet

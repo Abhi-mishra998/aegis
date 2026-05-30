@@ -893,6 +893,7 @@ setup_app(app, "gateway")
 # services/gateway/routers/ and depends only on services/gateway/_helpers.py
 # (never on main.py — that would create a load-time cycle).
 from services.gateway.routers.admin import router as _admin_router  # noqa: E402
+from services.gateway.routers.audit import router as _audit_router  # noqa: E402
 from services.gateway.routers.auto_response import (
     router as _auto_response_router,  # noqa: E402
 )
@@ -915,6 +916,7 @@ app.include_router(_stripe_router)
 app.include_router(_sso_router)
 app.include_router(_dashboard_router)
 app.include_router(_auto_response_router)
+app.include_router(_audit_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1071,48 +1073,12 @@ async def revoke_agent_permission(agent_id: str, permission_id: str, request: Re
 
 
 # ─────────────────────────────────────────────────────────────
-# AUDIT PROXY — /audit
-# P2-7 FIX: URLs corrected to /logs/... (not /audit/logs/...)
+# AUDIT PROXY — /audit/*
+# Extracted to services/gateway/routers/audit.py in the sprint-5 audit
+# cleanup. 33 routes moved; this file no longer hosts any /audit/* route.
+# The sub-router is registered via app.include_router at the bottom of
+# this file alongside the other extracted routers.
 # ─────────────────────────────────────────────────────────────
-
-@app.get("/audit/logs/summary", tags=["audit"])
-async def audit_summary(request: Request) -> Any:
-    """Proxy → Audit logs summary."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/summary",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/logs", tags=["audit"])
-async def list_audit_logs(request: Request) -> Any:
-    """Proxy → Audit logs list."""
-    params: dict[str, Any] = {
-        "limit": _clamp_int(request.query_params.get("limit"), 50, 1, 500),
-        "offset": _clamp_int(request.query_params.get("offset"), 0, 0, 100_000),
-    }
-    for key in ("agent_id", "action", "decision"):
-        if val := request.query_params.get(key):
-            params[key] = val
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs",
-        params=params,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/audit/logs/search", tags=["audit"])
-async def search_audit_logs(request: Request) -> Any:
-    """Proxy → Audit logs search."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1280,95 +1246,8 @@ async def receipts_verify(request: Request) -> Any:
     return _passthrough(resp)
 
 
-@app.get("/audit/export", tags=["audit"])
-async def audit_export(request: Request):
-    """Stream the tamper-evident audit chain as NDJSON for SIEM ingest.
-
-    See docs/integrations/siem.md for Splunk HEC / Datadog Logs / S3 examples.
-    Forwarded as-is to the audit service; query params (since, until, agent_id,
-    chain_shard, limit) are preserved.
-    """
-    from fastapi.responses import StreamingResponse
-
-    upstream = await request.app.state.client.send(
-        request.app.state.client.build_request(
-            "GET",
-            f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/export",
-            params=dict(request.query_params),
-            headers=_internal_headers(request),
-        ),
-        stream=True,
-    )
-
-    async def _relay():
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        finally:
-            await upstream.aclose()
-
-    return StreamingResponse(
-        _relay(),
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type", "application/x-ndjson"),
-        headers={k: v for k, v in upstream.headers.items() if k.lower() in {"x-acp-chain-format", "cache-control"}},
-    )
-
-
-@app.post("/audit/export", tags=["audit"])
-async def audit_export_post(request: Request) -> Response:
-    """
-    Proxy → Audit service CSV/JSON audit log export.
-
-    Body: {format, start_date?, end_date?, agent_id?, action?, limit?}
-    Streams the response directly so large CSV downloads work correctly.
-    Returns text/csv or application/json with Content-Disposition attachment.
-    """
-    body = await request.body()
-    upstream_req = request.app.state.client.build_request(
-        "POST",
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/audit/export",
-        content=body,
-        headers={**_internal_headers(request), "Content-Type": "application/json"},
-    )
-    upstream = await request.app.state.client.send(upstream_req, stream=True)
-
-    async def _relay():
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        finally:
-            await upstream.aclose()
-
-    forward_headers = {}
-    if "content-disposition" in upstream.headers:
-        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
-    if "content-length" in upstream.headers:
-        forward_headers["Content-Length"] = upstream.headers["content-length"]
-
-    return StreamingResponse(
-        _relay(),
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type", "application/octet-stream"),
-        headers=forward_headers,
-    )
-
-
-@app.get("/audit/logs/soc-timeline", tags=["audit"])
-async def soc_timeline(request: Request) -> Any:
-    """Proxy → Audit service SOC event feed (deny+kill+high-risk aggregation)."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/soc-timeline",
-        params={"limit": _clamp_int(request.query_params.get("limit"), 60, 1, 200)},
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/logs/heatmap", tags=["audit"])
-async def audit_heatmap(request: Request) -> Any:
-    """Proxy → Audit service request-volume heatmap (day × hour, last 7 days)."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/logs/heatmap", request)
+# /audit/export (GET+POST), /audit/logs/soc-timeline, /audit/logs/heatmap
+# all extracted to routers/audit.py.
 
 
 @app.get("/compliance/eu-ai-act", tags=["compliance"])
@@ -1698,66 +1577,8 @@ async def upload_policy_proxy(request: Request) -> Any:
     return _passthrough(resp)
 
 
-@app.get("/audit/logs/verify", tags=["audit"])
-async def verify_audit_integrity(request: Request) -> Any:
-    """Proxy → Audit logs integrity verification."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/verify",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/logs/{audit_id}/explain", tags=["audit"])
-async def explain_decision_proxy(audit_id: str, request: Request) -> Any:
-    """Proxy → Audit service root-cause explanation for one decision."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/{audit_id}/explain",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/audit/logs/{audit_id}/notes", tags=["audit"])
-async def add_audit_note_proxy(audit_id: str, request: Request) -> Any:
-    """Proxy → Audit service — add analyst note to an audit entry.
-
-    Must forward Content-Type so FastAPI on the audit side knows to parse
-    the body as JSON into the Pydantic _NoteCreate model. Without the
-    header, the request body is treated as raw bytes and validation fails
-    with "Input should be a valid dictionary or object".
-    """
-    headers = _internal_headers(request)
-    ctype = request.headers.get("content-type")
-    if ctype:
-        headers["Content-Type"] = ctype
-    resp = await request.app.state.client.post(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/{audit_id}/notes",
-        content=await request.body(),
-        headers=headers,
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/logs/{audit_id}/notes", tags=["audit"])
-async def list_audit_notes_proxy(audit_id: str, request: Request) -> Any:
-    """Proxy → Audit service — list analyst notes for an audit entry."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/{audit_id}/notes",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/drift/{agent_id}", tags=["audit"])
-async def agent_drift_proxy(agent_id: str, request: Request) -> Any:
-    """Proxy → Audit service behavioral drift report for one agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/drift/{agent_id}",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# /audit/logs/verify, /audit/logs/{audit_id}/explain, /audit/logs/{audit_id}/notes
+# (GET + POST), /audit/drift/{agent_id} — all extracted to routers/audit.py.
 
 
 @app.get("/billing/cost-attribution", tags=["billing"])
@@ -1828,235 +1649,15 @@ async def risk_top_threats(request: Request) -> Any:
     return _passthrough(resp)
 
 
-@app.get("/audit/trends", tags=["audit"])
-async def audit_trends_proxy(request: Request) -> Any:
-    """Proxy → Audit service — tenant-level daily anomaly trend (count/threats/avg_risk)."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/trends",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/top-findings", tags=["audit"])
-async def top_findings_proxy(request: Request) -> Any:
-    """Proxy → Audit service — canonical findings frequency ranking."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/top-findings",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/peer-benchmark/{agent_id}", tags=["audit"])
-async def agent_peer_benchmark_proxy(agent_id: str, request: Request) -> Any:
-    """Proxy → Audit service — percentile rank of one agent vs. tenant peers."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/peer-benchmark/{agent_id}",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/tool-breakdown", tags=["audit"])
-async def tool_risk_breakdown_proxy(request: Request) -> Any:
-    """Proxy → Audit service — per-tool deny rate and risk score breakdown."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/tool-breakdown",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/risk-trend/{agent_id}", tags=["audit"])
-async def agent_risk_trend_proxy(agent_id: str, request: Request) -> Any:
-    """Proxy → Audit service — 30-day daily risk score trend for one agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/risk-trend/{agent_id}",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/hourly-activity", tags=["audit"])
-async def audit_hourly_activity_proxy(request: Request) -> Any:
-    """Proxy → Audit service — decision velocity by hour-of-day."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/hourly-activity",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/risk-histogram", tags=["audit"])
-async def audit_risk_histogram_proxy(request: Request) -> Any:
-    """Proxy → Audit service — risk score frequency distribution histogram."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/risk-histogram",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/weekly-heatmap", tags=["audit"])
-async def audit_weekly_heatmap_proxy(request: Request) -> Any:
-    """Proxy → Audit service — 7×24 weekly activity heatmap."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/weekly-heatmap",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/decision-trend", tags=["audit"])
-async def audit_decision_trend_proxy(request: Request) -> Any:
-    """Proxy → Audit service — daily decision outcome breakdown."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/decision-trend",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/agent-activity", tags=["audit"])
-async def audit_agent_activity_proxy(request: Request) -> Any:
-    """Proxy → Audit service — per-agent activity summary table."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/agent-activity",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/high-risk-events", tags=["audit"])
-async def audit_high_risk_events_proxy(request: Request) -> Any:
-    """Proxy → Audit service — recent events at or above risk threshold."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/high-risk-events",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/deny-reasons", tags=["audit"])
-async def audit_deny_reasons_proxy(request: Request) -> Any:
-    """Proxy → Audit service — top deny reason strings by frequency."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/deny-reasons",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/tool-usage/{agent_id}", tags=["audit"])
-async def audit_tool_usage_proxy(agent_id: str, request: Request) -> Any:
-    """Proxy → Audit service — per-tool call stats for a single agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/tool-usage/{agent_id}",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/tool-risk", tags=["audit"])
-async def audit_tool_risk_proxy(request: Request) -> Any:
-    """Proxy → Audit service — cross-agent tool risk leaderboard."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/tool-risk",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/risk-percentile-trend", tags=["audit"])
-async def audit_risk_percentile_trend_proxy(request: Request) -> Any:
-    """Proxy → Audit service — daily p50/p75/p95 risk score percentiles."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/risk-percentile-trend",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/daily-active-agents", tags=["audit"])
-async def audit_daily_active_agents_proxy(request: Request) -> Any:
-    """Proxy → Audit service — distinct active agents per day."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/daily-active-agents",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/finding-breakdown", tags=["audit"])
-async def audit_finding_breakdown_proxy(request: Request) -> Any:
-    """Proxy → Audit service — ranked frequency of canonical finding types."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/finding-breakdown",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/agent-daily-decisions/{agent_id}", tags=["audit"])
-async def audit_agent_daily_decisions_proxy(agent_id: str, request: Request) -> Any:
-    """Proxy → Audit service — daily allow/deny counts for a single agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/agent-daily-decisions/{agent_id}",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/agent-findings/{agent_id}", tags=["audit"])
-async def audit_agent_findings_proxy(agent_id: str, request: Request) -> Any:
-    """Proxy → Audit service — ranked finding type frequency for a single agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/agent-findings/{agent_id}",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/posture-score-trend", tags=["audit"])
-async def audit_posture_score_trend_proxy(request: Request) -> Any:
-    """Proxy → Audit service — daily tenant posture score trend."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/posture-score-trend",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/audit/escalation-rate-trend", tags=["audit"])
-async def audit_escalation_rate_trend_proxy(request: Request) -> Any:
-    """Proxy → Audit service — daily escalation rate trend."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/escalation-rate-trend",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# /audit/trends, /audit/top-findings, /audit/peer-benchmark/{id},
+# /audit/tool-breakdown, /audit/risk-trend/{id}, /audit/hourly-activity,
+# /audit/risk-histogram, /audit/weekly-heatmap, /audit/decision-trend,
+# /audit/agent-activity, /audit/high-risk-events, /audit/deny-reasons,
+# /audit/tool-usage/{id}, /audit/tool-risk, /audit/risk-percentile-trend,
+# /audit/daily-active-agents, /audit/finding-breakdown,
+# /audit/agent-daily-decisions/{id}, /audit/agent-findings/{id},
+# /audit/posture-score-trend, /audit/escalation-rate-trend —
+# all extracted to routers/audit.py.
 
 
 # ─────────────────────────────────────────────────────────────

@@ -110,12 +110,12 @@ def test_router_agent_findings_accepts_days():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_agent_findings_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "agent-findings" in src
 
 
 def test_gateway_agent_findings_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("agent-findings")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/agent-findings" in snippet

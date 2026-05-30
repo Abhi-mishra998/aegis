@@ -82,12 +82,12 @@ def test_router_trends_accepts_days():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_trends_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "trends" in src
 
 
 def test_gateway_trends_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("audit/trends")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/trends" in snippet

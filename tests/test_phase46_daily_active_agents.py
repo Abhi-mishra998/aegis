@@ -103,12 +103,12 @@ def test_router_daily_active_agents_accepts_days():
 # ── gateway/main.py: proxy ────────────────────────────────────────────────────
 
 def test_gateway_has_daily_active_agents_proxy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     assert "daily-active-agents" in src
 
 
 def test_gateway_daily_active_agents_forwards_to_audit():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    src = ((ROOT / "services/gateway/routers/audit.py").read_text() + (ROOT / "services/gateway/main.py").read_text())
     idx = src.find("daily-active-agents")
     snippet = src[idx:idx + 400]
     assert "AUDIT_SERVICE_URL" in snippet or "logs/daily-active-agents" in snippet
