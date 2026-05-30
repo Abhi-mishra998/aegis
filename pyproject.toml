@@ -31,7 +31,6 @@ classifiers = [
 dependencies = [
     "httpx>=0.25",
     "cryptography>=42",
-    "PyYAML>=6",
 ]
 
 [project.urls]
@@ -58,7 +57,6 @@ server = [
     "pydantic[email]",
     "pydantic-settings",
     "python-jose[cryptography]",
-    "passlib[bcrypt]",
     "structlog",
     "prometheus-fastapi-instrumentator",
     "opentelemetry-api",
@@ -80,7 +78,6 @@ dev = [
     "hypothesis",
     "ruff",
     "mypy",
-    "PyJWT",
     "locust",
 ]
 
