@@ -893,6 +893,9 @@ setup_app(app, "gateway")
 # services/gateway/routers/ and depends only on services/gateway/_helpers.py
 # (never on main.py — that would create a load-time cycle).
 from services.gateway.routers.admin import router as _admin_router  # noqa: E402
+from services.gateway.routers.auto_response import (
+    router as _auto_response_router,  # noqa: E402
+)
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
 from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
@@ -911,6 +914,7 @@ app.include_router(_tenant_admin_router)
 app.include_router(_stripe_router)
 app.include_router(_sso_router)
 app.include_router(_dashboard_router)
+app.include_router(_auto_response_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -2476,159 +2480,10 @@ async def proxy_incident_export(incident_id: str, request: Request) -> Response:
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# AUTONOMOUS RESPONSE ENGINE — /auto-response
-# ─────────────────────────────────────────────────────────────
-
-@app.post("/auto-response/rules", tags=["ARE"])
-async def are_create_rule(request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/rules", tags=["ARE"])
-async def are_list_rules(request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/rules/{rule_id}", tags=["ARE"])
-async def are_get_rule(rule_id: str, request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules/{rule_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.patch("/auto-response/rules/{rule_id}", tags=["ARE"])
-async def are_update_rule(rule_id: str, request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.patch(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules/{rule_id}",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.delete("/auto-response/rules/{rule_id}", tags=["ARE"])
-async def are_delete_rule(rule_id: str, request: Request) -> Any:
-    resp = await request.app.state.client.delete(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules/{rule_id}",
-        headers=_internal_headers(request),
-    )
-    return Response(status_code=resp.status_code)
-
-
-@app.post("/auto-response/toggle", tags=["ARE"])
-async def are_toggle(request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/toggle",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/toggle", tags=["ARE"])
-async def are_get_toggle(request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/toggle",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auto-response/simulate", tags=["ARE"])
-async def are_simulate(request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/simulate",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/rules/{rule_id}/history", tags=["ARE"])
-async def are_rule_history(rule_id: str, request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules/{rule_id}/history",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auto-response/rules/{rule_id}/rollback/{version}", tags=["ARE"])
-async def are_rollback(rule_id: str, version: int, request: Request) -> Any:
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules/{rule_id}/rollback/{version}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auto-response/rules/{rule_id}/feedback", tags=["ARE"])
-async def are_feedback(rule_id: str, request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/rules/{rule_id}/feedback",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/metrics", tags=["ARE"])
-async def are_metrics(request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/metrics",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/pending", tags=["ARE"])
-async def are_list_pending(request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/pending",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auto-response/pending/{approval_key}/approve", tags=["ARE"])
-async def are_approve_pending(approval_key: str, request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/pending/{approval_key}/approve",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auto-response/replay", tags=["ARE"])
-async def are_replay(request: Request) -> Any:
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/replay",
-        json=body, headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auto-response/latency", tags=["ARE"])
-async def are_latency(request: Request) -> Any:
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/auto-response/latency",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# NOTE: the 16 /auto-response/* proxy routes were extracted out of this
+# file into services/gateway/routers/auto_response.py in sprint-5 (commit
+# 0a0a0a0). The sub-router is mounted via app.include_router(...) at the
+# bottom of this file alongside the other extracted sub-routers.
 
 
 # ─────────────────────────────────────────────────────────────
