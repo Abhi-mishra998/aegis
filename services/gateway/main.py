@@ -321,10 +321,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # alerts are paper. 30s cadence keeps the gauges fresh enough for
     # the 5-minute Alertmanager windows without pressuring Redis.
     queue_age_worker = asyncio.create_task(_refresh_queue_age_gauges_loop(redis))
+    # sprint-2.1 — token-revocation pub/sub listener. Identity service
+    # publishes the sha256 hash on revoke; this listener drops the entry
+    # from the in-process LRU so the revoked token is rejected on the
+    # *next* request instead of waiting up to 60s for the TTL to expire.
+    from services.gateway.auth import run_revocation_listener
+    revocation_listener = asyncio.create_task(run_revocation_listener(redis))
     yield
     await pubsub_manager.close()
     billing_worker.cancel()
     queue_age_worker.cancel()
+    revocation_listener.cancel()
     await _app.state.client.aclose()
     await redis.aclose()
     await service_client.close()
@@ -679,6 +686,49 @@ async def sso_providers(request: Request) -> Any:
     return _passthrough(resp)
 
 
+# Explicit /auth/sso/config routes MUST sit above the /auth/sso/{provider}
+# catch-all below, otherwise FastAPI matches "config" as a provider name and
+# forwards the request without X-Tenant-ID (identity returns 400).
+@app.get("/auth/sso/config", tags=["sso"])
+async def get_sso_config_proxy(request: Request) -> Any:
+    """Proxy → Identity: read tenant SSO provider config (secrets masked)."""
+    resp = await request.app.state.client.get(
+        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/config",
+        headers=_internal_headers(request),
+    )
+    return _passthrough(resp)
+
+
+@app.post("/auth/sso/config", tags=["sso"])
+async def save_sso_config_proxy(request: Request) -> Any:
+    """Proxy → Identity: persist tenant SSO provider config."""
+    headers = _internal_headers(request)
+    ctype = request.headers.get("content-type")
+    if ctype:
+        headers["Content-Type"] = ctype
+    resp = await request.app.state.client.post(
+        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/config",
+        content=await request.body(),
+        headers=headers,
+    )
+    return _passthrough(resp)
+
+
+@app.post("/auth/sso/config/test", tags=["sso"])
+async def test_sso_config_proxy(request: Request) -> Any:
+    """Proxy → Identity: probe configured SSO provider for reachability."""
+    headers = _internal_headers(request)
+    ctype = request.headers.get("content-type")
+    if ctype:
+        headers["Content-Type"] = ctype
+    resp = await request.app.state.client.post(
+        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/config/test",
+        content=await request.body(),
+        headers=headers,
+    )
+    return _passthrough(resp)
+
+
 @app.get("/auth/sso/{provider}", tags=["sso"])
 async def sso_login_redirect(provider: str, request: Request) -> Any:
     """Initiate SSO — proxies redirect to OIDC provider."""
@@ -837,6 +887,30 @@ app.add_middleware(SecurityMiddleware, redis=redis)  # type: ignore[arg-type]
 
 # Consolidated SDK Setup (logging, tracing, metrics, CORS, exception handlers, /health)
 setup_app(app, "gateway")
+
+# sprint-3.1 — per-domain router modules. The 3,920-LOC main.py is being
+# decomposed; admin is the first extraction. Each router lives under
+# services/gateway/routers/ and depends only on services/gateway/_helpers.py
+# (never on main.py — that would create a load-time cycle).
+from services.gateway.routers.admin import router as _admin_router  # noqa: E402
+from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
+from services.gateway.routers.decision import router as _decision_router  # noqa: E402
+from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
+from services.gateway.routers.sso import router as _sso_router  # noqa: E402
+from services.gateway.routers.stripe_webhook import (
+    router as _stripe_router,  # noqa: E402
+)
+from services.gateway.routers.tenant_admin import (
+    router as _tenant_admin_router,  # noqa: E402
+)
+
+app.include_router(_admin_router)
+app.include_router(_decision_router)
+app.include_router(_proxies_router)
+app.include_router(_tenant_admin_router)
+app.include_router(_stripe_router)
+app.include_router(_sso_router)
+app.include_router(_dashboard_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1986,55 +2060,8 @@ async def audit_escalation_rate_trend_proxy(request: Request) -> Any:
 # NEW: Kill-switch and decision history routes proxied to Decision service
 # ─────────────────────────────────────────────────────────────
 
-@app.get("/decision/kill-switch/{tenant_id}", tags=["decision"])
-async def get_kill_switch_status(tenant_id: str, request: Request) -> Any:
-    """Proxy → Decision service kill-switch status."""
-    resp = await request.app.state.client.get(
-        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/kill-switch/{tenant_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/decision/kill-switch/{tenant_id}", tags=["decision"])
-async def toggle_kill_switch(tenant_id: str, request: Request) -> Any:
-    """Proxy → Decision service toggle kill-switch."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/kill-switch/{tenant_id}",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    if resp.status_code in (200, 201, 204):
-        await _publish_event(
-            redis, tenant_id, "kill_switch",
-            {
-                "tenant_id": tenant_id,
-                "engaged": True,
-                "tenant_wide": True,
-                "reason": (body or {}).get("reason") if isinstance(body, dict) else None,
-            },
-        )
-    return _passthrough(resp)
-
-
-@app.delete("/decision/kill-switch/{tenant_id}", tags=["decision"])
-async def disengage_kill_switch(tenant_id: str, request: Request) -> Any:
-    """Proxy → Decision service disengage kill-switch."""
-    resp = await request.app.state.client.delete(
-        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/kill-switch/{tenant_id}",
-        headers=_internal_headers(request),
-    )
-    if resp.status_code in (200, 204):
-        await _publish_event(
-            redis, tenant_id, "kill_switch",
-            {
-                "tenant_id": tenant_id,
-                "engaged": False,
-                "tenant_wide": True,
-            },
-        )
-    return _passthrough(resp)
+# Decision kill-switch proxy routes moved to services/gateway/routers/decision.py
+# in sprint-4.E. The router is included near app initialisation alongside admin.
 
 
 @app.get("/decision/history", tags=["decision"])
@@ -2625,57 +2652,11 @@ async def get_recent_insights(request: Request) -> Any:
 # Single aggregated endpoint: audit + agents + billing + insights + kill-switch
 # ─────────────────────────────────────────────────────────────
 
-@app.get("/dashboard/state", tags=["dashboard"])
-async def dashboard_state(request: Request) -> dict[str, Any]:
-    """
-    Aggregated state for the executive dashboard.
-    Fans out to audit, registry, usage, insight, and decision services concurrently.
-    Each service failure returns an empty fallback — dashboard always loads.
-    """
-    client = request.app.state.client
-    headers = _internal_headers(request)
-    tenant_id = request.headers.get("X-Tenant-ID", "")
-
-    async def _safe(url: str, params: dict | None = None) -> Any:
-        try:
-            resp = await client.get(url, headers=headers, params=params or {}, timeout=5.0)
-            return _passthrough(resp) if resp.status_code < 500 else {}
-        except Exception:
-            return {}
-
-    audit_r, agents_r, billing_r, insights_r = await asyncio.gather(
-        _safe(f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/summary"),
-        _safe(f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/summary"),
-        _safe(f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/summary"),
-        _safe(f"{settings.INSIGHT_SERVICE_URL.rstrip('/')}/insights", {"limit": 5}),
-    )
-
-    kill_r: dict = {}
-    if tenant_id:
-        kill_r = await _safe(
-            f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/kill-switch/{tenant_id}"
-        )
-
-    agents_summary = agents_r.get("data", agents_r) if isinstance(agents_r, dict) else {}
-    if not isinstance(agents_summary, dict):
-        agents_summary = {}
-
-    return {
-        "success": True,
-        "data": {
-            "audit": audit_r.get("data", audit_r) if isinstance(audit_r, dict) else {},
-            "agents": {
-                "total":       agents_summary.get("total", 0),
-                "active":      agents_summary.get("active", 0),
-                "quarantined": agents_summary.get("quarantined", 0),
-                "high_risk":   agents_summary.get("high_risk", 0),
-            },
-            "billing": billing_r.get("data", billing_r) if isinstance(billing_r, dict) else {},
-            "insights": insights_r.get("data", []) if isinstance(insights_r, dict) else [],
-            "kill_switch": kill_r.get("data", kill_r) if isinstance(kill_r, dict) else {},
-            "ts": int(time.time()),
-        },
-    }
+# /dashboard/state moved to services/gateway/routers/dashboard.py in sprint-7.6.
+# That extraction also fixed a latent bug: the prior in-main implementation
+# accidentally returned JSONResponse objects from its _safe() helper and then
+# called .get() on them — the isinstance(dict) guards turned every field into
+# {} in production. The new module uses resp.json() directly.
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3162,237 +3143,12 @@ async def _trust_proxy(base_url: str, path: str, request: Request) -> Any:
         )
 
 
-@app.api_route("/graph/{full_path:path}", methods=["GET", "POST", "PATCH", "DELETE"], tags=["graph"])
-async def proxy_graph(full_path: str, request: Request) -> Any:
-    return await _trust_proxy(settings.IDENTITY_GRAPH_SERVICE_URL, f"/graph/{full_path}", request)
+# Runtime-trust passthrough proxies (/graph, /flight, /autonomy), playbooks,
+# webhooks, and notifications proxy routes moved to
+# services/gateway/routers/proxies.py in sprint-5.1.
 
 
-@app.api_route("/flight/{full_path:path}", methods=["GET", "POST", "PATCH", "DELETE"], tags=["flight"])
-async def proxy_flight(full_path: str, request: Request) -> Any:
-    return await _trust_proxy(settings.FLIGHT_RECORDER_SERVICE_URL, f"/flight/{full_path}", request)
-
-
-@app.api_route("/autonomy/{full_path:path}", methods=["GET", "POST", "PATCH", "DELETE"], tags=["autonomy"])
-async def proxy_autonomy(full_path: str, request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, f"/autonomy/{full_path}", request)
-
-
-# ─────────────────────────────────────────────────────────────
-# PLAYBOOKS PROXY (Day 13-14)
-# /playbooks/* → autonomy service /autonomy/playbooks/*
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/playbooks/templates", tags=["playbooks"])
-async def get_playbook_templates_proxy(request: Request) -> Any:
-    """Proxy to autonomy service /playbooks/templates (no auth required)."""
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/playbooks/templates", request)
-
-
-@app.get("/playbooks", tags=["playbooks"])
-async def list_playbooks_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/playbooks", request)
-
-
-@app.post("/playbooks", tags=["playbooks"])
-async def create_playbook_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/playbooks", request)
-
-
-# ─────────────────────────────────────────────────────────────
-# GET /playbooks/stats — in-gateway aggregation (Phase 10)
-# Calls /playbooks and /playbooks/templates via internal HTTP;
-# returns summary counts. Sub-call failures return zeros gracefully.
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/playbooks/stats", tags=["playbooks"])
-async def get_playbooks_stats(request: Request) -> Any:
-    """Return aggregate playbook statistics for the authenticated tenant.
-
-    Aggregates from:
-      - /autonomy/playbooks         (autonomy service) — installed playbooks list
-      - /autonomy/playbooks/templates (autonomy service) — available templates
-
-    Returns:
-      total_installed  — count of installed playbooks
-      total_templates  — count of available templates
-      active           — count of installed playbooks with status == "active"
-      triggers_24h     — total trigger count across all installed playbooks
-                         for the last 24 hours (sourced from playbook.triggers_24h
-                         field if present, else 0)
-      last_trigger_at  — ISO-8601 timestamp of most recent trigger, or null
-
-    Sub-call failures are tolerated — affected counters fall back to 0.
-    Requires a valid bearer token (authenticated UI / SDK calls).
-    """
-    client: httpx.AsyncClient = request.app.state.client
-    hdrs = _internal_headers(request)
-    base = settings.AUTONOMY_SERVICE_URL.rstrip("/")
-
-    # ── 1. Fetch installed playbooks ────────────────────────────────────────
-    total_installed = 0
-    active = 0
-    triggers_24h = 0
-    last_trigger_at: str | None = None
-
-    try:
-        pb_resp = await client.get(
-            f"{base}/autonomy/playbooks",
-            headers=hdrs,
-            params=request.query_params,
-            timeout=5.0,
-        )
-        if pb_resp.status_code == 200:
-            pb_data = pb_resp.json()
-            # Support both {"data": [...]} envelope and bare list
-            playbooks = pb_data.get("data", pb_data) if isinstance(pb_data, dict) else pb_data
-            if isinstance(playbooks, list):
-                total_installed = len(playbooks)
-                for pb in playbooks:
-                    if isinstance(pb, dict):
-                        if pb.get("status") == "active":
-                            active += 1
-                        triggers_24h += int(pb.get("triggers_24h", 0) or 0)
-                        ts = pb.get("last_trigger_at") or pb.get("last_triggered_at")
-                        if ts:
-                            if last_trigger_at is None or ts > last_trigger_at:
-                                last_trigger_at = ts
-    except Exception as exc:
-        logger.warning("playbooks_stats_installed_error", error=str(exc)[:200])
-
-    # ── 2. Fetch available templates ─────────────────────────────────────────
-    total_templates = 0
-    try:
-        tmpl_resp = await client.get(
-            f"{base}/autonomy/playbooks/templates",
-            headers=hdrs,
-            timeout=5.0,
-        )
-        if tmpl_resp.status_code == 200:
-            tmpl_data = tmpl_resp.json()
-            templates = tmpl_data.get("data", tmpl_data) if isinstance(tmpl_data, dict) else tmpl_data
-            if isinstance(templates, list):
-                total_templates = len(templates)
-    except Exception as exc:
-        logger.warning("playbooks_stats_templates_error", error=str(exc)[:200])
-
-    return JSONResponse(content={
-        "total_installed": total_installed,
-        "total_templates": total_templates,
-        "active": active,
-        "triggers_24h": triggers_24h,
-        "last_trigger_at": last_trigger_at,
-    })
-
-
-@app.get("/playbooks/{pid}/runs", tags=["playbooks"])
-async def list_playbook_runs_proxy(pid: str, request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, f"/autonomy/playbooks/{pid}/runs", request)
-
-
-@app.post("/playbooks/{pid}/trigger", tags=["playbooks"])
-async def trigger_playbook_proxy(pid: str, request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, f"/autonomy/playbooks/{pid}/trigger", request)
-
-
-@app.get("/playbooks/{pid}", tags=["playbooks"])
-async def get_playbook_proxy(pid: str, request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, f"/autonomy/playbooks/{pid}", request)
-
-
-@app.patch("/playbooks/{pid}", tags=["playbooks"])
-async def update_playbook_proxy(pid: str, request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, f"/autonomy/playbooks/{pid}", request)
-
-
-@app.delete("/playbooks/{pid}", tags=["playbooks"])
-async def delete_playbook_proxy(pid: str, request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, f"/autonomy/playbooks/{pid}", request)
-
-
-# ─────────────────────────────────────────────────────────────
-# WEBHOOK SETTINGS PROXY
-# /webhooks/* → autonomy service /autonomy/webhooks/*
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/webhooks/config", tags=["webhooks"])
-async def get_webhook_config_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/config", request)
-
-
-@app.post("/webhooks/config", tags=["webhooks"])
-async def save_webhook_config_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/config", request)
-
-
-@app.post("/webhooks/test/slack", tags=["webhooks"])
-async def test_slack_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/test/slack", request)
-
-
-@app.post("/webhooks/test/pagerduty", tags=["webhooks"])
-async def test_pagerduty_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/test/pagerduty", request)
-
-
-@app.post("/webhooks/test/webhook", tags=["webhooks"])
-async def test_generic_webhook_proxy(request: Request) -> Any:
-    return await _trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/test/webhook", request)
-
-
-# ─────────────────────────────────────────────────────────────
-# NOTIFICATIONS PROXY — /notifications → audit service
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/notifications", tags=["notifications"])
-async def list_notifications_proxy(request: Request) -> Any:
-    """Proxy → Audit service list notifications."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/notifications", request)
-
-
-@app.post("/notifications", tags=["notifications"])
-async def create_notification_proxy(request: Request) -> Any:
-    """Proxy → Audit service create notification."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/notifications", request)
-
-
-@app.post("/notifications/read-all", tags=["notifications"])
-async def mark_all_notifications_read_proxy(request: Request) -> Any:
-    """Proxy → Audit service mark all notifications as read."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/notifications/read-all", request)
-
-
-@app.get("/notifications/count", tags=["notifications"])
-async def get_notifications_count_proxy(request: Request) -> Any:
-    """Proxy → Audit service get unread notification count."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/notifications/count", request)
-
-
-@app.post("/notifications/{notification_id}/read", tags=["notifications"])
-async def mark_notification_read_proxy(notification_id: str, request: Request) -> Any:
-    """Proxy → Audit service mark one notification as read."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, f"/notifications/{notification_id}/read", request)
-
-
-# ─────────────────────────────────────────────────────────────
-# SSO CONFIG PROXY — /auth/sso/config → identity service
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/auth/sso/config", tags=["sso"])
-async def get_sso_config_proxy(request: Request) -> Any:
-    """Proxy → Identity service SSO config GET."""
-    return await _trust_proxy(settings.IDENTITY_SERVICE_URL, "/auth/sso/config", request)
-
-
-@app.post("/auth/sso/config", tags=["sso"])
-async def save_sso_config_proxy(request: Request) -> Any:
-    """Proxy → Identity service SSO config POST."""
-    return await _trust_proxy(settings.IDENTITY_SERVICE_URL, "/auth/sso/config", request)
-
-
-@app.post("/auth/sso/config/test", tags=["sso"])
-async def test_sso_config_proxy(request: Request) -> Any:
-    """Proxy → Identity service SSO config test."""
-    return await _trust_proxy(settings.IDENTITY_SERVICE_URL, "/auth/sso/config/test", request)
+# SSO config proxy routes moved to services/gateway/routers/sso.py in sprint-6.2.
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3549,30 +3305,21 @@ async def events_stream(request: Request) -> Response:
     Uses PubSubManager: one Redis subscription per tenant channel, fan-out to
     per-client bounded queues (maxsize=100). Old clients are not blocked by slow ones.
     """
-    # SSE auth precedence — browsers' EventSource API cannot set custom
-    # headers, so we ALWAYS accept all three forms and pick whichever exists:
-    #   1. acp_token cookie       — production browser flow
-    #   2. Authorization: Bearer  — SDK / curl / Locust
-    #   3. ?token=… query string  — non-browser clients that can't set cookies
-    #
-    # The query-string fallback is the canonical SSE auth path documented in
-    # the HTML spec; without it, anything other than the dashboard cookie flow
-    # fails silently.
+    # SSE auth: cookie (browser EventSource) or Authorization: Bearer (SDK).
+    # Query-string tokens were dropped in sprint-1 because they leak via
+    # nginx/ALB access logs, browser history, and Referer headers — see
+    # `audit-v2.md` §5.2.
     token = request.cookies.get("acp_token")
     if not token:
         auth_hdr = request.headers.get("Authorization", "")
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr[7:].strip()
-    if not token:
-        qt = request.query_params.get("token") or request.query_params.get("access_token")
-        if qt:
-            token = qt.strip()
 
     if not token:
         logger.info("sse_unauthenticated", reason="no_token_provided")
         return Response(
             status_code=401,
-            content='{"error":"Unauthorized","detail":"missing token (cookie / Authorization / ?token=)"}',
+            content='{"error":"Unauthorized","detail":"missing token (cookie or Authorization header)"}',
             media_type="application/json",
         )
 
@@ -3659,6 +3406,8 @@ async def events_stream(request: Request) -> Response:
             yield f"event: connected\ndata: {json.dumps(connected_payload)}\n\n"
 
             last_heartbeat = time.time()
+            last_reauth = time.time()
+            _REAUTH_INTERVAL_SECONDS = 30.0
             while True:
                 if await request.is_disconnected():
                     break
@@ -3666,6 +3415,28 @@ async def events_stream(request: Request) -> Response:
                     ignore_subscribe_messages=True, timeout=1.0,
                 )
                 now = time.time()
+
+                # Mid-stream token re-validation — closes the gap where a
+                # revoked token's SSE connection stays alive until the
+                # client disconnects. Every 30s we re-call the validator;
+                # on any failure (revoked, expired, signature mismatch)
+                # we yield a typed close event and exit the generator.
+                if now - last_reauth >= _REAUTH_INTERVAL_SECONDS:
+                    try:
+                        await tv.validate(token)
+                    except Exception as reauth_exc:
+                        logger.info(
+                            "sse_reauth_failed",
+                            tenant_id=tenant_id_str,
+                            error_type=type(reauth_exc).__name__,
+                        )
+                        yield (
+                            "event: auth_expired\n"
+                            "data: " + json.dumps({"reason": "token revoked or expired"}) + "\n\n"
+                        )
+                        break
+                    last_reauth = now
+
                 if msg and msg.get("type") in ("message", "pmessage"):
                     data = msg.get("data", b"")
                     if isinstance(data, bytes):
@@ -3883,38 +3654,5 @@ async def get_security_posture(request: Request) -> Any:
     })
 
 
-# ─────────────────────────────────────────────────────────────
-# ADMIN TENANTS PROXY (Phase 9)
-# GET /admin/tenants        → identity service /admin/tenants
-# GET /admin/tenants/{id}   → identity service /admin/tenants/{id}
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/admin/tenants", tags=["admin"])
-async def list_admin_tenants(request: Request) -> Any:
-    """Proxy → Identity service: list all tenants (admin view).
-
-    Requires a valid bearer token. The identity service enforces its own
-    internal-secret check on the upstream route.
-    """
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/admin/tenants",
-        headers=_internal_headers(request),
-        params=dict(request.query_params),
-        timeout=10.0,
-    )
-    return _passthrough(resp)
-
-
-@app.get("/admin/tenants/{tenant_id}", tags=["admin"])
-async def get_admin_tenant(tenant_id: str, request: Request) -> Any:
-    """Proxy → Identity service: fetch a single tenant by id (admin view).
-
-    Requires a valid bearer token. The identity service enforces its own
-    internal-secret check on the upstream route.
-    """
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/admin/tenants/{tenant_id}",
-        headers=_internal_headers(request),
-        timeout=10.0,
-    )
-    return _passthrough(resp)
+# Admin routes moved to services/gateway/routers/admin.py in sprint-3.1.
+# Mounted via app.include_router(admin_router) near the app initialisation.

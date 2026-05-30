@@ -24,8 +24,8 @@ from redis.asyncio import Redis
 from sdk.common.config import settings
 from sdk.common.invariants import clamp_risk
 from sdk.common.redis import get_redis_client
+from sdk.intelligence.service import intelligence_engine
 from services.behavior.schemas import BehaviorAnalysis
-from services.intelligence.service import intelligence_engine
 from services.learning.service import learning_engine
 
 logger = structlog.get_logger(__name__)
