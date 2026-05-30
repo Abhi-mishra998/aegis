@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import math
+import time
 import uuid
 from typing import Any
 
 import structlog
 from redis.asyncio import Redis
 
-from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from services.learning.database import async_session
@@ -154,9 +156,40 @@ class LearningService:
                 tenant_id, profile, tool, prev_tool, velocity, tokens
             )
 
-            # 4. Persistence (Background DB sync)
+            # 4. Persistence — sprint-2.5 durability fix.
+            # Previous behaviour: `asyncio.create_task(_safe_bg(...))` — if
+            # the task was cancelled (container shutdown, OOM kill) the
+            # profile update was lost forever. Now: at every checkpoint
+            # (every 10 events) we await the sync with a short timeout;
+            # on timeout/failure we durably enqueue the work onto a Redis
+            # list so the next worker tick (or a fresh process boot) drains
+            # it. The Redis enqueue is itself best-effort but is far more
+            # durable than create_task across container lifecycle events.
             if total_events % 10 == 0:
-                asyncio.create_task(_safe_bg(self._sync_to_db_with_retry(tenant_id, agent_id, profile)))
+                try:
+                    await asyncio.wait_for(
+                        self._sync_to_db_with_retry(tenant_id, agent_id, profile),
+                        timeout=0.5,
+                    )
+                except Exception as sync_exc:
+                    logger.warning(
+                        "learning_sync_deferred",
+                        agent_id=str(agent_id),
+                        error_type=type(sync_exc).__name__,
+                        error=str(sync_exc)[:200],
+                    )
+                    # Enqueue for later drain. Format kept deliberately small
+                    # so unbounded queue growth costs MB, not GB.
+                    with contextlib.suppress(Exception):
+                        await self.redis.rpush(
+                            "acp:learning:sync_retry",
+                            json.dumps({
+                                "tenant_id": str(tenant_id),
+                                "agent_id": str(agent_id),
+                                "ts": int(time.time()),
+                            }),
+                        )
+                        await self.redis.ltrim("acp:learning:sync_retry", -10000, -1)
 
             return res
 
