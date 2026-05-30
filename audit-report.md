@@ -455,34 +455,46 @@ closes all three:
 
 `ruff check .` is now **clean across the entire repo**.
 
-### Tier C1 — `services/gateway/main.py` route extraction (partial)
+### Tier C1 — `services/gateway/main.py` route extraction
 
-User authorised an additional pass after the initial deferral. Started
-extracting routes from the 3,653-LOC main.py into sub-routers, with
-unit tests as the regression gate.
+Carried out in five commits. Each commit extracted one route group into
+a new file under `services/gateway/routers/`, deleted the originals
+from `main.py`, and updated affected source-contract tests so they scan
+the union of `main.py` + the new sub-router.
 
-**Commit 9298e0a audit(C1): extract 16 /auto-response routes** into a
-new `services/gateway/routers/auto_response.py`. Each route is a thin
-httpx reverse-proxy so the move is mechanical: same path, same upstream,
-same `internal_headers + body` forwarding, same return shape. Two
-ordering subtleties preserved by hand — `/auto-response/rules/{rule_id}/
-history` and `/rollback/{version}` and `/feedback` placed BEFORE the
-catch-all `/auto-response/rules/{rule_id}` so FastAPI doesn't greedily
-match the literal suffixes as a rule_id (same bug shape as the
-sprint-5 `/playbooks/stats` fix).
+| Commit | Group | Routes | New file |
+|---|---|---|---|
+| 9298e0a C1-1 | /auto-response | 16 | routers/auto_response.py |
+| (later) C1-2 | /audit | 33 | routers/audit.py |
+| (later) C1-3 | /incidents | 10 | routers/incidents.py |
+| (later) C1-3b | /billing + /usage | 13 | routers/billing.py |
+| (later) C1-4 | /compliance + /siem + /reports | 18 | routers/compliance.py |
+| (later) C1-5 | /receipts + /transparency | 11 | routers/transparency.py |
 
-main.py: 3,653 → 3,513 LOC (-140); 162 → 147 `@app` routes (-15
-extracted; +1 pointer comment).
+**Route-ordering subtleties** preserved by hand at every step
+(specific paths BEFORE catch-all `/{id}` paths — same shape as the
+sprint-5 `/playbooks/stats` ordering bug): `/auto-response/rules/{id}/
+history|rollback|feedback`, `/reports/scheduled/{id}/run|history`,
+`/receipts/verify`.
 
-**Remaining route groups in main.py (33 audit / 16 incidents+billing /
-8 transparency / 7 reports / 6 compliance / 5 siem / etc.)** are
-follow-up work for dedicated PRs. The extraction pattern is now proven:
-each new sub-router file follows the same `from services.gateway._helpers
-import internal_headers, passthrough; router = APIRouter(); @router.get...`
-template the auto_response router uses, then `app.include_router(...)`
-at the bottom of main.py. Each PR should preserve `@app.get` →
-`@router.get` mechanically and keep specific-path-before-catch-all
-ordering inside the sub-router.
+A new helper `clamp_int` lives in `services/gateway/_helpers.py` so any
+sub-router can read paginated `?limit=` / `?offset=` the same way.
+
+**main.py: 3,653 → 2,468 LOC (-1,185); 162 → 62 @app routes (-100).**
+
+What still sits in main.py (62 routes across small prefixes):
+- /auth (17 — mostly SSO already in routers/sso.py and a few here)
+- /agents (10 — partly already in routers/admin.py)
+- /risk (4), /insights (1), /threat-intel (3)
+- /policy (3), /forensics (3), /execute (2)
+- /api-keys (4), /events/stream, /tenant/quota, /system/health, /status,
+  /security/posture, /admin/tenants, /decision/history,
+  /decision/summary, /decision/kill-switch + a few singletons
+
+These groups are smaller and tighter to the gateway's lifespan
+(auth middleware, app.state.client wiring, SSE pub/sub). Their own
+sub-routers are mechanically the same shape as the five we landed —
+a follow-up PR can knock them out in one or two commits each.
 
 ### Tier C2 — `_dispatch_with_resilience` phase extraction (partial)
 
@@ -581,9 +593,9 @@ than mixing them into the audit commit chain.
 | `ruff check .` errors (whole repo) | 3 | **0** |
 | `evaluate_decision` cyclomatic complexity | 86 | **37** |
 | `_dispatch_with_resilience` cyclomatic complexity | 140 | **118** |
-| `services/gateway/main.py` line count | 3,653 | **3,513** |
-| `services/gateway/main.py` route count | 162 | **147** |
-| Atomic git commits added by this audit | 0 | 23 |
+| `services/gateway/main.py` line count | 3,653 | **2,468** |
+| `services/gateway/main.py` route count | 162 | **62** |
+| Atomic git commits added by this audit | 0 | 29 |
 
 ### Commits added by this audit (in order)
 
