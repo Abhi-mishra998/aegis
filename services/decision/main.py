@@ -155,6 +155,66 @@ setup_app(app, "decision")
 from sdk.common.auth import verify_internal_secret
 
 
+async def _fan_out_policy_and_behavior(
+    req: OrchestrationRequest,
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+) -> tuple[httpx.Response | BaseException | None,
+           httpx.Response | BaseException | None,
+           int, bool]:
+    """Issue the OPA + Behavior consults in parallel.
+
+    Returns ``(policy_res, behavior_res, behavior_latency_ms, fanout_timed_out)``.
+    On overall timeout (``_T_GATHER_TOTAL``) both responses are ``None`` and
+    ``fanout_timed_out=True`` so the caller can classify the result as a
+    timeout rather than a generic failure.
+
+    Behavior is timed even when policy is healthy so the audit/metrics path
+    can record service_status + latency on every consult — the source of
+    truth for the "we consulted behavior on every call" product claim.
+    """
+    opa_payload = {
+        "tenant_id": str(req.tenant_id),
+        "agent_id": str(req.agent_id),
+        "tool": req.tool,
+        "risk_score": req.inference_risk,
+        "behavior_history": [],
+        "request_id": req.request_id,
+        "metadata": {"client_ip": req.client_ip},
+    }
+    behavior_payload = {
+        "tenant_id": str(req.tenant_id),
+        "agent_id":  str(req.agent_id),
+        "tool":      req.tool,
+        "tokens":    req.tokens,
+    }
+
+    behavior_started = time.monotonic()
+    fanout_timed_out = False
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                client.post(
+                    f"{settings.POLICY_SERVICE_URL.rstrip('/')}/policy/evaluate",
+                    json=opa_payload, headers=headers, timeout=_T_GATHER,
+                ),
+                client.post(
+                    f"{settings.BEHAVIOR_SERVICE_URL.rstrip('/')}/analyze",
+                    json=behavior_payload, headers=headers, timeout=_T_GATHER,
+                ),
+                return_exceptions=True,
+            ),
+            timeout=_T_GATHER_TOTAL,
+        )
+    except TimeoutError:
+        logger.warning("decision_fanout_timeout", agent_id=str(req.agent_id))
+        results = [None, None]
+        fanout_timed_out = True
+
+    behavior_latency_ms = int((time.monotonic() - behavior_started) * 1000)
+    return results[0], results[1], behavior_latency_ms, fanout_timed_out
+
+
 async def _resolve_agent_meta(
     req: OrchestrationRequest,
     client: httpx.AsyncClient,
@@ -240,49 +300,9 @@ async def evaluate_decision(
         return Decision(action="deny", risk=1.0, reasons=[f"Tool '{req.tool}' not in agent permissions"])
 
     # 2. Fan-out: Policy (OPA) + Behavior in parallel.
-    # Behavior is timed and classified independently so we can record
-    # service_status + latency on every consult (the audit/metrics path
-    # below depends on this even when the policy half is healthy).
-    opa_payload = {
-        "tenant_id": str(req.tenant_id),
-        "agent_id": str(req.agent_id),
-        "tool": req.tool,
-        "risk_score": req.inference_risk,
-        "behavior_history": [],
-        "request_id": req.request_id,
-        "metadata": {"client_ip": req.client_ip},
-    }
-    behavior_payload = {
-        "tenant_id": str(req.tenant_id),
-        "agent_id":  str(req.agent_id),
-        "tool":      req.tool,
-        "tokens":    req.tokens,
-    }
-
-    behavior_started = time.monotonic()
-    fanout_timed_out = False
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(
-                client.post(
-                    f"{settings.POLICY_SERVICE_URL.rstrip('/')}/policy/evaluate",
-                    json=opa_payload, headers=headers, timeout=_T_GATHER,
-                ),
-                client.post(
-                    f"{settings.BEHAVIOR_SERVICE_URL.rstrip('/')}/analyze",
-                    json=behavior_payload, headers=headers, timeout=_T_GATHER,
-                ),
-                return_exceptions=True,
-            ),
-            timeout=_T_GATHER_TOTAL,
-        )
-    except TimeoutError:
-        logger.warning("decision_fanout_timeout", agent_id=str(req.agent_id))
-        results = [None, None]
-        fanout_timed_out = True
-
-    policy_res, behavior_res = results[0], results[1]
-    behavior_latency_ms = int((time.monotonic() - behavior_started) * 1000)
+    policy_res, behavior_res, behavior_latency_ms, fanout_timed_out = (
+        await _fan_out_policy_and_behavior(req, client, headers)
+    )
 
     # Cost risk calculation moved to Behavior service or calculated here if needed.
 
