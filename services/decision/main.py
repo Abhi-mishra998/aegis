@@ -155,6 +155,67 @@ setup_app(app, "decision")
 from sdk.common.auth import verify_internal_secret
 
 
+async def _emit_behavior_firewall_audit(
+    req: OrchestrationRequest,
+    behavior_status: str,
+    behavior_latency_ms: int,
+    returned_score: float | None,
+    behavior_data: dict,
+    policy_applied: str,
+    short_circuit_action: str | None,
+) -> None:
+    """Emit the unconditional ``behavior_firewall_decision`` audit row + the
+    Prometheus consult counter / latency histogram.
+
+    This is the source-of-truth row for the "we consulted behavior on every
+    call" product claim, so it runs *synchronously* on the request path —
+    a Redis stall here surfaces as a 5xx rather than silently losing the
+    evidence. The call site sits behind the 2.0s gateway SLA.
+
+    Audit emission failures are logged loudly but never raised; the
+    decision pipeline keeps running so behavior of the upstream call is
+    not held hostage to an audit outage.
+    """
+    behavior_audit_decision = short_circuit_action or "consulted"
+    behavior_audit_reason   = "; ".join(behavior_data.get("flags", []) or []) or None
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=req.tenant_id,
+            agent_id=req.agent_id,
+            action="behavior_firewall_decision",
+            tool=req.tool,
+            decision=behavior_audit_decision,
+            reason=behavior_audit_reason,
+            metadata={
+                "service_status":  behavior_status,
+                "latency_ms":      behavior_latency_ms,
+                "returned_score":  returned_score,
+                "policy_applied":  policy_applied,
+                "request_id":      req.request_id,
+                "behavior_flags":  list(behavior_data.get("flags", []) or []),
+            },
+            request_id=req.request_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "behavior_firewall_audit_failed",
+            error=str(exc),
+            request_id=req.request_id,
+            service_status=behavior_status,
+        )
+
+    try:
+        from sdk.utils import (
+            BEHAVIOR_FIREWALL_CONSULT_TOTAL,
+            BEHAVIOR_FIREWALL_LATENCY_SECONDS,
+        )
+        BEHAVIOR_FIREWALL_CONSULT_TOTAL.labels(result=behavior_status).inc()
+        BEHAVIOR_FIREWALL_LATENCY_SECONDS.observe(behavior_latency_ms / 1000.0)
+    except ImportError as exc:
+        logger.debug("behavior_firewall_metric_unavailable", error=str(exc))
+
+
 async def _fan_out_policy_and_behavior(
     req: OrchestrationRequest,
     client: httpx.AsyncClient,
@@ -352,56 +413,17 @@ async def evaluate_decision(
     behavior_data = degraded.behavior_data
     policy_applied = degraded.policy_applied if behavior_status != "ok" else "behavior_consulted"
 
-    # Unconditional behavior_firewall_decision audit row — the source of truth
-    # for the "we consulted behavior on every call" product claim. Synchronous
-    # so a Redis stall surfaces as a 5xx instead of silently losing audit
-    # evidence; the call site sits behind the 2.0s gateway SLA.
-    behavior_audit_decision = (
-        degraded.short_circuit.action.value if degraded.short_circuit is not None else "consulted"
+    await _emit_behavior_firewall_audit(
+        req,
+        behavior_status=behavior_status,
+        behavior_latency_ms=behavior_latency_ms,
+        returned_score=returned_score,
+        behavior_data=behavior_data,
+        policy_applied=policy_applied,
+        short_circuit_action=(
+            degraded.short_circuit.action.value if degraded.short_circuit is not None else None
+        ),
     )
-    behavior_audit_reason = (
-        "; ".join(behavior_data.get("flags", []) or []) or None
-    )
-    try:
-        await push_audit_event(
-            redis=redis,
-            tenant_id=req.tenant_id,
-            agent_id=req.agent_id,
-            action="behavior_firewall_decision",
-            tool=req.tool,
-            decision=behavior_audit_decision,
-            reason=behavior_audit_reason,
-            metadata={
-                "service_status":  behavior_status,
-                "latency_ms":      behavior_latency_ms,
-                "returned_score":  returned_score,
-                "policy_applied":  policy_applied,
-                "request_id":      req.request_id,
-                "behavior_flags":  list(behavior_data.get("flags", []) or []),
-            },
-            request_id=req.request_id,
-        )
-    except Exception as exc:
-        # Audit emission failures are critical (this is the product-claim row)
-        # but must not break the decision path. Log loudly so the operator can
-        # correlate with a Redis incident.
-        logger.error(
-            "behavior_firewall_audit_failed",
-            error=str(exc),
-            request_id=req.request_id,
-            service_status=behavior_status,
-        )
-
-    # Prometheus accounting — every consult, including short-circuited ones.
-    try:
-        from sdk.utils import (
-            BEHAVIOR_FIREWALL_CONSULT_TOTAL,
-            BEHAVIOR_FIREWALL_LATENCY_SECONDS,
-        )
-        BEHAVIOR_FIREWALL_CONSULT_TOTAL.labels(result=behavior_status).inc()
-        BEHAVIOR_FIREWALL_LATENCY_SECONDS.observe(behavior_latency_ms / 1000.0)
-    except ImportError as exc:
-        logger.debug("behavior_firewall_metric_unavailable", error=str(exc))
 
     # If the degraded-mode policy short-circuits, also emit the extra
     # degraded_mode_fail_open row when applicable, then return early.
