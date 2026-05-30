@@ -1171,6 +1171,116 @@ async def invite_user(
     )
 
 
+# sprint-6.1 — surgical PATCH for tenant quota / tier updates.
+# The Stripe webhook (services/gateway/routers/stripe_webhook.py) calls
+# this to apply tier changes on subscription.created/updated/deleted.
+# Distinct from POST /auth/tenants (which is a full upsert used by
+# provisioning); this endpoint only updates the columns the request
+# explicitly sets, leaving everything else alone.
+@router.patch(
+    "/admin/tenants/{tenant_id}",
+    response_model=APIResponse[dict],
+    summary="Patch a tenant's tier / quota columns (subscription-driven)",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def patch_admin_tenant(
+    tenant_id: str,
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> APIResponse[dict]:
+    """
+    Partially update a tenant. Only the columns present in the body are
+    written; absent columns keep their current values.
+
+    Accepted body keys:
+      - tier                            (TenantTier enum value)
+      - rpm_limit                       (int)
+      - requests_per_second             (int)
+      - burst                           (int)
+      - daily_request_cap               (int)
+      - monthly_request_cap             (int | null)
+      - daily_inference_cost_cap_usd    (float | null)
+      - degraded_mode_policy            (DegradedModePolicy enum value)
+      - is_active                       (bool)
+
+    Returns the updated row's metadata. Logs every applied field so the
+    SOC2 audit trail captures Stripe-driven changes.
+    """
+    try:
+        tenant_uuid = uuid.UUID(tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="tenant_id must be a UUID") from exc
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    existing = result.scalar_one_or_none()
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    applied: dict[str, Any] = {}
+
+    if "tier" in body:
+        try:
+            existing.tier = TenantTier(body["tier"])
+            applied["tier"] = body["tier"]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid tier: {body['tier']}") from exc
+
+    if "rpm_limit" in body:
+        existing.rpm_limit = int(body["rpm_limit"])
+        applied["rpm_limit"] = existing.rpm_limit
+
+    if "requests_per_second" in body:
+        existing.requests_per_second = int(body["requests_per_second"])
+        applied["requests_per_second"] = existing.requests_per_second
+
+    if "burst" in body:
+        existing.burst = int(body["burst"])
+        applied["burst"] = existing.burst
+
+    if "daily_request_cap" in body:
+        existing.daily_request_cap = int(body["daily_request_cap"])
+        applied["daily_request_cap"] = existing.daily_request_cap
+
+    if "monthly_request_cap" in body:
+        v = body["monthly_request_cap"]
+        existing.monthly_request_cap = int(v) if v is not None else None
+        applied["monthly_request_cap"] = existing.monthly_request_cap
+
+    if "daily_inference_cost_cap_usd" in body:
+        v = body["daily_inference_cost_cap_usd"]
+        existing.daily_inference_cost_cap_usd = float(v) if v is not None else None
+        applied["daily_inference_cost_cap_usd"] = existing.daily_inference_cost_cap_usd
+
+    if "degraded_mode_policy" in body:
+        try:
+            existing.degraded_mode_policy = DegradedModePolicy(body["degraded_mode_policy"])
+            applied["degraded_mode_policy"] = body["degraded_mode_policy"]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid degraded_mode_policy: {body['degraded_mode_policy']}",
+            ) from exc
+
+    if "is_active" in body:
+        existing.is_active = bool(body["is_active"])
+        applied["is_active"] = existing.is_active
+
+    if not applied:
+        raise HTTPException(status_code=400, detail="No updatable fields in body")
+
+    await db.commit()
+    logger.info(
+        "tenant_patched",
+        tenant_id=str(tenant_uuid),
+        applied=applied,
+    )
+    return APIResponse(data={
+        "status":    "updated",
+        "tenant_id": str(tenant_uuid),
+        "applied":   applied,
+    })
+
+
 @router.patch(
     "/users/{user_id}",
     response_model=APIResponse[dict],
@@ -1392,5 +1502,3 @@ async def get_admin_tenant(
             "monthly_request_cap":  tenant.monthly_request_cap,
         }
     }
-
-    return APIResponse(data={"status": "ok"})
