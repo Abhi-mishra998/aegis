@@ -281,74 +281,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 return _aid_resp
 
             # --- 5c. Per-agent cost cap (Sprint 5) -----------------------
-            # Best-effort runtime spend check. Reads two Redis keys:
-            #   acp:agent_cost_cap:{agent_id}            float USD cap (0/absent = no cap)
-            #   acp:agent_cost_today:{agent_id}:{YYYYMMDD}  float USD spent today
-            # If spent >= cap, return 402 Payment Required with a structured
-            # body; the SDK / dashboard can surface the daily reset time.
-            # Cost cap is a budget control, NOT a security boundary, so the
-            # whole block is wrapped defensively and fails OPEN on any
-            # Redis / parsing error — a cache stall must never reject paid
-            # traffic.
-            if (
-                request.url.path.rstrip("/") in ("/execute", "/v1/execute")
-                and agent_id != uuid.UUID(int=0)
-            ):
-                try:
-                    cap_raw = await self.redis.get(f"acp:agent_cost_cap:{agent_id}")
-                    if cap_raw is not None:
-                        if isinstance(cap_raw, (bytes, bytearray)):
-                            cap_raw = cap_raw.decode("ascii", errors="replace")
-                        try:
-                            cap_usd = float(cap_raw or 0)
-                        except (TypeError, ValueError):
-                            cap_usd = 0.0
-                        if cap_usd > 0:
-                            from datetime import UTC
-                            from datetime import datetime as _dt
-                            from datetime import timedelta as _td
-                            _now = _dt.now(UTC)
-                            _day_key = _now.strftime("%Y%m%d")
-                            spent_raw = await self.redis.get(
-                                f"acp:agent_cost_today:{agent_id}:{_day_key}"
-                            )
-                            if isinstance(spent_raw, (bytes, bytearray)):
-                                spent_raw = spent_raw.decode("ascii", errors="replace")
-                            try:
-                                spent_usd = float(spent_raw or 0)
-                            except (TypeError, ValueError):
-                                spent_usd = 0.0
-                            if spent_usd >= cap_usd:
-                                reset_at = (
-                                    (_now + _td(days=1)).replace(
-                                        hour=0, minute=0, second=0, microsecond=0
-                                    )
-                                ).isoformat().replace("+00:00", "Z")
-                                _flight_final["decision"] = "block"
-                                _flight_final["status"]   = "failed"
-                                return JSONResponse(
-                                    status_code=402,
-                                    content={
-                                        "success":  False,
-                                        "error":    "agent_cost_cap_exceeded",
-                                        "cap_usd":  cap_usd,
-                                        "spent_usd": spent_usd,
-                                        "reset_at": reset_at,
-                                        "meta": {
-                                            "code":       402,
-                                            "category":   "cost_cap",
-                                            "request_id": request_id,
-                                            "agent_id":   str(agent_id),
-                                        },
-                                    },
-                                )
-                except Exception as _cost_cap_exc:
-                    # Fail-open: cost cap is best-effort, not a boundary.
-                    logger.warning(
-                        "agent_cost_cap_check_failed",
-                        error=str(_cost_cap_exc),
-                        agent_id=str(agent_id),
-                    )
+            _cost_resp = await self._check_per_agent_cost_cap(
+                request, agent_id, request_id, _flight_final,
+            )
+            if _cost_resp is not None:
+                return _cost_resp
 
             tool_name = await self._get_tool_name(request)
             logger.info("policy_check_called", agent_id=str(agent_id), tool=tool_name, tenant_id=t_id_str)
@@ -1040,6 +977,97 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             except Exception:
                 # Latency tracking must never break a request.
                 pass
+
+    async def _check_per_agent_cost_cap(
+        self,
+        request: Request,
+        agent_id: uuid.UUID,
+        request_id: str,
+        flight_final: dict,
+    ) -> Response | None:
+        """PHASE 5c — best-effort per-agent runtime spend check.
+
+        Reads two Redis keys:
+          ``acp:agent_cost_cap:{agent_id}``          float USD cap (0/absent = no cap)
+          ``acp:agent_cost_today:{agent_id}:{YMD}``  float USD spent today
+
+        If ``spent >= cap`` returns a 402 Payment Required ``JSONResponse``
+        with a structured body (cap_usd, spent_usd, reset_at, meta block).
+        Otherwise returns ``None`` so the dispatcher continues.
+
+        Cost cap is a budget control, NOT a security boundary, so any
+        Redis or parsing error is swallowed and the request is allowed
+        through — a cache stall must never reject paid traffic.
+
+        Mutates ``flight_final["decision"]`` and ``["status"]`` on the 402
+        path so the Flight Recorder bucket reflects the block.
+        """
+        if request.url.path.rstrip("/") not in ("/execute", "/v1/execute"):
+            return None
+        if agent_id == uuid.UUID(int=0):
+            return None
+
+        try:
+            cap_raw = await self.redis.get(f"acp:agent_cost_cap:{agent_id}")
+            if cap_raw is None:
+                return None
+            if isinstance(cap_raw, (bytes, bytearray)):
+                cap_raw = cap_raw.decode("ascii", errors="replace")
+            try:
+                cap_usd = float(cap_raw or 0)
+            except (TypeError, ValueError):
+                cap_usd = 0.0
+            if cap_usd <= 0:
+                return None
+
+            from datetime import UTC
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+            _now = _dt.now(UTC)
+            _day_key = _now.strftime("%Y%m%d")
+            spent_raw = await self.redis.get(
+                f"acp:agent_cost_today:{agent_id}:{_day_key}"
+            )
+            if isinstance(spent_raw, (bytes, bytearray)):
+                spent_raw = spent_raw.decode("ascii", errors="replace")
+            try:
+                spent_usd = float(spent_raw or 0)
+            except (TypeError, ValueError):
+                spent_usd = 0.0
+            if spent_usd < cap_usd:
+                return None
+
+            reset_at = (
+                (_now + _td(days=1)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+            ).isoformat().replace("+00:00", "Z")
+            flight_final["decision"] = "block"
+            flight_final["status"]   = "failed"
+            return JSONResponse(
+                status_code=402,
+                content={
+                    "success":   False,
+                    "error":     "agent_cost_cap_exceeded",
+                    "cap_usd":   cap_usd,
+                    "spent_usd": spent_usd,
+                    "reset_at":  reset_at,
+                    "meta": {
+                        "code":       402,
+                        "category":   "cost_cap",
+                        "request_id": request_id,
+                        "agent_id":   str(agent_id),
+                    },
+                },
+            )
+        except Exception as _cost_cap_exc:
+            # Fail-open: cost cap is best-effort, not a boundary.
+            logger.warning(
+                "agent_cost_cap_check_failed",
+                error=str(_cost_cap_exc),
+                agent_id=str(agent_id),
+            )
+            return None
 
     async def _validate_execute_agent_id(
         self,
