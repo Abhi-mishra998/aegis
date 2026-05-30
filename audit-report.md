@@ -410,16 +410,61 @@ Fixed by:
   `services/billing/router.py` to its replacement
   `services/usage/billing_routes/router.py`.
 
-### Deferred (Needs Investigation / dedicated PR)
+### Tier C3 — `evaluate_decision` shrunk from CC=86 to CC=37
+
+After the initial report deferred the high-complexity refactors, the user
+explicitly authorised a follow-up pass. C3 was the lowest-risk Tier-C
+item — the decision-engine test suite (67 dedicated tests) gives a
+strong unit-level gate. Extracted in four commits, each with the suite
+as a regression check:
+
+  - **f6b2ce6 audit(C3a): extract `_resolve_agent_meta`** — JWT-claims
+    parse + Registry HTTP fallback (~25 lines).
+  - **3967233 audit(C3b): extract `_fan_out_policy_and_behavior`** —
+    parallel OPA + Behavior consult + timeout handling (~45 lines).
+  - **882c9bc audit(C3c): extract `_emit_behavior_firewall_audit`** —
+    the unconditional product-claim audit row + Prometheus metric pair
+    (~50 lines).
+  - **51dda47 audit(C3d): extract `_compute_inference_signals` and
+    hoist its rule tables** — PII + sensitive-path + SQL DDL/DML/
+    injection/PII checks (~75 lines), with `_SQL_TOOLS`, `_DDL_HARD`,
+    `_INJECT`, `_PII_COLS`, `_SENSITIVE_DIRS` lifted to module-level
+    constants instead of being redefined inline on every call.
+
+Final radon: `evaluate_decision` CC=37 (was 86); the extracted helpers
+sit at CC≤34 each. Each helper has a single responsibility, an explicit
+docstring, and is independently testable. Behavioural equivalence is
+preserved bit-for-bit (same call ordering, same flag tags, same `max(...)`
+precedence on inference_risk floors, same fail-open vs fail-closed
+characteristics).
+
+### Pre-existing ruff issues — now zero across the repo
+
+The initial Phase-5 gate flagged 3 ruff issues in files the audit didn't
+touch (they were part of the user's pre-existing pending modifications).
+Commit **a37eca5 audit: clear final 3 ruff issues across the repo**
+closes all three:
+
+  - `services/autonomy/webhook_executor.py:57` B007 `family` →
+    `_family` (loop variable was unused; matches the other underscored
+    siblings `_type`, `_proto`, `_canon`).
+  - `services/behavior/service.py:15` I001 import sort (auto-fixed).
+  - `services/gateway/main.py:895` I001 — the 7 deferred sub-router
+    imports lifted into a proper block; each still carries `# noqa: E402`
+    for the deliberate post-app-creation position.
+
+`ruff check .` is now **clean across the entire repo**.
+
+### Still deferred (genuinely needs Docker integration stack as a gate)
 
 - **Tier C1 — split `services/gateway/main.py` (3,653 LOC)** into
-  smaller routers. The five sub-routers in `services/gateway/routers/`
+  smaller routers. The seven sub-routers in `services/gateway/routers/`
   already split out some of the work, but the bulk is still in `main.py`.
   Doing this in an audit pass is risky because (a) the recent
   `/playbooks/stats` bug showed how route ordering matters for FastAPI
   matching, and (b) the SPA-vs-API path collision in nginx depends on
   every gateway route being known. Needs the Playwright smoke test in
-  `/tmp/aegis-smoke/smoke.js` plus an integration test stack as the
+  `/tmp/aegis-smoke/smoke.js` plus a running compose stack as the
   regression gate. Recommended as its own PR.
 - **Tier C2 — refactor `services/gateway/middleware.py::
   _dispatch_with_resilience` (CC=140, ~890 lines)**. The function is
@@ -427,15 +472,12 @@ Fixed by:
   structured by `PHASE 0` … `PHASE 7` comments. Splitting it requires
   carefully shuttling shared state (`tenant_id`, `agent_id`, `tier`,
   `tokens`, `risk_score`, `reasons`, `action`, `_flight_*`) between
-  extracted phase helpers. With only unit tests as gates (Docker
-  integration stack unavailable in this sandbox), the regression risk
-  is unacceptably high for a drive-by commit. Documented as a
-  dedicated-PR item; per-phase extraction with one commit per phase
-  remains the right approach.
-- **Tier C3 — refactor `services/decision/main.py::evaluate_decision`
-  (CC=86)**. Same shape: top-level decision pipeline that fans out
-  across many signals; needs per-signal extraction with the decision-
-  engine test suite as the gate.
+  extracted phase helpers. The unit tests do **not** exercise this
+  dispatcher directly — it requires a running gateway with full
+  middleware composition. Without integration coverage, the regression
+  risk is unacceptable for an audit-style commit. Same advice as C1:
+  dedicated PR with a docker-compose integration test as the gate;
+  per-phase extraction (one commit per phase) keeps each step revertable.
 - **Tier B2 — Sidebar/Topbar agent picker dedup**. The 39-line jscpd
   hit IS a real duplication, but Sidebar uses `text-[10px] font-mono`
   + truncated label and Topbar uses `text-xs font-mono` + `name · status`
@@ -484,8 +526,9 @@ than mixing them into the audit commit chain.
 | Pre-existing test failures (route refactor drift) | 10 | 0 |
 | `pytest -m 'not integration'` result | 1690 pass / 10 fail | **1690 pass / 0 fail** |
 | `cd ui && npm run build` | passes | passes |
-| `ruff check .` errors (in audit-touched files) | 0 | 0 |
-| Atomic git commits added by this audit | 0 | 13 |
+| `ruff check .` errors (whole repo) | 3 | **0** |
+| `evaluate_decision` cyclomatic complexity | 86 | **37** |
+| Atomic git commits added by this audit | 0 | 18 |
 
 ### Commits added by this audit (in order)
 
@@ -502,7 +545,13 @@ ee44787  audit: realign source-contract tests with sub-router structure
 87d12c7  audit: centralise alembic env.py into sdk/common/alembic_env
 0225225  audit: drop 4 unused 'export' keywords on internal-only symbols
 2f8af91  audit: add psycopg2-binary to [dev] extras for ops scripts
-(this commit) audit: finalise audit-report.md with Phase 3+5+6 execution log
+4adf4a9  audit: finalise audit-report.md with Phase 3+5+6 execution log
+f6b2ce6  audit(C3a): extract _resolve_agent_meta from evaluate_decision
+3967233  audit(C3b): extract _fan_out_policy_and_behavior from evaluate_decision
+882c9bc  audit(C3c): extract _emit_behavior_firewall_audit helper
+51dda47  audit(C3d): extract _compute_inference_signals + hoist its rule tables
+a37eca5  audit: clear final 3 ruff issues across the repo
+(this commit) audit: finalise report with C3 + ruff-clean outcomes
 ```
 
 Every commit is atomic and revertable with `git revert <sha>` if
