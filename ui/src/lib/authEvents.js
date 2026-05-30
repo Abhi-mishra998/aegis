@@ -1,4 +1,7 @@
-export const AUTH_EVENTS = {
+// Module-local: callers consume the wrapper functions below, not the raw
+// event-name constant. Keep this private to prevent stringly-typed
+// `window.addEventListener('acp:auth:failure', …)` from leaking to callers.
+const AUTH_EVENTS = {
   FAILURE: 'acp:auth:failure',
 }
 
