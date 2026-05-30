@@ -79,6 +79,12 @@ dev = [
     "ruff",
     "mypy",
     "locust",
+    # psycopg2-binary is used by scripts/ops/{export_tenant,reconcile,
+    # redact_tenant_pii}.py and scripts/reconcile_billing_gap.py — sync
+    # psycopg2 is chosen there because the ops scripts run outside the
+    # asyncio service runtime. Declaring it here so `pip install -e .[dev]`
+    # produces a runnable ops environment.
+    "psycopg2-binary",
 ]
 
 # Customer wheel ships only the public SDK surface. Server-side modules
