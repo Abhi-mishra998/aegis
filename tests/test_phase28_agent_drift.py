@@ -87,7 +87,12 @@ def test_gateway_drift_proxy_forwards_to_audit_service():
 
 
 def test_gateway_drift_proxy_passes_query_params():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    # /audit/drift/{agent_id} was extracted to routers/audit.py in sprint-5.
+    # Scan that file first so .find("drift") lands on the real decorator.
+    src = (
+        (ROOT / "services/gateway/routers/audit.py").read_text()
+        + (ROOT / "services/gateway/main.py").read_text()
+    )
     idx = src.find("drift")
     snippet = src[max(0, idx - 200):idx + 600]
     assert "query_params" in snippet or "params" in snippet

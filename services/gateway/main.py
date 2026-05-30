@@ -897,6 +897,7 @@ from services.gateway.routers.audit import router as _audit_router  # noqa: E402
 from services.gateway.routers.auto_response import (
     router as _auto_response_router,  # noqa: E402
 )
+from services.gateway.routers.billing import router as _billing_router  # noqa: E402
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
 from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
@@ -919,6 +920,7 @@ app.include_router(_dashboard_router)
 app.include_router(_auto_response_router)
 app.include_router(_audit_router)
 app.include_router(_incidents_router)
+app.include_router(_billing_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1583,17 +1585,7 @@ async def upload_policy_proxy(request: Request) -> Any:
 # (GET + POST), /audit/drift/{agent_id} — all extracted to routers/audit.py.
 
 
-@app.get("/billing/cost-attribution", tags=["billing"])
-async def billing_cost_attribution(request: Request) -> Any:
-    """Proxy → Usage service per-agent weekly cost attribution."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/cost-attribution",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
+# /billing/cost-attribution extracted to routers/billing.py
 @app.get("/playbooks/autotrigger-stats", tags=["autonomy"])
 async def playbook_autotrigger_stats(request: Request) -> Any:
     """Proxy → Autonomy service per-playbook auto-trigger counts."""
@@ -1728,163 +1720,8 @@ async def replay_agent_behavior(agent_id: str, request: Request) -> Any:
     return _passthrough(resp)
 
 
-# ─────────────────────────────────────────────────────────────
-# BILLING PROXY — /billing
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/billing/invoices", tags=["billing"])
-async def billing_invoices(request: Request) -> Any:
-    """Proxy → Usage service billing invoices."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/invoices",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/billing/summary", tags=["billing"])
-async def billing_summary(request: Request) -> Any:
-    """Proxy → Usage service Redis-based billing ROI summary."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/summary",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/billing/events", tags=["billing"])
-async def billing_record_event(request: Request) -> Any:
-    """Proxy → Usage service billing events (records money saved)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/events",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    if resp.status_code in (200, 201):
-        tenant_id_str = request.headers.get("X-Tenant-ID", "") or (
-            str(getattr(request.state, "tenant_id", "") or "")
-        )
-        if tenant_id_str:
-            body_dict = body if isinstance(body, dict) else {}
-            agent_id_val = str(body_dict.get("agent_id", "") or "")
-            await _publish_event(
-                redis, tenant_id_str, "billing_updated",
-                {
-                    "agent_id": agent_id_val or None,
-                    "tool": body_dict.get("tool"),
-                    "action": body_dict.get("action"),
-                    "cost": body_dict.get("cost") or body_dict.get("amount"),
-                    "units": body_dict.get("units") or body_dict.get("quantity"),
-                    "audit_id": body_dict.get("audit_id"),
-                },
-                agent_id=agent_id_val or None,
-            )
-    return _passthrough(resp)
-
-
-# Budget requests
-@app.post("/billing/budget-requests", tags=["billing"])
-async def billing_budget_requests_create(request: Request) -> Any:
-    """Proxy → Usage service: create a budget increase request."""
-    body = await request.body()
-    resp = await request.app.state.client.post(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/budget-requests",
-        content=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/billing/budget-requests", tags=["billing"])
-async def billing_budget_requests_list(request: Request) -> Any:
-    """Proxy → Usage service: list budget requests for tenant."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/budget-requests",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/billing/budget-requests/{req_id}", tags=["billing"])
-async def billing_budget_request_get(req_id: str, request: Request) -> Any:
-    """Proxy → Usage service: get a single budget request."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/budget-requests/{req_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/billing/budget-requests/{req_id}/approve", tags=["billing"])
-async def billing_budget_request_approve(req_id: str, request: Request) -> Any:
-    """Proxy → Usage service: approve a budget request."""
-    body = await request.body()
-    resp = await request.app.state.client.post(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/budget-requests/{req_id}/approve",
-        content=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/billing/budget-requests/{req_id}/reject", tags=["billing"])
-async def billing_budget_request_reject(req_id: str, request: Request) -> Any:
-    """Proxy → Usage service: reject a budget request."""
-    body = await request.body()
-    resp = await request.app.state.client.post(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/budget-requests/{req_id}/reject",
-        content=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-# ─────────────────────────────────────────────────────────────
-# USAGE PROXY — /usage
-# ─────────────────────────────────────────────────────────────
-
-@app.post("/usage/record", tags=["usage"])
-async def usage_record(request: Request) -> Any:
-    """Proxy → Usage service tool execution recording."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/usage/record",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/usage/summary", tags=["usage"])
-async def usage_summary(request: Request) -> Any:
-    """Proxy → Usage service tenant usage summary."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/usage/summary",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/usage/dashboard", tags=["usage"])
-async def usage_dashboard(request: Request) -> Any:
-    """Proxy → Usage service revenue dashboard (injecting X-Internal-Secret)."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/usage/dashboard",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/usage/anomalies", tags=["usage"])
-async def usage_anomalies(request: Request) -> Any:
-    """Proxy → Usage service billing anomalies (injecting X-Internal-Secret)."""
-    resp = await request.app.state.client.get(
-        f"{settings.USAGE_SERVICE_URL.rstrip('/')}/usage/anomalies",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# All /billing/* (9 routes) and /usage/* (4 routes) extracted to
+# routers/billing.py.
 
 
 # ─────────────────────────────────────────────────────────────
