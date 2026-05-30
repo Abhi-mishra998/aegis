@@ -154,6 +154,95 @@ setup_app(app, "decision")
 
 from sdk.common.auth import verify_internal_secret
 
+_SQL_TOOLS = {"query", "db.query", "db.execute", "sql", "db.run"}
+_DDL_HARD = (
+    "drop table", "drop database", "drop schema", "drop view",
+    "truncate table", "truncate ",
+)
+_INJECT = (
+    "where 1=1", "where 1 = 1", "or 1=1", "or '1'='1'",
+    "union select", "union all select", "; drop", "xp_", "sp_", "exec(",
+)
+_PII_COLS = (
+    "ssn", "credit_card", "creditcard", "social_security",
+    "passport", "salary", "password", "pin", "dob",
+    "date_of_birth", "account_number",
+)
+_SENSITIVE_DIRS = ("/etc/", "/proc/", "/root/", ".ssh/", "/var/log/", "/boot/")
+
+
+def _compute_inference_signals(req: OrchestrationRequest) -> tuple[list[str], float]:
+    """Return ``(inference_flags, inference_risk)`` enriched with the rule-based
+    flags the decision engine consumes.
+
+    Two categories of checks run here, both deterministic and side-effect-
+    free except for structured logging:
+      * **Filesystem & metadata signals** — PII access request flags on
+        non-SQL tools, and sensitive-directory paths on ``read_file``.
+      * **SQL governance** — DDL destruction, unguarded DML, injection
+        patterns, and PII/bulk exfiltration shape the inference_risk
+        floor for any ``db.*`` tool or known SQL alias.
+
+    Each rule appends a stable upper-case flag tag and bumps the
+    inference_risk floor; later rules take ``max(...)`` of their own
+    floor so the highest-severity signal always wins.
+    """
+    inference_flags = list(req.inference_flags) if req.inference_flags else []
+    inference_risk  = float(req.inference_risk or 0.0)
+
+    # PII indicator in non-SQL tool payloads (e.g. crm.get_customer with include_pii)
+    is_sql_tool = req.tool in _SQL_TOOLS or req.tool.startswith("db.")
+    if req.metadata and not is_sql_tool and req.metadata.get("include_pii") is True:
+        inference_flags.append("PII_ACCESS_REQUESTED")
+        inference_risk = max(inference_risk, 0.25)
+        logger.info("pii_access_requested", tool=req.tool)
+
+    # Filesystem sensitive-path detection for read_file
+    if req.tool == "read_file":
+        file_path = (req.metadata or {}).get("path", "")
+        if file_path and any(file_path.startswith(d) for d in _SENSITIVE_DIRS):
+            inference_flags.append("SENSITIVE_PATH_DETECTED")
+            inference_risk = max(inference_risk, 0.75)
+            logger.warning("sensitive_path_detected", path=file_path, tool=req.tool)
+
+    # SQL governance — covers query, db.query, db.execute, and any db.* tool
+    if is_sql_tool:
+        sql_query = ""
+        if req.metadata:
+            sql_query = (
+                req.metadata.get("sql") or req.metadata.get("input")
+                or req.metadata.get("query") or ""
+            )
+        if sql_query:
+            sql_lower = sql_query.strip().lower()
+            if any(p in sql_lower for p in _DDL_HARD):
+                inference_flags.append("SQL_DDL_DESTRUCTION")
+                inference_risk = max(inference_risk, 0.95)
+                logger.warning("sql_ddl_detected", tool=req.tool)
+            elif (("delete from" in sql_lower or "update " in sql_lower)
+                  and "where" not in sql_lower):
+                inference_flags.append("SQL_UNGUARDED_MUTATION")
+                inference_risk = max(inference_risk, 0.85)
+                logger.warning("sql_unguarded_mutation", tool=req.tool)
+            if ("SQL_DDL_DESTRUCTION" not in inference_flags
+                    and "SQL_UNGUARDED_MUTATION" not in inference_flags
+                    and any(p in sql_lower for p in _INJECT)):
+                inference_flags.append("SQL_INJECTION_PATTERN")
+                inference_risk = max(inference_risk, 0.80)
+                logger.warning("sql_injection_pattern_detected", tool=req.tool)
+            _has_select_star = "select *" in sql_lower or "select\t*" in sql_lower
+            _has_pii = any(col in sql_lower for col in _PII_COLS)
+            if (not any(f in inference_flags for f in (
+                    "SQL_DDL_DESTRUCTION", "SQL_UNGUARDED_MUTATION", "SQL_INJECTION_PATTERN"))
+                    and (_has_pii or _has_select_star)):
+                inference_flags.append("SQL_PII_EXFILTRATION")
+                _pii_risk = 0.82 if _has_pii else 0.75
+                inference_risk = max(inference_risk, _pii_risk)
+                logger.info("sql_pii_pattern_detected", has_star=_has_select_star,
+                            has_pii=_has_pii, tool=req.tool)
+
+    return inference_flags, inference_risk
+
 
 async def _emit_behavior_firewall_audit(
     req: OrchestrationRequest,
@@ -474,81 +563,10 @@ async def evaluate_decision(
                 request_id=req.request_id,
             )
 
-    # 4. Check path sensitivity for read_file operations (Issue #4)
-    inference_flags = list(req.inference_flags) if req.inference_flags else []
-    inference_risk = float(req.inference_risk or 0.0)
-
-    # 4a-pre. PII indicator in non-SQL tool payloads (e.g. crm.get_customer with include_pii)
-    if req.metadata and req.tool not in {"query", "db.query", "db.execute", "sql", "db.run"} and not req.tool.startswith("db."):
-        if req.metadata.get("include_pii") is True:
-            inference_flags.append("PII_ACCESS_REQUESTED")
-            inference_risk = max(inference_risk, 0.25)
-            logger.info("pii_access_requested", tool=req.tool)
-
-    if req.tool == "read_file":
-        file_path = req.metadata.get("path", "") if req.metadata else ""
-        if file_path:
-            sensitive_dirs = ["/etc/", "/proc/", "/root/", ".ssh/", "/var/log/", "/boot/"]
-            if any(file_path.startswith(d) for d in sensitive_dirs):
-                inference_flags.append("SENSITIVE_PATH_DETECTED")
-                inference_risk = max(inference_risk, 0.75)
-                logger.warning("sensitive_path_detected", path=file_path, tool=req.tool)
-
-    # 4b. SQL governance — covers db.query, db.execute, query, and any db.* tool
-    _SQL_TOOLS = {"query", "db.query", "db.execute", "sql", "db.run"}
-    if req.tool in _SQL_TOOLS or req.tool.startswith("db."):
-        sql_query = ""
-        if req.metadata:
-            sql_query = (
-                req.metadata.get("sql") or req.metadata.get("input")
-                or req.metadata.get("query") or ""
-            )
-        if sql_query:
-            sql_lower = sql_query.strip().lower()
-            # DDL destruction → KILL (inference_risk = 0.95)
-            _DDL_HARD = (
-                "drop table", "drop database", "drop schema", "drop view",
-                "truncate table", "truncate ",
-            )
-            if any(p in sql_lower for p in _DDL_HARD):
-                inference_flags.append("SQL_DDL_DESTRUCTION")
-                inference_risk = max(inference_risk, 0.95)
-                logger.warning("sql_ddl_detected", tool=req.tool)
-            # Unguarded DML → ESCALATE (inference_risk = 0.85)
-            elif (("delete from" in sql_lower or "update " in sql_lower)
-                  and "where" not in sql_lower):
-                inference_flags.append("SQL_UNGUARDED_MUTATION")
-                inference_risk = max(inference_risk, 0.85)
-                logger.warning("sql_unguarded_mutation", tool=req.tool)
-            # SQL injection patterns → ESCALATE (inference_risk = 0.80)
-            _INJECT = (
-                "where 1=1", "where 1 = 1", "or 1=1", "or '1'='1'",
-                "union select", "union all select", "; drop", "xp_", "sp_", "exec(",
-            )
-            if ("SQL_DDL_DESTRUCTION" not in inference_flags
-                    and "SQL_UNGUARDED_MUTATION" not in inference_flags
-                    and any(p in sql_lower for p in _INJECT)):
-                inference_flags.append("SQL_INJECTION_PATTERN")
-                inference_risk = max(inference_risk, 0.80)
-                logger.warning("sql_injection_pattern_detected", tool=req.tool)
-            # PII/bulk exfiltration — two severity tiers:
-            #   explicit PII columns (ssn, credit_card, …) → inference_risk = 0.82
-            #   SELECT * bulk read → inference_risk = 0.75
-            _PII_COLS = (
-                "ssn", "credit_card", "creditcard", "social_security",
-                "passport", "salary", "password", "pin", "dob",
-                "date_of_birth", "account_number",
-            )
-            _has_select_star = "select *" in sql_lower or "select\t*" in sql_lower
-            _has_pii = any(col in sql_lower for col in _PII_COLS)
-            if (not any(f in inference_flags for f in (
-                    "SQL_DDL_DESTRUCTION", "SQL_UNGUARDED_MUTATION", "SQL_INJECTION_PATTERN"))
-                    and (_has_pii or _has_select_star)):
-                inference_flags.append("SQL_PII_EXFILTRATION")
-                _pii_risk = 0.82 if _has_pii else 0.75
-                inference_risk = max(inference_risk, _pii_risk)
-                logger.info("sql_pii_pattern_detected", has_star=_has_select_star,
-                            has_pii=_has_pii, tool=req.tool)
+    # 4. Filesystem + SQL inference signals (PII flags, sensitive-path detection,
+    # SQL DDL/DML/injection/PII checks). Stable rule order — highest-severity
+    # signal sets the floor.
+    inference_flags, inference_risk = _compute_inference_signals(req)
 
     # 5. Assemble DecisionContext and evaluate
     ctx = DecisionContext(
