@@ -69,6 +69,9 @@ _SKIP_PATHS = frozenset(
         "/auth/token", "/auth/login", "/auth/agent/token",  # public auth endpoints
         "/auth/sso/providers",  # SSO provider list (public — drives login UI buttons)
         "/events/stream",  # SSE — inline auth handled in the route handler
+        # sprint-5.3: Stripe webhook authenticates via Stripe-Signature, not JWT.
+        # The handler verifies the signature before processing the event.
+        "/billing/stripe/webhook",
     ]
 )
 
@@ -271,28 +274,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             # when the JWT carries no agent (human SECURITY/ADMIN callers). This
             # ensures hard-deny audit records (PII/RCE/SQL) are attributed to the
             # correct agent_id instead of the zero UUID.
-            if request.url.path.rstrip("/") in ("/execute", "/v1/execute") and raw_body:
-                try:
-                    _bd = json.loads(raw_body)
-                    _body_agent_id = _bd.get("agent_id") if isinstance(_bd, dict) else None
-                    if _body_agent_id and isinstance(_body_agent_id, str):
-                        import uuid as _uuid
-                        try:
-                            _parsed_aid = _uuid.UUID(_body_agent_id)
-                        except (ValueError, AttributeError):
-                            _parsed_aid = None
-                        if _parsed_aid is None or _parsed_aid == _uuid.UUID(int=0):
-                            return self._deny("Invalid agent_id format", 400)
-                        _reg_data = await service_client.get_agent_metadata(
-                            _parsed_aid, tenant_id, jwt_claims={}
-                        )
-                        if _reg_data is None:
-                            return self._deny("Unknown agent — not registered in this tenant", 403)
-                        # Promote body agent_id when JWT has no agent identity
-                        if agent_id == _uuid.UUID(int=0) and _parsed_aid:
-                            agent_id = _parsed_aid
-                except Exception:
-                    pass  # fail-open — don't block on registry timeout
+            agent_id, _aid_resp = await self._validate_execute_agent_id(
+                request, raw_body, agent_id, tenant_id,
+            )
+            if _aid_resp is not None:
+                return _aid_resp
 
             # --- 5c. Per-agent cost cap (Sprint 5) -----------------------
             # Best-effort runtime spend check. Reads two Redis keys:
@@ -1054,6 +1040,55 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             except Exception:
                 # Latency tracking must never break a request.
                 pass
+
+    async def _validate_execute_agent_id(
+        self,
+        request: Request,
+        raw_body: bytes,
+        agent_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+    ) -> tuple[uuid.UUID, Response | None]:
+        """PHASE 5b — agent_id body validation for /execute calls.
+
+        Returns ``(maybe_promoted_agent_id, response_or_none)``:
+          * On parse failure of the JSON body or any registry error, returns
+            ``(agent_id, None)`` — fail-open per the original code, so registry
+            outages do not block real governance traffic.
+          * On a malformed body ``agent_id``, returns ``(agent_id, 400 deny)``.
+          * On a body ``agent_id`` that the registry doesn't recognise for the
+            current tenant, returns ``(agent_id, 403 deny)``.
+          * On success, promotes the body's agent_id into the local one when
+            the JWT carried no agent identity (human SECURITY / ADMIN callers).
+
+        This makes the audit attribution land on the correct agent_id even for
+        admin-issued /execute calls.
+        """
+        if request.url.path.rstrip("/") not in ("/execute", "/v1/execute") or not raw_body:
+            return agent_id, None
+
+        try:
+            _bd = json.loads(raw_body)
+            _body_agent_id = _bd.get("agent_id") if isinstance(_bd, dict) else None
+            if _body_agent_id and isinstance(_body_agent_id, str):
+                try:
+                    _parsed_aid = uuid.UUID(_body_agent_id)
+                except (ValueError, AttributeError):
+                    _parsed_aid = None
+                if _parsed_aid is None or _parsed_aid == uuid.UUID(int=0):
+                    return agent_id, self._deny("Invalid agent_id format", 400)
+                _reg_data = await service_client.get_agent_metadata(
+                    _parsed_aid, tenant_id, jwt_claims={}
+                )
+                if _reg_data is None:
+                    return agent_id, self._deny("Unknown agent — not registered in this tenant", 403)
+                # Promote body agent_id when JWT has no agent identity
+                if agent_id == uuid.UUID(int=0) and _parsed_aid:
+                    return _parsed_aid, None
+        except Exception:
+            # fail-open — don't block on registry timeout
+            pass
+
+        return agent_id, None
 
     async def _handle_auth_phase(
         self, request: Request
