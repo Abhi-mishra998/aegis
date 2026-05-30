@@ -899,6 +899,7 @@ from services.gateway.routers.auto_response import (
 )
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
+from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
 from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
 from services.gateway.routers.sso import router as _sso_router  # noqa: E402
 from services.gateway.routers.stripe_webhook import (
@@ -917,6 +918,7 @@ app.include_router(_sso_router)
 app.include_router(_dashboard_router)
 app.include_router(_auto_response_router)
 app.include_router(_audit_router)
+app.include_router(_incidents_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1934,151 +1936,7 @@ async def validate_api_key(request: Request) -> Any:
     return _passthrough(resp)
 
 
-# ─────────────────────────────────────────────────────────────
-# INCIDENTS PROXY — /incidents
-# ─────────────────────────────────────────────────────────────
-
-@app.post("/incidents", tags=["Incidents"])
-async def create_incident(request: Request) -> Any:
-    """Proxy → API service create incident. Injects tenant_id from headers."""
-    body = await request.json()
-    body = dict(body)
-    if "tenant_id" not in body:
-        body["tenant_id"] = request.headers.get("X-Tenant-ID", "")
-
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/incidents",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/incidents/transitions", tags=["Incidents"])
-async def incidents_transitions(request: Request) -> Any:
-    """Proxy → Audit service: valid state machine transitions for incidents."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/incidents/transitions", request)
-
-
-@app.get("/incidents/summary", tags=["Incidents"])
-async def incident_summary(request: Request) -> Any:
-    """Proxy → API service incident summary (security score, MTTR, open counts)."""
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/incidents/summary",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/incidents", tags=["Incidents"])
-async def list_incidents(request: Request) -> Any:
-    """Proxy → API service incident list with optional status/severity filters."""
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/incidents",
-        params={
-            k: v for k, v in request.query_params.items()
-            if k in ("status", "severity", "limit", "offset")
-        },
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/incidents/{incident_id}", tags=["Incidents"])
-async def get_incident(incident_id: str, request: Request) -> Any:
-    """Proxy → API service single incident."""
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/incidents/{incident_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.patch("/incidents/{incident_id}", tags=["Incidents"])
-async def update_incident(incident_id: str, request: Request) -> Any:
-    """Proxy → API service update incident status."""
-    body = await request.json()
-    resp = await request.app.state.client.patch(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/incidents/{incident_id}",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    result = resp.json()
-    tenant_id_str = request.headers.get("X-Tenant-ID", "")
-    if tenant_id_str and resp.status_code == 200:
-        incident_data = result.get("data", {}) if isinstance(result, dict) else {}
-        inc_agent_id = str(incident_data.get("agent_id", "")) if isinstance(incident_data, dict) else ""
-        await _publish_event(
-            redis, tenant_id_str, "incident_updated", incident_data,
-            agent_id=inc_agent_id or None,
-        )
-    return result
-
-
-@app.post("/incidents/{incident_id}/actions", tags=["Incidents"])
-async def incident_action(incident_id: str, request: Request) -> Any:
-    """Proxy → API service add response action to incident."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/incidents/{incident_id}/actions",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/incidents/{incident_id}/comments", tags=["Incidents"])
-async def add_incident_comment(incident_id: str, request: Request) -> Any:
-    """Proxy → Audit service: add a timeline comment to an incident."""
-    return await _trust_proxy(
-        settings.AUDIT_SERVICE_URL, f"/incidents/{incident_id}/comments", request
-    )
-
-
-@app.get("/incidents/{incident_id}/comments", tags=["Incidents"])
-async def list_incident_comments(incident_id: str, request: Request) -> Any:
-    """Proxy → Audit service: list comments for an incident (ASC order)."""
-    return await _trust_proxy(
-        settings.AUDIT_SERVICE_URL, f"/incidents/{incident_id}/comments", request
-    )
-
-
-@app.post("/incidents/{incident_id}/export", tags=["Incidents"])
-async def proxy_incident_export(incident_id: str, request: Request) -> Response:
-    """
-    Proxy → Audit service forensic incident PDF export.
-
-    Streams the upstream PDF bytes directly so the download arrives intact.
-    The audit service endpoint is at /compliance/incidents/{incident_id}/export
-    (mounted under the compliance_router prefix).
-    Returns application/pdf with Content-Disposition attachment.
-    """
-    upstream_req = request.app.state.client.build_request(
-        "POST",
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/compliance/incidents/{incident_id}/export",
-        headers=_internal_headers(request),
-    )
-    upstream = await request.app.state.client.send(upstream_req, stream=True)
-
-    async def _relay():
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        finally:
-            await upstream.aclose()
-
-    forward_headers = {}
-    if "content-disposition" in upstream.headers:
-        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
-    if "content-length" in upstream.headers:
-        forward_headers["Content-Length"] = upstream.headers["content-length"]
-
-    return StreamingResponse(
-        _relay(),
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type", "application/octet-stream"),
-        headers=forward_headers,
-    )
+# All 10 /incidents/* routes extracted to routers/incidents.py.
 
 
 # NOTE: the 16 /auto-response/* proxy routes were extracted out of this

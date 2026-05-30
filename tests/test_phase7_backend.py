@@ -64,26 +64,38 @@ def test_migration_file_exists():
 
 # ── 6. Gateway has PATCH /incidents proxy ─────────────────────────────────
 
+def _gateway_routes_src() -> str:
+    """/incidents/* routes were extracted to routers/incidents.py in sprint-5.
+    Return the union of main.py + routers/incidents.py so contract tests find
+    the decorator regardless of whether it lives on @app or @router."""
+    main_src = _read(GATEWAY)
+    sub_src  = (GATEWAY.parent / "routers" / "incidents.py").read_text(encoding="utf-8")
+    return sub_src + main_src  # sub first so .find() lands on the real route
+
+
 def test_gateway_patch_incidents_proxy():
-    src = _read(GATEWAY)
-    assert '@app.patch("/incidents/{incident_id}"' in src, \
-        "PATCH /incidents/{incident_id} proxy not found in gateway/main.py"
+    src = _gateway_routes_src()
+    assert ('@app.patch("/incidents/{incident_id}"' in src
+            or '@router.patch("/incidents/{incident_id}"' in src), \
+        "PATCH /incidents/{incident_id} proxy not found in gateway"
 
 
 # ── 7. Gateway has POST /incidents/{id}/comments proxy ────────────────────
 
 def test_gateway_post_comments_proxy():
-    src = _read(GATEWAY)
-    assert '@app.post("/incidents/{incident_id}/comments"' in src, \
-        "POST /incidents/{incident_id}/comments proxy not found in gateway/main.py"
+    src = _gateway_routes_src()
+    assert ('@app.post("/incidents/{incident_id}/comments"' in src
+            or '@router.post("/incidents/{incident_id}/comments"' in src), \
+        "POST /incidents/{incident_id}/comments proxy not found in gateway"
 
 
 # ── 8. Gateway has GET /incidents/{id}/comments proxy ────────────────────
 
 def test_gateway_get_comments_proxy():
-    src = _read(GATEWAY)
-    assert '@app.get("/incidents/{incident_id}/comments"' in src, \
-        "GET /incidents/{incident_id}/comments proxy not found in gateway/main.py"
+    src = _gateway_routes_src()
+    assert ('@app.get("/incidents/{incident_id}/comments"' in src
+            or '@router.get("/incidents/{incident_id}/comments"' in src), \
+        "GET /incidents/{incident_id}/comments proxy not found in gateway"
 
 
 # ── 9. api.js incidentService has update method ───────────────────────────
