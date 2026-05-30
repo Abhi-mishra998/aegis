@@ -65,6 +65,18 @@ async def _rehydrate_kill_switches() -> None:
 
     Called at startup AND periodically (every 30s) by _kill_switch_poll_loop
     so a live FLUSHDB is healed within one poll interval.
+
+    KNOWN ARCHITECTURAL DEBT (deferred to sprint-5; audit-v2 §2.2.1):
+    `kill_switches` table is conceptually decision-domain state but
+    physically lives in the `acp_audit` database because decision shares the
+    audit DATABASE_URL. The clean fix is either:
+      (a) move kill_switches to its own decision DB and update both
+          /decision/router.py writers + this rehydrator, OR
+      (b) add /internal/kill-switches CRUD endpoints to audit service and
+          replace direct DB access here with httpx calls.
+    Both require a live-data migration in (a) or a staged code rollout in
+    (b). Tracked for sprint-5 maintenance window. Status quo is functionally
+    correct; cost is schema coupling between two services on `audit_logs`.
     """
     try:
         from sqlalchemy import text as _text
@@ -143,35 +155,25 @@ setup_app(app, "decision")
 from sdk.common.auth import verify_internal_secret
 
 
-@app.post("/evaluate", response_model=Decision)
-async def evaluate_decision(
+async def _resolve_agent_meta(
     req: OrchestrationRequest,
-    _: str = Depends(verify_internal_secret),
-    x_agent_claims: str | None = None,
-) -> Decision:
-    """
-    Orchestrates context evaluation:
-    1. Agent status resolved from X-Agent-Claims header (zero Registry calls)
-       or falls back to Registry HTTP if header absent (old tokens / admin path).
-    2. Records Usage & Checks Budget (CostEngine)
-    3. Fan-out: Policy + Behavior in parallel
-    4. Computes final Decision via DecisionEngine
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+) -> dict:
+    """Return the agent metadata blob used for permission + status checks.
+
+    Prefer the JWT claims threaded through `metadata.agent_claims` (zero
+    Registry calls — the gateway already validated the JWT). Fall back to a
+    Registry HTTP fetch only when claims are missing AND the request is for
+    a real agent (NIL UUID is the system-actor placeholder used for admin
+    paths). Parse failures are logged but never raised — the rest of the
+    pipeline runs with `agent_meta={}` and downstream defense-in-depth
+    permission checks remain authoritative.
     """
     import json as _json
 
-    headers = {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
-        "X-Tenant-ID": str(req.tenant_id)
-    }
-
-    if not _http_client:
-        raise httpx.HTTPStatusError("Service Unavailable: HTTP Client not initialized", request=None, response=None)
-    client: httpx.AsyncClient = _http_client
-
-    # 1. Resolve agent data — prefer JWT claims over Registry HTTP
     agent_meta: dict = {}
 
-    # Gateway injects X-Agent-Claims with JWT permissions when available
     raw_claims = req.metadata.get("agent_claims") if req.metadata else None
     if raw_claims:
         try:
@@ -195,6 +197,34 @@ async def evaluate_decision(
                 agent_meta = reg_json.get("data", reg_json) if reg_json.get("success") else reg_json
         except Exception as exc:
             logger.warning("registry_unreachable_in_decision", error=str(exc))
+
+    return agent_meta
+
+
+@app.post("/evaluate", response_model=Decision)
+async def evaluate_decision(
+    req: OrchestrationRequest,
+    _: str = Depends(verify_internal_secret),
+    x_agent_claims: str | None = None,
+) -> Decision:
+    """
+    Orchestrates context evaluation:
+    1. Agent status resolved from X-Agent-Claims header (zero Registry calls)
+       or falls back to Registry HTTP if header absent (old tokens / admin path).
+    2. Records Usage & Checks Budget (CostEngine)
+    3. Fan-out: Policy + Behavior in parallel
+    4. Computes final Decision via DecisionEngine
+    """
+    headers = {
+        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        "X-Tenant-ID": str(req.tenant_id)
+    }
+
+    if not _http_client:
+        raise httpx.HTTPStatusError("Service Unavailable: HTTP Client not initialized", request=None, response=None)
+    client: httpx.AsyncClient = _http_client
+
+    agent_meta = await _resolve_agent_meta(req, client, headers)
 
     agent_status = agent_meta.get("status", agent_meta.get("agent_status", "active"))
     if agent_status in ("quarantined", "terminated"):
