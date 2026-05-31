@@ -138,12 +138,15 @@ def test_identity_has_sso_config():
 # ---------------------------------------------------------------------------
 
 def test_gateway_proxies_sso_config():
-    gateway_path = str(
-        Path(__file__).parent.parent / "services" / "gateway" / "main.py"
+    # /auth/sso/* extracted from main.py and consolidated in routers/sso.py
+    # in sprint-5.
+    base = Path(__file__).parent.parent / "services" / "gateway"
+    src = (
+        (base / "main.py").read_text(encoding="utf-8")
+        + (base / "routers" / "sso.py").read_text(encoding="utf-8")
     )
-    assert _grep(gateway_path, "sso/config"), \
-        "No 'sso/config' proxy found in gateway/main.py"
-    assert _grep(gateway_path, "IDENTITY_SERVICE_URL"), \
+    assert "sso/config" in src, "No 'sso/config' proxy found in gateway"
+    assert "IDENTITY_SERVICE_URL" in src, \
         "IDENTITY_SERVICE_URL not referenced for SSO config proxy"
 
 

@@ -437,263 +437,21 @@ class AuthRequest(BaseModel):
     password: str
 
 
-@app.post("/auth/token", tags=["auth"])
-async def proxy_auth_token(request: Request, payload: AuthRequest, response: Response) -> dict[str, Any]:
-    """
-    P0-1 FIX: Added `request: Request` parameter so request.app.state.client is valid.
-    P1-3 FIX: secure= is gated on ENVIRONMENT == 'production'.
-    CONTRACT FIX: Returns access_token in BOTH the response body (for API/Locust/SDK
-    clients) AND as an httpOnly cookie (for browser clients). This eliminates the
-    bearer-vs-cookie split that caused all post-restart auth failures.
-    """
-    url = f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/login"
-    client = request.app.state.client
-    try:
-        tenant_id = request.headers.get("X-Tenant-ID")
-        headers = _internal_headers(request)
-        if tenant_id:
-            headers["X-Tenant-ID"] = tenant_id
-
-        resp = await client.post(
-            url,
-            json={"email": payload.email, "password": payload.password},
-            headers=headers
-        )
-        if resp.status_code != 200:
-            try:
-                err_body = resp.json()
-                err_detail = err_body.get("error") or err_body.get("detail") or "Invalid email or password"
-
-                # Special handling for validation errors showing missing X-Tenant-ID
-                if err_body.get("error") == "Validation failed":
-                    for d in err_body.get("meta", {}).get("details", []):
-                        if "x-tenant-id" in d.get("loc", []):
-                            err_detail = "X-Tenant-ID required"
-            except Exception:
-                err_detail = "Invalid email or password"
-
-            # Allow X-Tenant-ID missing 400s to return status 400
-            if resp.status_code == 400 or resp.status_code == 422:
-                response.status_code = 400
-            else:
-                response.status_code = 401
-
-            return {
-                "success": False,
-                "error": err_detail
-            }
-
-        data = resp.json() or {}
-        info = data.get("data", {})
-        token = info.get("access_token")
-
-        if not token:
-            return {
-                "success": False,
-                "error": "Token generation failed"
-            }
-
-        is_secure = settings.ENVIRONMENT == "production"
-
-        # Browser clients: httpOnly cookie so JS cannot steal the token
-        response.set_cookie(
-            key="acp_token",
-            value=token,
-            httponly=True,
-            secure=is_secure,
-            samesite="strict",
-            max_age=86400,
-        )
-
-        # API / Locust / SDK clients: token returned in body so Bearer auth works
-        return {
-            "success": True,
-            "data": {
-                "access_token": token,
-                "token_type": "bearer",
-                "expires_in": info.get("expires_in"),
-                "tenant_id": str(info.get("tenant_id", "")),
-                "role": info.get("role"),
-            },
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/auth/agent/token", tags=["auth"])
-async def proxy_agent_token(request: Request, response: Response) -> Any:
-    """Proxy → Identity: issue token for agents. Body: {agent_id, secret} (credentials must be provisioned first via POST /auth/credentials)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/token",
-        json=body,
-        headers={**_internal_headers(request), "X-Tenant-ID": request.headers.get("X-Tenant-ID", "")},
-    )
-    response.status_code = resp.status_code
-    try:
-        data = resp.json()
-    except Exception:
-        data = None
-    if resp.status_code != 200 or data is None:
-        detail = (data or {}).get("detail", "Agent authentication failed")
-        return {"success": False, "error": detail, "data": None}
-    return data
-
-
-@app.post("/auth/logout", tags=["auth"])
-async def logout(response: Response) -> dict[str, Any]:
-    """Clear session cookies and terminate gateway session."""
-    is_secure = settings.ENVIRONMENT == "production"
-    response.delete_cookie("acp_token", secure=is_secure, httponly=True, samesite="strict")
-    return {"success": True, "message": "Cleared session cookies."}
-
-
-@app.get("/auth/me", tags=["auth"])
-async def get_me(request: Request) -> Any:
-    """Proxy → Identity: current user details from JWT."""
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/me",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auth/introspect", tags=["auth"])
-async def introspect_token(request: Request) -> Any:
-    """Proxy → Identity: verify token validity and return claims."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/introspect",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auth/refresh", tags=["auth"])
-async def refresh_token(request: Request) -> Any:
-    """Proxy → Identity: rotate access token (revokes old, issues new)."""
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/refresh",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auth/revoke", tags=["auth"])
-async def revoke_token(request: Request) -> Any:
-    """Proxy → Identity: revoke all tokens for an agent (ADMIN/SECURITY only)."""
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/revoke",
-        params=request.query_params,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# /auth/token, /auth/agent/token, /auth/logout, /auth/me,
+# /auth/introspect, /auth/refresh, /auth/revoke — extracted to
+# routers/auth.py.
 
 
 # All /auth/users + /users/* (5 routes) extracted to routers/users.py.
 
 
-@app.post("/auth/credentials", tags=["auth"])
-async def provision_credentials(request: Request, response: Response) -> Any:
-    """Proxy → Identity: provision agent credentials (requires INTERNAL_SECRET via gateway)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/credentials",
-        json=body,
-        headers={**_internal_headers(request), "X-Tenant-ID": request.headers.get("X-Tenant-ID", "")},
-    )
-    response.status_code = resp.status_code
-    return _passthrough(resp)
-
-
-@app.get("/auth/tenants/{tenant_id}", tags=["auth"])
-async def get_tenant_metadata(tenant_id: str, request: Request) -> Any:
-    """Proxy → Identity: get tier and rate-limit metadata for a tenant (ADMIN only)."""
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/tenants/{tenant_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# /auth/credentials + /auth/tenants/{tenant_id} extracted to routers/auth.py.
 
 
 # /auth/sso/* is in the middleware skip-list so these routes pass through unauthenticated.
 
-@app.get("/auth/sso/providers", tags=["sso"])
-async def sso_providers(request: Request) -> Any:
-    """Return the list of configured SSO providers for the login UI."""
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/providers",
-    )
-    return _passthrough(resp)
-
-
-# Explicit /auth/sso/config routes MUST sit above the /auth/sso/{provider}
-# catch-all below, otherwise FastAPI matches "config" as a provider name and
-# forwards the request without X-Tenant-ID (identity returns 400).
-@app.get("/auth/sso/config", tags=["sso"])
-async def get_sso_config_proxy(request: Request) -> Any:
-    """Proxy → Identity: read tenant SSO provider config (secrets masked)."""
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/config",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auth/sso/config", tags=["sso"])
-async def save_sso_config_proxy(request: Request) -> Any:
-    """Proxy → Identity: persist tenant SSO provider config."""
-    headers = _internal_headers(request)
-    ctype = request.headers.get("content-type")
-    if ctype:
-        headers["Content-Type"] = ctype
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/config",
-        content=await request.body(),
-        headers=headers,
-    )
-    return _passthrough(resp)
-
-
-@app.post("/auth/sso/config/test", tags=["sso"])
-async def test_sso_config_proxy(request: Request) -> Any:
-    """Proxy → Identity: probe configured SSO provider for reachability."""
-    headers = _internal_headers(request)
-    ctype = request.headers.get("content-type")
-    if ctype:
-        headers["Content-Type"] = ctype
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/config/test",
-        content=await request.body(),
-        headers=headers,
-    )
-    return _passthrough(resp)
-
-
-@app.get("/auth/sso/{provider}", tags=["sso"])
-async def sso_login_redirect(provider: str, request: Request) -> Any:
-    """Initiate SSO — proxies redirect to OIDC provider."""
-    url = f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/{provider}"
-    resp = await request.app.state.client.get(url, params=dict(request.query_params))
-    if resp.status_code in (301, 302, 303, 307, 308):
-        from starlette.responses import RedirectResponse as _RR
-        return _RR(resp.headers["location"], status_code=resp.status_code)
-    return _passthrough(resp)
-
-
-@app.get("/auth/sso/{provider}/callback", tags=["sso"])
-async def sso_callback_proxy(provider: str, request: Request) -> Any:
-    """Handle the OIDC callback and proxy the redirect-with-cookie back to the browser."""
-    url = f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/sso/{provider}/callback"
-    resp = await request.app.state.client.get(url, params=dict(request.query_params))
-    if resp.status_code in (301, 302, 303, 307, 308):
-        from starlette.responses import RedirectResponse as _RR
-        rr = _RR(resp.headers.get("location", "/"), status_code=resp.status_code)
-        if "set-cookie" in resp.headers:
-            rr.headers["set-cookie"] = resp.headers["set-cookie"]
-        return rr
-    return _passthrough(resp)
+# All /auth/sso/* (6 routes incl. config GET/POST/test and provider redirects)
+# extracted to routers/sso.py.
 
 
 @app.get("/tenant/quota", tags=["tenant"])
@@ -837,6 +595,7 @@ setup_app(app, "gateway")
 from services.gateway.routers.admin import router as _admin_router  # noqa: E402
 from services.gateway.routers.agents import router as _agents_router  # noqa: E402
 from services.gateway.routers.audit import router as _audit_router  # noqa: E402
+from services.gateway.routers.auth import router as _auth_router  # noqa: E402
 from services.gateway.routers.auto_response import (
     router as _auto_response_router,  # noqa: E402
 )
@@ -881,6 +640,7 @@ app.include_router(_policy_router)
 app.include_router(_forensics_router)
 app.include_router(_users_router)
 app.include_router(_agents_router)
+app.include_router(_auth_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),

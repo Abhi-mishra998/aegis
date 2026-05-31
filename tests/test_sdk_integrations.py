@@ -175,7 +175,11 @@ def test_sso_routes_skip_auth_in_middleware():
 
 
 def test_sso_proxy_routes_in_gateway():
-    src = Path("services/gateway/main.py").read_text()
+    # /auth/sso/{provider} + callback extracted to routers/sso.py in sprint-5.
+    src = (
+        Path("services/gateway/main.py").read_text()
+        + Path("services/gateway/routers/sso.py").read_text()
+    )
     assert "/auth/sso/{provider}" in src
     assert "/auth/sso/{provider}/callback" in src
 
