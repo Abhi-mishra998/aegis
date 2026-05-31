@@ -835,6 +835,7 @@ setup_app(app, "gateway")
 # services/gateway/routers/ and depends only on services/gateway/_helpers.py
 # (never on main.py — that would create a load-time cycle).
 from services.gateway.routers.admin import router as _admin_router  # noqa: E402
+from services.gateway.routers.agents import router as _agents_router  # noqa: E402
 from services.gateway.routers.audit import router as _audit_router  # noqa: E402
 from services.gateway.routers.auto_response import (
     router as _auto_response_router,  # noqa: E402
@@ -879,6 +880,7 @@ app.include_router(_risk_router)
 app.include_router(_policy_router)
 app.include_router(_forensics_router)
 app.include_router(_users_router)
+app.include_router(_agents_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -890,148 +892,8 @@ app.include_router(_users_router)
 # REGISTRY PROXY — /agents
 # ─────────────────────────────────────────────────────────────
 
-@app.get("/agents", tags=["agents"])
-async def list_agents(request: Request) -> Any:
-    """Proxy → Registry service list agents."""
-    resp = await request.app.state.client.get(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents",
-        params=request.query_params,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/agents", tags=["agents"])
-async def create_agent(request: Request, response: Response) -> Any:
-    """Proxy → Registry service create agent. Publishes agent_created SSE event."""
-    body = await request.json()
-    body = dict(body)
-
-    # RULE 3: Tie owner_id to actual user_id from JWT (M-12 Fix)
-    actor = getattr(request.state, "actor", "unknown")
-    if actor and actor != "unknown":
-        body["owner_id"] = actor
-
-    resp = await request.app.state.client.post(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    response.status_code = resp.status_code
-    result = resp.json()
-    tenant_id_str = request.headers.get("X-Tenant-ID", "")
-    if tenant_id_str and resp.status_code in (200, 201):
-        agent_data = result.get("data", result) if isinstance(result, dict) else {}
-        new_agent_id = str(agent_data.get("id", "")) if isinstance(agent_data, dict) else ""
-        await _publish_event(
-            redis, tenant_id_str, "agent_created", agent_data,
-            agent_id=new_agent_id or None,
-        )
-    return result
-
-
-@app.get("/agents/summary", tags=["agents"])
-async def agents_summary(request: Request) -> Any:
-    """Proxy → Registry fleet summary (count by status + high-risk count)."""
-    return await _trust_proxy(settings.REGISTRY_SERVICE_URL, "/agents/summary", request)
-
-
-@app.get("/registry/tools", tags=["registry"])
-async def registry_tools(request: Request) -> Any:
-    """Proxy → Registry service: deduplicated tool names across all registered agents."""
-    return await _trust_proxy(settings.REGISTRY_SERVICE_URL, "/agents/tools", request)
-
-
-@app.get("/agents/{agent_id}", tags=["agents"])
-async def get_agent(agent_id: str, request: Request) -> Any:
-    """Proxy → Registry get single agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.patch("/agents/{agent_id}", tags=["agents"])
-async def update_agent(agent_id: str, request: Request) -> Any:
-    """Proxy → Registry update agent."""
-    body = await request.json()
-    resp = await request.app.state.client.patch(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.delete("/agents/{agent_id}", tags=["agents"])
-async def delete_agent(agent_id: str, request: Request) -> Any:
-    """Proxy → Registry delete agent. Publishes agent_deleted SSE event."""
-    resp = await request.app.state.client.delete(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}",
-        headers=_internal_headers(request),
-    )
-    tenant_id_str = request.headers.get("X-Tenant-ID", "")
-    if tenant_id_str and resp.status_code in (200, 204):
-        await _publish_event(
-            redis, tenant_id_str, "agent_deleted", {"agent_id": agent_id},
-            agent_id=agent_id,
-        )
-    return _passthrough(resp)
-
-
-@app.get("/agents/{agent_id}/profile", tags=["agents"])
-async def agent_profile(agent_id: str, request: Request) -> Any:
-    """Proxy → Registry agent behavioral profile."""
-    return await _trust_proxy(settings.REGISTRY_SERVICE_URL, f"/agents/{agent_id}/profile", request)
-
-
-@app.get("/agents/{agent_id}/permissions", tags=["agents"])
-async def list_agent_permissions(agent_id: str, request: Request) -> Any:
-    """Proxy → Registry list agent permissions."""
-    resp = await request.app.state.client.get(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}/permissions",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/agents/{agent_id}/permissions", tags=["agents"])
-async def add_agent_permission(agent_id: str, request: Request, response: Response) -> Any:
-    """Proxy → Registry add agent permission.
-    Normalises client payloads: maps `allowed` bool → `action`, injects
-    `granted_by` from the JWT-authenticated role so callers don't need to send it.
-    """
-    body = await request.json()
-    body = dict(body)  # shallow copy — do not mutate caller's dict
-
-    # Map convenience field `allowed: bool` → `action: ALLOW|DENY`
-    if "action" not in body and "allowed" in body:
-        body["action"] = "ALLOW" if body.pop("allowed") else "DENY"
-    body.pop("allowed", None)  # drop if action was already present
-
-    # Inject granted_by from authenticated role (avoids requiring caller to send it)
-    if not body.get("granted_by"):
-        role = getattr(request.state, "role", None)
-        body["granted_by"] = str(role) if role else "system"
-
-    resp = await request.app.state.client.post(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}/permissions",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    response.status_code = resp.status_code
-    return _passthrough(resp)
-
-
-@app.delete("/agents/{agent_id}/permissions/{permission_id}", tags=["agents"])
-async def revoke_agent_permission(agent_id: str, permission_id: str, request: Request) -> Any:
-    """Proxy → Registry revoke agent permission."""
-    resp = await request.app.state.client.delete(
-        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}/permissions/{permission_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# All /agents/* (10 routes) and /registry/tools extracted to
+# routers/agents.py.
 
 
 # ─────────────────────────────────────────────────────────────

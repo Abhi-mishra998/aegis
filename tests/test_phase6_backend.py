@@ -106,11 +106,15 @@ def test_agent_profile_endpoint_in_registry():
 # ---------------------------------------------------------------------------
 
 def test_gateway_proxies_agent_profile():
-    gateway_path = str(
-        Path(__file__).parent.parent / "services" / "gateway" / "main.py"
+    # /agents/{id}/profile extracted from main.py to routers/agents.py in
+    # sprint-5; search both files.
+    base = Path(__file__).parent.parent / "services" / "gateway"
+    src = (
+        (base / "main.py").read_text(encoding="utf-8")
+        + (base / "routers" / "agents.py").read_text(encoding="utf-8")
     )
-    assert _grep(gateway_path, "agent_id}/profile"), \
-        "No 'agent_id}/profile' proxy route found in gateway/main.py"
+    assert "agent_id}/profile" in src, \
+        "No 'agent_id}/profile' proxy route found in gateway"
 
 
 # ---------------------------------------------------------------------------
