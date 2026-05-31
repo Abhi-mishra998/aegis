@@ -455,12 +455,12 @@ closes all three:
 
 `ruff check .` is now **clean across the entire repo**.
 
-### Tier C1 — `services/gateway/main.py` route extraction
+### Tier C1 — `services/gateway/main.py` route extraction (complete)
 
-Carried out in five commits. Each commit extracted one route group into
-a new file under `services/gateway/routers/`, deleted the originals
-from `main.py`, and updated affected source-contract tests so they scan
-the union of `main.py` + the new sub-router.
+Carried out across eleven commits. Each commit extracted one route
+group into a new file under `services/gateway/routers/`, deleted the
+originals from `main.py`, and updated affected source-contract tests
+so they scan the union of `main.py` + the new sub-router.
 
 | Commit | Group | Routes | New file |
 |---|---|---|---|
@@ -471,43 +471,49 @@ the union of `main.py` + the new sub-router.
 | 08b2162 C1-4 | /compliance + /siem + /reports | 18 | routers/compliance.py |
 | 2aced56 C1-5 | /receipts + /transparency | 11 | routers/transparency.py |
 | 94ae0fd C1-6 | /risk + /threat-intel + /insights + /playbooks/autotrigger-stats | 9 | routers/risk.py |
-| (this round) C1-7 | /policy + /forensics | 6 | routers/policy.py + routers/forensics.py |
-| (this round) C1-8 | /users + /api-keys | 9 | routers/users.py |
+| 47c6c48 C1-7 | /policy + /forensics | 6 | routers/policy.py + routers/forensics.py |
+| 065b5db C1-8 | /users + /api-keys | 9 | routers/users.py |
+| f24f2c6 C1-9 | /agents + /registry/tools | 11 | routers/agents.py |
+| (later) C1-10 | /auth/* (non-SSO) + consolidate /auth/sso/* | 15 | routers/auth.py + routers/sso.py |
+| (later) C1-11 | /tenant/quota + /auth/tenants + /decision history/summary | 4 | routers/tenant.py + extends auth.py/decision.py |
 
 **Route-ordering subtleties** preserved by hand at every step
 (specific paths BEFORE catch-all `/{id}` paths — same shape as the
 sprint-5 `/playbooks/stats` ordering bug): `/auto-response/rules/{id}/
 history|rollback|feedback`, `/reports/scheduled/{id}/run|history`,
-`/receipts/verify`.
+`/receipts/verify`, `/api-keys/validate`, `/agents/summary`,
+`/agents/{id}/profile|permissions`, `/auth/sso/config|providers`.
 
 A new helper `clamp_int` lives in `services/gateway/_helpers.py` so any
 sub-router can read paginated `?limit=` / `?offset=` the same way.
 
-**main.py: 3,653 → 2,177 LOC (-1,476); 162 → 38 @app routes (-124).**
+The /auth/sso routes had a shadow-bug: `routers/sso.py` was registered
+via `app.include_router(...)` but main.py still hosted the same paths
+as `@app.get/post`. FastAPI's first-registered-wins semantics meant the
+sso.py versions were silently dead. C1-10 removed the duplicates from
+main.py and consolidated the full SSO surface (providers + config GET/
+POST/test + provider redirect + callback) into sso.py.
 
-**125 routes extracted** into 9 new sub-router files
+**main.py: 3,653 → 1,676 LOC (-1,977); 162 → 8 @app routes (-154).**
+
+**154 routes extracted** into 13 new or expanded sub-router files
 (`auto_response`, `audit`, `incidents`, `billing`, `compliance`,
-`transparency`, `risk`, `policy`, `forensics`, `users`).
+`transparency`, `risk`, `policy`, `forensics`, `users`, `agents`,
+`auth`, `sso`, `tenant`, plus extensions to existing `decision`).
 
-What still sits in main.py (38 routes — the lifespan-tied core):
-- `/auth/*` (~12 — token, agent_token, logout, me, introspect, refresh,
-  revoke, credentials, tenants/{id}, sso/providers, sso/config (GET+POST
-  +test), sso/{provider}+callback). The sso suite already has its own
-  routers/sso.py and stays there.
-- `/agents/*` (~10) — agent CRUD, permission grants, profile (registry
-  proxies, partly already in routers/admin.py)
-- `/execute` + `/execute/{tool_name}` — the request-path handlers that
-  the middleware composes with; staying in main.py keeps the load-order
-  trivial.
-- `/events/stream` — SSE handler with custom cookie/Bearer/token auth;
-  staying in main.py keeps the middleware skip-list co-located.
-- Singletons: `/status`, `/system/health`, `/security/posture`,
-  `/tenant/quota`, `/decision/history|summary|kill-switch`,
-  `/admin/tenants`, `/internal/reconciliation-report`.
+What still sits in main.py (8 routes — the lifespan-tied core):
+- `/execute`, `/execute/{tool_name}` — request hot path, sits on
+  SecurityMiddleware
+- `/events/stream` — SSE with custom auth, co-located with the
+  middleware skip-list
+- `/status`, `/system/health`, `/security/posture` — health probes
+  that need app.state.start_time, latency_window, downstream RTT
+- `/internal/reconciliation-report` — internal-only singleton
 
-These 38 are intentionally close to the gateway's lifespan: middleware
-composition, app.state lifecycle, SSE pub/sub, and the request-path
-hot loop. Further extraction would mostly be ceremony.
+These 8 routes are each tightly coupled to either the request hot path
+or the gateway's lifespan/middleware setup. Extracting them would
+mostly be ceremony with no real readability win — they belong with
+their lifespan code.
 
 ### Tier C2 — `_dispatch_with_resilience` phase extraction (partial)
 
@@ -606,11 +612,11 @@ than mixing them into the audit commit chain.
 | `ruff check .` errors (whole repo) | 3 | **0** |
 | `evaluate_decision` cyclomatic complexity | 86 | **37** |
 | `_dispatch_with_resilience` cyclomatic complexity | 140 | **118** |
-| `services/gateway/main.py` line count | 3,653 | **2,177** |
-| `services/gateway/main.py` route count | 162 | **38** |
-| Sub-router files in `services/gateway/routers/` | 7 | **17** |
-| Routes extracted out of main.py | 0 | **125** |
-| Atomic git commits added by this audit | 0 | 32 |
+| `services/gateway/main.py` line count | 3,653 | **1,676** |
+| `services/gateway/main.py` route count | 162 | **8** |
+| Sub-router files in `services/gateway/routers/` | 7 | **18** |
+| Routes extracted out of main.py | 0 | **154** |
+| Atomic git commits added by this audit | 0 | **35** |
 
 ### Commits added by this audit (in order)
 
