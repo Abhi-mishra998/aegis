@@ -603,27 +603,28 @@ Two pre-existing ruff issues live in those pending files:
 Recommend folding these into the user's next pending commit rather
 than mixing them into the audit commit chain.
 
-### Pre-existing test failures (not caused by this audit)
+### Pre-existing test failures (fixed in audit closeout)
 
-Final `pytest -m 'not integration'` snapshot: **1829 passed, 8 failed,
-5 errors, 14 deselected** in ~14s. Verified by `git merge-base
+Pre-closeout `pytest -m 'not integration'` showed **1829 passed, 8
+failed, 5 errors, 14 deselected**. Verified by `git merge-base
 --is-ancestor 5c6bff1 38d4345` (exit 0) that the source change which
-made the tests fail predates the first audit commit.
+broke them predates the first audit commit — they were not introduced
+by the audit. Folded into the audit's housekeeping after that:
 
 - `services/audit/tests/test_transparency_endpoints.py` — 8 contract
-  tests call `verify_root(db=..., payload=...)` but the source
-  signature in `services/audit/transparency.py:385` requires a third
-  `tenant_id` arg (added in `5c6bff1 "remove the unused md files"`).
-  The test file was never updated to match.
-- `services/identity/tests/test_org_id_consistency.py` — 5 tests
-  require a live Postgres on `127.0.0.1:5433`. They aren't marked
-  `@pytest.mark.integration`, so they slip through the `-m 'not
-  integration'` filter and error during fixture setup with `OSError:
-  Connect call failed`. Run with the compose stack up, or add the
-  marker.
+  tests called `verify_root(db=..., payload=...)` but the source in
+  `services/audit/transparency.py:385` requires a third `tenant_id`
+  arg (added in `5c6bff1`). Added a module-level `_TEST_TENANT` and
+  threaded it through every call. The tenant_id is only consulted on
+  the `{date: ...}` shortcut path which none of these tests exercise,
+  so the value doesn't materially affect coverage.
+- `services/identity/tests/test_org_id_consistency.py` — 5 tests need
+  a live Postgres on `:5433` but weren't marked `@pytest.mark.integration`,
+  so they leaked into the unit suite as `OSError: Connect call failed`.
+  Added `pytestmark = pytest.mark.integration` at module scope; they
+  now deselect cleanly without the compose stack.
 
-Both clusters are pre-existing source/test drift, untouched by every
-commit in the audit chain.
+Post-closeout: **1837 passed, 19 deselected, 0 failed, 0 errors in 12.8s**.
 
 ## Metrics
 
@@ -640,7 +641,8 @@ commit in the audit chain.
 | Unreachable code blocks (vulture, ≥100% conf.) | 1 | 0 |
 | Duplicated alembic env.py lines across services | ~470 | ~100 (shared) + 9×~7 (shims) |
 | Pre-existing test failures (route refactor drift) | 10 | 0 |
-| `pytest -m 'not integration'` audit-introduced regressions | 0 | **0** (1829 pass; 8 fail + 5 err are pre-existing — see below) |
+| `pytest -m 'not integration'` audit-introduced regressions | 0 | **0** |
+| `pytest -m 'not integration'` final state | 1829 pass / 8 fail / 5 err | **1837 pass / 0 fail / 0 err** |
 | `cd ui && npm run build` | passes | passes |
 | `ruff check .` errors (whole repo) | 3 | **0** |
 | `evaluate_decision` cyclomatic complexity | 86 | **37** |
@@ -649,7 +651,7 @@ commit in the audit chain.
 | `services/gateway/main.py` route count | 162 | **8** |
 | Sub-router files in `services/gateway/routers/` | 7 | **18** |
 | Routes extracted out of main.py | 0 | **154** |
-| Atomic git commits added by this audit | 0 | **46** |
+| Atomic git commits added by this audit | 0 | **47** |
 | UI shared primitives extracted (B2/B3) | 0 | **4** (AgentScopePicker + SecretInput + StatusBadge + IntegrationCard) |
 | Silent `except: pass` removed (P4a) | 3 | **0** |
 
@@ -701,7 +703,8 @@ a72bbc2  audit(P4a):   replace 3 silent `except: pass` with structured warnings
 9891ce8  audit(C2a-redo): extract PHASE 0 size check with header-channelled action
 00cf09d  audit(B2-redo): extract AgentScopePicker shared between Sidebar + Topbar
 4f92665  audit(B3-redo): extract ConnectorPrimitives for SSO/SIEM/Webhook settings
-(this commit) audit: final closeout — B2/B3-redo and Phase 4a closed
+17ec2a3  audit: final closeout — B2/B3-redo and Phase 4a closed
+(this commit) audit: fix 13 pre-existing test failures (tenant_id arg + integration marker)
 ```
 
 Every commit is atomic and revertable with `git revert <sha>` if

@@ -6,6 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.identity.models import User, UserRole
 
+# These tests require a live Postgres on the identity service port
+# (5433 by default). They were not previously marked, so they slipped
+# through `pytest -m 'not integration'` and errored during fixture
+# setup with `OSError: Connect call failed`. Marking them so the unit
+# suite stays green without the compose stack.
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_user_creation_sets_org_id_defaults_to_tenant(db: AsyncSession) -> None:
