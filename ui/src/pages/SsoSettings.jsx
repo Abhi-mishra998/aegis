@@ -1,58 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
-  Shield, Save, Play, CheckCircle2, XCircle,
-  Loader2, AlertCircle, Eye, EyeOff, ChevronDown,
-  Lock, Globe, Key, AlertTriangle, RefreshCw,
+  Save, Play, CheckCircle2, XCircle,
+  Loader2, AlertCircle, Lock, Globe,
+  AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { ssoService } from '../services/api'
+import { SecretInput } from '../components/Common/ConnectorPrimitives'
 
 const PROVIDER_TYPES = [
   { value: 'saml',  label: 'SAML 2.0',   desc: 'Okta, Azure AD, ADFS, OneLogin' },
   { value: 'oidc',  label: 'OIDC',        desc: 'Auth0, Okta, Google Workspace' },
 ]
-
-function SecretInput({ id, label, placeholder, value, onChange, rows }) {
-  const [show, setShow] = useState(false)
-  if (rows) {
-    return (
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label htmlFor={id} className="text-xs text-neutral-400">{label}</label>
-          <button type="button" onClick={() => setShow(v => !v)} className="text-[10px] text-neutral-500 hover:text-white flex items-center gap-1">
-            {show ? <EyeOff size={11} /> : <Eye size={11} />} {show ? 'Hide' : 'Show'}
-          </button>
-        </div>
-        <textarea
-          id={id}
-          rows={rows}
-          value={show ? value : value ? '•'.repeat(Math.min(value.length, 40)) : ''}
-          onChange={e => onChange(e.target.value)}
-          onFocus={() => setShow(true)}
-          placeholder={placeholder}
-          className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-white/20 font-mono resize-none"
-        />
-      </div>
-    )
-  }
-  return (
-    <div>
-      <label htmlFor={id} className="block text-xs text-neutral-400 mb-1">{label}</label>
-      <div className="relative">
-        <input
-          id={id}
-          type={show ? 'text' : 'password'}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 pr-9 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
-        />
-        <button type="button" onClick={() => setShow(v => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white">
-          {show ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-      </div>
-    </div>
-  )
-}
 
 export default function SsoSettings() {
   const [cfg, setCfg] = useState({

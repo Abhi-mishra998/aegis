@@ -1,62 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
-  Database, Server, CheckCircle2, XCircle, Play,
-  Save, Eye, EyeOff, Loader2, AlertCircle, Upload,
+  Database, Server, Play,
+  Save, Loader2, AlertCircle, Upload,
   RefreshCw, AlertTriangle,
 } from 'lucide-react'
 import { siemService } from '../services/api'
-
-function StatusBadge({ result }) {
-  if (!result) return null
-  const ok = result.status === 'sent'
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
-      ok ? 'bg-green-500/10 text-green-400' : result.status === 'skipped' ? 'bg-neutral-500/10 text-neutral-500' : 'bg-red-500/10 text-red-400'
-    }`}>
-      {ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-      {result.status === 'sent' ? `Sent (HTTP ${result.http_status})` : result.reason || result.status}
-    </span>
-  )
-}
-
-function SecretInput({ id, label, placeholder, value, onChange }) {
-  const [show, setShow] = useState(false)
-  return (
-    <div>
-      <label htmlFor={id} className="block text-xs text-neutral-400 mb-1">{label}</label>
-      <div className="relative">
-        <input
-          id={id}
-          type={show ? 'text' : 'password'}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 pr-9 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
-        />
-        <button type="button" onClick={() => setShow(v => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white">
-          {show ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function IntegrationCard({ icon: Icon, title, description, color, children }) {
-  return (
-    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5">
-      <div className="flex items-center gap-3 mb-4">
-        <div className={`w-8 h-8 rounded-lg ${color} flex items-center justify-center`}>
-          <Icon size={16} className="text-white" />
-        </div>
-        <div>
-          <div className="text-sm font-medium text-white">{title}</div>
-          <div className="text-xs text-neutral-500">{description}</div>
-        </div>
-      </div>
-      {children}
-    </div>
-  )
-}
+import { SecretInput, StatusBadge, IntegrationCard } from '../components/Common/ConnectorPrimitives'
 
 export default function SiemSettings() {
   const [cfg, setCfg] = useState({
