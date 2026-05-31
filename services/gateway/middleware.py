@@ -702,81 +702,21 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 raise
 
             # --- 6.5 BOUNDED AUTONOMY (F3) ----------------------------------
-            # 2026-05-13: Autonomy contracts are an additive layer evaluated AFTER
-            # the security pipeline approves. Fail-open on autonomy service outage
-            # (logged + visible in /system/health) so a degraded autonomy service
-            # never silently widens trust — Policy + Decision retain fail-closed.
-            ac = await check_autonomy_contract(
-                tenant_id=t_id_str, agent_id=str(agent_id), action=tool_name,
-                request_id=request_id, tool_calls_so_far=tokens,
-                redis=self.redis,
+            _autonomy_resp, _autonomy_action = await self._enforce_bounded_autonomy(
+                request,
+                t_id_str=t_id_str,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                tool_name=tool_name,
+                request_id=request_id,
+                tokens=tokens,
+                risk_score=risk_score,
+                flight_final=_flight_final,
             )
-            if not ac.get("allowed", True):
-                action = "deny"
-                reason_detail = ac.get("reason") or "autonomy_contract_violation"
-                await self._log_audit(
-                    t_id_str, agent_id, "execute_tool", tool_name, "deny",
-                    reason_detail, request_id,
-                    {"status": 403, "risk_score": risk_score, "violated_rules": ac.get("violated_rules", [])},
-                )
-                await self._record_billing_with_retry(
-                    tenant_id=t_id_str, action="deny", agent_id=agent_id,
-                    tokens=tokens, audit_id=request_id,
-                )
-                asyncio.create_task(_safe_bg(emit_graph_event(
-                    self.redis,
-                    tenant_id=t_id_str,
-                    src_id=str(agent_id), src_type="agent",
-                    src_name=getattr(request.state, "actor", None) or str(agent_id),
-                    dst_id=tool_name, dst_type="tool", dst_name=tool_name,
-                    edge_type="invokes", action="execute_tool", outcome="deny",
-                    risk_score=risk_score, request_id=request_id,
-                    attributes={"layer": "autonomy", "rules": ac.get("violated_rules", [])},
-                )))
-                _flight_final["decision"] = "deny"
-                _flight_final["risk"]     = risk_score or 0.0
-                _flight_final["status"]   = "failed"
-                return self._deny(f"Autonomy: {reason_detail}", 403)
-            if ac.get("requires_approval"):
-                # Approval is an out-of-band workflow (human-in-the-loop via
-                # /autonomy/overrides). 2026-05-15: response was previously
-                # 202 + an unrealised "polling URL"; /execute is now strictly
-                # synchronous (no 202), so we return 403 with the same
-                # `approval_required` reason. The SDK surfaces this as
-                # EscalationRequiredError so callers can branch.
-                asyncio.create_task(_safe_bg(emit_step(
-                    self.redis, tenant_id=t_id_str, request_id=request_id,
-                    step_index=2, step_type="autonomy",
-                    summary="approval_required", status="pending",
-                    payload={"contract_id": ac.get("contract_id")},
-                )))
-                _flight_final["decision"] = "escalate"
-                _flight_final["risk"]     = risk_score or 0.0
-                _flight_final["status"]   = "failed"
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "success": False,
-                        "error": "approval_required",
-                        "detail": f"Action requires approval (contract {ac.get('contract_id')}).",
-                        "meta": {
-                            "code": 403,
-                            "category": "escalation",
-                            "request_id": request_id,
-                            "contract_id": ac.get("contract_id"),
-                        },
-                    },
-                )
-
-            # Flight step — autonomy contract evaluated and allowed (or no
-            # contract applied). Pairing with the deny branch above gives a
-            # complete autonomy trace.
-            asyncio.create_task(_safe_bg(emit_step(
-                self.redis, tenant_id=t_id_str, request_id=request_id,
-                step_index=2, step_type="autonomy",
-                summary=ac.get("reason") or "autonomy_pass",
-                status="ok",
-            )))
+            if _autonomy_action is not None:
+                action = _autonomy_action
+            if _autonomy_resp is not None:
+                return _autonomy_resp
 
             # --- 7. EXECUTION ---
             action = "allow"
@@ -977,6 +917,106 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             except Exception:
                 # Latency tracking must never break a request.
                 pass
+
+    async def _enforce_bounded_autonomy(
+        self,
+        request: Request,
+        *,
+        t_id_str: str,
+        tenant_id: uuid.UUID,
+        agent_id: uuid.UUID,
+        tool_name: str,
+        request_id: str,
+        tokens: int,
+        risk_score: float,
+        flight_final: dict,
+    ) -> tuple[Response | None, str | None]:
+        """PHASE 6.5 — bounded-autonomy contract check (F3).
+
+        Autonomy contracts are an additive layer evaluated AFTER the
+        security pipeline approves. Fail-open on autonomy service outage
+        (logged + visible in /system/health) so a degraded autonomy
+        service never silently widens trust — Policy + Decision retain
+        fail-closed.
+
+        Three outcomes:
+          * ``allowed`` → return ``(None, None)`` so dispatcher continues
+          * ``deny``    → audit + billing recorded, graph event emitted,
+                          flight_final mutated, return 403 + ``"deny"``
+          * ``requires_approval`` → flight_final mutated, return a 403
+                          with structured ``approval_required`` body and
+                          ``"escalate"`` as the new action label
+
+        The /execute contract is strictly synchronous so the
+        approval-required path returns 403 (with the SDK mapping it to
+        EscalationRequiredError), not 202 + polling URL.
+        """
+        ac = await check_autonomy_contract(
+            tenant_id=t_id_str, agent_id=str(agent_id), action=tool_name,
+            request_id=request_id, tool_calls_so_far=tokens,
+            redis=self.redis,
+        )
+        if not ac.get("allowed", True):
+            reason_detail = ac.get("reason") or "autonomy_contract_violation"
+            await self._log_audit(
+                t_id_str, agent_id, "execute_tool", tool_name, "deny",
+                reason_detail, request_id,
+                {"status": 403, "risk_score": risk_score,
+                 "violated_rules": ac.get("violated_rules", [])},
+            )
+            await self._record_billing_with_retry(
+                tenant_id=t_id_str, action="deny", agent_id=agent_id,
+                tokens=tokens, audit_id=request_id,
+            )
+            asyncio.create_task(_safe_bg(emit_graph_event(
+                self.redis,
+                tenant_id=t_id_str,
+                src_id=str(agent_id), src_type="agent",
+                src_name=getattr(request.state, "actor", None) or str(agent_id),
+                dst_id=tool_name, dst_type="tool", dst_name=tool_name,
+                edge_type="invokes", action="execute_tool", outcome="deny",
+                risk_score=risk_score, request_id=request_id,
+                attributes={"layer": "autonomy", "rules": ac.get("violated_rules", [])},
+            )))
+            flight_final["decision"] = "deny"
+            flight_final["risk"]     = risk_score or 0.0
+            flight_final["status"]   = "failed"
+            return self._deny(f"Autonomy: {reason_detail}", 403), "deny"
+
+        if ac.get("requires_approval"):
+            asyncio.create_task(_safe_bg(emit_step(
+                self.redis, tenant_id=t_id_str, request_id=request_id,
+                step_index=2, step_type="autonomy",
+                summary="approval_required", status="pending",
+                payload={"contract_id": ac.get("contract_id")},
+            )))
+            flight_final["decision"] = "escalate"
+            flight_final["risk"]     = risk_score or 0.0
+            flight_final["status"]   = "failed"
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "success": False,
+                    "error":   "approval_required",
+                    "detail":  f"Action requires approval (contract {ac.get('contract_id')}).",
+                    "meta": {
+                        "code":        403,
+                        "category":    "escalation",
+                        "request_id":  request_id,
+                        "contract_id": ac.get("contract_id"),
+                    },
+                },
+            ), "escalate"
+
+        # Allowed (or no contract applied) — emit the pairing autonomy
+        # step so the Flight Recorder timeline shows the trace.
+        asyncio.create_task(_safe_bg(emit_step(
+            self.redis, tenant_id=t_id_str, request_id=request_id,
+            step_index=2, step_type="autonomy",
+            summary=ac.get("reason") or "autonomy_pass",
+            status="ok",
+        )))
+        return None, None
 
     async def _check_per_agent_cost_cap(
         self,
