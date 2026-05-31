@@ -46,16 +46,30 @@ def test_registry_summary_excludes_deleted():
 
 # ── Gateway: GET /agents/summary proxy ───────────────────────────────────────
 
+def _gateway_agents_src() -> str:
+    """/agents/* + /registry/tools extracted from main.py to routers/agents.py
+    in sprint-5. Scan the new file first so .find() lands on the decorator."""
+    return (
+        (ROOT / "services/gateway/routers/agents.py").read_text()
+        + (ROOT / "services/gateway/main.py").read_text()
+    )
+
+
 def test_gateway_has_agents_summary_route():
-    src = (ROOT / "services/gateway/main.py").read_text()
-    assert "/agents/summary" in src
+    assert "/agents/summary" in _gateway_agents_src()
 
 
 def test_gateway_agents_summary_proxies_to_registry():
-    src = (ROOT / "services/gateway/main.py").read_text()
-    idx = src.find("/agents/summary")
-    snippet = src[max(0, idx - 50):idx + 300]
-    assert "REGISTRY_SERVICE_URL" in snippet or "_trust_proxy" in snippet
+    # Find the actual decorator (skip module docstrings that mention the path).
+    src = _gateway_agents_src()
+    idx = src.find('get("/agents/summary"')
+    if idx == -1:
+        idx = src.find('"/agents/summary"')
+    snippet = src[max(0, idx - 50):idx + 400]
+    assert ("REGISTRY_SERVICE_URL" in snippet
+            or "_trust_proxy" in snippet
+            or "trust_proxy" in snippet), \
+        "agents/summary handler does not forward to registry"
 
 
 # ── Security posture: live incidents + key rotation ──────────────────────────
