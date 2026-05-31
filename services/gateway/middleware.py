@@ -790,68 +790,17 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             return response
 
         except HTTPException as e:
-            # Flight: emit a terminal error step + snapshot so timelines do
-            # not end abruptly without explanation. Fire-and-forget; never
-            # blocks the actual error response.
-            try:
-                if t_id_str != "unknown":
-                    asyncio.create_task(_safe_bg(emit_step(
-                        self.redis, tenant_id=t_id_str, request_id=request_id,
-                        step_index=99, step_type="failure",
-                        summary=f"{e.status_code}:{(e.detail or '')[:80]}",
-                        status="error",
-                        payload={"status_code": e.status_code},
-                    )))
-                    asyncio.create_task(_safe_bg(emit_snapshot(
-                        self.redis, tenant_id=t_id_str, request_id=request_id,
-                        step_index=99,
-                        snapshot={
-                            "phase": "http_exception",
-                            "status_code": e.status_code,
-                            "detail": (e.detail or "")[:200],
-                            "tool": tool_name,
-                        },
-                    )))
-            except Exception as _flight_exc:
-                logger.debug("flight_error_emit_failed", error=str(_flight_exc))
-
-            # ACP Hardening: Ensure Audit + Billing for error outcomes
-            try:
-                # Recover tenant_id from header even on auth failure
-                if t_id_str == "unknown":
-                    t_id_hdr = request.headers.get("X-Tenant-ID")
-                    if t_id_hdr:
-                        t_id_str = t_id_hdr
-                        try:
-                            agent_id_hdr = request.headers.get("X-Agent-ID")
-                            if agent_id_hdr:
-                                agent_id = uuid.UUID(agent_id_hdr)
-                        except (ValueError, TypeError):
-                            pass
-
-                if t_id_str != "unknown":
-                    # Log audit (synchronous to ensure persistence)
-                    await self._log_audit(t_id_str, agent_id, "execute_tool", tool_name, action, e.detail, request_id, {"status": e.status_code, "risk_score": risk_score})
-                    # Record billing synchronously with timeout + fallback
-                    await self._record_billing_with_retry(
-                        tenant_id=t_id_str,
-                        action=action,
-                        agent_id=agent_id,
-                        tokens=tokens,
-                        audit_id=request_id
-                    )
-            except Exception as _inner:
-                logger.error("error_handler_failed", error=str(_inner))
-
-            # HTTP-level rejections (auth, throttle, etc.) are blocks, not
-            # platform errors. Bucket them under final_decision="block" unless
-            # the success path already filled in a richer disposition.
-            if _flight_final["status"] != "ok":
-                if _flight_final["decision"] == "error":
-                    _flight_final["decision"] = "block"
-                _flight_final["status"] = "failed"
-                _flight_final["risk"]   = risk_score or 0.0
-            return self._deny(e.detail, e.status_code)
+            return await self._handle_http_exception(
+                e, request,
+                t_id_str=t_id_str,
+                agent_id=agent_id,
+                tool_name=tool_name,
+                action=action,
+                risk_score=risk_score,
+                tokens=tokens,
+                request_id=request_id,
+                flight_final=_flight_final,
+            )
         except Exception as exc:
             # 2026-05-15: classify timeouts as 504, not 500. The synchronous
             # /execute contract permits a clean timeout response — what it
@@ -917,6 +866,96 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             except Exception:
                 # Latency tracking must never break a request.
                 pass
+
+    async def _handle_http_exception(
+        self,
+        e: HTTPException,
+        request: Request,
+        *,
+        t_id_str: str,
+        agent_id: uuid.UUID,
+        tool_name: str,
+        action: str,
+        risk_score: float,
+        tokens: int,
+        request_id: str,
+        flight_final: dict,
+    ) -> Response:
+        """Finalise an HTTPException-terminated request.
+
+        Three jobs, all best-effort:
+          1. Emit a terminal flight step + snapshot so the timeline doesn't
+             end abruptly. Fire-and-forget; never blocks the response.
+          2. Audit + billing the error outcome. Recovers ``t_id_str`` /
+             ``agent_id`` from headers when auth failed before the
+             middleware bound them — without this, auth-failure rows would
+             be attributed to the zero UUID and slip through tenant-scoped
+             queries.
+          3. Bucket the flight_final disposition: HTTP-level rejections
+             (auth, throttle, etc.) are blocks, not platform errors.
+
+        Returns the final 4xx/5xx response built from the exception.
+        """
+        # 1. Flight terminal step + snapshot
+        try:
+            if t_id_str != "unknown":
+                asyncio.create_task(_safe_bg(emit_step(
+                    self.redis, tenant_id=t_id_str, request_id=request_id,
+                    step_index=99, step_type="failure",
+                    summary=f"{e.status_code}:{(e.detail or '')[:80]}",
+                    status="error",
+                    payload={"status_code": e.status_code},
+                )))
+                asyncio.create_task(_safe_bg(emit_snapshot(
+                    self.redis, tenant_id=t_id_str, request_id=request_id,
+                    step_index=99,
+                    snapshot={
+                        "phase": "http_exception",
+                        "status_code": e.status_code,
+                        "detail": (e.detail or "")[:200],
+                        "tool": tool_name,
+                    },
+                )))
+        except Exception as _flight_exc:
+            logger.debug("flight_error_emit_failed", error=str(_flight_exc))
+
+        # 2. Audit + billing — recover identity from headers if auth failed
+        try:
+            if t_id_str == "unknown":
+                t_id_hdr = request.headers.get("X-Tenant-ID")
+                if t_id_hdr:
+                    t_id_str = t_id_hdr
+                    try:
+                        agent_id_hdr = request.headers.get("X-Agent-ID")
+                        if agent_id_hdr:
+                            agent_id = uuid.UUID(agent_id_hdr)
+                    except (ValueError, TypeError):
+                        pass
+
+            if t_id_str != "unknown":
+                await self._log_audit(
+                    t_id_str, agent_id, "execute_tool", tool_name,
+                    action, e.detail, request_id,
+                    {"status": e.status_code, "risk_score": risk_score},
+                )
+                await self._record_billing_with_retry(
+                    tenant_id=t_id_str,
+                    action=action,
+                    agent_id=agent_id,
+                    tokens=tokens,
+                    audit_id=request_id,
+                )
+        except Exception as _inner:
+            logger.error("error_handler_failed", error=str(_inner))
+
+        # 3. Bucket flight disposition: HTTP rejection = block, not error
+        if flight_final["status"] != "ok":
+            if flight_final["decision"] == "error":
+                flight_final["decision"] = "block"
+            flight_final["status"] = "failed"
+            flight_final["risk"]   = risk_score or 0.0
+
+        return self._deny(e.detail, e.status_code)
 
     async def _enforce_bounded_autonomy(
         self,
