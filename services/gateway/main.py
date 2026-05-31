@@ -454,117 +454,10 @@ class AuthRequest(BaseModel):
 # extracted to routers/sso.py.
 
 
-@app.get("/tenant/quota", tags=["tenant"])
-async def get_tenant_quota(request: Request) -> dict[str, Any]:
-    """Sprint 3.2 — current usage + limits for the authenticated tenant.
-
-    Returns:
-        {
-          "limits": {
-            "requests_per_second": int, "burst": int,
-            "daily_request_cap": int, "monthly_request_cap": int | null,
-            "rpm_limit": int, "tier": str,
-          },
-          "usage": {
-            "daily_used": int, "daily_resets_at": iso8601,
-            "monthly_used": int, "monthly_resets_at": iso8601 | null,
-            "monthly_warn_emitted": bool,
-          }
-        }
-
-    Counts come from Redis counters maintained by `TenantQuotaLimiter`.
-    Read-only — never increments the counters.
-    """
-    tenant_id = getattr(request.state, "tenant_id", None)
-    if tenant_id is None:
-        raise HTTPException(status_code=401, detail="tenant context required")
-    limits = getattr(request.state, "quota_limits", None) or {}
-    tier   = getattr(request.state, "tier", "basic")
-    rpm    = int(getattr(request.state, "rpm_limit", 0) or 0)
-
-    from sdk.common.inference_cost import InferenceCostLimiter
-    from sdk.common.ratelimit import TenantQuotaLimiter
-    limiter = TenantQuotaLimiter(redis)
-    usage = await limiter.usage_snapshot(
-        tenant_id=str(tenant_id),
-        daily_cap=int(limits.get("daily_request_cap", 1_000_000)),
-        monthly_cap=(
-            int(limits["monthly_request_cap"])
-            if limits.get("monthly_request_cap") is not None else None
-        ),
-    )
-    # Sprint 3.5 — daily inference $$ usage alongside the request quota
-    cost_limiter = InferenceCostLimiter(redis)
-    cost_usage = await cost_limiter.usage_snapshot(
-        tenant_id=str(tenant_id),
-        agent_id=str(getattr(request.state, "agent_id", "") or ""),
-    )
-
-    # Sprint 2 — at-most-once-per-month SSE quota_warning publish when
-    # the tenant crosses 80% of its monthly request cap. The
-    # `acp:quota_warning_sent:{tenant_id}:{YYYYMM}` SETNX guard makes
-    # this idempotent even if /tenant/quota is polled every few seconds.
-    monthly_cap = usage.get("monthly_cap") if isinstance(usage, dict) else None
-    monthly_used = usage.get("monthly_used") if isinstance(usage, dict) else None
-    if monthly_cap and monthly_used is not None:
-        try:
-            cap_int = int(monthly_cap)
-            used_int = int(monthly_used)
-        except (TypeError, ValueError):
-            cap_int, used_int = 0, 0
-        if cap_int > 0 and used_int >= int(cap_int * 0.80):
-            now = datetime.now(UTC)
-            guard_key = f"acp:quota_warning_sent:{tenant_id}:{now.strftime('%Y%m')}"
-            try:
-                first_time = await redis.set(guard_key, "1", nx=True, ex=35 * 24 * 3600)
-            except Exception as _e:
-                logger.warning("quota_warning_guard_failed", error=str(_e))
-                first_time = False
-            if first_time:
-                await _publish_event(
-                    redis, str(tenant_id), "quota_warning",
-                    {
-                        "tenant_id":         str(tenant_id),
-                        "monthly_used":      used_int,
-                        "monthly_cap":       cap_int,
-                        "percent":           round(used_int / cap_int * 100.0, 2),
-                        "monthly_resets_at": usage.get("monthly_resets_at"),
-                        "threshold":         80,
-                    },
-                )
-
-    return {
-        "limits": {
-            "requests_per_second":           int(limits.get("requests_per_second", 50)),
-            "burst":                         int(limits.get("burst", 100)),
-            "daily_request_cap":             int(limits.get("daily_request_cap", 1_000_000)),
-            "monthly_request_cap":           limits.get("monthly_request_cap"),
-            "daily_inference_cost_cap_usd":  limits.get("daily_inference_cost_cap_usd"),
-            "rpm_limit":                     rpm,
-            "tier":                          tier,
-        },
-        "usage": {**usage, **cost_usage},
-    }
+# /tenant/quota extracted to routers/tenant.py.
 
 
-@app.post("/auth/tenants", tags=["auth"])
-async def upsert_tenant(request: Request) -> Any:
-    """Proxy → Identity: create or update a tenant's tier and rpm_limit (ADMIN only)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/tenants",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    # Bust the in-process Redis tenant-metadata cache so rpm_limit / tier
-    # changes take effect on the next request, not after the 10-minute TTL.
-    if resp.status_code in (200, 201) and isinstance(body, dict) and body.get("tenant_id"):
-        try:
-            redis = request.app.state.redis
-            await redis.delete(f"acp:tenant_meta:{body['tenant_id']}")
-        except Exception:
-            pass
-    return _passthrough(resp)
+# /auth/tenants extracted to routers/auth.py.
 
 
 # /v1/* alias: every endpoint is reachable under the stable /v1 namespace.
@@ -614,6 +507,7 @@ from services.gateway.routers.sso import router as _sso_router  # noqa: E402
 from services.gateway.routers.stripe_webhook import (
     router as _stripe_router,  # noqa: E402
 )
+from services.gateway.routers.tenant import router as _tenant_router  # noqa: E402
 from services.gateway.routers.tenant_admin import (
     router as _tenant_admin_router,  # noqa: E402
 )
@@ -641,6 +535,7 @@ app.include_router(_forensics_router)
 app.include_router(_users_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
+app.include_router(_tenant_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -745,25 +640,7 @@ def _extract_policy_reasons(decision_data: Any) -> list[str]:
 # in sprint-4.E. The router is included near app initialisation alongside admin.
 
 
-@app.get("/decision/history", tags=["decision"])
-async def decision_history(request: Request) -> Any:
-    """Proxy → Decision service decision history."""
-    resp = await request.app.state.client.get(
-        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/history",
-        params={"limit": _clamp_int(request.query_params.get("limit"), 20, 1, 200)},
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/decision/summary", tags=["decision"])
-async def decision_summary(request: Request) -> Any:
-    """Proxy → Decision service risk summary (Redis-based counters)."""
-    resp = await request.app.state.client.get(
-        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/summary",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# /decision/history + /decision/summary extracted to routers/decision.py.
 
 
 # All /forensics/* (3 routes) extracted to routers/forensics.py.
