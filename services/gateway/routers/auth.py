@@ -209,3 +209,26 @@ async def get_tenant_metadata(tenant_id: str, request: Request) -> Any:
         headers=internal_headers(request),
     )
     return passthrough(resp)
+
+
+@router.post("/auth/tenants", tags=["auth"])
+async def upsert_tenant(request: Request) -> Any:
+    """Proxy → Identity: create or update a tenant's tier and rpm_limit (ADMIN only).
+
+    On success busts the in-process Redis ``acp:tenant_meta:{id}`` cache so
+    rpm_limit / tier changes take effect on the very next request rather
+    than after the 10-minute TTL.
+    """
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/auth/tenants",
+        json=body,
+        headers=internal_headers(request),
+    )
+    if resp.status_code in (200, 201) and isinstance(body, dict) and body.get("tenant_id"):
+        try:
+            redis_client = request.app.state.redis
+            await redis_client.delete(f"acp:tenant_meta:{body['tenant_id']}")
+        except Exception:
+            pass
+    return passthrough(resp)
