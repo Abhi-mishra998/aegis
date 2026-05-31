@@ -1,70 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
-  Webhook, Slack, Bell, Globe, CheckCircle2, XCircle,
-  Save, Play, Eye, EyeOff, Loader2, AlertCircle,
+  Webhook, Slack, Bell, Globe,
+  Save, Play, Loader2, AlertCircle,
   AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { webhookService } from '../services/api'
-
-function StatusBadge({ result }) {
-  if (!result) return null
-  const ok = result.status === 'sent' || result.status === 'ok'
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
-      ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-    }`}>
-      {ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-      {ok ? 'Sent' : result.reason || result.status}
-    </span>
-  )
-}
-
-function SecretInput({ id, label, placeholder, value, onChange }) {
-  const [show, setShow] = useState(false)
-  return (
-    <div>
-      <label htmlFor={id} className="block text-xs text-neutral-400 mb-1">{label}</label>
-      <div className="relative">
-        <input
-          id={id}
-          type={show ? 'text' : 'password'}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="
-            w-full bg-white/[0.04] border border-[var(--border-subtle)]
-            rounded-lg px-3 py-2 pr-9 text-sm text-white placeholder-neutral-600
-            focus:outline-none focus:border-white/20
-          "
-        />
-        <button
-          type="button"
-          onClick={() => setShow(v => !v)}
-          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white"
-        >
-          {show ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function ChannelCard({ icon: Icon, title, description, children }) {
-  return (
-    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center">
-          <Icon size={16} className="text-neutral-300" />
-        </div>
-        <div>
-          <div className="text-sm font-medium text-white">{title}</div>
-          <div className="text-xs text-neutral-500">{description}</div>
-        </div>
-      </div>
-      {children}
-    </div>
-  )
-}
+import { SecretInput, StatusBadge, IntegrationCard } from '../components/Common/ConnectorPrimitives'
 
 export default function WebhookSettings() {
   const [cfg, setCfg] = useState({ slack_url: '', pagerduty_key: '', generic_url: '' })
@@ -177,7 +118,7 @@ export default function WebhookSettings() {
         </div>
       )}
 
-      <ChannelCard icon={Slack} title="Slack" description="Post alerts to a Slack channel via incoming webhook">
+      <IntegrationCard icon={Slack} title="Slack" description="Post alerts to a Slack channel via incoming webhook">
         <div className="space-y-3">
           <SecretInput
             id="slack_url"
@@ -202,9 +143,9 @@ export default function WebhookSettings() {
             Create an incoming webhook at <span className="text-neutral-400">api.slack.com/apps</span>.
           </p>
         </div>
-      </ChannelCard>
+      </IntegrationCard>
 
-      <ChannelCard icon={Bell} title="PagerDuty" description="Trigger PagerDuty incidents via Events API v2">
+      <IntegrationCard icon={Bell} title="PagerDuty" description="Trigger PagerDuty incidents via Events API v2">
         <div className="space-y-3">
           <SecretInput
             id="pd_key"
@@ -228,9 +169,9 @@ export default function WebhookSettings() {
             Get the routing key from your PagerDuty service → Integrations → Events API v2.
           </p>
         </div>
-      </ChannelCard>
+      </IntegrationCard>
 
-      <ChannelCard icon={Globe} title="Generic Webhook" description="Send JSON payloads to any HTTP endpoint">
+      <IntegrationCard icon={Globe} title="Generic Webhook" description="Send JSON payloads to any HTTP endpoint">
         <div className="space-y-3">
           <div>
             <label htmlFor="generic_url" className="block text-xs text-neutral-400 mb-1">Endpoint URL</label>
@@ -262,7 +203,7 @@ export default function WebhookSettings() {
             {`POST ${cfg.generic_url || '<url>'}\nContent-Type: application/json\n\n{"event":"aegis.test","source":"acp","timestamp":"<iso>"}`}
           </div>
         </div>
-      </ChannelCard>
+      </IntegrationCard>
 
       <div className="p-4 bg-white/[0.02] border border-[var(--border-subtle)] rounded-xl">
         <div className="flex items-start gap-3">

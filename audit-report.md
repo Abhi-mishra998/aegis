@@ -571,10 +571,16 @@ are mechanically similar to what's already shipped:
   fidelity or grow a wide prop matrix; neither makes the codebase
   meaningfully better. Skipped.
 - **Tier B3 — SSO/SIEM/Webhook settings "Connector card" extraction**.
-  Same shape: three production pages share ~80 lines, but each has
-  page-specific copy and validation. Worth a dedicated UI PR with a
-  small design pass for the shared `ConnectorConfig` primitive; not
-  worth a drive-by audit refactor.
+  Closed in B3-redo: extracted `SecretInput` / `StatusBadge` /
+  `IntegrationCard` into `ui/src/components/Common/ConnectorPrimitives.jsx`
+  (143 LOC, exported). All three pages now import from there; local
+  definitions removed. `SecretInput` covers both single-line and
+  textarea (SAML cert) modes via `rows` prop. `StatusBadge` defaults to
+  `Sent (HTTP nnn)` when `result.http_status` is set, else `Sent`;
+  accepts `successText` override. `IntegrationCard` has an optional
+  `color` prop — when omitted (Webhook page) the chip stays neutral.
+  Net: −152 LOC across three pages, +143 LOC in the shared module,
+  three primitives now live in one place. UI build passes.
 
 ### Pre-existing dirty tree (intentionally not modified)
 
