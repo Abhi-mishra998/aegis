@@ -1,16 +1,15 @@
 import React, { useState, useMemo, useEffect, useRef, useContext, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import { useAgents } from '../../hooks/useAgents'
 import { AgentContext } from '../../context/AgentContext'
 import { authService, incidentService } from '../../services/api'
 import { LogOut, Menu, ChevronDown, Settings, User, Zap, Bot, Command, AlertTriangle } from 'lucide-react'
 import NotificationCenter from '../Common/NotificationCenter'
+import AgentScopePicker from './AgentScopePicker'
 
 export default function Topbar({ onMenuClick, onCommandPalette }) {
   const navigate  = useNavigate()
   const { user, tenant_id, updateAuth, addToast } = useAuth()
-  const { agents, selectedAgentId, setSelectedAgentId, agentsLoading } = useAgents()
   const { sseConnected } = useContext(AgentContext)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [openIncidents, setOpenIncidents] = useState(0)
@@ -81,36 +80,10 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
         </div>
       </div>
 
-      {/* Center: agent selector */}
+      {/* Center: agent selector — shared with Sidebar via AgentScopePicker */}
       <div className="flex items-center gap-2 px-2">
         <Bot size={13} className="text-neutral-500 shrink-0" aria-hidden="true" />
-        {agentsLoading ? (
-          <span className="text-xs text-neutral-600 font-mono">Loading agents…</span>
-        ) : agents.length === 0 ? (
-          <span className="text-xs text-neutral-600 italic">No agents</span>
-        ) : (
-          <select
-            value={selectedAgentId || ''}
-            onChange={(e) => setSelectedAgentId(e.target.value)}
-            aria-label="Select active agent"
-            className="
-              text-xs font-mono
-              bg-[var(--bg-surface-elevated)]
-              border border-[var(--border-subtle)]
-              rounded-lg px-2 py-1
-              focus:outline-none focus:border-white/30
-              transition-colors cursor-pointer
-              max-w-[200px] truncate
-            "
-            style={{ color: '#d4d4d4', WebkitTextFillColor: '#d4d4d4', colorScheme: 'dark' }}
-          >
-            {agents.map((a) => (
-              <option key={a.id} value={a.id} style={{ backgroundColor: '#111', color: '#fff' }}>
-                {a.name} · {(a.status || 'unknown').toLowerCase()}
-              </option>
-            ))}
-          </select>
-        )}
+        <AgentScopePicker variant="header" />
       </div>
 
       {/* Right: SSE status + cmd palette + notifications + user menu */}
