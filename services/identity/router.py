@@ -859,8 +859,16 @@ async def test_sso_config(
             try:
                 doc = resp.json()
                 discovered_issuer = doc.get("issuer", issuer)
-            except Exception:
-                pass
+            except Exception as exc:
+                # OIDC discovery response wasn't JSON or the JSON shape
+                # didn't expose an issuer. Fall back to the configured
+                # issuer so the operator can still see the URL came back
+                # 2xx — log so a future "we returned a wrong issuer" bug
+                # is debuggable.
+                logger.warning(
+                    "oidc_discovery_parse_failed",
+                    test_url=test_url, error=str(exc),
+                )
         return {
             "reachable": reachable,
             "issuer": discovered_issuer,

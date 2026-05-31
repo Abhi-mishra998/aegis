@@ -115,8 +115,14 @@ async def list_recent_insights(
                     item = json.loads(raw)
                     item.setdefault("event_id", event_id)
                     insights.append(item)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Malformed insight blob in Redis. Skip it but log so
+                    # a poison-pill entry is debuggable instead of silently
+                    # truncating the response.
+                    logger.warning(
+                        "insight_parse_failed_indexed",
+                        event_id=event_id, error=str(exc),
+                    )
         if insights:
             return {"success": True, "data": insights}
 
@@ -134,8 +140,13 @@ async def list_recent_insights(
                     insights.append(parsed)
                     if len(insights) >= limit:
                         break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Malformed insight blob discovered in SCAN fallback.
+                    # Skip but log so the responsible writer can be tracked.
+                    logger.warning(
+                        "insight_parse_failed_scan",
+                        key=str(k), error=str(exc),
+                    )
         if cursor == 0:
             break
 
