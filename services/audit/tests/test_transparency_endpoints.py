@@ -101,6 +101,13 @@ def fake_db():
     return db
 
 
+# Matches the default tenant_id embedded in `_make_signed_payload`'s
+# receipt. verify_root only consults this arg on the `{date: ...}`
+# shortcut path; for full signed payloads (every test below), the value
+# is unused but the parameter is still required.
+_TEST_TENANT = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
 # --------------------------------------------------------------------------- #
 # empty_epoch_root_hash                                                       #
 # --------------------------------------------------------------------------- #
@@ -135,7 +142,7 @@ class TestEmptyEpochRootHash:
 class TestVerifyRootContract:
     async def test_valid_payload_returns_ok(self, fake_db) -> None:
         payload = _make_signed_payload()
-        resp = await verify_root(db=fake_db, payload=payload)
+        resp = await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=payload)
         body = resp.data
         assert body["valid"] is True
         assert body["algorithm"] == "ed25519"
@@ -150,7 +157,7 @@ class TestVerifyRootContract:
         bad = _make_signed_payload()
         bad.pop("signature")
         with pytest.raises(HTTPException) as exc:
-            await verify_root(db=fake_db, payload=bad)
+            await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=bad)
         assert exc.value.status_code == 400
         body = exc.value.detail
         assert body["valid"] is False
@@ -160,26 +167,26 @@ class TestVerifyRootContract:
 
     async def test_empty_payload_is_400(self, fake_db) -> None:
         with pytest.raises(HTTPException) as exc:
-            await verify_root(db=fake_db, payload={})
+            await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload={})
         assert exc.value.status_code == 400
         assert exc.value.detail["errors"] == ["malformed_payload"]
 
     async def test_none_payload_is_400(self, fake_db) -> None:
         with pytest.raises(HTTPException) as exc:
-            await verify_root(db=fake_db, payload=None)
+            await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=None)
         assert exc.value.status_code == 400
 
     async def test_missing_receipt_subfield_is_400(self, fake_db) -> None:
         payload = _make_signed_payload()
         payload["receipt"].pop("root_hash")
         with pytest.raises(HTTPException) as exc:
-            await verify_root(db=fake_db, payload=payload)
+            await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=payload)
         assert exc.value.status_code == 400
 
     async def test_unknown_fingerprint_returns_200_with_error_code(self, fake_db) -> None:
         payload = _make_signed_payload()
         payload["public_key_fingerprint"] = "0" * 32
-        resp = await verify_root(db=fake_db, payload=payload)
+        resp = await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=payload)
         body = resp.data
         assert body["valid"] is False
         assert body["errors"] == ["unknown_key_fingerprint"]
@@ -190,7 +197,7 @@ class TestVerifyRootContract:
         payload = _make_signed_payload()
         # Flip one byte of the receipt — the signature won't validate anymore.
         payload["receipt"]["leaf_count"] += 1
-        resp = await verify_root(db=fake_db, payload=payload)
+        resp = await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=payload)
         body = resp.data
         assert body["valid"] is False
         assert body["errors"] == ["signature_mismatch"]
@@ -200,7 +207,7 @@ class TestVerifyRootContract:
         payload = _make_signed_payload()
         payload["signature"] = "@@@@not-base64@@@@"
         with pytest.raises(HTTPException) as exc:
-            await verify_root(db=fake_db, payload=payload)
+            await verify_root(db=fake_db, tenant_id=_TEST_TENANT, payload=payload)
         assert exc.value.detail["errors"] == ["malformed_payload"]
 
 
