@@ -802,44 +802,16 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 flight_final=_flight_final,
             )
         except Exception as exc:
-            # 2026-05-15: classify timeouts as 504, not 500. The synchronous
-            # /execute contract permits a clean timeout response — what it
-            # must never produce is 202 (no polling URL exists). Decision
-            # service timeouts manifest as either `asyncio.TimeoutError` or
-            # `httpx.TimeoutException` (ReadTimeout / ConnectTimeout etc.).
-            is_timeout = isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
-            logger.exception("gateway_unhandled_error", error=str(exc), is_timeout=is_timeout)
-            # /execute contract: only 200/403/429/502/504. Timeouts → 504;
-            # all other upstream failures → 403 fail-closed (can't make a
-            # security decision → deny is the safe default).
-            status_code = 504 if is_timeout else 403
-            audit_reason = "decision_timeout" if is_timeout else f"fail_closed: {exc}"
-            try:
-                if t_id_str != "unknown":
-                    # The audit row is the transparency-chain anchor for
-                    # this 504 — without it a customer auditor can't tell a
-                    # timed-out request from a dropped one.
-                    await self._log_audit(
-                        t_id_str, agent_id, "execute_tool", tool_name,
-                        "error", audit_reason, request_id,
-                        {"status": status_code, "risk_score": risk_score,
-                         "category": "decision_timeout" if is_timeout else "fail_closed"},
-                    )
-                    await self._record_billing_with_retry(
-                        tenant_id=t_id_str,
-                        action="error",
-                        agent_id=agent_id,
-                        tokens=tokens,
-                        audit_id=request_id,
-                    )
-            except Exception as _err_inner:
-                logger.error("error_path_finalize_failed", error=str(_err_inner))
-            _flight_final["decision"] = "error"
-            _flight_final["status"]   = "failed"
-            _flight_final["risk"]     = risk_score or 0.0
-            if is_timeout:
-                return self._decision_timeout(request_id)
-            return self._deny("Fail-Closed: decision service unavailable", 403)
+            return await self._handle_unhandled_exception(
+                exc,
+                t_id_str=t_id_str,
+                agent_id=agent_id,
+                tool_name=tool_name,
+                risk_score=risk_score,
+                tokens=tokens,
+                request_id=request_id,
+                flight_final=_flight_final,
+            )
         finally:
             # Guaranteed timeline close. Every /execute that reached
             # tool_name resolution set `_flight_opened=True`; the matching
@@ -866,6 +838,64 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             except Exception:
                 # Latency tracking must never break a request.
                 pass
+
+    async def _handle_unhandled_exception(
+        self,
+        exc: BaseException,
+        *,
+        t_id_str: str,
+        agent_id: uuid.UUID,
+        tool_name: str,
+        risk_score: float,
+        tokens: int,
+        request_id: str,
+        flight_final: dict,
+    ) -> Response:
+        """Finalise a non-HTTPException-terminated request.
+
+        Classifies the exception:
+          * ``asyncio.TimeoutError`` or ``httpx.TimeoutException`` → 504
+            with category=``decision_timeout``. The /execute contract is
+            strictly synchronous so a timeout is the cleanest possible
+            response (the alternative was 202 + an unrealised polling URL).
+          * everything else → 403 fail-closed. We can't make a security
+            decision so deny is the only safe default; /execute's response
+            contract is 200/403/429/502/504 only.
+
+        Always writes an audit + billing row when the tenant is known —
+        the audit row is the transparency-chain anchor for the 5xx and
+        without it an auditor can't tell a timed-out request from a
+        dropped one.
+        """
+        is_timeout = isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
+        logger.exception("gateway_unhandled_error", error=str(exc), is_timeout=is_timeout)
+        status_code = 504 if is_timeout else 403
+        audit_reason = "decision_timeout" if is_timeout else f"fail_closed: {exc}"
+        try:
+            if t_id_str != "unknown":
+                await self._log_audit(
+                    t_id_str, agent_id, "execute_tool", tool_name,
+                    "error", audit_reason, request_id,
+                    {"status": status_code, "risk_score": risk_score,
+                     "category": "decision_timeout" if is_timeout else "fail_closed"},
+                )
+                await self._record_billing_with_retry(
+                    tenant_id=t_id_str,
+                    action="error",
+                    agent_id=agent_id,
+                    tokens=tokens,
+                    audit_id=request_id,
+                )
+        except Exception as _err_inner:
+            logger.error("error_path_finalize_failed", error=str(_err_inner))
+
+        flight_final["decision"] = "error"
+        flight_final["status"]   = "failed"
+        flight_final["risk"]     = risk_score or 0.0
+
+        if is_timeout:
+            return self._decision_timeout(request_id)
+        return self._deny("Fail-Closed: decision service unavailable", 403)
 
     async def _handle_http_exception(
         self,
