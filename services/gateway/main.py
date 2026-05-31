@@ -905,6 +905,7 @@ from services.gateway.routers.dashboard import router as _dashboard_router  # no
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
 from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
 from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
+from services.gateway.routers.risk import router as _risk_router  # noqa: E402
 from services.gateway.routers.sso import router as _sso_router  # noqa: E402
 from services.gateway.routers.stripe_webhook import (
     router as _stripe_router,  # noqa: E402
@@ -929,6 +930,7 @@ app.include_router(_incidents_router)
 app.include_router(_billing_router)
 app.include_router(_compliance_router)
 app.include_router(_transparency_router)
+app.include_router(_risk_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1111,22 +1113,7 @@ async def revoke_agent_permission(agent_id: str, permission_id: str, request: Re
 # ─────────────────────────────────────────────────────────────
 
 
-@app.post("/threat-intel/ip", tags=["threat-intel"])
-async def threat_intel_ip_proxy(request: Request) -> Any:
-    """Proxy → Audit service — enrich an IP address via threat intelligence."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/threat-intel/ip", request)
-
-
-@app.post("/threat-intel/domain", tags=["threat-intel"])
-async def threat_intel_domain_proxy(request: Request) -> Any:
-    """Proxy → Audit service — enrich a domain via threat intelligence."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/threat-intel/domain", request)
-
-
-@app.get("/threat-intel/summary", tags=["threat-intel"])
-async def threat_intel_summary_proxy(request: Request) -> Any:
-    """Proxy → Audit service — return threat intel summary counters."""
-    return await _trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/threat-intel/summary", request)
+# All /threat-intel/* (3 routes) extracted to routers/risk.py.
 
 
 def _is_nontrivial_policy_decision(decision_data: Any) -> bool:
@@ -1244,62 +1231,9 @@ async def upload_policy_proxy(request: Request) -> Any:
 # (GET + POST), /audit/drift/{agent_id} — all extracted to routers/audit.py.
 
 
-# /billing/cost-attribution extracted to routers/billing.py
-@app.get("/playbooks/autotrigger-stats", tags=["autonomy"])
-async def playbook_autotrigger_stats(request: Request) -> Any:
-    """Proxy → Autonomy service per-playbook auto-trigger counts."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/playbooks/autotrigger-stats",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-# ─────────────────────────────────────────────────────────────
-# RISK PROXY — /risk
-# P2-7 FIX: Correct downstream URLs (removed double /audit prefix)
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/risk/summary", tags=["risk"])
-async def risk_summary(request: Request) -> Any:
-    """Proxy → Audit service summary for risk dashboard."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/summary",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/risk/signal-weights", tags=["risk"])
-async def risk_signal_weights(request: Request) -> Any:
-    """Proxy → Decision service signal weights."""
-    resp = await request.app.state.client.get(
-        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/signal-weights",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/risk/timeline", tags=["risk"])
-async def risk_timeline(request: Request) -> Any:
-    """Proxy → Audit service risk timeline. Forwards ?days= query param."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/risk/timeline",
-        params={"days": _clamp_int(request.query_params.get("days"), 7, 1, 90)},
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/risk/top-threats", tags=["risk"])
-async def risk_top_threats(request: Request) -> Any:
-    """Proxy → Audit service top threats. Forwards ?limit= query param."""
-    resp = await request.app.state.client.get(
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/risk/top-threats",
-        params={"limit": _clamp_int(request.query_params.get("limit"), 10, 1, 100)},
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# /billing/cost-attribution extracted to routers/billing.py.
+# /playbooks/autotrigger-stats extracted to routers/risk.py.
+# All /risk/* (4 routes) extracted to routers/risk.py.
 
 
 # /audit/trends, /audit/top-findings, /audit/peer-benchmark/{id},
@@ -1441,20 +1375,7 @@ async def validate_api_key(request: Request) -> Any:
 # bottom of this file alongside the other extracted sub-routers.
 
 
-# ─────────────────────────────────────────────────────────────
-# INSIGHTS PROXY — /insights
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/insights/recent", tags=["risk"])
-async def get_recent_insights(request: Request) -> Any:
-    """Proxy → Insight service for recent AI analysis results."""
-    resp = await request.app.state.client.get(
-        f"{settings.INSIGHT_SERVICE_URL.rstrip('/')}/insights",
-        params=request.query_params,
-        headers=_internal_headers(request),
-    )
-    # Insight service returns {"success": true, "data": [...]} — pass through directly
-    return _passthrough(resp)
+# /insights/recent extracted to routers/risk.py.
 
 
 # ─────────────────────────────────────────────────────────────

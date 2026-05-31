@@ -90,7 +90,13 @@ def test_gateway_cost_attribution_forwards_to_billing():
 
 
 def test_gateway_autotrigger_stats_forwards_to_autonomy():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    # /playbooks/autotrigger-stats was extracted from main.py to
+    # routers/risk.py in sprint-5; search the new file first so .find()
+    # lands on the actual decorator, not the pointer comment in main.py.
+    src = (
+        (ROOT / "services/gateway/routers/risk.py").read_text()
+        + (ROOT / "services/gateway/main.py").read_text()
+    )
     idx = src.find("autotrigger-stats")
     snippet = src[max(0, idx - 300):idx + 500]
     assert "AUTONOMY_SERVICE_URL" in snippet or "autonomy" in snippet.lower()
