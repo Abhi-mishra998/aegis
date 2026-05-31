@@ -564,12 +564,14 @@ are mechanically similar to what's already shipped:
   the minimal scalar state it needs. The execution phase itself
   (line 863+) is the largest — splitting it should be its own PR with
   load-test gates because it sits squarely on the request path.
-- **Tier B2 — Sidebar/Topbar agent picker dedup**. The 39-line jscpd
-  hit IS a real duplication, but Sidebar uses `text-[10px] font-mono`
-  + truncated label and Topbar uses `text-xs font-mono` + `name · status`
-  label format. Extracting a shared component would either lose visual
-  fidelity or grow a wide prop matrix; neither makes the codebase
-  meaningfully better. Skipped.
+- **Tier B2 — Sidebar/Topbar agent picker dedup**. Closed in B2-redo:
+  extracted `ui/src/components/Layout/AgentScopePicker.jsx` with a
+  VARIANT lookup table (`compact` for Sidebar — `text-[10px|11px]`,
+  rounded-md, name-only label; `header` for Topbar — `text-xs`,
+  rounded-lg, max-w-[200px], `name · status` label). Both call sites
+  reduced to a single `<AgentScopePicker variant="…" />` line; no
+  visual regression. Shared inline `colorScheme: 'dark'` style block
+  also lives in one place now.
 - **Tier B3 — SSO/SIEM/Webhook settings "Connector card" extraction**.
   Closed in B3-redo: extracted `SecretInput` / `StatusBadge` /
   `IntegrationCard` into `ui/src/components/Common/ConnectorPrimitives.jsx`
@@ -601,6 +603,28 @@ Two pre-existing ruff issues live in those pending files:
 Recommend folding these into the user's next pending commit rather
 than mixing them into the audit commit chain.
 
+### Pre-existing test failures (not caused by this audit)
+
+Final `pytest -m 'not integration'` snapshot: **1829 passed, 8 failed,
+5 errors, 14 deselected** in ~14s. Verified by `git merge-base
+--is-ancestor 5c6bff1 38d4345` (exit 0) that the source change which
+made the tests fail predates the first audit commit.
+
+- `services/audit/tests/test_transparency_endpoints.py` — 8 contract
+  tests call `verify_root(db=..., payload=...)` but the source
+  signature in `services/audit/transparency.py:385` requires a third
+  `tenant_id` arg (added in `5c6bff1 "remove the unused md files"`).
+  The test file was never updated to match.
+- `services/identity/tests/test_org_id_consistency.py` — 5 tests
+  require a live Postgres on `127.0.0.1:5433`. They aren't marked
+  `@pytest.mark.integration`, so they slip through the `-m 'not
+  integration'` filter and error during fixture setup with `OSError:
+  Connect call failed`. Run with the compose stack up, or add the
+  marker.
+
+Both clusters are pre-existing source/test drift, untouched by every
+commit in the audit chain.
+
 ## Metrics
 
 | Metric | Before | After |
@@ -616,7 +640,7 @@ than mixing them into the audit commit chain.
 | Unreachable code blocks (vulture, ≥100% conf.) | 1 | 0 |
 | Duplicated alembic env.py lines across services | ~470 | ~100 (shared) + 9×~7 (shims) |
 | Pre-existing test failures (route refactor drift) | 10 | 0 |
-| `pytest -m 'not integration'` result | 1690 pass / 10 fail | **1690 pass / 0 fail** |
+| `pytest -m 'not integration'` audit-introduced regressions | 0 | **0** (1829 pass; 8 fail + 5 err are pre-existing — see below) |
 | `cd ui && npm run build` | passes | passes |
 | `ruff check .` errors (whole repo) | 3 | **0** |
 | `evaluate_decision` cyclomatic complexity | 86 | **37** |
@@ -625,13 +649,15 @@ than mixing them into the audit commit chain.
 | `services/gateway/main.py` route count | 162 | **8** |
 | Sub-router files in `services/gateway/routers/` | 7 | **18** |
 | Routes extracted out of main.py | 0 | **154** |
-| Atomic git commits added by this audit | 0 | **38** |
+| Atomic git commits added by this audit | 0 | **46** |
+| UI shared primitives extracted (B2/B3) | 0 | **4** (AgentScopePicker + SecretInput + StatusBadge + IntegrationCard) |
+| Silent `except: pass` removed (P4a) | 3 | **0** |
 
 ### Commits added by this audit (in order)
 
 ```
 38d4345  audit: remove 4 unused imports (ruff F401)
-4ae0b12  audit: delete 8 dead UI primitives (Sprint-4 leftovers)
+90dc17f  audit: delete 8 dead UI primitives (Sprint-4 leftovers)
 7523efd  audit: drop 5 unused npm packages from ui/package.json
 f9295e5  audit: delete orphan top-level package.json + lockfile
 9f623cb  audit: drop 3 unused Python deps from pyproject.toml
@@ -651,8 +677,31 @@ a37eca5  audit: clear final 3 ruff issues across the repo
 1a7730b  audit: finalise report with C3 + ruff-clean outcomes
 e5f41c5  audit(C2b): extract _validate_execute_agent_id phase from middleware
 a9015f8  audit(C2c): extract _check_per_agent_cost_cap phase from middleware
-9298e0a  audit(C1): extract 16 /auto-response routes into routers/auto_response.py
-(this commit) audit: finalise report with C1+C2 partial outcomes
+9298e0a  audit(C1):    extract 16 /auto-response routes into routers/auto_response.py
+8b67964  audit: finalise report with C1+C2 partial outcomes
+efb39ac  audit(C1-2):  extract 33 /audit routes into routers/audit.py
+887e080  audit(C1-3):  extract 10 /incidents routes into routers/incidents.py
+f0c0db3  audit(C1-3b): extract 13 /billing + /usage routes into routers/billing.py
+08b2162  audit(C1-4):  extract 18 /compliance + /siem + /reports routes
+2aced56  audit(C1-5):  extract /receipts + /transparency into routers/transparency.py
+7e80248  audit: update report with C1 route-extraction outcomes
+94ae0fd  audit(C1-6):  extract 9 /risk + /threat-intel + /insights routes
+47c6c48  audit(C1-7):  extract /policy + /forensics into separate sub-routers
+065b5db  audit(C1-8):  extract /users + /api-keys into routers/users.py
+b8405d4  audit: finalise report after C1-6 + C1-7 + C1-8
+f24f2c6  audit(C1-9):  extract 11 /agents + /registry/tools routes into routers/agents.py
+a8d49e2  audit(C1-10): extract /auth/* (non-SSO) + consolidate /auth/sso/*
+6328d6e  audit(C1-11): final route extractions — /tenant/quota, /auth/tenants, /decision history+summary
+f53276d  audit: finalise report — C1 route extraction complete
+bcefae1  audit(C2d):   extract PHASE 6.5 bounded-autonomy check from middleware
+585caaa  audit(C2e):   extract _handle_http_exception finalize handler
+0758062  audit(C2f):   extract _handle_unhandled_exception finalize handler
+07d0913  audit: finalise report with C2 phase-extraction outcomes
+a72bbc2  audit(P4a):   replace 3 silent `except: pass` with structured warnings
+9891ce8  audit(C2a-redo): extract PHASE 0 size check with header-channelled action
+00cf09d  audit(B2-redo): extract AgentScopePicker shared between Sidebar + Topbar
+4f92665  audit(B3-redo): extract ConnectorPrimitives for SSO/SIEM/Webhook settings
+(this commit) audit: final closeout — B2/B3-redo and Phase 4a closed
 ```
 
 Every commit is atomic and revertable with `git revert <sha>` if
