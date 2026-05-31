@@ -515,30 +515,33 @@ or the gateway's lifespan/middleware setup. Extracting them would
 mostly be ceremony with no real readability win — they belong with
 their lifespan code.
 
-### Tier C2 — `_dispatch_with_resilience` phase extraction (partial)
+### Tier C2 — `_dispatch_with_resilience` phase extraction
 
-Same playbook: extract one phase at a time, unit suite as the gate.
+Same playbook as C3: extract one phase at a time, unit suite as the
+gate, dict-by-reference for `_flight_final` mutation, tuple returns for
+intermediate state.
 
-**Commit e5f41c5 audit(C2b): extract `_validate_execute_agent_id`** —
-the 22-line agent_id body validation block (PHASE 5b) lifted into a
-private async helper that returns `(maybe_promoted_agent_id,
-response_or_none)`. Preserves the fail-open registry-outage semantics,
-the 400/403 deny paths, and the JWT-agent-is-zero → promote-from-body
-branch exactly.
+| Commit | Phase / handler | New helper | CC | LOC |
+|---|---|---|---|---|
+| e5f41c5 C2b | PHASE 5b agent_id body validation | `_validate_execute_agent_id` | 13 | 22 |
+| a9015f8 C2c | PHASE 5c per-agent cost cap | `_check_per_agent_cost_cap` | 13 | 60 |
+| bcefae1 C2d | PHASE 6.5 bounded autonomy | `_enforce_bounded_autonomy` | 8 | 75 |
+| 585caaa C2e | `except HTTPException as e:` finalize | `_handle_http_exception` | 14 | 62 |
+| 0758062 C2f | `except Exception as exc:` finalize | `_handle_unhandled_exception` | 8 | 40 |
 
-**Commit a9015f8 audit(C2c): extract `_check_per_agent_cost_cap`** —
-the 60-line PHASE 5c spend-check block lifted into a helper that
-returns a 402 `JSONResponse` on cap-exceeded or `None` otherwise. The
-helper mutates the `_flight_final` dict by reference so the dispatcher's
-finally block still sees the correct disposition bucket.
+**`_dispatch_with_resilience` cyclomatic complexity: 140 → 93** (33.6% drop).
 
-`_dispatch_with_resilience` cyclomatic complexity: **140 → 118**.
-The function is still large (~870 lines) but two well-defined phases
-are now testable in isolation.
+Behavioural equivalence preserved bit-for-bit through every extraction:
+fail-open semantics where they existed (cost cap, autonomy), fail-closed
+where they existed (HTTPException / Exception handlers always write the
+audit + billing row as the transparency-chain anchor), same SSE event
+shapes, same flight_final bucketing rules. The `_flight_final` dict is
+passed by reference so the dispatcher's finally block still sees the
+disposition update from every phase that short-circuits.
 
 **PHASE 0 (payload size check, ~5 lines) deliberately NOT extracted**:
 the `action = "reject"` mutation immediately preceding the raise feeds
-the `except HTTPException as e: ... self._log_audit(..., action, ...)`
+the `except HTTPException as e: self._log_audit(..., action, ...)`
 clause downstream. Extracting would either change the audit row's
 action field from "reject" to "deny" (silent regression) or require
 threading a `state` dict everywhere. Net value is negative.
@@ -611,12 +614,12 @@ than mixing them into the audit commit chain.
 | `cd ui && npm run build` | passes | passes |
 | `ruff check .` errors (whole repo) | 3 | **0** |
 | `evaluate_decision` cyclomatic complexity | 86 | **37** |
-| `_dispatch_with_resilience` cyclomatic complexity | 140 | **118** |
+| `_dispatch_with_resilience` cyclomatic complexity | 140 | **93** |
 | `services/gateway/main.py` line count | 3,653 | **1,676** |
 | `services/gateway/main.py` route count | 162 | **8** |
 | Sub-router files in `services/gateway/routers/` | 7 | **18** |
 | Routes extracted out of main.py | 0 | **154** |
-| Atomic git commits added by this audit | 0 | **35** |
+| Atomic git commits added by this audit | 0 | **38** |
 
 ### Commits added by this audit (in order)
 
