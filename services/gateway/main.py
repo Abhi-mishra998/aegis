@@ -903,7 +903,9 @@ from services.gateway.routers.compliance import (
 )
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
+from services.gateway.routers.forensics import router as _forensics_router  # noqa: E402
 from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
+from services.gateway.routers.policy import router as _policy_router  # noqa: E402
 from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
 from services.gateway.routers.risk import router as _risk_router  # noqa: E402
 from services.gateway.routers.sso import router as _sso_router  # noqa: E402
@@ -931,6 +933,8 @@ app.include_router(_billing_router)
 app.include_router(_compliance_router)
 app.include_router(_transparency_router)
 app.include_router(_risk_router)
+app.include_router(_policy_router)
+app.include_router(_forensics_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1143,88 +1147,7 @@ def _extract_policy_reasons(decision_data: Any) -> list[str]:
     return [str(reason)] if reason else []
 
 
-@app.post("/policy/simulate", tags=["policy"])
-async def simulate_policy(request: Request) -> Any:
-    """Proxy → Policy service dry-run simulation."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.POLICY_SERVICE_URL.rstrip('/')}/policy/simulate",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    if resp.status_code == 200:
-        tenant_id_str = request.headers.get("X-Tenant-ID", "") or (
-            str(getattr(request.state, "tenant_id", "") or "")
-        )
-        try:
-            result = resp.json()
-        except Exception:
-            result = None
-        data = result.get("data", result) if isinstance(result, dict) else None
-        if tenant_id_str and _is_nontrivial_policy_decision(data):
-            body_dict = body if isinstance(body, dict) else {}
-            agent_id_val = str(body_dict.get("agent_id", "") or "")
-            reasons_list = _extract_policy_reasons(data)
-            await _publish_event(
-                redis, tenant_id_str, "policy_decision",
-                {
-                    "agent_id": agent_id_val or None,
-                    "action": body_dict.get("tool") or body_dict.get("action"),
-                    "allowed": bool(data.get("allowed", False)) if isinstance(data, dict) else False,
-                    "reasons": reasons_list,
-                    "source": "simulate",
-                },
-                agent_id=agent_id_val or None,
-            )
-    return _passthrough(resp)
-
-
-@app.post("/policy/test", tags=["policy"])
-async def test_policy_proxy(request: Request) -> Any:
-    """Proxy → Policy service — test Rego against sample inputs (no agent auth required)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.POLICY_SERVICE_URL.rstrip('/')}/policy/test",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    if resp.status_code == 200:
-        tenant_id_str = request.headers.get("X-Tenant-ID", "") or (
-            str(getattr(request.state, "tenant_id", "") or "")
-        )
-        try:
-            result = resp.json()
-        except Exception:
-            result = None
-        data = result.get("data", result) if isinstance(result, dict) else None
-        if tenant_id_str and _is_nontrivial_policy_decision(data):
-            body_dict = body if isinstance(body, dict) else {}
-            agent_id_val = str(body_dict.get("agent_id", "") or "")
-            reasons_list = _extract_policy_reasons(data)
-            await _publish_event(
-                redis, tenant_id_str, "policy_decision",
-                {
-                    "agent_id": agent_id_val or None,
-                    "action": body_dict.get("tool") or body_dict.get("action"),
-                    "allowed": bool(data.get("allowed", False)) if isinstance(data, dict) else False,
-                    "reasons": reasons_list,
-                    "source": "test",
-                },
-                agent_id=agent_id_val or None,
-            )
-    return _passthrough(resp)
-
-
-@app.post("/policy/upload", tags=["policy"])
-async def upload_policy_proxy(request: Request) -> Any:
-    """Proxy → Policy service — save a named Rego policy (ADMIN/SECURITY only)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.POLICY_SERVICE_URL.rstrip('/')}/policy/upload",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# All /policy/* (3 routes) extracted to routers/policy.py.
 
 
 # /audit/logs/verify, /audit/logs/{audit_id}/explain, /audit/logs/{audit_id}/notes
@@ -1277,40 +1200,7 @@ async def decision_summary(request: Request) -> Any:
     return _passthrough(resp)
 
 
-# ─────────────────────────────────────────────────────────────
-# FORENSICS PROXY — /forensics
-# P0-3 FIX: FORENSICS_SERVICE_URL now exists in ACPSettings
-# NEW: /forensics/replay/{agent_id} route added
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/forensics/investigation", tags=["forensics"])
-async def forensics_investigation(request: Request) -> Any:
-    """Proxy → Forensics service investigation list."""
-    resp = await request.app.state.client.get(
-        f"{settings.FORENSICS_SERVICE_URL.rstrip('/')}/forensics/investigation",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/forensics/investigation/{agent_id}", tags=["forensics"])
-async def get_investigation_report(agent_id: str, request: Request) -> Any:
-    """Proxy → Forensics service investigation report for an agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.FORENSICS_SERVICE_URL.rstrip('/')}/forensics/investigation/{agent_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.get("/forensics/replay/{agent_id}", tags=["forensics"])
-async def replay_agent_behavior(agent_id: str, request: Request) -> Any:
-    """Proxy → Forensics service forensic replay for an agent."""
-    resp = await request.app.state.client.get(
-        f"{settings.FORENSICS_SERVICE_URL.rstrip('/')}/forensics/replay/{agent_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# All /forensics/* (3 routes) extracted to routers/forensics.py.
 
 
 # All /billing/* (9 routes) and /usage/* (4 routes) extracted to

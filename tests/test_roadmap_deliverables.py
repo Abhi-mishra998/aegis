@@ -318,14 +318,20 @@ def test_policy_service_has_upload_endpoint():
     assert "policy/upload" in src or "policy_upload" in src or "upload" in src
 
 
+def _gateway_policy_src() -> str:
+    """/policy/* extracted from main.py to routers/policy.py in sprint-5."""
+    return (
+        (ROOT / "services/gateway/main.py").read_text()
+        + (ROOT / "services/gateway/routers/policy.py").read_text()
+    )
+
+
 def test_gateway_proxies_policy_test():
-    src = (ROOT / "services/gateway/main.py").read_text()
-    assert "policy/test" in src
+    assert "policy/test" in _gateway_policy_src()
 
 
 def test_gateway_proxies_policy_upload():
-    src = (ROOT / "services/gateway/main.py").read_text()
-    assert "policy/upload" in src
+    assert "policy/upload" in _gateway_policy_src()
 
 
 def test_policy_builder_routed_in_app():
