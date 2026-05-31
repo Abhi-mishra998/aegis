@@ -208,12 +208,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
 
         try:
             # --- 1. PAYLOAD SIZE CHECK (PHASE 0 - FAIL FAST) ---
-            # Enforce ACP Rule: Check size BEFORE even wasting CPU on JWT validation
-            raw_body = await request.body()
-            body_hash = hashlib.sha256(raw_body).hexdigest() if raw_body else "empty"
-            if len(raw_body) > settings.MAX_PAYLOAD_BYTES:
-                action = "reject"
-                raise HTTPException(status_code=413, detail="Payload exceeds absolute gateway limit")
+            raw_body, body_hash = await self._check_payload_size(request)
 
             # --- 2. AUTHENTICATION & IDENTITY (PHASE 1) ---
             # MUST be the first line of defense after size check.
@@ -839,6 +834,34 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 # Latency tracking must never break a request.
                 pass
 
+    async def _check_payload_size(
+        self, request: Request,
+    ) -> tuple[bytes, str]:
+        """PHASE 0 — fail-fast payload size check + body hash.
+
+        Returns ``(raw_body, body_hash)`` on success. On oversize, raises
+        ``HTTPException(413)`` with an ``X-ACP-Audit-Action: reject``
+        header. The downstream ``_handle_http_exception`` reads that
+        header and uses it as the audit row's action label so the row
+        reflects the canonical "reject" disposition (distinct from the
+        default "deny"). Headers are the only metadata channel
+        ``HTTPException`` exposes; using them keeps the action label
+        encapsulated in the helper instead of leaking back into the
+        dispatcher's closure.
+
+        Body hash is computed even on the success path because every
+        downstream phase (idempotency, audit) needs it.
+        """
+        raw_body = await request.body()
+        body_hash = hashlib.sha256(raw_body).hexdigest() if raw_body else "empty"
+        if len(raw_body) > settings.MAX_PAYLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Payload exceeds absolute gateway limit",
+                headers={"X-ACP-Audit-Action": "reject"},
+            )
+        return raw_body, body_hash
+
     async def _handle_unhandled_exception(
         self,
         exc: BaseException,
@@ -949,7 +972,14 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         except Exception as _flight_exc:
             logger.debug("flight_error_emit_failed", error=str(_flight_exc))
 
-        # 2. Audit + billing — recover identity from headers if auth failed
+        # 2. Audit + billing — recover identity from headers if auth failed.
+        # If the originating helper set X-ACP-Audit-Action in the
+        # HTTPException headers (e.g. PHASE 0 sets "reject" on 413),
+        # honour that as the canonical audit disposition; otherwise fall
+        # back to the dispatcher's closure-level `action` (default "deny").
+        effective_action = (e.headers or {}).get("x-acp-audit-action") \
+            or (e.headers or {}).get("X-ACP-Audit-Action") \
+            or action
         try:
             if t_id_str == "unknown":
                 t_id_hdr = request.headers.get("X-Tenant-ID")
@@ -965,12 +995,12 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             if t_id_str != "unknown":
                 await self._log_audit(
                     t_id_str, agent_id, "execute_tool", tool_name,
-                    action, e.detail, request_id,
+                    effective_action, e.detail, request_id,
                     {"status": e.status_code, "risk_score": risk_score},
                 )
                 await self._record_billing_with_retry(
                     tenant_id=t_id_str,
-                    action=action,
+                    action=effective_action,
                     agent_id=agent_id,
                     tokens=tokens,
                     audit_id=request_id,
