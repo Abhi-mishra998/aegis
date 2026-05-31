@@ -83,7 +83,11 @@ def test_gateway_auth_validates_via_service():
 
 
 def test_gateway_proxy_has_validate_route():
-    src = (ROOT / "services/gateway/main.py").read_text()
+    # /api-keys/* extracted from main.py to routers/users.py in sprint-5.
+    src = (
+        (ROOT / "services/gateway/main.py").read_text()
+        + (ROOT / "services/gateway/routers/users.py").read_text()
+    )
     assert "/api-keys/validate" in src
 
 

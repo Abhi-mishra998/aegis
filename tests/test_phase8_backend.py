@@ -89,26 +89,35 @@ def test_identity_has_delete_user_endpoint():
 
 # ── 7. gateway has GET /users proxy ───────────────────────────────────────
 
+def _users_src() -> str:
+    """/users + /auth/users extracted from main.py to routers/users.py in
+    sprint-5. The decorator changed from @app.* to @router.* — scan both
+    files and accept either."""
+    return _read(GATEWAY) + (GATEWAY.parent / "routers" / "users.py").read_text(encoding="utf-8")
+
+
 def test_gateway_has_get_users_proxy():
-    src = _read(GATEWAY)
-    assert 'app.get("/users"' in src, \
-        'GET /users proxy not found in services/gateway/main.py'
+    src = _users_src()
+    assert ('app.get("/users"' in src or '@router.get("/users"' in src), \
+        'GET /users proxy not found in gateway'
 
 
 # ── 8. gateway has POST /users/invite proxy ────────────────────────────────
 
 def test_gateway_has_post_users_invite_proxy():
-    src = _read(GATEWAY)
-    assert 'app.post("/users/invite"' in src, \
-        'POST /users/invite proxy not found in services/gateway/main.py'
+    src = _users_src()
+    assert ('app.post("/users/invite"' in src
+            or '@router.post("/users/invite"' in src), \
+        'POST /users/invite proxy not found in gateway'
 
 
 # ── 9. gateway has PATCH /users proxy ─────────────────────────────────────
 
 def test_gateway_has_patch_users_proxy():
-    src = _read(GATEWAY)
-    assert 'app.patch("/users/{user_id}"' in src, \
-        'PATCH /users/{user_id} proxy not found in services/gateway/main.py'
+    src = _users_src()
+    assert ('app.patch("/users/{user_id}"' in src
+            or '@router.patch("/users/{user_id}"' in src), \
+        'PATCH /users/{user_id} proxy not found in gateway'
 
 
 # ── 10. api.js has auditExportService ─────────────────────────────────────

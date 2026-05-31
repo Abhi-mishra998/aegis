@@ -591,65 +591,7 @@ async def revoke_token(request: Request) -> Any:
     return _passthrough(resp)
 
 
-@app.post("/auth/users", tags=["auth"])
-async def create_user(request: Request) -> Any:
-    """Proxy → Identity: create a new user account (first user open; subsequent require ADMIN)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/auth/users",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-# ─────────────────────────────────────────────────────────────
-# USER MANAGEMENT — /users
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/users", tags=["users"])
-async def list_users_proxy(request: Request) -> Any:
-    """Proxy → Identity: list users for the tenant (filter by role, is_active)."""
-    resp = await request.app.state.client.get(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/users",
-        params=dict(request.query_params),
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/users/invite", tags=["users"])
-async def invite_user_proxy(request: Request) -> Any:
-    """Proxy → Identity: invite a new user (creates account with random password)."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/users/invite",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.patch("/users/{user_id}", tags=["users"])
-async def update_user_proxy(user_id: str, request: Request) -> Any:
-    """Proxy → Identity: update user role or active status."""
-    body = await request.json()
-    resp = await request.app.state.client.patch(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/users/{user_id}",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.delete("/users/{user_id}", tags=["users"])
-async def deactivate_user_proxy(user_id: str, request: Request) -> Any:
-    """Proxy → Identity: soft-delete (deactivate) a user."""
-    resp = await request.app.state.client.delete(
-        f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/users/{user_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# All /auth/users + /users/* (5 routes) extracted to routers/users.py.
 
 
 @app.post("/auth/credentials", tags=["auth"])
@@ -918,6 +860,7 @@ from services.gateway.routers.tenant_admin import (
 from services.gateway.routers.transparency import (
     router as _transparency_router,  # noqa: E402
 )
+from services.gateway.routers.users import router as _users_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
@@ -935,6 +878,7 @@ app.include_router(_transparency_router)
 app.include_router(_risk_router)
 app.include_router(_policy_router)
 app.include_router(_forensics_router)
+app.include_router(_users_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -1207,53 +1151,7 @@ async def decision_summary(request: Request) -> Any:
 # routers/billing.py.
 
 
-# ─────────────────────────────────────────────────────────────
-# API KEYS PROXY — /api-keys
-# P0-5 FIX: Previously served by embedded router; now pure httpx proxy
-# ─────────────────────────────────────────────────────────────
-
-@app.get("/api-keys", tags=["API Keys"])
-async def list_api_keys(request: Request) -> Any:
-    """Proxy → API service list keys."""
-    resp = await request.app.state.client.get(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/api-keys", tags=["API Keys"])
-async def create_api_key(request: Request) -> Any:
-    """Proxy → API service create key."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.delete("/api-keys/{key_id}", tags=["API Keys"])
-async def revoke_api_key(key_id: str, request: Request) -> Any:
-    """Proxy → API service revoke key."""
-    resp = await request.app.state.client.delete(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys/{key_id}",
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
-
-
-@app.post("/api-keys/validate", tags=["API Keys"])
-async def validate_api_key(request: Request) -> Any:
-    """Proxy → API service validate key."""
-    body = await request.json()
-    resp = await request.app.state.client.post(
-        f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys/validate",
-        json=body,
-        headers=_internal_headers(request),
-    )
-    return _passthrough(resp)
+# All /api-keys/* (4 routes) extracted to routers/users.py.
 
 
 # All 10 /incidents/* routes extracted to routers/incidents.py.
