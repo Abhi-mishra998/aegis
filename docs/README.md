@@ -19,6 +19,7 @@
 - **Architecture (7 pages)** — the system overview, the 11-stage gateway pipeline, the data model, multi-tenancy, deployment topology, UI primitives, and a worked end-to-end decision.
 - **Services (18 pages + index)** — every backend microservice documented to a 13-point spec: business purpose, architecture, request flow, dependencies, database tables, Redis usage, security controls, metrics, deployment model, API endpoints, example requests, troubleshooting, production considerations.
 - **UI (34 pages + index)** — every page in the React UI documented to a 10-point spec: sidebar location, role gating, what you see, backend calls, auto-refresh and realtime, per-agent scoping, empty states, edge cases, related docs.
+- **Voice Guide (4 pages)** — the voice-driven question-answering interface embedded in the Aegis UI navbar: hybrid RAG (BM25 + dense + cross-encoder rerank), Groq-primary / Gemini-fallback LLM, animated audio-reactive orb, three-layer session timeout, deployed on a Graviton EC2 alongside the Aegis core.
 - **Security (7 pages)** — the cryptographic audit chain, JWT auth, RBAC, kill switch, OPA policies, threat scenarios, secret management.
 - **Operations (6 main pages + 3 runbooks)** — deployment via tarball/S3/SSM, backup and restore drills, key rotation, soak tests, tenant data requests, observability, plus the three P0 runbooks.
 - **API (4 pages)** — the full reference indexed from the live OpenAPI spec, authentication contract, error code matrix, copy-paste examples in curl / Python / Node.
@@ -32,6 +33,7 @@
 - **Cryptographic audit chain** — every decision is signed (ed25519), chained to the previous (SHA-256 prev_hash), and rolled into a daily Merkle root.
 - **Kill switch** — tenant-wide halt propagates in under 5 seconds.
 - **End-to-end gateway p95 ≈ 70 ms** on the live deployment (`/system/health` latency window, 60s).
+- **Voice Agent in the navbar** — a sibling EC2 (`t3.medium`, `ap-south-1`) hosts the LiveKit Agents worker. Reviewers click the **Voice Agent** button on `dev.aegisagent.in`, allow the microphone, and talk to a docs-grounded cybersecurity advisor. Pipeline: Deepgram nova-3 → Groq llama-3.3-70b (Gemini fallback) → Cartesia sonic-3, with hybrid BM25 + dense + cross-encoder retrieval over **1,794 chunks from 103 docs**. p50 end-to-end ~1.3 s in `ap-south-1`. Documented under [Voice Guide](voice-guide/_index.md).
 
 ## Reading order if you have an hour
 
@@ -88,4 +90,5 @@ Aegis is Apache 2.0. The documentation is CC-BY-4.0.
 
 - Live demo: [dev.aegisagent.in](https://dev.aegisagent.in)
 - Repository: [github.com/Abhi-mishra998/aegis](https://github.com/Abhi-mishra998/aegis)
+- Author contact + profiles: [Contact](contact.md)
 - This documentation is also published at: (TBD when GitBook is live)

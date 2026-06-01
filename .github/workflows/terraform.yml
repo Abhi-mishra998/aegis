@@ -1,0 +1,57 @@
+name: Terraform validate
+
+# sprint-6.3 — gate every PR that touches `infra/terraform/**` on
+# `terraform fmt -check` + `terraform validate`. We deliberately do NOT
+# auto-apply: the infra is currently un-imported (sprint-5.4 stub), and a
+# blind apply against an empty state would try to create duplicates of
+# existing resources. Apply only happens via manual `workflow_dispatch`
+# after an operator has imported every resource.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform.yml"
+
+jobs:
+  validate:
+    name: fmt + validate + plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (backend not configured in CI — use -backend=false)
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        run: terraform validate -no-color
+
+      - name: Plan (no creds — limited surface)
+        # We don't have AWS creds in CI by default, so plan will fail at
+        # data sources. That's OK — fmt + validate are the real gates.
+        # Operators wiring real CI creds can drop the `continue-on-error`.
+        run: terraform plan -no-color -input=false || true
+        continue-on-error: true
+        env:
+          # Block the provider from reaching AWS. validate doesn't need it
+          # but plan/data sources do; this prevents accidental writes from
+          # leaking AWS_PROFILE / shared-config on the runner.
+          AWS_ACCESS_KEY_ID: ""
+          AWS_SECRET_ACCESS_KEY: ""
+          AWS_DEFAULT_REGION: "ap-south-1"

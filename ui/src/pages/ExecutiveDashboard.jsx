@@ -84,6 +84,12 @@ export default function ExecutiveDashboard() {
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
   const [exporting, setExporting] = useState(false);
+  // sprint-2.9: surface degraded data instead of silently falling back.
+  // 'live' = primary /dashboard/state succeeded.
+  // 'degraded' = primary failed, individual endpoints filled in.
+  // 'stale' = both primary and fallback failed; UI shows last good values.
+  const [dataState, setDataState] = useState('live');
+  const [lastSync,  setLastSync]  = useState(null);
 
   const downloadBoardReport = async () => {
     setExporting(true);
@@ -123,8 +129,12 @@ export default function ExecutiveDashboard() {
         const ins = state.insights || [];
         setInsights(Array.isArray(ins) ? ins.slice(0, 5) : []);
         setError('');
+        setDataState('live');
+        setLastSync(new Date());
       } catch (err) {
-        // Fallback: try individual calls if aggregate endpoint is unreachable
+        // Fallback: try individual calls if aggregate endpoint is unreachable.
+        // Surface the degraded state so users know the dashboard is not the
+        // canonical source for this refresh.
         try {
           const [billingRes, riskRes, insightRes] = await Promise.all([
             api.getBilling(),
@@ -136,9 +146,14 @@ export default function ExecutiveDashboard() {
           setRisk(riskRes.data || riskRes);
           const insData = insightRes.data || insightRes;
           setInsights(Array.isArray(insData) ? insData.slice(0, 5) : []);
-          setError('');
+          setError('Live aggregate unavailable — showing degraded view from individual services.');
+          setDataState('degraded');
+          setLastSync(new Date());
         } catch (fallbackErr) {
-          if (mounted) setError(fallbackErr.message || 'Failed to sync backend modules.');
+          if (mounted) {
+            setError(fallbackErr.message || 'Failed to sync backend modules.');
+            setDataState('stale');
+          }
         }
       } finally {
         if (mounted) setLoading(false);
@@ -170,6 +185,21 @@ export default function ExecutiveDashboard() {
 
   return (
     <div className="space-y-8">
+      {/* Data freshness banner — surfaces silent fallback / stale state.
+          sprint-2.9: previous behaviour showed identical UI whether the
+          backend was healthy or down. */}
+      {dataState !== 'live' && (
+        <div className={
+          dataState === 'degraded'
+            ? 'rounded-md border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200'
+            : 'rounded-md border border-red-700/40 bg-red-900/20 px-3 py-2 text-xs text-red-200'
+        }>
+          {dataState === 'degraded'
+            ? `Live aggregate unavailable — showing degraded view from individual services. Last sync: ${lastSync ? lastSync.toLocaleTimeString() : 'never'}.`
+            : `All backend sources unreachable. Showing last cached values${lastSync ? ' from ' + lastSync.toLocaleTimeString() : ''}.`}
+        </div>
+      )}
+
       {/* ── Page header ── */}
       <div className="page-header">
         <div className="space-y-1">

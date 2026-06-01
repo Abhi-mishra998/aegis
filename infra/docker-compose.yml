@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-acp}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
@@ -28,29 +28,13 @@ services:
       timeout: 5s
       retries: 5
 
-  postgres_replica:
-    image: postgres:15-alpine
-    container_name: acp_postgres_replica
-    user: postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      PGDATA: /var/lib/postgresql/data
-    volumes:
-      - postgres_replica_data:/var/lib/postgresql/data
-      - ./postgres/replica-setup.sh:/docker-entrypoint-initdb.d/replica-setup.sh
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: ["postgres", "-c", "hot_standby=on"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - acp_network
-    restart: unless-stopped
+  # postgres_replica removed in sprint-2 (2026-05-29).
+  # The container was a hot standby that no application code ever read from
+  # (grep -rn "READ_DATABASE_URL\|_replica" services/ returned zero hits).
+  # Production HA is delegated to AWS RDS Multi-AZ failover. Self-host
+  # operators who want read-replica traffic offload should re-introduce
+  # the replica AND wire READ_DATABASE_URL into the services that need it
+  # (good candidates: services/audit/compliance.py PDF generation).
 
   # ─────────────────────────────────────────
   # PGBouncer (Production-Ready Config)
@@ -63,7 +47,7 @@ services:
       - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
       - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
     ports:
-      - "6432:6432"
+      - "127.0.0.1:6432:6432"
     restart: unless-stopped
     healthcheck:
       # nc -z is more reliable for pgbouncer health checks
@@ -81,7 +65,7 @@ services:
     # AS-2 FIX: Enable AOF persistence so audit chain heads survive restarts
     command: redis-server --appendonly yes --appendfsync everysec --save 60 1000
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -106,7 +90,7 @@ services:
              cd /tmp/bundle &&
              python -m http.server 8182"
     ports:
-      - "8182:8182"
+      - "127.0.0.1:8182:8182"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8182/bundle.tar.gz')"]
@@ -120,7 +104,7 @@ services:
 
     container_name: acp_opa
     ports:
-      - "8181:8181"
+      - "127.0.0.1:8181:8181"
     environment:
       - GOMAXPROCS=2
     volumes:
@@ -155,7 +139,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://behavior_user:${BEHAVIOR_DB_PASSWORD:-behavior_prod_pwd}@pgbouncer:6432/acp_behavior
     ports:
-      - "8007:8000"
+      - "127.0.0.1:8007:8000"
     # 2026-05-13 (Run-3): Run-2 reported behavior_service_unavailable as a
     # dominant fallback reason at 47 r/s. The decision engine times out and
     # falls back to risk=0.5 (anomaly detection effectively off). Bumping to
@@ -173,7 +157,7 @@ services:
       timeout: 4s
       retries: 3
 
-  # NOTE: services/intelligence and services/learning are imported as Python
+  # NOTE: sdk/intelligence and services/learning are imported as Python
   # modules by services/behavior/service.py — their source dirs MUST stay.
   # The standalone HTTP servers previously exposed on :8008 and :8009 each had
   # one trivial route with no external callers, so they were removed (2026-05-14).
@@ -187,7 +171,9 @@ services:
     env_file:
       - .env
     ports:
-      - "8011:8000"
+      - "127.0.0.1:8011:8000"
+    environment:
+      - AUDIT_SERVICE_URL=http://audit:8000
     command: uvicorn services.insight.main:app --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
@@ -208,11 +194,16 @@ services:
     command: python -m services.insight.worker
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "test -f /proc/1/status || exit 1"]
+      # Heartbeat probe — the worker SETEX's the key on every loop iteration
+      # with a 90-second TTL. A stuck loop never refreshes it; healthcheck
+      # flips unhealthy and docker compose restarts the container.
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import os,sys,redis; r=redis.from_url(os.environ['REDIS_URL']); sys.exit(0 if r.exists('acp:worker:heartbeat:insight_worker') else 1)\""
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
   # ─────────────────────────────────────────
   # MICROSERVICES
@@ -228,8 +219,9 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://registry_user:${REGISTRY_DB_PASSWORD:-registry_prod_pwd}@pgbouncer:6432/acp_registry
+      - AUDIT_SERVICE_URL=http://audit:8000
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     command: >
       sh -c "cd /app/services/registry && alembic upgrade head &&
              cd /app && uvicorn services.registry.main:app --host 0.0.0.0 --port 8000 --workers 2"
@@ -256,7 +248,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://identity_user:${IDENTITY_DB_PASSWORD:-identity_prod_pwd}@pgbouncer:6432/acp_identity
       - REDIS_CLUSTER_ENABLED=false
@@ -291,7 +283,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8003:8000"
+      - "127.0.0.1:8003:8000"
     volumes:
       - ../services/policy:/app/services/policy
       - ../sdk:/app/sdk
@@ -324,7 +316,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8004:8000"
+      - "127.0.0.1:8004:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://audit_user:${AUDIT_DB_PASSWORD:-audit_prod_pwd}@pgbouncer:6432/acp_audit
       - REDIS_CLUSTER_ENABLED=false
@@ -359,7 +351,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8005:8000"
+      - "127.0.0.1:8005:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://api_user:${API_DB_PASSWORD:-api_prod_pwd}@pgbouncer:6432/acp_api
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -389,7 +381,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8006:8000"
+      - "127.0.0.1:8006:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://usage_user:${USAGE_DB_PASSWORD:-usage_prod_pwd}@pgbouncer:6432/acp_usage
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -434,6 +426,10 @@ services:
       - IDENTITY_GRAPH_SERVICE_URL=http://identity_graph:8000
       - FLIGHT_RECORDER_SERVICE_URL=http://flight_recorder:8000
       - AUTONOMY_SERVICE_URL=http://autonomy:8000
+      # sprint-8 fix: gateway was missing BEHAVIOR_SERVICE_URL so /system/health
+      # fell back to the localhost:8007 default, returning "Unreachable" for
+      # behavior in the UI service grid even though the container was healthy.
+      - BEHAVIOR_SERVICE_URL=http://behavior:8000
       - REDIS_CLUSTER_ENABLED=false
       # P0-2 FIX: no weak fallback — JWT_SECRET_KEY MUST be set and must match identity service
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -472,13 +468,14 @@ services:
     env_file:
       - .env
     ports:
-      - "8010:8000"
+      - "127.0.0.1:8010:8000"
     volumes:
       - ../services/decision:/app/services/decision
       - ../sdk:/app/sdk
     environment:
       # Reads AuditLog for /decision/history; CostEngine uses Redis only
       - DATABASE_URL=postgresql+asyncpg://audit_user:${AUDIT_DB_PASSWORD:-audit_prod_pwd}@pgbouncer:6432/acp_audit
+      - AUDIT_SERVICE_URL=http://audit:8000
       - REGISTRY_SERVICE_URL=http://registry:8000
       - POLICY_SERVICE_URL=http://policy:8000
       - BEHAVIOR_SERVICE_URL=http://behavior:8000
@@ -507,10 +504,11 @@ services:
     env_file:
       - .env
     ports:
-      - "8012:8000"
+      - "127.0.0.1:8012:8000"
     environment:
       # Reads AuditLog for replay and investigation
       - DATABASE_URL=postgresql+asyncpg://audit_user:${AUDIT_DB_PASSWORD:-audit_prod_pwd}@pgbouncer:6432/acp_audit
+      - AUDIT_SERVICE_URL=http://audit:8000
       - REDIS_CLUSTER_ENABLED=false
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
     command: uvicorn services.forensics.main:app --host 0.0.0.0 --port 8000 --workers 2
@@ -561,7 +559,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8013:8000"
+      - "127.0.0.1:8013:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://identity_graph_user:${IDENTITY_GRAPH_DB_PASSWORD:-identity_graph_prod_pwd}@pgbouncer:6432/acp_identity_graph
       - REDIS_CLUSTER_ENABLED=false
@@ -592,7 +590,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8014:8000"
+      - "127.0.0.1:8014:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://flight_recorder_user:${FLIGHT_RECORDER_DB_PASSWORD:-flight_recorder_prod_pwd}@pgbouncer:6432/acp_flight_recorder
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -622,7 +620,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8015:8000"
+      - "127.0.0.1:8015:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://autonomy_user:${AUTONOMY_DB_PASSWORD:-autonomy_prod_pwd}@pgbouncer:6432/acp_autonomy
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -643,29 +641,11 @@ services:
       retries: 5
       start_period: 120s
 
-  groq_worker:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    container_name: acp_groq_worker
-    user: "999:999"
-    env_file:
-      - .env
-    environment:
-      - PYTHONUNBUFFERED=1
-    command: python -m services.groq_worker.service
-    volumes:
-      - ../services:/app/services:ro
-      - ../sdk:/app/sdk:ro
-    # on-failure (not always): exits with code 1 when GROQ_API_KEY is missing
-    # or invalid; restarting infinitely in that case burns CPU and pollutes logs.
-    restart: on-failure
-    healthcheck:
-      test: ["CMD-SHELL", "test -f /proc/1/status || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+  # groq_worker removed in sprint-3.3 (2026-05-29).
+  # Its own docstring declared "Identical semantics to services.insight.worker
+  # — kept as an alternative deployment target." Running both burned ~2× the
+  # Groq API budget and gave operators no signal which one's metrics to look
+  # at. `insight_worker` is the canonical consumer of `acp:groq_queue`.
 
   # ─────────────────────────────────────────
   # OBSERVABILITY STACK (2026-05-14)
@@ -677,7 +657,7 @@ services:
     image: prom/prometheus:v2.55.1
     container_name: acp_prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus-rules.yml:/etc/prometheus/rules.yml:ro
@@ -701,14 +681,29 @@ services:
     image: prom/alertmanager:v0.27.0
     container_name: acp_alertmanager
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
+    environment:
+      # Read by entrypoint below to write secret files mounted as tmpfs.
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - PAGERDUTY_ROUTING_KEY=${PAGERDUTY_ROUTING_KEY:-}
     volumes:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
-    command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-      - --storage.path=/alertmanager
-      - --web.external-url=http://localhost:9093
+    # Write secrets to ephemeral files for slack_api_url_file / routing_key_file.
+    # Empty env vars produce empty files; alertmanager logs delivery errors but
+    # continues running. Operators populate SLACK_WEBHOOK_URL + PAGERDUTY_ROUTING_KEY
+    # in `.env` to activate routing.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        printf '%s' "$$SLACK_WEBHOOK_URL"      > /etc/alertmanager/slack_webhook_url
+        printf '%s' "$$PAGERDUTY_ROUTING_KEY"  > /etc/alertmanager/pagerduty_routing_key
+        chmod 600 /etc/alertmanager/slack_webhook_url /etc/alertmanager/pagerduty_routing_key
+        exec /bin/alertmanager \
+          --config.file=/etc/alertmanager/alertmanager.yml \
+          --storage.path=/alertmanager \
+          --web.external-url=http://localhost:9093
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9093/-/ready"]
@@ -720,7 +715,7 @@ services:
     image: grafana/grafana:11.3.0
     container_name: acp_grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
@@ -747,9 +742,9 @@ services:
     image: jaegertracing/all-in-one:1.57
     container_name: acp_jaeger
     ports:
-      - "16686:16686"   # Jaeger UI
-      - "4317:4317"     # OTLP gRPC
-      - "4318:4318"     # OTLP HTTP
+      - "127.0.0.1:16686:16686"   # Jaeger UI
+      - "127.0.0.1:4317:4317"     # OTLP gRPC
+      - "127.0.0.1:4318:4318"     # OTLP HTTP
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
@@ -762,7 +757,6 @@ services:
 
 volumes:
   postgres_data:
-  postgres_replica_data:
   redis_data:
   prometheus_data:
   grafana_data:

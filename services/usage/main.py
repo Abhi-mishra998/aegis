@@ -14,7 +14,7 @@ from sdk.common.db import engine, get_session_factory
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
-from services.billing.router import router as billing_router
+from services.usage.billing_routes.router import router as billing_router
 from services.usage.router.billing_dlq import router as billing_dlq_router
 from services.usage.router.usage import router as usage_router
 
@@ -381,7 +381,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     async with get_session_factory()() as db:
         await check_schema(db, "usage")
     redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
-    from services.billing.value_engine import BillingValueEngine
+    from services.usage.billing_routes.value_engine import BillingValueEngine
     _app.state.billing_engine = BillingValueEngine(redis)
 
     reconciliation_task = asyncio.create_task(billing_reconciliation_worker())

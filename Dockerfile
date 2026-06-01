@@ -1,7 +1,19 @@
 # ─────────────────────────────────────────
+# Base image pin (sprint-2.10).
+# `python:3.11-slim` is a moving tag. Before each release set PYTHON_BASE
+# in `.env` or via `docker compose build --build-arg PYTHON_BASE=...` to a
+# specific digest, e.g.:
+#   PYTHON_BASE=python:3.11-slim@sha256:<digest from `docker pull` output>
+# The default keeps the moving tag so a fresh checkout still builds; CI/CD
+# overrides via build-arg so production has a known-frozen base layer.
+# Dependabot config: .github/dependabot.yml updates the digest weekly.
+# ─────────────────────────────────────────
+ARG PYTHON_BASE=python:3.11-slim
+
+# ─────────────────────────────────────────
 # STAGE 1: Builder
 # ─────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM ${PYTHON_BASE} AS builder
 
 WORKDIR /app
 
@@ -30,7 +42,7 @@ RUN pip install --no-cache-dir --default-timeout=100 --retries=3 \
 # ─────────────────────────────────────────
 # STAGE 2: Final
 # ─────────────────────────────────────────
-FROM python:3.11-slim AS final
+FROM ${PYTHON_BASE} AS final
 
 WORKDIR /app
 

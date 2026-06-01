@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aegis status</title>
+<!-- sprint-6.4 — customer-facing status page renderer.
+     Single static file served from S3 + CloudFront. Polls the JSON
+     snapshot at /status/current.json (written every minute by
+     scripts/maintenance/publish_status_page.py) and renders it. No
+     server, no JavaScript framework, no auth — by design. -->
+<style>
+  :root {
+    --bg: #0b0b0d;
+    --fg: #e8e8ea;
+    --muted: #8a8a92;
+    --card: #161618;
+    --border: #25252a;
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --err: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+  }
+  header { padding: 48px 24px 16px; max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 8px; font-weight: 600; }
+  .subtitle { color: var(--muted); font-size: 14px; margin: 0; }
+  main { padding: 24px; max-width: 960px; margin: 0 auto; }
+  .overall {
+    display: flex; align-items: center; gap: 12px;
+    padding: 20px; border-radius: 12px;
+    background: var(--card); border: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
+  .dot.degraded { background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+  .dot.down { background: var(--err); box-shadow: 0 0 12px var(--err); }
+  .overall-text { font-size: 16px; font-weight: 500; }
+  .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .services {
+    display: grid; gap: 8px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 8px;
+  }
+  .service-row {
+    display: grid;
+    grid-template-columns: 16px 1fr auto auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .service-row:last-child { border-bottom: none; }
+  .svc-name { font-weight: 500; }
+  .svc-status { font-size: 12px; color: var(--muted); }
+  .svc-latency {
+    font-size: 12px; font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .uptime-card {
+    margin-top: 16px;
+    padding: 20px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex; gap: 32px; justify-content: space-around;
+  }
+  .uptime-stat {
+    text-align: center;
+  }
+  .uptime-value {
+    font-size: 28px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .uptime-label {
+    font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-top: 4px;
+  }
+  footer {
+    padding: 32px 24px; max-width: 960px; margin: 0 auto;
+    color: var(--muted); font-size: 12px;
+    text-align: center;
+  }
+  footer a { color: var(--muted); }
+  .error {
+    padding: 12px 16px; border-radius: 8px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--err); font-size: 13px;
+    margin-bottom: 12px;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Aegis status</h1>
+    <p class="subtitle">Realtime service health for aegisagent.in</p>
+  </header>
+
+  <main>
+    <div id="error" class="error" style="display: none;"></div>
+
+    <div class="overall" id="overall">
+      <span class="dot ok" id="overall-dot"></span>
+      <span class="overall-text" id="overall-text">Loading…</span>
+      <span class="meta" id="meta"></span>
+    </div>
+
+    <div class="uptime-card" id="uptime-card" style="display: none;">
+      <div class="uptime-stat">
+        <div class="uptime-value" id="uptime-24h">—</div>
+        <div class="uptime-label">24-hour availability</div>
+      </div>
+      <div class="uptime-stat">
+        <div class="uptime-value" id="audit-rows">—</div>
+        <div class="uptime-label">audit decisions / hour</div>
+      </div>
+    </div>
+
+    <div class="services" id="services"></div>
+  </main>
+
+  <footer>
+    <p>
+      Snapshot updates every ~60 seconds. Source data: gateway /system/health + Prometheus.<br />
+      For incident history or programmatic access see
+      <a href="/status/current.json">/status/current.json</a>.
+    </p>
+  </footer>
+
+<script>
+// sprint-6.4 — fetch + render the status snapshot. No external deps.
+// Adjust BASE_URL to point at the CDN/static-S3 origin if this page is
+// hosted on a different domain than the JSON snapshot.
+const BASE_URL = '';
+const REFRESH_INTERVAL_MS = 30_000;
+
+const $ = (id) => document.getElementById(id);
+
+function fmtPercent(v) {
+  if (v == null || isNaN(v)) return '—';
+  return (v * 100).toFixed(2) + '%';
+}
+
+function fmtNumber(v) {
+  if (v == null || isNaN(v)) return '—';
+  return Math.round(v).toLocaleString();
+}
+
+function fmtLatency(ms) {
+  if (ms == null || isNaN(ms)) return '';
+  if (ms < 1) return '<1 ms';
+  return `${Math.round(ms)} ms`;
+}
+
+function render(snap) {
+  $('error').style.display = 'none';
+
+  // Overall pill
+  const overall = snap.overall_status || 'unknown';
+  $('overall-dot').className = 'dot ' + (overall === 'operational' ? 'ok' : overall === 'degraded' ? 'degraded' : 'down');
+  $('overall-text').textContent = overall === 'operational'
+    ? 'All systems operational'
+    : overall === 'degraded'
+    ? 'Some services degraded'
+    : 'Service outage detected';
+
+  // Meta (generated timestamp)
+  if (snap.generated_at) {
+    const dt = new Date(snap.generated_at);
+    $('meta').textContent = 'updated ' + dt.toLocaleString();
+  }
+
+  // Uptime + audit row stats
+  if (snap.uptime_24h != null || snap.audit_rows_1h != null) {
+    $('uptime-card').style.display = 'flex';
+    $('uptime-24h').textContent = fmtPercent(snap.uptime_24h);
+    $('audit-rows').textContent = fmtNumber(snap.audit_rows_1h);
+  }
+
+  // Service rows
+  const container = $('services');
+  container.innerHTML = '';
+  (snap.services || []).forEach((s) => {
+    const row = document.createElement('div');
+    row.className = 'service-row';
+
+    const dot = document.createElement('span');
+    dot.className = 'dot ' + (s.status === 'operational' ? 'ok' : 'degraded');
+    row.appendChild(dot);
+
+    const name = document.createElement('span');
+    name.className = 'svc-name';
+    name.textContent = s.name;
+    row.appendChild(name);
+
+    const status = document.createElement('span');
+    status.className = 'svc-status';
+    status.textContent = s.status;
+    row.appendChild(status);
+
+    const lat = document.createElement('span');
+    lat.className = 'svc-latency';
+    lat.textContent = fmtLatency(s.latency_ms);
+    row.appendChild(lat);
+
+    container.appendChild(row);
+  });
+}
+
+async function load() {
+  try {
+    const resp = await fetch(BASE_URL + '/status/current.json', { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const snap = await resp.json();
+    render(snap);
+  } catch (err) {
+    $('error').style.display = 'block';
+    $('error').textContent = 'Could not load snapshot: ' + err.message;
+    // Don't clobber the previous render — leave the page showing the last
+    // good state while we wait for the next refresh.
+  }
+}
+
+load();
+setInterval(load, REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>

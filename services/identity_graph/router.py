@@ -10,7 +10,6 @@ GET    /graph/runtime-relationships — recent edges (last 1 h default)
 GET    /graph/trust/{id}            — trust score + history
 GET    /graph/drift                 — recent drift signals
 POST   /graph/compromise/simulate   — Feature 5: blast simulation
-GET    /graph/compromise/history    — past simulations
 """
 from __future__ import annotations
 
@@ -320,14 +319,3 @@ async def simulate_compromise(
         started_by=None,
     )
     return APIResponse(data=CompromiseOut.model_validate(sim))
-
-
-@router.get("/compromise/history", response_model=APIResponse[list[CompromiseOut]])
-async def compromise_history(
-    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(50, ge=1, le=500),
-) -> APIResponse[list[CompromiseOut]]:
-    repo = GraphRepository(db)
-    sims = await repo.list_simulations(tenant_id, limit=limit)
-    return APIResponse(data=[CompromiseOut.model_validate(s) for s in sims])

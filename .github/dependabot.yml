@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Weekly bumps of the Python base-image digest. Dependabot opens a PR with
+  # the new SHA-256 digest of python:3.11-slim; the deploy workflow's
+  # build-arg picks it up. Manual review required before merge so we can
+  # check the CVE notes.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "security"]
+
+  # Lockstep updates for Python runtime deps. Same cadence so the security
+  # window doesn't grow indefinitely.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+
+  # GitHub Actions versions (appleboy/ssh-action, actions/checkout, etc.).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["ci"]

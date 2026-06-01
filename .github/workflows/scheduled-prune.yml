@@ -1,0 +1,36 @@
+name: Scheduled outbox prune
+
+on:
+  schedule:
+    # 03:00 UTC daily — middle of low-traffic window for both major regions.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: scheduled-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune pending_usage_events
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH to EC2 and run prune
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd ~/aegis
+            # Run prune against the audit database via the audit container's env.
+            # Output goes to syslog → CloudWatch (when sprint-4.1 ships).
+            docker compose -f infra/docker-compose.yml run --rm \
+              -e OUTBOX_RETENTION_DAYS=14 \
+              -e OUTBOX_PRUNE_BATCH_SIZE=10000 \
+              audit \
+              python /app/scripts/maintenance/prune_audit_outbox.py | tee -a /var/log/aegis-prune.log

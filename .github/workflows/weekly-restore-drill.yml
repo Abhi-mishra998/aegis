@@ -1,0 +1,50 @@
+name: Weekly restore drill
+
+on:
+  schedule:
+    # Sunday 04:00 UTC — after the backup has run and after the prune.
+    - cron: "0 4 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  group: weekly-restore-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: Restore latest backup into throwaway containers
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH to EC2 and run restore drill
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 60m
+          script: |
+            set -euo pipefail
+            cd ~/aegis
+            timestamp=$(date -u +%Y-%m-%dT%H:%MZ)
+            # restore_drill.sh spins isolated postgres + redis on a separate
+            # docker network, pg_restores the latest S3 backup, and runs a
+            # SELECT COUNT(*) FROM audit_logs smoke check. Tears down on exit.
+            if sudo -E bash scripts/ops/restore_drill.sh 2>&1 | tee /tmp/drill.log; then
+              echo "- $timestamp PASS (run ${{ github.run_id }})" >> docs/runbooks/drill_log.md
+            else
+              echo "- $timestamp FAIL (run ${{ github.run_id }}) — see /tmp/drill.log" >> docs/runbooks/drill_log.md
+              exit 1
+            fi
+
+      - name: Post Slack summary
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then exit 0; fi
+          status="${{ job.status }}"
+          payload=$(jq -n --arg s "$status" --arg run "${{ github.run_id }}" \
+            '{text: ("Weekly restore drill: " + $s + " — run " + $run)}')
+          curl -fsS -X POST -H "Content-Type: application/json" -d "$payload" "$SLACK_WEBHOOK_URL" || true

@@ -8,35 +8,22 @@ const HEARTBEAT_WATCHDOG_INTERVAL_MS = 10_000
 /**
  * useSSE — hardened SSE consumer.
  *
- * Backend `/events/stream` accepts auth from three sources:
- *   1. acp_token httpOnly cookie  (production dashboard)
- *   2. Authorization: Bearer …    (impossible from EventSource API)
- *   3. ?token=…                   (cookieless / cross-origin SDK case)
+ * Backend `/events/stream` accepts auth from two sources:
+ *   1. acp_token httpOnly cookie  (set by the gateway on /auth/token)
+ *   2. Authorization: Bearer …    (impossible from EventSource API, used by SDK)
  *
  * The browser EventSource cannot set custom headers, so we rely on the cookie
- * via `withCredentials: true` AND optionally append a query-string token when
- * `localStorage.sse_query_token` is present (CSRF-safe — same-origin only).
+ * via `withCredentials: true`. Same-origin requests automatically include it.
  *
  * Features:
  *   - exponential backoff to MAX_BACKOFF_MS
  *   - per-channel `addEventListener` demux via `channels` option
  *   - exposes connection state (connecting | open | closed)
  *   - heartbeat-aware (silent ping every 15s from backend keeps the stream alive)
- *   - Sprint 2: re-reads the query-token on EVERY reconnect (refresh-token aware)
- *   - Sprint 2: heartbeat-freshness watchdog — force-close if backend goes quiet
- *   - Sprint 2: surfaces `lastError` ('auth_expired' | 'network' | 'cors' | 'unknown')
+ *   - heartbeat-freshness watchdog — force-close if backend goes quiet
+ *   - surfaces `lastError` ('auth_expired' | 'network' | 'cors' | 'unknown')
  *   - reduced-motion safe (no auto-scroll triggered from here)
  */
-
-// Read the current SSE token at call time so reconnects always pick up a
-// freshly refreshed session token, not the one captured at hook init.
-function getCurrentToken() {
-  try {
-    return localStorage.getItem('sse_query_token') || null
-  } catch {
-    return null
-  }
-}
 
 export function useSSE({
   enabled = true,
@@ -70,12 +57,10 @@ export function useSSE({
   useEffect(() => { agentIdRef.current     = agentId     }, [agentId])
 
   const buildUrl = () => {
-    // Optional query-token override for environments where cookies are not
-    // shared with the API origin (cross-origin SaaS, mobile webviews).
-    // IMPORTANT: read at call-time so reconnects use refreshed tokens.
+    // Auth flows over the same-origin httpOnly acp_token cookie via
+    // withCredentials. Query-string tokens are no longer accepted by the
+    // gateway (sprint-1 hardening) so we don't append one.
     const params = new URLSearchParams()
-    const tok = getCurrentToken()
-    if (tok) params.set('token', tok)
     if (agentIdRef.current) params.set('agent_id', String(agentIdRef.current))
     const qs = params.toString()
     return `${API_BASE}/events/stream${qs ? `?${qs}` : ''}`

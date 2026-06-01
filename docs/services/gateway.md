@@ -81,6 +81,7 @@ The gateway used to live in a 4,000+ line `main.py`. The 2026-05 audit pass (com
 | `routers/policy.py` | 4 | `/policy/*` |
 | `routers/forensics.py` | 6 | `/forensics/*` |
 | `routers/auto_response.py` | 16 | `/auto-response/*` |
+| `routers/voice.py` | 2 | `/voice/token`, `/voice/status` — mints short-lived LiveKit JWTs that dispatch the Aegis Voice Guide worker on its sibling EC2 (see [Voice Guide](../voice-guide/_index.md)) |
 | `routers/proxies.py`, `routers/dashboard.py`, `routers/admin.py`, `routers/tenant.py`, `routers/tenant_admin.py`, `routers/stripe_webhook.py` | misc | system + admin paths |
 
 Each sub-router file owns its Pydantic models and any router-local helpers. Shared dependencies (auth dependency, internal-secret guard, ResilientClient injection) come from `services/gateway/_helpers.py` and `services/gateway/main.py` only. Adding a route means modifying one sub-router, not the main.py wiring.
@@ -194,7 +195,7 @@ All metrics scrape from `/metrics` on the gateway pod and are visualized on `inf
 - **Replicas**: 1 per EC2 host today; uvicorn workers set via env `UVICORN_WORKERS` (default 4).
 - **Healthcheck**: `GET /health` returns `200 {"status":"ok"}` if the FastAPI app started.
 - **Readiness**: `GET /readiness` runs a deep probe of every downstream service plus Redis. Used by deploy scripts before traffic shift.
-- **Env vars consumed**: `REDIS_URL`, `INTERNAL_SECRET`, `IDENTITY_SERVICE_URL`, `REGISTRY_SERVICE_URL`, `POLICY_SERVICE_URL`, `DECISION_SERVICE_URL`, `AUDIT_SERVICE_URL`, `BEHAVIOR_SERVICE_URL`, `USAGE_SERVICE_URL`, `AUTONOMY_SERVICE_URL`, `FLIGHT_RECORDER_SERVICE_URL`, `IDENTITY_GRAPH_SERVICE_URL`, `FORENSICS_SERVICE_URL`, `API_SERVICE_URL`, `OPA_URL`, `ENVIRONMENT`, `DECISION_GATHER_TOTAL_TIMEOUT` (default 1.5s).
+- **Env vars consumed**: `REDIS_URL`, `INTERNAL_SECRET`, `IDENTITY_SERVICE_URL`, `REGISTRY_SERVICE_URL`, `POLICY_SERVICE_URL`, `DECISION_SERVICE_URL`, `AUDIT_SERVICE_URL`, `BEHAVIOR_SERVICE_URL`, `USAGE_SERVICE_URL`, `AUTONOMY_SERVICE_URL`, `FLIGHT_RECORDER_SERVICE_URL`, `IDENTITY_GRAPH_SERVICE_URL`, `FORENSICS_SERVICE_URL`, `API_SERVICE_URL`, `OPA_URL`, `ENVIRONMENT`, `DECISION_GATHER_TOTAL_TIMEOUT` (default 1.5s), and the Voice Guide bridge: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (used only by `routers/voice.py` to sign short-lived LiveKit JWTs).
 - **Restart policy**: `unless-stopped` in compose.
 - **Resources**: Not constrained today; the gateway's footprint is ~250 MB resident.
 

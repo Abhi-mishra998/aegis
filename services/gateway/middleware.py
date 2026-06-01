@@ -122,6 +122,9 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/admin",
     "/dashboard",
     "/policy",
+    # Voice Guide bridge — mints LiveKit JWTs and reports worker status.
+    # Pure read-only management surface, no agent execution semantics.
+    "/voice",
 )
 
 # Configuration from global settings

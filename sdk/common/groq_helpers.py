@@ -1,7 +1,8 @@
 """
-Shared Groq enrichment helpers used by both services.insight.worker and
-services.groq_worker.service. Both consumers share the same model-selection
-and signal-formatting logic; keeping it in one place prevents drift.
+Shared Groq enrichment helpers used by services.insight.worker.
+(The duplicate services.groq_worker.service was removed in sprint-3.3;
+this module is kept as a sdk-level utility in case other services
+need the same prompt + model-selection logic.)
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ MODEL_FAST = settings.GROQ_MODEL_FAST   # llama-3.1-8b-instant  (low-risk events
 # Shared prompt templates — canonical single source of truth
 # ---------------------------------------------------------------------------
 
-# Used by: services.insight.worker, services.groq_worker.service
+# Used by: services.insight.worker
 THREAT_INTEL_SYSTEM_PROMPT = """\
 You are an enterprise AI security analyst producing threat intelligence briefings \
 for an AI agent governance platform. You analyze blocked or high-risk agent \

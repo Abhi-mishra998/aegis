@@ -515,6 +515,7 @@ from services.gateway.routers.transparency import (
     router as _transparency_router,  # noqa: E402
 )
 from services.gateway.routers.users import router as _users_router  # noqa: E402
+from services.gateway.routers.voice import router as _voice_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
@@ -536,6 +537,7 @@ app.include_router(_users_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_tenant_router)
+app.include_router(_voice_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
