@@ -97,6 +97,12 @@ jobs:
         run: |
           # Use the same compose file as production. The .env file is
           # generated locally here; secrets above were never real.
+          #
+          # NB: docker compose validates the WHOLE file before bringing up the
+          # subset below, so every `${VAR:?...}` required-no-default var in
+          # infra/docker-compose.yml must be present here — including
+          # GRAFANA_ADMIN_PASSWORD, even though Grafana itself isn't started.
+          # This was a cause of red CI runs in 2026-06; see deploy.md gotcha #10.
           cat > infra/.env <<EOF
           DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@pgbouncer:6432/acp
           REDIS_URL=redis://redis:6379
@@ -107,6 +113,7 @@ jobs:
           POSTGRES_USER=postgres
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
           POSTGRES_DB=acp
+          GRAFANA_ADMIN_PASSWORD=ci-placeholder-not-a-real-secret
           SLACK_WEBHOOK_URL=
           PAGERDUTY_ROUTING_KEY=
           EOF
