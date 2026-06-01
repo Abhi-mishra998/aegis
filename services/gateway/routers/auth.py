@@ -13,9 +13,8 @@ auth. That whole sequence moved verbatim — no behavioural changes.
 """
 from __future__ import annotations
 
-from typing import Any
-
 import re
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, field_validator

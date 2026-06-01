@@ -1,0 +1,32 @@
+{
+  "_comment": "sprint-4.D — IAM policy attached to the EC2 instance role (acp-ec2-role). Grants the minimum permissions the CloudWatch Agent needs.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudWatchLogsWrite",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:PutRetentionPolicy"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:*:log-group:/aegis/*",
+        "arn:aws:logs:*:*:log-group:/aegis/*:*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchAgentSelfMetrics",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricData"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "cloudwatch:namespace": "CWAgent" }
+      }
+    }
+  ]
+}

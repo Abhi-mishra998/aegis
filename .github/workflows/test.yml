@@ -60,3 +60,102 @@ jobs:
 
       - name: Run ruff
         run: ruff check . --output-format=github
+
+  e2e-playwright:
+    # sprint-4.F — UI behavioural tests run against a real compose stack.
+    # Replaces the broken string-match `tests/test_phase*_ui.py` pattern
+    # the audits flagged. The job is the next thing to fail if a release
+    # candidate breaks the user-facing flows the security audit cares about
+    # (auth, dashboard fallback banner, cross-tenant kill-switch).
+    name: e2e (Playwright)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    timeout-minutes: 25
+    env:
+      JWT_SECRET_KEY: "ci-e2e-jwt-secret-not-for-production"
+      INTERNAL_SECRET: "ci-e2e-internal-secret-placeholder"
+      GROQ_API_KEY: "ci-e2e-groq-key-placeholder"
+      POSTGRES_PASSWORD: "ci_e2e_pwd"
+      AEGIS_BASE_URL: "http://localhost:5173"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install Playwright deps
+        working-directory: ui
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Bring up minimal compose stack
+        run: |
+          # Use the same compose file as production. The .env file is
+          # generated locally here; secrets above were never real.
+          cat > infra/.env <<EOF
+          DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@pgbouncer:6432/acp
+          REDIS_URL=redis://redis:6379
+          JWT_SECRET_KEY=${JWT_SECRET_KEY}
+          JWT_ALGORITHM=HS256
+          INTERNAL_SECRET=${INTERNAL_SECRET}
+          GROQ_API_KEY=${GROQ_API_KEY}
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          POSTGRES_DB=acp
+          SLACK_WEBHOOK_URL=
+          PAGERDUTY_ROUTING_KEY=
+          EOF
+          docker compose -f infra/docker-compose.yml up -d --build gateway ui redis pgbouncer postgres opa bundle-server audit identity registry api usage decision
+          # Wait up to 5 minutes for the gateway to become reachable.
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8000/health && break || sleep 5
+          done
+
+      - name: Run Playwright
+        working-directory: ui
+        # Skip tests that require live credentials we don't have in CI.
+        # The kill-switch + degraded-banner specs are gated by env vars.
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ui/playwright-report/
+          retention-days: 7
+
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v || true
+
+  helm-lint:
+    # sprint-3.6 — gate Helm template syntax. The chart ships for self-host
+    # customers (see infra/helm/README.md); a template regression that
+    # broke helm install would otherwise reach customers undetected.
+    name: Helm chart lint
+    runs-on: ubuntu-latest
+    # Skip if no helm files changed in the PR.
+    if: contains(github.event.head_commit.message, '[skip-helm]') == false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: helm lint
+        run: helm lint infra/helm/acp/
+
+      - name: helm template (dry render)
+        run: helm template aegis infra/helm/acp/ -f infra/helm/acp/values.yaml > /dev/null

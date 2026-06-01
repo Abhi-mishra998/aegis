@@ -53,6 +53,43 @@ python demos/run_all_demos.py                  # live run, stack required
 - **Match the existing code style.** Run `ruff check .` before pushing. Zero ruff warnings required.
 - **Write real commit messages.** `fix: resolve JWT revocation race under high concurrency` not `update stuff`.
 - **Update tests.** If you change behavior, add or update a test that covers it.
+- **Behavioural tests, not string-match.** Don't add tests of the form
+  `assert "X" in Path("ui/src/pages/Foo.jsx").read_text()`. Sprint-6
+  deleted 16 of those files (1,324 LOC) because they caught zero bugs
+  and broke on every cosmetic rename. Use Playwright (`ui/tests/e2e/`)
+  or pytest with FastAPI's TestClient instead.
+- **CHANGELOG entry.** Add a one-line entry under `## [Unreleased]` for
+  any user-visible change.
+
+## Architectural rules (so future PRs stay reviewable)
+
+Codified from the post-sprint-6 audit closure. Breaking these is what
+created the security findings the past sprints had to fix.
+
+1. **Never `except: pass`.** Bare except + pass swallows real errors.
+   Use a typed exception and either re-raise or log structured.
+2. **Never fire-and-forget billing or audit writes.** The outbox pattern
+   exists for a reason. `services/audit/writer.py:64-96` is the
+   canonical example.
+3. **Every new tenant-scoped route gets `Depends(get_tenant_id)`** and a
+   downstream `tenant_id ==` check. Path tenant_id without a JWT match
+   is what created the sprint-1 cross-tenant kill-switch CRITICAL.
+4. **Every new `/admin/*` route gets `require_admin_role(request)`** at
+   the gateway. The middleware only blocks WRITE methods for non-admin;
+   GETs slip through without an explicit gate. See
+   `services/gateway/_helpers.py:require_admin_role`.
+5. **Every new container port is bound to `127.0.0.1`** unless it is the
+   gateway (8000) or the UI (5173). See `infra/docker-compose.yml`.
+6. **Every new env-loaded secret is in `sdk/common/config.py`'s Pydantic
+   `Field(...)` with no default.** Defaults like `"change_me_internal"`
+   become production trust boundaries.
+7. **Every new alert rule gets a Slack/PagerDuty route in
+   `infra/alertmanager.yml`.** A rule that doesn't page anybody is
+   monitoring theater.
+8. **Every new gateway route under `/admin/*`, `/decision/*`, or
+   `/autonomy/*` lives in `services/gateway/routers/<domain>.py`,
+   not `main.py`.** Add a new file if there isn't one already; do not
+   grow the god-file. Current size: 3,654 LOC; target: under 1,000.
 
 ### Branch naming
 

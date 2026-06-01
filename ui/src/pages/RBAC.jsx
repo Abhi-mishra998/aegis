@@ -52,10 +52,8 @@ function AgentRow({ agent, toolOptions }) {
     setError('')
     try {
       const res  = await registryService.listPermissions(agent.id)
-      const list = Array.isArray(res)     ? res
-                 : Array.isArray(res?.data) ? res.data
-                 : []
-      if (mountedRef.current) setPermissions(list)
+      // Gateway shape for permissions: { success, data: [...] }
+      if (mountedRef.current) setPermissions(res?.data || [])
     } catch (err) {
       if (mountedRef.current) setError(err.message || 'Failed to load permissions.')
     } finally {
@@ -260,12 +258,8 @@ export default function RBAC() {
     setError('')
     try {
       const res  = await registryService.listAgents()
-      const list = Array.isArray(res)              ? res
-                 : Array.isArray(res?.data)        ? res.data
-                 : Array.isArray(res?.data?.items) ? res.data.items
-                 : Array.isArray(res?.data?.data)  ? res.data.data
-                 : []
-      if (mountedRef.current) setAgents(list)
+      // Gateway shape for agents: { success, data: { items: [...] } }
+      if (mountedRef.current) setAgents(res?.data?.items || [])
     } catch (err) {
       if (mountedRef.current) setError(err.message || 'Failed to load agents.')
     } finally {

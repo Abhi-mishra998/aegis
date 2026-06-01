@@ -1,0 +1,129 @@
+#!/bin/bash
+# user_data.sh — runs on first boot of the EC2 instance.
+#
+# Responsibilities:
+#   1. Install system deps (Python 3.12, venv, build-essential, awscli, jq).
+#   2. Create /opt/aegis with correct ownership.
+#   3. Drop fetch-secrets.sh that pulls runtime keys from Secrets Manager.
+#   4. Install (but don't start) the aegis-* systemd units.
+#
+# Terraform-substituted vars: $${aws_region}, $${project_name}.
+# All bash variables use $$$${VAR} so Terraform's templatefile leaves them alone.
+
+set -euxo pipefail
+
+APP_DIR="/opt/aegis"
+AGENT_DIR="$${APP_DIR}/agent"
+
+# ---- 1. System packages -----------------------------------------------------
+apt-get update -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  ca-certificates \
+  curl \
+  jq \
+  unzip \
+  git \
+  rsync \
+  build-essential \
+  python3.12 \
+  python3.12-venv \
+  python3-pip
+
+# AWS CLI v2 (Ubuntu 24.04 removed the apt awscli package).
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+  rm -rf /tmp/awscliv2.zip /tmp/aws
+fi
+
+# ---- 2. App directory -------------------------------------------------------
+install -d -o ubuntu -g ubuntu -m 0755 "$${APP_DIR}"
+install -d -o ubuntu -g ubuntu -m 0755 "$${AGENT_DIR}"
+install -d -o ubuntu -g ubuntu -m 0755 "$${APP_DIR}/scripts"
+
+# ---- 3. fetch-secrets.sh (region + project name baked in at TF apply) -------
+# Uses fixed secret names so the IAM policy can scope to `aegis-voice-guide/*`
+# without needing secretsmanager:ListSecrets (which doesn't support resource-
+# level permissions). GOOGLE_API_KEY is optional — silently skipped if absent.
+cat >/opt/aegis/scripts/fetch-secrets.sh <<'INNER_EOF'
+#!/bin/bash
+set -euo pipefail
+
+REGION="__AWS_REGION__"
+PROJECT="__PROJECT_NAME__"
+OUT=/opt/aegis/agent/.env.local
+
+REQUIRED=(LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET DEEPGRAM_API_KEY CARTESIA_API_KEY GROQ_API_KEY)
+OPTIONAL=(GOOGLE_API_KEY)
+
+install -d -o ubuntu -g ubuntu -m 0755 /opt/aegis/agent
+: > "$OUT.tmp"
+chmod 0600 "$OUT.tmp"
+
+for KEY in "${REQUIRED[@]}"; do
+  VAL="$(aws --region "$REGION" secretsmanager get-secret-value \
+            --secret-id "$PROJECT/$KEY" --query SecretString --output text)"
+  printf '%s=%s\n' "$KEY" "$VAL" >> "$OUT.tmp"
+done
+
+for KEY in "${OPTIONAL[@]}"; do
+  if VAL="$(aws --region "$REGION" secretsmanager get-secret-value \
+              --secret-id "$PROJECT/$KEY" --query SecretString --output text 2>/dev/null)"; then
+    printf '%s=%s\n' "$KEY" "$VAL" >> "$OUT.tmp"
+  fi
+done
+
+mv "$OUT.tmp" "$OUT"
+chown ubuntu:ubuntu "$OUT"
+chmod 0600 "$OUT"
+INNER_EOF
+
+# Substitute the Terraform-known values into the generated script.
+sed -i "s|__AWS_REGION__|${aws_region}|g; s|__PROJECT_NAME__|${project_name}|g" /opt/aegis/scripts/fetch-secrets.sh
+
+chmod 0755 /opt/aegis/scripts/fetch-secrets.sh
+chown -R ubuntu:ubuntu /opt/aegis/scripts
+
+# ---- 4. systemd units (enabled but not started — deploy.sh will start) -----
+cat >/etc/systemd/system/aegis-fetch-secrets.service <<'EOF'
+[Unit]
+Description=Aegis: pull runtime secrets from AWS Secrets Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/aegis/scripts/fetch-secrets.sh
+RemainAfterExit=yes
+EOF
+
+cat >/etc/systemd/system/aegis-agent.service <<'EOF'
+[Unit]
+Description=Aegis Voice Agent
+After=aegis-fetch-secrets.service network-online.target
+Requires=aegis-fetch-secrets.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/aegis/agent
+EnvironmentFile=/opt/aegis/agent/.env.local
+ExecStart=/opt/aegis/agent/.venv/bin/python src/agent.py start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable aegis-fetch-secrets.service
+systemctl enable aegis-agent.service
+
+echo "user_data: bootstrap complete. Run scripts/deploy.sh from the dev machine next." \
+  | tee /var/log/aegis-bootstrap.log

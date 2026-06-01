@@ -185,9 +185,14 @@ async def process_groq_queue() -> None:
                         await redis.xack(_STREAM_KEY, _CONSUMER_GROUP, msg_id)
                         continue
 
-                    # Idempotency — skip if already processed
+                    # Idempotency claim: atomic SET NX wins the right to call
+                    # the paid Groq API. Releases on failure so a redelivery
+                    # can retry; overwritten by store_insight on success.
                     cache_key = f"acp:groq:insight:{event_id}"
-                    if await redis.exists(cache_key):
+                    claimed = await redis.set(
+                        cache_key, b"pending", nx=True, ex=_INSIGHT_TTL,
+                    )
+                    if not claimed:
                         logger.info("insight_skipped_idempotent", event_id=event_id)
                         await redis.xack(_STREAM_KEY, _CONSUMER_GROUP, msg_id)
                         continue
@@ -220,6 +225,9 @@ async def process_groq_queue() -> None:
 
                         await redis.xack(_STREAM_KEY, _CONSUMER_GROUP, msg_id)
                     except Exception as err:
+                        # Release the idempotency claim so a redelivery can retry.
+                        with contextlib.suppress(Exception):
+                            await redis.delete(cache_key)
                         logger.error("insight_generation_failed", event_id=event_id, error=str(err))
                         await redis.xadd(
                             _DLQ_KEY,
@@ -227,6 +235,12 @@ async def process_groq_queue() -> None:
                             maxlen=1000,
                         )
                         await redis.xack(_STREAM_KEY, _CONSUMER_GROUP, msg_id)
+
+            # Heartbeat — refresh the key the docker healthcheck reads.
+            # A stuck loop never reaches here; healthcheck flips unhealthy
+            # and docker compose restarts the worker.
+            with contextlib.suppress(Exception):
+                await redis.setex(b"acp:worker:heartbeat:insight_worker", 90, str(int(time.time())))
 
         except asyncio.CancelledError:
             break

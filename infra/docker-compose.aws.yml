@@ -215,17 +215,8 @@ services:
           cpus: "0.05"
           memory: 48M
 
-  groq_worker:
-    depends_on: []
-    restart: always
-    deploy:
-      resources:
-        limits:
-          cpus: "0.50"
-          memory: 256M
-        reservations:
-          cpus: "0.10"
-          memory: 64M
+  # groq_worker removed in sprint-3.3 (2026-05-29); insight_worker is the
+  # canonical consumer of acp:groq_queue.
 
   opa:
     depends_on: []

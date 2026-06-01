@@ -1,0 +1,41 @@
+name: Publish status page snapshot
+
+# sprint-4.G — every 1 minute, push the current platform status to S3.
+# The public status page (e.g. status.aegisagent.in) renders the JSON
+# directly via a static CloudFront distribution.
+
+on:
+  schedule:
+    # Every minute — but GitHub Actions has a 5-minute floor on cron, so
+    # in practice this is best-effort minute-ish granularity. For real
+    # 30-second updates, run the same script on a host-side systemd timer.
+    - cron: "* * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: status-page-publish
+  cancel-in-progress: true  # If a previous run is still going, the new one wins.
+
+jobs:
+  snapshot:
+    name: Snapshot platform health → S3
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and run snapshot
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          timeout: 30s
+          command_timeout: 2m
+          script: |
+            set -euo pipefail
+            cd ~/aegis
+            docker compose -f infra/docker-compose.yml run --rm \
+              -e GATEWAY_URL=http://gateway:8000 \
+              -e PROMETHEUS_URL=http://prometheus:9090 \
+              -e STATUS_S3_BUCKET=aegis-statuspage \
+              audit \
+              python /app/scripts/maintenance/publish_status_page.py

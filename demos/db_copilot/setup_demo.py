@@ -86,8 +86,13 @@ async def _create_demo_db() -> None:
         print("ERROR: sqlalchemy not available — pip install sqlalchemy[asyncio] asyncpg")
         return
 
-    # Connect to postgres default DB to create acp_demo if it doesn't exist
-    admin_dsn = "postgresql+asyncpg://postgres:postgres@localhost:5433/postgres"
+    # Connect to postgres default DB to create acp_demo if it doesn't exist.
+    # Derive the admin DSN from the same host/port as DEMO_PG_DSN so this works
+    # against any deployment (was previously hardcoded to localhost:5433).
+    admin_dsn = os.getenv(
+        "DEMO_ADMIN_PG_DSN",
+        _DEMO_DSN.rsplit("/", 1)[0] + "/postgres",
+    )
     engine_admin = create_async_engine(admin_dsn, isolation_level="AUTOCOMMIT")
     async with engine_admin.connect() as conn:
         result = await conn.execute(text("SELECT 1 FROM pg_database WHERE datname='acp_demo'"))

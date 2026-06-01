@@ -115,6 +115,55 @@ def invalidate_local_token(token: str) -> bool:
     return _LOCAL_TOKEN_LRU.invalidate(LocalTokenValidator._token_hash(token))
 
 
+def invalidate_local_token_by_hash(token_hash: str) -> bool:
+    """Invalidate by sha256 hash — used by the revocation Pub/Sub listener.
+
+    The Identity service publishes the hash on revoke; each gateway worker's
+    listener drops the entry. Closes the up-to-60-second revocation latency
+    window that the LRU otherwise opens.
+    """
+    return _LOCAL_TOKEN_LRU.invalidate(token_hash)
+
+
+# Pub/Sub channel name shared with services/identity/router.py — keep in sync.
+TOKEN_REVOCATIONS_CHANNEL = "acp:token:revocations"
+
+
+async def run_revocation_listener(redis_client: Redis) -> None:
+    """Subscribe to the revocation channel and drop entries from the LRU.
+
+    Started as a background task in the gateway lifespan. One subscriber per
+    uvicorn worker is required — Redis Pub/Sub fans out, but listeners must
+    live in the process whose LRU they are clearing.
+
+    Message format: the bare 64-char sha256 hex digest of the JWT.
+    """
+    import structlog
+    log = structlog.get_logger(__name__)
+    while True:
+        try:
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe(TOKEN_REVOCATIONS_CHANNEL)
+            log.info("token_revocation_listener_subscribed", channel=TOKEN_REVOCATIONS_CHANNEL)
+            async for msg in pubsub.listen():
+                if not msg or msg.get("type") != "message":
+                    continue
+                data = msg.get("data", b"")
+                token_hash = data.decode("utf-8", errors="ignore") if isinstance(data, (bytes, bytearray)) else str(data)
+                token_hash = token_hash.strip()
+                # Defence: only 64-char hex strings are valid token hashes.
+                if len(token_hash) == 64 and all(c in "0123456789abcdef" for c in token_hash):
+                    dropped = invalidate_local_token_by_hash(token_hash)
+                    log.info("token_revocation_received", dropped=dropped)
+                else:
+                    log.warning("token_revocation_malformed", payload_len=len(token_hash))
+        except Exception as exc:
+            log.warning("token_revocation_listener_error", error=str(exc))
+            # Back off briefly, then reconnect.
+            import asyncio as _asyncio
+            await _asyncio.sleep(2.0)
+
+
 class LocalTokenValidator:
     """
     Handles local JWT validation with Redis-backed caching.

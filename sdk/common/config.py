@@ -57,6 +57,17 @@ class ACPSettings(BaseSettings):
     JWT_ALGORITHM: str = Field(default="HS256")
     JWT_EXPIRY_MINUTES: int = Field(default=15)
 
+    @field_validator("JWT_ALGORITHM")
+    @classmethod
+    def _allowed_jwt_algorithm(cls, v: str) -> str:
+        allowed = {"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
+        if v not in allowed:
+            raise ValueError(
+                f"JWT_ALGORITHM must be one of {sorted(allowed)}; got {v!r}. "
+                f"Refusing to start — 'none' or unknown algorithms disable signature verification."
+            )
+        return v
+
     # ─────────────────────────────────────────────────────────────
     # 🌐 External Services
     # ─────────────────────────────────────────────────────────────

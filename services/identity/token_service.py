@@ -131,6 +131,21 @@ class TokenService:
 
         return dict(payload)
 
+    # sprint-2.1 — gateway workers subscribe to this channel and drop the
+    # matching entry from their in-process LRU on receipt. Keeps revocation
+    # latency bounded to a single Redis hop instead of the 60-second LRU TTL.
+    _REVOCATION_CHANNEL = "acp:token:revocations"
+
+    async def _publish_revocation(self, token_hash: str) -> None:
+        """Best-effort notify every gateway worker that this hash is dead."""
+        try:
+            await self._redis.publish(self._REVOCATION_CHANNEL, token_hash)
+        except Exception:
+            # Pub/Sub is best-effort — the Redis revocation key is still set,
+            # so workers without the broadcast still reject the token (just
+            # up to 60s slower on LRU hits). Don't fail the revoke call.
+            pass
+
     async def revoke(self, token: str) -> bool:
         """Mark token as revoked. Returns True if token was active."""
         try:
@@ -152,6 +167,7 @@ class TokenService:
 
         await self._redis.setex(revoke_key, 86400, "1")  # type: ignore[misc]
         await self._redis.delete(active_key)
+        await self._publish_revocation(token_hash)
         return True
 
     async def revoke_all_for_agent(self, agent_id: uuid.UUID) -> int:
@@ -167,6 +183,7 @@ class TokenService:
             token_hash = h.decode()
             await self._redis.setex(f"{REDIS_REVOKE_PREFIX}{token_hash}", 86400, "1")
             await self._redis.delete(f"{REDIS_TOKEN_PREFIX}{token_hash}")
+            await self._publish_revocation(token_hash)
             count += 1
 
         await self._redis.delete(agent_key)

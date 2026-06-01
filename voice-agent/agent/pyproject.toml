@@ -1,0 +1,27 @@
+[project]
+name = "aegis-voice-guide"
+version = "0.1.0"
+description = "Aegis Voice Guide — RAG-grounded voice assistant over Aegis docs"
+requires-python = ">=3.10"
+dependencies = [
+    "livekit-agents[deepgram,cartesia,openai,silero,turn-detector]~=1.5",
+    "chromadb>=0.5",
+    "sentence-transformers>=3.0",
+    "rank-bm25>=0.2.2",
+    # Declared directly so the [tool.uv.sources] CPU-only index applies.
+    "torch>=2.2,<3",
+    "python-dotenv>=1.0",
+]
+
+[tool.uv]
+package = false
+
+# Force CPU-only torch — embeddings don't need GPU, and the default Linux
+# wheel drags in ~1 GB of unused CUDA libraries.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

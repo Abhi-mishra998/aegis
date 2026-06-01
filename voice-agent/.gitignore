@@ -1,0 +1,47 @@
+# Env / secrets (NEVER commit)
+.env
+.env.*
+.env.local
+.env.*.local
+*.env
+secrets/
+*-credentials*
+*credentials*.json
+
+# Terraform — state files contain secrets; never commit
+infrastructure/.terraform/
+infrastructure/.terraform.lock.hcl
+infrastructure/*.tfstate
+infrastructure/*.tfstate.*
+infrastructure/*.tfvars
+infrastructure/*.tfvars.json
+infrastructure/crash.log
+infrastructure/crash.*.log
+infrastructure/override.tf
+infrastructure/override.tf.json
+infrastructure/*_override.tf
+infrastructure/*_override.tf.json
+infrastructure/.terraformrc
+infrastructure/terraform.rc
+
+# AWS / cloud secret material
+*.pem
+*.ppk
+*.p12
+.aws/credentials
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+
+# RAG / models
+chroma_db/
+.cache/
+models/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

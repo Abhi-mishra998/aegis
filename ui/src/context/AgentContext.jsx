@@ -33,15 +33,8 @@ export function AgentProvider({ children }) {
     setAgentsLoading(true)
     try {
       const res  = await registryService.listAgents()
-      const list = Array.isArray(res)
-        ? res
-        : Array.isArray(res?.data)
-        ? res.data
-        : Array.isArray(res?.data?.items)
-        ? res.data.items
-        : Array.isArray(res?.data?.data)
-        ? res.data.data
-        : []
+      // Gateway shape: { success, data: { items: [...] } }
+      const list = res?.data?.items || []
 
       if (!mountedRef.current) return
       setAgents(list)

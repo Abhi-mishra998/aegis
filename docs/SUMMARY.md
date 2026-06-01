@@ -86,6 +86,13 @@
   * [Threat Intelligence](ui/settings/threat-intel.md)
   * [Scheduled Reports](ui/settings/scheduled-reports.md)
 
+## Voice Guide
+
+* [Overview](voice-guide/_index.md)
+* [UI Integration](voice-guide/ui-integration.md)
+* [RAG and LLM Strategy](voice-guide/rag-and-llm.md)
+* [Deployment and Operations](voice-guide/deployment.md)
+
 ## Security
 
 * [Cryptographic Audit Chain](security/crypto-audit-chain.md)
@@ -115,3 +122,7 @@
 * [Authentication](api/authentication.md)
 * [Error Codes](api/error-codes.md)
 * [Examples](api/examples.md)
+
+---
+
+* [Contact](contact.md)

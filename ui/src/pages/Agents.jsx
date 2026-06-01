@@ -87,9 +87,9 @@ export default function Agents() {
         registryService.getSummary(),
       ]);
       if (res.status === 'fulfilled') {
+        // Canonical shape from gateway: { success, data: { items: [...] } }.
         const r = res.value;
-        const list = Array.isArray(r) ? r : Array.isArray(r?.data) ? r.data : Array.isArray(r?.data?.items) ? r.data.items : Array.isArray(r?.data?.data) ? r.data.data : [];
-        setAgents(list);
+        setAgents(r?.data?.items || []);
         setError('');
       } else {
         setError(res.reason?.message || 'Failed to reach identity module.');

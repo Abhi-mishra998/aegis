@@ -1,39 +1,60 @@
 # Alertmanager configuration for ACP
-# Routes Prometheus alerts to operator channels.
-#
-# Default receiver is a webhook that logs to stdout — replace with Slack /
-# PagerDuty / Opsgenie before production. Webhook URL comes from the
-# ALERT_WEBHOOK_URL or SLACK_WEBHOOK_URL env var; if both are empty, alerts
-# are visible only in the Alertmanager UI at :9093.
+# Routes Prometheus alerts to Slack and (optionally) PagerDuty.
+# Webhook URLs come from env at startup: SLACK_WEBHOOK_URL, PAGERDUTY_URL.
+# If a URL is empty/missing alertmanager will log a delivery error but the
+# config remains valid — operators must populate the env var to wire delivery.
 
 global:
   resolve_timeout: 5m
+  # Slack URL is the default fallback for receivers that don't override it.
+  slack_api_url_file: /etc/alertmanager/slack_webhook_url
 
 route:
   group_by: ["alertname", "service"]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
-  receiver: default
+  receiver: slack
 
   routes:
-    # Critical alerts: short batching window, shorter repeat
+    # Critical alerts: page via PagerDuty AND Slack; short repeat window.
     - matchers:
         - severity = "critical"
-      receiver: default
+      receiver: critical
       group_wait: 10s
       group_interval: 1m
       repeat_interval: 30m
+      continue: true
 
 receivers:
-  - name: default
-    # No webhook configured by default — alerts are visible in the Alertmanager UI
-    # at http://localhost:9093 only. To push to Slack / PagerDuty / Opsgenie,
-    # uncomment and replace the URL below before redeploying alertmanager.
-    #
-    # webhook_configs:
-    #   - url: "https://hooks.slack.com/services/T0/B0/REPLACE"
-    #     send_resolved: true
+  - name: slack
+    slack_configs:
+      - channel: '#aegis-alerts'
+        send_resolved: true
+        title: '{{ .CommonAnnotations.summary }}'
+        text: |-
+          *Severity:* {{ .CommonLabels.severity }}
+          *Service:*  {{ .CommonLabels.service }}
+          *Status:*   {{ .Status }}
+          {{ range .Alerts }}
+          • {{ .Annotations.description }}
+          {{ end }}
+
+  - name: critical
+    slack_configs:
+      - channel: '#aegis-critical'
+        send_resolved: true
+        title: 'CRITICAL: {{ .CommonAnnotations.summary }}'
+        text: |-
+          *Service:* {{ .CommonLabels.service }}
+          {{ range .Alerts }}
+          • {{ .Annotations.description }}
+          {{ end }}
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/pagerduty_routing_key
+        send_resolved: true
+        severity: critical
+        description: '{{ .CommonAnnotations.summary }}'
 
 inhibit_rules:
   # If the whole service is down, suppress its noisy downstream alerts.
