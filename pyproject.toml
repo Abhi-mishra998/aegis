@@ -70,7 +70,7 @@ server = [
     "prometheus-client",
     "groq",
     "reportlab>=4.0",
-    "livekit-api>=0.8",
+    "livekit-api>=1.1.0",
 ]
 dev = [
     "pytest",
