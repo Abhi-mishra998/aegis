@@ -101,6 +101,33 @@ jobs:
         working-directory: ui
         run: npm run build
 
+      - name: Generate CI-safe pgbouncer userlist
+        # `infra/userlist.txt` is gitignored (it carries real Postgres
+        # credentials in dev). Compose bind-mounts it into pgbouncer at
+        # /etc/pgbouncer/userlist.txt — if the host file is missing, Docker
+        # silently creates an empty DIRECTORY in its place and the container
+        # fails with `not a directory: trying to mount a directory onto a
+        # file`. We generate a CI-only userlist with the postgres superuser
+        # plus every per-service user whose default password is baked into
+        # infra/docker-compose.yml (so `${X_DB_PASSWORD:-x_prod_pwd}` keeps
+        # working without operator-supplied secrets).
+        run: |
+          cat > infra/userlist.txt <<EOF
+          "postgres" "${POSTGRES_PASSWORD}"
+          "pgbouncer_admin" "${POSTGRES_PASSWORD}"
+          "registry_user"        "registry_prod_pwd"
+          "identity_user"        "identity_prod_pwd"
+          "audit_user"           "audit_prod_pwd"
+          "api_user"             "api_prod_pwd"
+          "usage_user"           "usage_prod_pwd"
+          "behavior_user"        "behavior_prod_pwd"
+          "autonomy_user"        "autonomy_prod_pwd"
+          "identity_graph_user"  "identity_graph_prod_pwd"
+          "flight_recorder_user" "flight_recorder_prod_pwd"
+          EOF
+          chmod 644 infra/userlist.txt
+          echo "userlist.txt written, $(wc -l < infra/userlist.txt) entries"
+
       - name: Bring up minimal compose stack
         run: |
           # Use the same compose file as production. The .env file is
