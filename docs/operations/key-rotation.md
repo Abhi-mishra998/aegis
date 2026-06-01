@@ -40,7 +40,7 @@ export RECEIPT_SIGNING_PRIVATE_KEY="$(cat /tmp/new-receipt-key.txt | base64 -w0)
 # See operations/deployment.md
 
 # 5. Verify the new key is active
-curl -sS https://aegisagent.in/transparency/keys -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" | jq
+curl -sS https://dev.aegisagent.in/transparency/keys -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" | jq
 
 # 6. Verify old receipts still validate
 .venv/bin/acp verify-root --date 2026-05-01
@@ -63,7 +63,7 @@ docker compose -f /home/ubuntu/aegis/infra/docker-compose.yml up -d --force-recr
     flight_recorder identity_graph forensics api usage insight groq_worker
 
 # 4. Verify all services healthy
-curl -sS https://aegisagent.in/system/health -H "Authorization: Bearer $TOKEN" \
+curl -sS https://dev.aegisagent.in/system/health -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '.data.services'
 
 # 5. Drop INTERNAL_SECRET_PREVIOUS once all services confirmed healthy
@@ -109,19 +109,19 @@ The log is the SOC 2 audit trail for key management. Auditors review it during c
 
 ```bash
 # Current key + historical keys
-curl -sS https://aegisagent.in/transparency/keys \
+curl -sS https://dev.aegisagent.in/transparency/keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '{ primary: .data.primary_fingerprint, historical: .data.historical_keys | length }'
 
 # Verify a receipt from before the rotation
 RECEIPT_ID=<old audit row id>
-curl -sS "https://aegisagent.in/audit/logs/$RECEIPT_ID/receipt" \
+curl -sS "https://dev.aegisagent.in/audit/logs/$RECEIPT_ID/receipt" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '.data.signature_valid'
 
 # Verify the daily root from before the rotation
 DATE=<yyyy-mm-dd>
-curl -sS "https://aegisagent.in/transparency/roots/$DATE" \
+curl -sS "https://dev.aegisagent.in/transparency/roots/$DATE" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '.data.signature_valid'
 ```

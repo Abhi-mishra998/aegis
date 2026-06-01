@@ -15,24 +15,36 @@ from __future__ import annotations
 
 from typing import Any
 
+import re
+
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, field_validator
 
 from sdk.common.config import settings
 from services.gateway._helpers import internal_headers, passthrough
 
 router = APIRouter()
 
+# RFC-5321-ish but permissive enough to allow .local / .test / .internal TLDs
+# that the python-email-validator package rejects as "special-use or reserved".
+# The identity service is the source of truth for credential validity.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 def _base() -> str:
     return settings.IDENTITY_SERVICE_URL.rstrip("/")
 
 
-# Mirrors the in-main.py AuthRequest schema; kept local so this module
-# does not need to reach back into main for one Pydantic model.
 class AuthRequest(BaseModel):
-    email:    EmailStr
+    email:    str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def _check_email(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v):
+            raise ValueError("not a valid email address")
+        return v
 
 
 @router.post("/auth/token", tags=["auth"])

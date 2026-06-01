@@ -136,7 +136,7 @@ The `/threat-intel/summary` route returns the platform's own intelligence view; 
 ### Tenant's cross-tenant signal summary
 
 ```bash
-curl -sS https://aegisagent.in/threat-intel/summary \
+curl -sS https://dev.aegisagent.in/threat-intel/summary \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ campaigns: .data.campaigns, top_findings: .data.findings[:5] }'
@@ -145,7 +145,7 @@ curl -sS https://aegisagent.in/threat-intel/summary \
 ### Enrich a suspicious IP from an audit row's metadata
 
 ```bash
-curl -sS -X POST https://aegisagent.in/threat-intel/ip \
+curl -sS -X POST https://dev.aegisagent.in/threat-intel/ip \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

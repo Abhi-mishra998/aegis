@@ -178,7 +178,7 @@ The gateway proxies most of these as `/audit/*` paths; some live under different
 ### Fetch the last 10 audit rows
 
 ```bash
-curl -sS https://aegisagent.in/audit/logs?limit=10 \
+curl -sS https://dev.aegisagent.in/audit/logs?limit=10 \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq '.data.items'
 ```
@@ -186,7 +186,7 @@ curl -sS https://aegisagent.in/audit/logs?limit=10 \
 ### Verify the chain
 
 ```bash
-curl -sS https://aegisagent.in/audit/logs/verify \
+curl -sS https://dev.aegisagent.in/audit/logs/verify \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq '{ valid, violations, rows_checked }'
 ```
@@ -194,7 +194,7 @@ curl -sS https://aegisagent.in/audit/logs/verify \
 ### Fetch the receipt for one row
 
 ```bash
-curl -sS https://aegisagent.in/audit/logs/$AUDIT_ID/receipt \
+curl -sS https://dev.aegisagent.in/audit/logs/$AUDIT_ID/receipt \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -202,7 +202,7 @@ curl -sS https://aegisagent.in/audit/logs/$AUDIT_ID/receipt \
 ### Add an analyst note
 
 ```bash
-curl -sS -X POST https://aegisagent.in/audit/logs/$AUDIT_ID/notes \
+curl -sS -X POST https://dev.aegisagent.in/audit/logs/$AUDIT_ID/notes \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

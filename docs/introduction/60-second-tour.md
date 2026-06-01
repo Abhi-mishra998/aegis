@@ -2,7 +2,7 @@
 
 **A guided walkthrough of the Aegis web UI. Sixty seconds, eight stops, every part of the platform.**
 
-The live deployment is at [aegisagent.in](https://aegisagent.in). For credentials, see [Quickstart](quickstart.md).
+The live deployment is at [aegisagent.in](https://dev.aegisagent.in). For credentials, see [Quickstart](quickstart.md).
 
 ## What you'll see
 

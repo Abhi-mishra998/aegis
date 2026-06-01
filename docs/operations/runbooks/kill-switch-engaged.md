@@ -23,7 +23,7 @@ The kill switch stops everything. Use it only when narrower levers do not apply.
 
 ### Do you have the reason ready?
 
-The engage API requires a non-empty `reason`. The reason is recorded in the audit chain and visible to the team that disengages later. Be specific: "Active prompt injection campaign hitting CRM agent — investigating attacker IP 203.0.113.42" is better than "incident."
+The current engage API records the reason server-side as the constant `manual_admin_lockdown` — operators communicate context via the audit-row note (`/audit/logs/{id}/notes`) and the Slack alert, not the engage payload itself. Have the human-readable reason ready for both. Be specific: "Active prompt injection campaign hitting CRM agent — investigating attacker IP 203.0.113.42" is better than "incident."
 
 ### Who needs to know?
 
@@ -43,28 +43,27 @@ The status badge turns red within 5 seconds.
 ### Via API
 
 ```bash
-curl -sS -X POST https://aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS -X POST https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "Content-Type: application/json" \
-  -d '{
-    "reason": "Suspected prompt injection campaign — investigating",
-    "engaged_by": "operator@acme.com"
-  }'
+  -d '{"action":"engage"}'
 ```
 
-Expected: HTTP 200 with `{ "success": true }`. The audit chain records the engage event.
+Expected: HTTP 200 with `{"success":true,"data":{"status":"engaged","tenant_id":"<uuid>"}}`. The audit chain records the engage event with the operator's `user_id` (extracted from the JWT) and the reason `manual_admin_lockdown`.
+
+If you see HTTP 422 "Validation failed", you are running a pre-2026-06-01 decision-service image — the `path_tenant_id` dependency arg was unannotated and FastAPI treated it as a missing query param. Redeploy from the current tarball.
 
 ## Verify propagation
 
 ```bash
 # Status should be engaged within 5 seconds
-curl -sS https://aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" | jq
 
 # Verify a test execute is denied
-curl -sS -X POST https://aegisagent.in/execute \
+curl -sS -X POST https://dev.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "Content-Type: application/json" \
@@ -108,28 +107,23 @@ Before disengaging:
 ### Via API
 
 ```bash
-curl -sS -X DELETE https://aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS -X DELETE https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Tenant-ID: $TENANT_ID" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "reason": "Investigation complete; policy updated and offending agent quarantined.",
-    "disengaged_by": "operator@acme.com"
-  }'
+  -H "X-Tenant-ID: $TENANT_ID"
 ```
 
-The audit row records the disengage event.
+The DELETE route takes no body. The audit row records the disengage event with the operator's JWT-derived `user_id`. The POST route also accepts `{"action":"disengage"}` for callers that prefer one HTTP verb.
 
 ## Verify recovery
 
 ```bash
 # Status should be disengaged
-curl -sS https://aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Tenant-ID: $TENANT_ID" | jq '.data.engaged'  # should be false
+  -H "X-Tenant-ID: $TENANT_ID" | jq '.data.status'  # should be "disengaged"
 
 # A test execute should now succeed
-curl -sS -X POST https://aegisagent.in/execute \
+curl -sS -X POST https://dev.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "X-Agent-ID: $AGENT_ID" \

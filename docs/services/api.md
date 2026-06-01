@@ -201,7 +201,7 @@ Selected endpoints:
 ### Create an API key
 
 ```bash
-curl -sS -X POST https://aegisagent.in/api-keys \
+curl -sS -X POST https://dev.aegisagent.in/api-keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -212,7 +212,7 @@ curl -sS -X POST https://aegisagent.in/api-keys \
 ### Create an AR rule that quarantines on prompt-injection finding
 
 ```bash
-curl -sS -X POST https://aegisagent.in/auto-response/rules \
+curl -sS -X POST https://dev.aegisagent.in/auto-response/rules \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -228,7 +228,7 @@ curl -sS -X POST https://aegisagent.in/auto-response/rules \
 ### Push a test event to Splunk
 
 ```bash
-curl -sS -X POST https://aegisagent.in/siem/test/splunk \
+curl -sS -X POST https://dev.aegisagent.in/siem/test/splunk \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001"
 ```

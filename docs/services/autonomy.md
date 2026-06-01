@@ -167,7 +167,7 @@ Note: `/playbooks/autotrigger-stats` is declared before `/playbooks/{playbook_id
 ### List built-in playbook templates
 
 ```bash
-curl -sS https://aegisagent.in/playbooks/templates \
+curl -sS https://dev.aegisagent.in/playbooks/templates \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -175,7 +175,7 @@ curl -sS https://aegisagent.in/playbooks/templates \
 ### Create a contract that limits delegation to depth 2
 
 ```bash
-curl -sS -X POST https://aegisagent.in/autonomy/contracts \
+curl -sS -X POST https://dev.aegisagent.in/autonomy/contracts \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -191,7 +191,7 @@ curl -sS -X POST https://aegisagent.in/autonomy/contracts \
 ### Trigger an incident-response playbook manually
 
 ```bash
-curl -sS -X POST https://aegisagent.in/playbooks/$PLAYBOOK_ID/trigger \
+curl -sS -X POST https://dev.aegisagent.in/playbooks/$PLAYBOOK_ID/trigger \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

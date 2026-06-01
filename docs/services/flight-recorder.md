@@ -132,7 +132,7 @@ Indexes: `execution_timelines.tenant_id, started_at DESC`, `execution_timelines.
 ### Recent timelines
 
 ```bash
-curl -sS https://aegisagent.in/flight/timelines?limit=10 \
+curl -sS https://dev.aegisagent.in/flight/timelines?limit=10 \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | {id, tool_name, final_decision, total_latency_ms}'
@@ -141,12 +141,12 @@ curl -sS https://aegisagent.in/flight/timelines?limit=10 \
 ### Full timeline detail
 
 ```bash
-TID=$(curl -sS https://aegisagent.in/flight/timelines?limit=1 \
+TID=$(curl -sS https://dev.aegisagent.in/flight/timelines?limit=1 \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq -r '.data.items[0].id')
 
-curl -sS https://aegisagent.in/flight/timeline/$TID \
+curl -sS https://dev.aegisagent.in/flight/timeline/$TID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data | { tool_name, status, steps: (.steps | length), snapshots: (.snapshots | length) }'

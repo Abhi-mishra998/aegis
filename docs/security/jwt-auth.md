@@ -65,7 +65,7 @@ Key: `acp:token_validation:{sha256(token)}`.
 
 When the LRU misses, the validator checks Redis. If present, the decoded payload is returned and the LRU is warmed. Redis TTL matches the token expiry so the entry vanishes when the token does.
 
-The Redis cache is shared across gateway workers and across the two EC2s. A token validated on EC2-1 is cached for EC2-2 too — keeps the cache hit rate high across the fleet.
+The Redis cache is shared across gateway workers (and across hosts, on a multi-EC2 deployment) via ElastiCache `acp-redis-dev`. A token validated by one worker is cached for every other worker — keeps the cache hit rate high regardless of which gateway worker handles the next call.
 
 ## Replay protection
 

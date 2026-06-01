@@ -28,20 +28,22 @@ When disengaged, the key is deleted and subsequent requests proceed normally.
 
 ## Engagement contract
 
-Source: `services/decision/router.py:79-115` (engage) and `:117-135` (disengage).
+Source: `services/decision/router.py:101-137` (engage / disengage via POST), `:140-158` (disengage via DELETE), `:161-176` (read).
 
-- `POST /decision/kill-switch/{tenant_id}` engages. Body requires a non-empty `reason`. Authorization: `ADMIN` or `SECURITY`.
-- `DELETE /decision/kill-switch/{tenant_id}` disengages. Same authorization.
-- `GET /decision/kill-switch/{tenant_id}` reads the state. Authorization: `AUDITOR`+.
-- The `tenant_id` in the path must match the JWT's tenant. Cross-tenant kill-switching is rejected with 401.
+- `POST /decision/kill-switch/{tenant_id}` with body `{"action": "engage"}` engages. The endpoint records the reason as `manual_admin_lockdown` in both Redis (TTL-bounded) and the `kill_switches` table (durable). Authorization: `ADMIN` or `SECURITY`.
+- `POST /decision/kill-switch/{tenant_id}` with body `{"action": "disengage"}` and `DELETE /decision/kill-switch/{tenant_id}` both disengage. Same authorization.
+- `GET /decision/kill-switch/{tenant_id}` reads the current state — returns `{"status": "engaged" \| "disengaged", "tenant_id": "...", "reason": "..." \| null}`. Same authorization.
+- The `tenant_id` in the path must match the gateway-attested tenant (`X-Tenant-ID` header forwarded from the JWT). Cross-tenant kill-switching is rejected with **403** by `_assert_authenticated_tenant_matches`.
 
-Every engage and disengage produces an audit row `action="kill_switch_engaged"` or `"kill_switch_disengaged"` with the operator's `user_id`, the `reason`, and a timestamp. The audit chain makes the toggle non-repudiable.
+The path-tenant dependency was buggy in releases before 2026-06-01: the dependency arg was unannotated, so FastAPI treated it as a required query param and every request returned 422 "Validation failed". Fixed by declaring `tenant_id: str = Path(...)` in `_assert_authenticated_tenant_matches`. If you see a 422 on this endpoint, you're running a pre-fix image.
+
+Every engage and disengage produces an audit row (`action="kill_switch_engaged"` or `"kill_switch_disengaged"`) with the operator's `user_id`, the reason, and a timestamp. The audit chain makes the toggle non-repudiable.
 
 ## Propagation
 
 The gateway reads `acp:kill_switch:{tenant_id}` on every request (no caching). Once the Redis key is set, every gateway worker observes the new state within one request lifetime. Under sustained traffic, the propagation lag is under 5 seconds tenant-wide.
 
-The two EC2 hosts read from the same ElastiCache cluster, so propagation is uniform across the fleet.
+All gateway workers read from the same ElastiCache cluster, so propagation is uniform — on the current single-EC2 dev deployment that's one host, and on a future multi-EC2 deployment every host sees the engage event within one Redis-read RTT.
 
 ## Fail-closed posture
 

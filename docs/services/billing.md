@@ -163,7 +163,7 @@ The gateway exposes the billing surface; all routes proxy to usage or audit.
 ### 30-day spend with per-agent breakdown
 
 ```bash
-curl -sS "https://aegisagent.in/billing/summary?days=30" \
+curl -sS "https://dev.aegisagent.in/billing/summary?days=30" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ total_usd, by_agent: .by_agent[] | { name, usd }, percent_of_cap }'
@@ -172,7 +172,7 @@ curl -sS "https://aegisagent.in/billing/summary?days=30" \
 ### Create a budget request
 
 ```bash
-curl -sS -X POST https://aegisagent.in/billing/budget-requests \
+curl -sS -X POST https://dev.aegisagent.in/billing/budget-requests \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -182,7 +182,7 @@ curl -sS -X POST https://aegisagent.in/billing/budget-requests \
 ### Inspect any audit/usage gap
 
 ```bash
-curl -sS https://aegisagent.in/audit/billing-gaps \
+curl -sS https://dev.aegisagent.in/audit/billing-gaps \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ audit_without_usage: (.audit_without_usage | length), usage_without_audit: (.usage_without_audit | length) }'

@@ -130,7 +130,7 @@ The Groq API key is provided via env; the doc does not state the secret value. R
 ### Recent insights
 
 ```bash
-curl -sS "https://aegisagent.in/insights/recent?limit=10" \
+curl -sS "https://dev.aegisagent.in/insights/recent?limit=10" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | { event_id, agent, finding, summary }'
@@ -139,7 +139,7 @@ curl -sS "https://aegisagent.in/insights/recent?limit=10" \
 ### One insight by event id
 
 ```bash
-curl -sS https://aegisagent.in/insights/$EVENT_ID \
+curl -sS https://dev.aegisagent.in/insights/$EVENT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.summary'

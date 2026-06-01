@@ -93,19 +93,20 @@ The UI and the SDK both talk to one endpoint, the Gateway, over HTTPS. Everythin
 
 The total is twelve application services because `gateway` and `forensics` do not own their own databases. They each read from sibling services' stores under read-only DSNs.
 
-Three additional workers run alongside the application services but are not addressable on a port:
+Additional workers run alongside the application services but are not addressable on a port:
 
-- `groq_worker` — drains the Groq inference Redis Stream into the audit and usage pipelines.
-- `insight_worker` — consumes audit rows into the `insight` aggregate tables.
-- `insight` (HTTP) — exposes the aggregations to the gateway proxy.
+- `insight` (HTTP) — exposes audit-derived aggregations to the gateway proxy. Always running.
+- `insight_worker` — consumes audit rows into the `insight` aggregate tables. Stopped on dev (`--restart=no`) because the `GROQ_API_KEY` Secrets Manager entry is intentionally `EMPTY`; the worker hard-fails on a missing key. Re-enable by setting the key and `docker start acp_insight_worker`.
 
-Plus `learning` is a planned service that owns `behavior_profiles`; its current footprint is the table only, with profile generation done by the behavior service.
+The historical `groq_worker` block was removed during the audit cleanup pass — see `infra/docker-compose.aws.yml` and the audit playbook for context.
+
+`learning` is a planned service that owns `behavior_profiles`; its current footprint is the table only, with profile generation done by the behavior service.
 
 ## Edge components
 
 | Component | Container | Purpose |
 |---|---|---|
-| Application Load Balancer | AWS ALB (`aegisagent-prod`) | Public HTTPS termination, health checks, traffic split to two EC2 hosts |
+| Application Load Balancer | AWS ALB (`acp-dev-alb-1541605899`, alias of `dev.aegisagent.in`) | Public HTTPS termination, health checks, routes to the single EC2 today. The two-EC2 prod footprint was decommissioned 2026-06-01 |
 | Nginx | `acp_ui` | Serves the React SPA shell and proxies `/auth`, `/agents`, `/audit`, etc. to the gateway; routes that are both SPA and API are disambiguated by `Accept` header and `Sec-Fetch-Mode` |
 | UI bundle | `ui/dist/` baked into `acp_ui` image | React + Vite + Tailwind, no client-side router for unknown routes — falls back to `index.html` for SPA navigations |
 | Gateway | `acp_gateway` | FastAPI app with the 11-stage middleware, the only service exposed via Nginx |
@@ -116,11 +117,11 @@ The Nginx configuration that disambiguates SPA navigation from JSON fetches live
 
 | Store | Container / Service | Used for |
 |---|---|---|
-| Postgres | RDS `acp-postgres-prod` (production), `acp_postgres` (compose-local) | All application state. One logical database per service (`acp_identity`, `acp_registry`, `acp_audit`, etc.). All connections go through PgBouncer for connection pooling. |
-| Postgres replica | RDS read replica (production), `acp_postgres_replica` (compose-local) | Forensics replay, heavy aggregator queries, point-in-time recovery |
-| Redis | ElastiCache `acp-redis-prod` (production), `acp_redis` (compose-local) | JWT revocation, rate-limit token buckets, OPA decision cache, per-tenant Pub/Sub channels for SSE, decision-signal cache, audit Redis Stream, billing outbox cursor |
+| Postgres | RDS `acp-postgres-dev` (live deployment), `acp_postgres` (compose-local laptop dev) | All application state. One logical database per service (`acp_identity`, `acp_registry`, `acp_audit`, etc.). All connections go through PgBouncer for connection pooling. |
+| Postgres replica | None on dev (Single-AZ); `acp_postgres_replica` exists in the laptop compose | Production-grade deployments add a read replica for forensics replay and heavy aggregator queries |
+| Redis | ElastiCache `acp-redis-dev` (live deployment), `acp_redis` (compose-local laptop dev) | JWT revocation, rate-limit token buckets, OPA decision cache, per-tenant Pub/Sub channels for SSE, decision-signal cache, audit Redis Stream, billing outbox cursor |
 | OPA | `acp_opa` | In-process policy engine — the gateway calls it via HTTP on a Docker-network address; bundles are pushed by `bundle_server` from `services/policy/policies/` |
-| S3 | `acp-receipts-prod`, `acp-backups-prod`, `acp-tenant-exports-prod` | Audit receipts, encrypted nightly backups (age + pg_dump), per-tenant data exports |
+| S3 | `acp-dev-backups-628478` (deploys + nightly backups), `acp-dev-statuspage-628478` (public status JSON), `acp-dev-alb-logs-628478` (ALB access logs) | Receipt durability, encrypted nightly `pg_dump` via age, ALB access logs |
 
 ## Observability stack
 
@@ -179,4 +180,4 @@ All durable state is tenant-scoped. Every table has a `tenant_id UUID NOT NULL` 
 - [Flow of a Decision](flow-of-a-decision.md) — a single `POST /execute` walked end-to-end across all 12 services.
 - [Data Model](data-model.md) — every Postgres table, Redis key pattern, and S3 bucket in one inventory.
 - [Multi-Tenancy](multi-tenancy.md) — how `X-Tenant-ID` propagates and what stops cross-tenant access.
-- [Deployment Topology](deployment-topology.md) — the AWS account, the two EC2 hosts, the compose file, the deploy script.
+- [Deployment Topology](deployment-topology.md) — the AWS account, the single EC2, the compose file, the deploy script.

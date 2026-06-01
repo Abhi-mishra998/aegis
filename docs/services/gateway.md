@@ -61,6 +61,43 @@ For a `POST /execute`, the gateway middleware stages are:
 
 For non-`/execute` paths (management endpoints), stages 3–8 are skipped — see `_MANAGEMENT_PATH_PREFIXES` in `services/gateway/middleware.py`.
 
+## Code structure (post-2026-05 refactor)
+
+The gateway used to live in a 4,000+ line `main.py`. The 2026-05 audit pass (commits `9298e0a` through `6328d6e`) extracted route groups into 22 sub-routers under `services/gateway/routers/` and lifted six middleware phases into their own helpers. `main.py` is now ~1,700 lines of wiring; `middleware.py` is ~1,500 of pipeline orchestration.
+
+| Sub-router | Routes | Public path prefix |
+|---|---|---|
+| `routers/auth.py` | 9 | `/auth/*` (token, me, introspect, refresh, revoke, tenants) |
+| `routers/sso.py` | 3 | `/auth/sso/*` |
+| `routers/users.py` | 8 | `/users/*`, `/api-keys/*` |
+| `routers/agents.py` | 11 | `/agents`, `/agents/{id}/permissions`, `/registry/tools` |
+| `routers/audit.py` | 33 | `/audit/*` |
+| `routers/transparency.py` | 5 | `/transparency/*`, `/receipts/*` |
+| `routers/decision.py` | 5 | `/decision/*` |
+| `routers/incidents.py` | 10 | `/incidents/*` |
+| `routers/billing.py` | 13 | `/billing/*`, `/usage/*` |
+| `routers/compliance.py` | 18 | `/compliance/*`, `/siem/*`, `/reports/*` |
+| `routers/risk.py` | 9 | `/risk/*`, `/threat-intel/*`, `/insights/*` |
+| `routers/policy.py` | 4 | `/policy/*` |
+| `routers/forensics.py` | 6 | `/forensics/*` |
+| `routers/auto_response.py` | 16 | `/auto-response/*` |
+| `routers/proxies.py`, `routers/dashboard.py`, `routers/admin.py`, `routers/tenant.py`, `routers/tenant_admin.py`, `routers/stripe_webhook.py` | misc | system + admin paths |
+
+Each sub-router file owns its Pydantic models and any router-local helpers. Shared dependencies (auth dependency, internal-secret guard, ResilientClient injection) come from `services/gateway/_helpers.py` and `services/gateway/main.py` only. Adding a route means modifying one sub-router, not the main.py wiring.
+
+The same pass extracted the middleware phases out of one monolithic `dispatch`:
+
+| Helper | Source | What it does |
+|---|---|---|
+| `_validate_execute_agent_id` | `services/gateway/_mw_auth.py` | Pre-stage validation that the agent token's `agent_id` claim matches the URL agent (extracted in commit `e5f41c5`) |
+| `_check_per_agent_cost_cap` | `services/gateway/_mw_rate_limit.py` | Stage 2 per-agent USD cap check (commit `a9015f8`) |
+| PHASE 0 size check | `services/gateway/middleware.py` | Header-channelled early-deny for oversize requests (commit `9891ce8`) |
+| PHASE 6.5 bounded-autonomy | `services/gateway/middleware.py` | Autonomy contract check after Decision, before execution (commit `bcefae1`) |
+| `_handle_http_exception` finalize | `services/gateway/_mw_audit.py` | HTTPException path: still emits stage-10 audit (commit `585caaa`) |
+| `_handle_unhandled_exception` finalize | `services/gateway/_mw_audit.py` | 500 path: still emits stage-10 audit with `error="internal_error"` (commit `0758062`) |
+
+Both extractions preserve the prior semantics — the audit playbook treats this work as code-shape cleanup, not behaviour change.
+
 ## Dependencies
 
 **Python libraries:**
@@ -193,7 +230,7 @@ For the full list see [API Reference](../api/reference.md) (generated from `/ope
 ### Mint a token
 
 ```bash
-curl -sS -X POST https://aegisagent.in/auth/token \
+curl -sS -X POST https://dev.aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"admin@acp.local","password":"REDACTED"}'
@@ -202,7 +239,7 @@ curl -sS -X POST https://aegisagent.in/auth/token \
 ### List agents
 
 ```bash
-curl -sS https://aegisagent.in/agents \
+curl -sS https://dev.aegisagent.in/agents \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -210,7 +247,7 @@ curl -sS https://aegisagent.in/agents \
 ### Execute a tool (the main event)
 
 ```bash
-curl -sS -X POST https://aegisagent.in/execute \
+curl -sS -X POST https://dev.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "X-Agent-ID: $AGENT_ID" \

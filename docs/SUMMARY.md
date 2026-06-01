@@ -8,6 +8,7 @@
 * [Why Runtime Governance](introduction/why-runtime-governance.md)
 * [Quickstart](introduction/quickstart.md)
 * [60-Second Tour](introduction/60-second-tour.md)
+* [Demo Packs](introduction/demo-packs.md)
 
 ## Architecture
 
@@ -17,6 +18,7 @@
 * [Data Model](architecture/data-model.md)
 * [Multi-Tenancy](architecture/multi-tenancy.md)
 * [Deployment Topology](architecture/deployment-topology.md)
+* [UI Primitives](architecture/ui-primitives.md)
 
 ## Services
 

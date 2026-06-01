@@ -158,7 +158,7 @@ All under prefix `/agents` (and the catalog endpoint `/registry/tools`).
 ### List agents
 
 ```bash
-curl -sS https://aegisagent.in/agents \
+curl -sS https://dev.aegisagent.in/agents \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | {name, risk_level, status}'
@@ -167,7 +167,7 @@ curl -sS https://aegisagent.in/agents \
 ### Create an agent
 
 ```bash
-curl -sS -X POST https://aegisagent.in/agents \
+curl -sS -X POST https://dev.aegisagent.in/agents \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -182,12 +182,12 @@ curl -sS -X POST https://aegisagent.in/agents \
 ### Grant a tool permission
 
 ```bash
-AGENT_ID=$(curl -sS https://aegisagent.in/agents \
+AGENT_ID=$(curl -sS https://dev.aegisagent.in/agents \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq -r '.data.items[] | select(.name=="crm-support-bot") | .id')
 
-curl -sS -X POST https://aegisagent.in/agents/$AGENT_ID/permissions \
+curl -sS -X POST https://dev.aegisagent.in/agents/$AGENT_ID/permissions \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

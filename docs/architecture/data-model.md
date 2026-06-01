@@ -8,7 +8,7 @@ All connections go through PgBouncer (`acp_pgbouncer`) on port 6432. The applica
 
 ## Postgres databases
 
-The platform runs eleven logical Postgres databases. Production lives on AWS RDS `acp-postgres-prod` (single instance with one read replica `acp-postgres-prod-replica`). Local development uses a single `acp_postgres` container that hosts all eleven databases.
+The platform runs nine application-owned Postgres databases plus the `acp` bootstrap. The live deployment lives on AWS RDS `acp-postgres-dev` (Single-AZ `db.t4g.micro`; production-class deployments would add a read replica). Local laptop development uses a single `acp_postgres` container that hosts the same set of logical databases.
 
 | Database | Owner service | Notes |
 |---|---|---|
@@ -22,7 +22,7 @@ The platform runs eleven logical Postgres databases. Production lives on AWS RDS
 | `acp_identity_graph` | identity_graph | Typed graph: nodes, edges, trust scores, drift signals, compromise simulation history. |
 | `acp_flight_recorder` | flight_recorder | Per-execution timelines, steps, snapshots, artifacts. |
 | `acp_autonomy` | autonomy | Multi-agent contracts, contract violations, human override events, playbooks, playbook runs. |
-| `acp_postgres_replica` | (read replica) | Forensics replay queries, heavy aggregator scans, point-in-time recovery target. |
+| (read replica) | — | On multi-AZ deployments, a read replica handles forensics replay queries, heavy aggregator scans, and point-in-time recovery. Absent on the current Single-AZ dev deployment — forensics queries share the writer instance until a replica is added. |
 
 ## Tables by service
 
@@ -120,7 +120,7 @@ Indexes: `graph_nodes.tenant_id, node_type`, `graph_edges.tenant_id, src_node_id
 
 ## Redis keys
 
-Aegis uses Redis 7 (ElastiCache `acp-redis-prod` in production, `acp_redis` container locally). Two databases: db 0 for runtime state, db 1 for queues and outboxes.
+Aegis uses Redis 7 (ElastiCache `acp-redis-dev` `cache.t3.micro` on the live deployment, `acp_redis` container locally). Two databases: db 0 for runtime state, db 1 for queues and outboxes.
 
 | Key pattern | Purpose | TTL |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Quickstart
 
-**From zero to a signed audit row in under ten curl commands.** This page targets the public deployment at `https://aegisagent.in`. For a local install, swap the host for `http://localhost:8000` and follow the same steps.
+**From zero to a signed audit row in under ten curl commands.** This page targets the live development deployment at `https://dev.aegisagent.in`. For a local install, swap the host for `http://localhost:8000` and follow the same steps. (As of 2026-06-01 the historical production environment at `aegisagent.in` was decommissioned — `dev.aegisagent.in` is the only live deployment and is sized for ten concurrent reviewers.)
 
 ## Prerequisites
 
@@ -9,21 +9,21 @@
 
 ## Credentials (demo deployment only)
 
-For the public live demo at `https://aegisagent.in`, two accounts are pre-seeded:
+For the public live demo at `https://dev.aegisagent.in`, two accounts are pre-seeded:
 
 | Account | Role | Use case |
 |---|---|---|
-| `demo@aegisagent.in` | `VIEWER` | Read-only tour. Cannot trigger any write or `/execute` action. |
-| `admin@acp.local` | `ADMIN` | Full write access. Required to run the playground steps below. |
+| `demo@aegisagent.in` | `VIEWER` | Read-only tour. Cannot trigger any write or `/execute` action. The Login page exposes this account via the "Try Live Demo" button so reviewers can click straight in. |
+| `admin@acp.local` | `ADMIN` | Full write access. Required to run the playground steps below. The gateway's email validator accepts `.local` TLDs as of 2026-06-01 — see `services/gateway/routers/auth.py`. |
 
 Passwords for the demo deployment are documented in the live deployment's onboarding email, not in this repository. If you need them and you have access, ask the deployment owner. For self-hosted installs, see [Deployment](../operations/deployment.md) for the seed script.
 
-The tenant ID for the demo deployment is the canonical default UUID `00000000-0000-0000-0000-000000000001`. All requests below send it as an `X-Tenant-ID` header.
+The tenant ID for the demo deployment is the canonical default UUID `00000000-0000-0000-0000-000000000001`. All requests below send it as an `X-Tenant-ID` header. This is the value of the `tenants.tenant_id` column, **not** the row primary key — see `architecture/data-model.md` for the split.
 
 ## 1. Get a token
 
 ```bash
-HOST=https://aegisagent.in
+HOST=https://dev.aegisagent.in
 TENANT=00000000-0000-0000-0000-000000000001
 
 TOKEN=$(curl -sS -X POST "$HOST/auth/token" \
@@ -57,7 +57,7 @@ curl -sS "$HOST/agents" \
   | jq '.data.items[] | {name, risk_level, status}'
 ```
 
-On the public demo this returns four pre-seeded agents: `demo-agent` (low risk), `db-copilot` (medium), `support-agent` (medium), `devops-agent` (high). Each is registered in the `registry` service with an allow-listed set of tool permissions.
+On the public demo this returns three pre-seeded agents: `db-copilot-demo`, `devops-agent-demo`, `support-agent-demo`. Each is registered in the `registry` service with an allow-listed set of tool permissions and a behaviour profile that drives the [demo packs](demo-packs.md). All three ship at `risk_level: low` until they generate enough decision history for the trust-score worker to recompute.
 
 Capture one agent ID for the next step:
 
@@ -65,7 +65,7 @@ Capture one agent ID for the next step:
 AGENT_ID=$(curl -sS "$HOST/agents" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" \
-  | jq -r '.data.items[] | select(.name=="db-copilot") | .id')
+  | jq -r '.data.items[] | select(.name=="db-copilot-demo") | .id')
 
 echo "agent id: $AGENT_ID"
 ```
@@ -106,7 +106,7 @@ curl -sS -X POST "$HOST/execute" \
 
 Expected response: HTTP `403`, body shape `{"success": false, "error": "policy_denied", "data": {"action": "deny", "rule_id": "...", "findings": [...]}}`. The policy stage flagged the destructive SQL pattern, the decision engine combined the five risk signals, the audit row was written, and the receipt URL is included in the response. Execution did not happen.
 
-To see all four shipped attack scenarios in one place, open `https://aegisagent.in/playground` and click any of the **Attack Scenario** cards.
+To see all four shipped attack scenarios in one place, open `https://dev.aegisagent.in/playground` and click any of the **Attack Scenario** cards.
 
 ## 6. Fetch and verify the audit row
 
