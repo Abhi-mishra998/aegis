@@ -69,7 +69,7 @@ server = [
     "bcrypt",
     "prometheus-client",
     "groq",
-    "reportlab>=4.0",
+    "reportlab>=4.5.1",
     "livekit-api>=0.8",
 ]
 dev = [
