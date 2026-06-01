@@ -45,7 +45,7 @@ The page does not have a meaningful empty state — `/system/health` always retu
 - **All services green but customers complaining**: the health check is a deep probe but not an end-to-end probe. A slow downstream tool (Anthropic, Groq) won't show here. Cross-reference Settings → Observability for latency.
 - **One service amber for over an hour**: degraded mode kicked in for that service. The audit chain still records every consult with `service_status="degraded"` so behavior is observable.
 - **`/status` vs `/system/health`**: `/status` is the public customer-visible page and only carries gateway-internal latency. `/system/health` is the operator view with downstream RTTs. Don't confuse the two.
-- **Per-EC2 flap**: `/system/health` is gateway-internal so the two EC2s see the same RDS / Redis state. Disagreement between the two would point at a Docker DNS issue on one host.
+- **Per-host flap**: `/system/health` is gateway-internal so every gateway worker sees the same RDS / Redis state. The current dev deployment runs one EC2; on a multi-EC2 deployment, disagreement between hosts would point at a Docker DNS issue on one of them.
 
 ## Related docs
 

@@ -155,7 +155,7 @@ The gateway proxies `/policy/simulate`, `/policy/test`, `/policy/upload` for the
 ### Simulate a draft rule over the last 24 hours
 
 ```bash
-curl -sS -X POST https://aegisagent.in/policy/simulate \
+curl -sS -X POST https://dev.aegisagent.in/policy/simulate \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -168,7 +168,7 @@ curl -sS -X POST https://aegisagent.in/policy/simulate \
 ### Run unit tests on the current bundle
 
 ```bash
-curl -sS -X POST https://aegisagent.in/policy/test \
+curl -sS -X POST https://dev.aegisagent.in/policy/test \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq '.data.results'
 ```
@@ -176,7 +176,7 @@ curl -sS -X POST https://aegisagent.in/policy/test \
 ### Upload a new policy
 
 ```bash
-curl -sS -X POST https://aegisagent.in/policy/upload \
+curl -sS -X POST https://dev.aegisagent.in/policy/upload \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -189,7 +189,7 @@ curl -sS -X POST https://aegisagent.in/policy/upload \
 ### Health-check OPA
 
 ```bash
-curl -sS https://aegisagent.in/policy/health/opa
+curl -sS https://dev.aegisagent.in/policy/health/opa
 ```
 
 ## Troubleshooting

@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +72,28 @@ def _require_admin_or_security(
     return role
 
 
+def _assert_authenticated_tenant_matches(
+    tenant_id: str = Path(...),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+) -> None:
+    """Defence-in-depth: reject mismatch between path tenant and gateway-attested tenant.
+
+    The gateway forwards the authenticated tenant via X-Tenant-ID (see
+    `services/gateway/main.py:_internal_headers`). If the URL's path tenant
+    differs, this is a cross-tenant escalation attempt.
+    """
+    if not x_tenant_id or x_tenant_id != tenant_id:
+        logger.critical(
+            "kill_switch_cross_tenant_blocked",
+            path_tenant=tenant_id,
+            attested_tenant=x_tenant_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-tenant kill-switch operation rejected",
+        )
+
+
 # ---------------------------------------------------------------------------
 # KILL SWITCH
 # ---------------------------------------------------------------------------
@@ -81,6 +103,7 @@ async def toggle_kill_switch(
     tenant_id: str,
     payload: KillSwitchAction,
     _role: Annotated[str, Depends(_require_admin_or_security)],
+    _tenant_match: Annotated[None, Depends(_assert_authenticated_tenant_matches)],
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
 
@@ -118,6 +141,7 @@ async def toggle_kill_switch(
 async def disengage_kill_switch(
     tenant_id: str,
     _role: Annotated[str, Depends(_require_admin_or_security)],
+    _tenant_match: Annotated[None, Depends(_assert_authenticated_tenant_matches)],
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
 
@@ -138,6 +162,7 @@ async def disengage_kill_switch(
 async def get_kill_switch_status(
     tenant_id: str,
     _role: Annotated[str, Depends(_require_admin_or_security)],
+    _tenant_match: Annotated[None, Depends(_assert_authenticated_tenant_matches)],
 ) -> APIResponse[dict]:
 
     redis = _get_redis()

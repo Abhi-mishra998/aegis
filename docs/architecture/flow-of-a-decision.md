@@ -8,7 +8,7 @@ This page pairs with [10-Stage Pipeline](10-stage-pipeline.md) — that page des
 
 - **Caller**: `admin@acp.local` logged in as `ADMIN`.
 - **Tenant**: `00000000-0000-0000-0000-000000000001`.
-- **Agent**: `db-copilot` (medium risk_level).
+- **Agent**: `db-copilot-demo` (`risk_level: low` at the moment — the trust-score worker will recompute as decision history accumulates).
 - **Request body**:
 
   ```json
@@ -117,13 +117,13 @@ State on the request after this stage: `request.state.tenant_id`, `request.state
 
 - Lua script in `sdk/common/ratelimit.py::TOKEN_BUCKET_SCRIPT` runs against Redis with arguments `(tenant_id, agent_id, now, rate, burst)`.
 - Returns `0` — under cap. (A non-zero return would produce HTTP 429 with `Retry-After`.)
-- Per-agent USD cost cap check: `acp:agent_cost_cap:{agent_id}` is absent for `db-copilot`, so this check is a no-op.
+- Per-agent USD cost cap check: `acp:agent_cost_cap:{agent_id}` is absent for `db-copilot-demo`, so this check is a no-op.
 
 ### 5. Stage 3 — Inference
 
 - `inference_proxy.evaluate` scans the payload for the regex catalogue: prompt-injection openers, encoded blobs, suspiciously deep JSON.
 - The query string contains `DROP TABLE` after a `;` — flagged as `destructive_sql`.
-- Tool-name guard: `db.query` is in the registry permission set for `db-copilot`.
+- Tool-name guard: `db.query` is in the registry permission set for `db-copilot-demo`.
 - Returns `ProxyDecision(risk_contribution=0.6, findings=["destructive_sql"], signals=[...])`.
 - No deny here — the finding is passed forward.
 
@@ -203,7 +203,7 @@ State on the request after this stage: `request.state.tenant_id`, `request.state
 ### 13. Background: timeline + graph emission
 
 - `services/gateway/trust_emitter.py::emit_timeline_end` writes the per-stage execution timeline to the Flight Recorder. Each stage's start, end, decision, and latency are stored.
-- `emit_graph_event` emits a typed edge `db-copilot -> rds/acp-postgres-prod` of type `writes` with `outcome: deny` and `risk_score: 0.97` into the Identity Graph.
+- `emit_graph_event` emits a typed edge `db-copilot-demo -> rds/acp-postgres-dev` of type `writes` with `outcome: deny` and `risk_score: 0.97` into the Identity Graph.
 
 ### 14. Audit worker drains the stream
 
@@ -249,7 +249,7 @@ A single HTTP exchange:
 
 ```
 POST /execute HTTP/1.1
-Host: aegisagent.in
+Host: dev.aegisagent.in
 Authorization: Bearer eyJhbGciOi...
 X-Tenant-ID: 00000000-0000-0000-0000-000000000001
 X-Agent-ID: b2836c8d-e6e7-4f2e-a382-d862739bd233

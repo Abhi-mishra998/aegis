@@ -145,7 +145,7 @@ Most endpoints are reached via the gateway as `/audit/*` aggregates (since the U
 ### Read an agent's current baseline
 
 ```bash
-curl -sS https://aegisagent.in/behavior/profile/$AGENT_ID \
+curl -sS https://dev.aegisagent.in/behavior/profile/$AGENT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -153,7 +153,7 @@ curl -sS https://aegisagent.in/behavior/profile/$AGENT_ID \
 ### Force a baseline refresh after a major workload change
 
 ```bash
-curl -sS -X POST https://aegisagent.in/behavior/profile/$AGENT_ID/refresh \
+curl -sS -X POST https://dev.aegisagent.in/behavior/profile/$AGENT_ID/refresh \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001"
 ```

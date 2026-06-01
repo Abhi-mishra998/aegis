@@ -152,7 +152,7 @@ Indexes: `usage_records.tenant_id, created_at DESC`, `usage_records.agent_id, cr
 ### Dashboard payload
 
 ```bash
-curl -sS https://aegisagent.in/usage/dashboard \
+curl -sS https://dev.aegisagent.in/usage/dashboard \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ today_usd, top_agents: .by_agent[:3], anomaly_count: (.anomalies | length) }'
@@ -161,7 +161,7 @@ curl -sS https://aegisagent.in/usage/dashboard \
 ### Cost attribution over 4 weeks
 
 ```bash
-curl -sS "https://aegisagent.in/billing/cost-attribution?weeks=4" \
+curl -sS "https://dev.aegisagent.in/billing/cost-attribution?weeks=4" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq
@@ -170,7 +170,7 @@ curl -sS "https://aegisagent.in/billing/cost-attribution?weeks=4" \
 ### DLQ inspection
 
 ```bash
-curl -sS https://aegisagent.in/billing/dlq \
+curl -sS https://dev.aegisagent.in/billing/dlq \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | { audit_id, error_reason, retry_count, failed_at }'

@@ -15,8 +15,8 @@
 
 ## What's covered
 
-- **Introduction (4 pages)** — what the platform is, what problems it solves, how to take a tour.
-- **Architecture (6 pages)** — the system overview, the 11-stage gateway pipeline, the data model, multi-tenancy, deployment topology, and a worked end-to-end decision.
+- **Introduction (5 pages)** — what the platform is, what problems it solves, how to take a tour, and how the three demo packs populate the UI.
+- **Architecture (7 pages)** — the system overview, the 11-stage gateway pipeline, the data model, multi-tenancy, deployment topology, UI primitives, and a worked end-to-end decision.
 - **Services (18 pages + index)** — every backend microservice documented to a 13-point spec: business purpose, architecture, request flow, dependencies, database tables, Redis usage, security controls, metrics, deployment model, API endpoints, example requests, troubleshooting, production considerations.
 - **UI (34 pages + index)** — every page in the React UI documented to a 10-point spec: sidebar location, role gating, what you see, backend calls, auto-refresh and realtime, per-agent scoping, empty states, edge cases, related docs.
 - **Security (7 pages)** — the cryptographic audit chain, JWT auth, RBAC, kill switch, OPA policies, threat scenarios, secret management.
@@ -25,13 +25,13 @@
 
 ## Platform at a glance
 
-- **12 application services** + 3 workers running across **27 containers** per EC2 host.
-- **2 EC2** hosts behind an Application Load Balancer at `https://aegisagent.in`.
-- **11 logical Postgres databases** on RDS plus a read replica.
-- **Redis (ElastiCache)** for runtime state, rate limits, and pub/sub.
+- **13 application services** + the `insight` HTTP + worker pair, running across **22 containers** on the live deployment.
+- **1 EC2** host (`m6g.medium`, 4 GB Graviton) behind an Application Load Balancer at `https://dev.aegisagent.in`. The two-EC2 production footprint at `aegisagent.in` was decommissioned 2026-06-01; the dev environment is the only live deployment today.
+- **9 logical Postgres databases** on RDS Single-AZ (`db.t4g.micro`).
+- **Redis (ElastiCache `cache.t3.micro`)** for runtime state, rate limits, and pub/sub.
 - **Cryptographic audit chain** — every decision is signed (ed25519), chained to the previous (SHA-256 prev_hash), and rolled into a daily Merkle root.
 - **Kill switch** — tenant-wide halt propagates in under 5 seconds.
-- **p95 gateway evaluation latency** approximately 21 ms in the current production deployment.
+- **End-to-end gateway p95 ≈ 70 ms** on the live deployment (`/system/health` latency window, 60s).
 
 ## Reading order if you have an hour
 
@@ -51,12 +51,12 @@ Every page in this set cites real code paths (`services/*/*.py`, `services/polic
 grep -n "<claimed snippet>" <cited file>
 
 # Verify the live audit chain is intact
-curl -sS https://aegisagent.in/audit/logs/verify \
+curl -sS https://dev.aegisagent.in/audit/logs/verify \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 
 # Verify the running OpenAPI spec matches the reference
-curl -sS https://aegisagent.in/openapi.json | jq '.paths | keys | length'
+curl -sS https://dev.aegisagent.in/openapi.json | jq '.paths | keys | length'
 ```
 
 Where this documentation and the running code disagree, the code wins. Please open an issue.
@@ -86,6 +86,6 @@ Aegis is Apache 2.0. The documentation is CC-BY-4.0.
 
 ## Links
 
-- Live demo: [aegisagent.in](https://aegisagent.in)
+- Live demo: [dev.aegisagent.in](https://dev.aegisagent.in)
 - Repository: [github.com/Abhi-mishra998/aegis](https://github.com/Abhi-mishra998/aegis)
 - This documentation is also published at: (TBD when GitBook is live)

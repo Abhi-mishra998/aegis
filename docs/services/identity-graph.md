@@ -163,7 +163,7 @@ The `devops-agent` node currently has `trust_score=0.49` — depressed because o
 ### List the graph
 
 ```bash
-curl -sS "https://aegisagent.in/graph/agents?limit=200" \
+curl -sS "https://dev.aegisagent.in/graph/agents?limit=200" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ nodes: .data.nodes | length, edges: .data.edges | length }'
@@ -173,12 +173,12 @@ curl -sS "https://aegisagent.in/graph/agents?limit=200" \
 ### Blast radius for the devops agent at depth 3
 
 ```bash
-NID=$(curl -sS "https://aegisagent.in/graph/agents?limit=20" \
+NID=$(curl -sS "https://dev.aegisagent.in/graph/agents?limit=20" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq -r '.data.nodes[] | select(.name=="devops-agent") | .id')
 
-curl -sS "https://aegisagent.in/graph/blast-radius/$NID?depth=3" \
+curl -sS "https://dev.aegisagent.in/graph/blast-radius/$NID?depth=3" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ actor: .data.actor.name, affected_resources, risk_score }'
@@ -187,7 +187,7 @@ curl -sS "https://aegisagent.in/graph/blast-radius/$NID?depth=3" \
 ### Run a stolen-token compromise sim
 
 ```bash
-curl -sS -X POST https://aegisagent.in/graph/compromise/simulate \
+curl -sS -X POST https://dev.aegisagent.in/graph/compromise/simulate \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

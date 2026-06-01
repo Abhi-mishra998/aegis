@@ -46,6 +46,15 @@ For `POST /decision/evaluate` (the internal call the gateway makes at stage 6):
 5. Engine writes a per-tenant rolling history into Redis stream `acp:decision_history:{tenant_id}` (capped at 10,000 entries).
 6. Returns the `Decision` object as JSON.
 
+The 2026-05 audit pass (commits `f6b2ce6` through `51dda47`) extracted four helpers out of the monolithic `evaluate_decision`. The hot path is unchanged; the call graph is just easier to test in isolation:
+
+| Helper | Source | What it owns |
+|---|---|---|
+| `_resolve_agent_meta` | `services/decision/router.py` | Loads agent risk level, status, and cap; shared by `/evaluate` and the trust-score worker |
+| `_fan_out_policy_and_behavior` | `services/decision/router.py` | Parallel httpx calls to Policy + Behavior with shared timeout budget |
+| `_emit_behavior_firewall_audit` | `services/decision/router.py` | Always-on `behavior_firewall_decision` audit row with `service_status` / `latency_ms` / `policy_applied` |
+| `_compute_inference_signals` | `services/decision/router.py` | PII / DDL / path-traversal classifier with rule tables hoisted to module scope so they don't reallocate per call |
+
 For `POST /decision/kill-switch/{tenant_id}`:
 
 1. RBAC gate: `ADMIN` or `SECURITY` role only (enforced at the gateway and re-checked here).
@@ -90,9 +99,9 @@ Recent decisions are stored as a capped Redis stream so the `/decision/history` 
 
 ## Security controls
 
-- **RBAC on kill switch** — `POST /decision/kill-switch/{tenant_id}` and `DELETE` require `ADMIN` or `SECURITY`. Source: `services/decision/router.py:79-115`.
+- **RBAC on kill switch** — `POST /decision/kill-switch/{tenant_id}`, the DELETE variant, and the GET all require `ADMIN` or `SECURITY`. Source: `services/decision/router.py:101-176`.
 - **RBAC on signal weights** — `PUT /decision/signal-weights` requires `ADMIN` or `SECURITY`. Read is `AUDITOR`+.
-- **Tenant-id binding** — Both kill-switch routes take `tenant_id` as a path param; the handler verifies it matches the JWT's tenant_id. Cross-tenant kill-switching is not allowed.
+- **Tenant-id binding** — All three kill-switch routes take `tenant_id` as a path param; the `_assert_authenticated_tenant_matches` dependency rejects mismatches with HTTP 403. Until 2026-06-01 the dependency arg was unannotated and FastAPI treated it as a missing query param, so every request returned 422 "Validation failed" — fixed by declaring `tenant_id: str = Path(...)`.
 - **Audit emission** — Every kill-switch change is an audit row. No silent toggles.
 - **No raw query input** — The Decision service consumes signal objects, not user-supplied text. Prompt injection on the signal API surface is not applicable.
 
@@ -151,17 +160,19 @@ Weights sum to 1.0; the handler rejects updates that don't.
 ### Engage the kill switch
 
 ```bash
-curl -sS -X POST https://aegisagent.in/decision/kill-switch/00000000-0000-0000-0000-000000000001 \
+curl -sS -X POST https://dev.aegisagent.in/decision/kill-switch/00000000-0000-0000-0000-000000000001 \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
-  -d '{"reason":"Suspected prompt injection campaign", "engaged_by":"operator@acme.com"}'
+  -d '{"action":"engage"}'
 ```
+
+The reason is recorded server-side as `manual_admin_lockdown`. The response body shape is `{"success": true, "data": {"status": "engaged", "tenant_id": "..."}}`.
 
 ### Read the current weights
 
 ```bash
-curl -sS https://aegisagent.in/decision/signal-weights \
+curl -sS https://dev.aegisagent.in/decision/signal-weights \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -169,7 +180,7 @@ curl -sS https://aegisagent.in/decision/signal-weights \
 ### Override weights — emphasize policy more
 
 ```bash
-curl -sS -X PUT https://aegisagent.in/decision/signal-weights \
+curl -sS -X PUT https://dev.aegisagent.in/decision/signal-weights \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

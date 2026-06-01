@@ -10,7 +10,7 @@ The UI sidebar has three groups, in left-to-right order of how often operators u
 - **Operations dropdown** (11–12 items) — power-user surfaces.
 - **Settings hub** — 17 sub-pages reachable from the Settings page.
 
-The full sidebar source is at `ui/src/components/Layout/Sidebar.jsx`.
+The full sidebar source is at `ui/src/components/Layout/Sidebar.jsx`. The agent-scope selector shown at the top of the sidebar (and mirrored in the topbar on wide layouts) is the shared `AgentScopePicker` component — see [UI Primitives](../architecture/ui-primitives.md) for the wider set of reusable components and the conventions they follow.
 
 ## Primary nav (5 pages)
 

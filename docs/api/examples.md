@@ -7,7 +7,7 @@
 Set these environment variables once. They thread through every example.
 
 ```bash
-export AEGIS_HOST=https://aegisagent.in
+export AEGIS_HOST=https://dev.aegisagent.in
 export AEGIS_TENANT_ID=<your-tenant-uuid>
 export AEGIS_EMAIL=<your-admin-email>
 # Do NOT export the password to a shared shell. Pipe it in or use AWS Secrets Manager.
@@ -293,27 +293,27 @@ es.onmessage = (e) => {
 ## 8. Engage and disengage the kill switch
 
 ```bash
-# Engage
+# Engage — body is the action literal only; the engagement reason is recorded
+# server-side as `manual_admin_lockdown`.
 curl -sS -X POST "$AEGIS_HOST/decision/kill-switch/$AEGIS_TENANT_ID" \
   -H "Authorization: Bearer $AEGIS_TOKEN" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
   -H "Content-Type: application/json" \
-  -d '{"reason":"Investigating suspected prompt injection","engaged_by":"operator@acme.com"}'
+  -d '{"action":"engage"}'
 
-# Verify engaged
+# Verify engaged — response shape:
+# {"success":true,"data":{"status":"engaged"|"disengaged","tenant_id":"...","reason":"manual_admin_lockdown"|null}}
 curl -sS "$AEGIS_HOST/decision/kill-switch/$AEGIS_TENANT_ID" \
   -H "Authorization: Bearer $AEGIS_TOKEN" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID" | jq
 
-# Disengage
+# Disengage — DELETE takes no body; the POST variant accepts {"action":"disengage"} too.
 curl -sS -X DELETE "$AEGIS_HOST/decision/kill-switch/$AEGIS_TENANT_ID" \
   -H "Authorization: Bearer $AEGIS_TOKEN" \
-  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"Investigation complete; policy updated."}'
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
 ```
 
-Requires `ADMIN` or `SECURITY` role. See [Kill Switch runbook](../operations/runbooks/kill-switch-engaged.md) before engaging.
+Requires `ADMIN` or `SECURITY` role. The path `tenant_id` must match the JWT's tenant — mismatch returns HTTP 403 from `_assert_authenticated_tenant_matches`. Pre-2026-06-01 images returned HTTP 422 "Validation failed" on every call due to a missing `Path(...)` annotation on the dependency arg — if you see that, you're running a stale image. See [Kill Switch runbook](../operations/runbooks/kill-switch-engaged.md) before engaging.
 
 ## 9. Add an analyst note
 

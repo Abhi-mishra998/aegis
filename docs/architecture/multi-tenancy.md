@@ -140,7 +140,7 @@ Aegis includes a small `/admin/tenants` endpoint for the platform operator. It i
 
 ### The "default" tenant in demos
 
-The public demo at `https://aegisagent.in` uses the canonical default tenant UUID `00000000-0000-0000-0000-000000000001`. This is just a UUID like any other from the platform's perspective — it has no special privileges. The choice is purely a convention for demos and tests so credentials and curl examples can be shared.
+The public demo at `https://dev.aegisagent.in` uses the canonical default tenant UUID `00000000-0000-0000-0000-000000000001`. This is just a UUID like any other from the platform's perspective — it has no special privileges. The choice is purely a convention for demos and tests so credentials and curl examples can be shared.
 
 ## Quotas and rate limits per tenant
 
