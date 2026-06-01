@@ -93,6 +93,14 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      - name: Build UI bundle
+        # ui/Dockerfile does `COPY dist /usr/share/nginx/html` and asserts
+        # `*.js` exists in the destination — the dist/ tree must be produced
+        # *outside* Docker before `compose build ui` runs (this is by design;
+        # the multi-stage cache could otherwise hide an empty dist).
+        working-directory: ui
+        run: npm run build
+
       - name: Bring up minimal compose stack
         run: |
           # Use the same compose file as production. The .env file is
