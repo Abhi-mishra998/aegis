@@ -9,7 +9,8 @@
     ],
     "exclude": [
         "**/__pycache__",
-        "**/.venv"
+        "**/.venv",
+        "voice-agent"
     ],
     "reportMissingImports": true,
     "reportMissingTypeStubs": false

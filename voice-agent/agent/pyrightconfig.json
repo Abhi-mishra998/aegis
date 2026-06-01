@@ -1,0 +1,33 @@
+{
+  "// purpose":   "Pylance/Pyright config scoped to the voice-agent subproject.",
+  "// why_separate": "The Aegis core uses Python 3.11 + acp/.venv at the repo root. The voice-agent has a separate Python 3.14 venv with livekit-agents, chromadb, sentence-transformers, etc. — none of which exist in the Aegis venv. Pylance walks up from a file looking for the nearest pyrightconfig; putting one here pins voice-agent files to the correct interpreter and avoids the 'Import livekit could not be resolved' false positives.",
+
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.14",
+
+  "include": [
+    "src",
+    "tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "**/chroma_db",
+    "**/bm25_index"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "src",
+      "extraPaths": ["src"]
+    },
+    {
+      "root": "tests",
+      "extraPaths": ["src"]
+    }
+  ],
+
+  "reportMissingImports":     true,
+  "reportMissingTypeStubs":   false,
+  "useLibraryCodeForTypes":   true
+}
