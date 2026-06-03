@@ -702,7 +702,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the long version.
 - **GitHub Issues** — bug reports, feature requests
 - **Live demo** — <https://dev.aegisagent.in> (sign in, click the Voice Agent button)
 - **Engineering write-up** — [Hashnode: I built a runtime firewall for AI agents](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
-- **5-minute video** — [Google Drive demo link](https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view)
+- **5-minute video** — [Google Drive demo link](https://drive.google.com/drive/folders/1cAnCFmF6SEqaqTbiijuj0HyGwXmy1lhZ?usp=sharing)
 
 <br/>
 
