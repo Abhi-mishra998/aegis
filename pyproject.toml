@@ -53,7 +53,7 @@ server = [
     "uvicorn[standard]",
     "sqlalchemy[asyncio]",
     "asyncpg",
-    "redis>=4.2.0",
+    "redis>=8.0.0",
     "pydantic[email]",
     "pydantic-settings",
     "python-jose[cryptography]",
