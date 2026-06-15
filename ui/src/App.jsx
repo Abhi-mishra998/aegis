@@ -15,6 +15,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import OnboardingWizard from './pages/OnboardingWizard';
 import ShadowModeReview from './pages/ShadowModeReview';
+import Dashboard from './pages/Dashboard';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import ExecutiveDashboard from './pages/ExecutiveDashboard';
 import Settings from './pages/Settings';
@@ -240,9 +241,11 @@ function App() {
               <Route path="/onboarding" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
               <Route path="/shadow-review" element={<ProtectedRoute><ShadowModeReview /></ProtectedRoute>} />
 
-              {/* Flight Recorder is the homepage — tamper-evident replay is the wedge */}
-              <Route path="/"          element={<Navigate to="/flight-recorder" />} />
-              <Route path="/dashboard" element={<Navigate to="/flight-recorder" />} />
+              {/* Sprint 4 — Dashboard is the landing page; FlightRecorder
+                  moves to /audit-feed for analysts. */}
+              <Route path="/"          element={<Navigate to="/dashboard" />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
 
               {/* Primary nav (5) */}
               <Route path="/flight-recorder" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />

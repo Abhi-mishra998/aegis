@@ -46,6 +46,17 @@ async def workspace_me(request: Request) -> Any:
     return passthrough(resp)
 
 
+@router.get("/workspace/inventory")
+async def workspace_inventory(request: Request) -> Any:
+    """Sprint 4 — Dashboard hero data. Proxy → registry:/workspace/inventory."""
+    resp = await request.app.state.client.get(
+        f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/workspace/inventory",
+        headers=internal_headers(request),
+        timeout=6.0,
+    )
+    return passthrough(resp)
+
+
 @router.post(
     "/workspace/exit-shadow-mode",
     dependencies=[Depends(verify_role(Role.OWNER))],
