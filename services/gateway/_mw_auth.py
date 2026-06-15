@@ -240,6 +240,32 @@ class _AuthMixin:
             logger.critical("tenant_isolation_violation", token_tenant=tenant_id_str, header_tenant=x_tenant)
             raise HTTPException(status_code=403, detail="Tenant mismatch detected")
 
+        # Sprint 6 — Auto-Remediation revoked-agents check. When an
+        # incident transitions to quarantined the executor adds the
+        # agent_id to a per-tenant set; subsequent requests bearing the
+        # same agent_id are rejected at auth. Single SISMEMBER call;
+        # ~0.2 ms on the warm pool. Skipped for the unknown-agent
+        # sentinel (UUID(int=0)) so unauthenticated/anonymous paths
+        # aren't affected.
+        if agent_id_str and agent_id_str != str(uuid.UUID(int=0)):
+            try:
+                from services.security.remediation.executor import is_agent_revoked
+                if await is_agent_revoked(self.redis, tenant_id_str, agent_id_str):
+                    logger.warning(
+                        "agent_revoked_by_remediation",
+                        tenant_id=tenant_id_str, agent_id=agent_id_str,
+                    )
+                    raise HTTPException(
+                        status_code=401,
+                        detail="agent_revoked_by_remediation",
+                    )
+            except HTTPException:
+                raise
+            except Exception as _rex:
+                # Fail open on the revoked-set check — if Redis blips we
+                # shouldn't take down auth for every request.
+                logger.warning("revoked_agents_check_failed", error=str(_rex))
+
         # Org-level isolation: if the client sends X-Org-ID it MUST match the token's org_id.
         # The header is optional — older clients without org_id support are still served.
         x_org_id = request.headers.get("X-Org-ID")

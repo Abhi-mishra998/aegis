@@ -505,6 +505,9 @@ from services.gateway.routers.proxies import router as _proxies_router  # noqa: 
 from services.gateway.routers.risk import router as _risk_router  # noqa: E402
 from services.gateway.routers.sso import router as _sso_router  # noqa: E402
 from services.gateway.routers.iag import router as _iag_router  # noqa: E402
+from services.gateway.routers.remediation import (
+    router as _remediation_router,  # noqa: E402
+)
 from services.gateway.routers.storylines import (
     router as _storylines_router,  # noqa: E402
 )
@@ -533,6 +536,7 @@ app.include_router(_audit_router)
 app.include_router(_incidents_router)
 app.include_router(_storylines_router)
 app.include_router(_iag_router)
+app.include_router(_remediation_router)
 app.include_router(_billing_router)
 app.include_router(_compliance_router)
 app.include_router(_transparency_router)
