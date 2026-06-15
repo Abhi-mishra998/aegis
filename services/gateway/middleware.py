@@ -95,6 +95,9 @@ _MANAGEMENT_PATH_PREFIXES = (
     # Sprint 4 — kill-chain storyline read API. Detection-side, no tool
     # execution semantics; pairs with /incidents (which is operations-side).
     "/storylines",
+    # Sprint 5 — Identity & Access Graph + Blast Radius read API.
+    # Analytics surface; no tool execution semantics.
+    "/iag",
     "/metrics",
     "/risk",
     "/stream",
