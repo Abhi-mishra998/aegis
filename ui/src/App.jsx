@@ -13,6 +13,7 @@ import { clearSessionMetadata } from './services/api';
 
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import OnboardingWizard from './pages/OnboardingWizard';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import ExecutiveDashboard from './pages/ExecutiveDashboard';
 import Settings from './pages/Settings';
@@ -235,6 +236,7 @@ function App() {
                   (e.g. /signup/verify-email-address) — the `/*` is required. */}
               <Route path="/login/*"  element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Login />} />
               <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Signup />} />
+              <Route path="/onboarding" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
 
               {/* Flight Recorder is the homepage — tamper-evident replay is the wedge */}
               <Route path="/"          element={<Navigate to="/flight-recorder" />} />

@@ -363,6 +363,13 @@ export const registryService = {
   revokePermission: (agentId, permId) =>
     request(`/agents/${agentId}/permissions/${permId}`, { method: "DELETE" }),
   getProfile: (id) => request(`/agents/${id}/profile`),
+  wizard: (data) =>
+    request("/agents/wizard", { method: "POST", body: JSON.stringify(data) }),
+  installSnippet: (agentId, provider, aegisApiKey) =>
+    request(
+      `/agents/wizard/install-snippet/${agentId}/${provider}` +
+        (aegisApiKey ? `?aegis_api_key=${encodeURIComponent(aegisApiKey)}` : ""),
+    ),
   getSummary: () => request("/agents/summary"),
 };
 
