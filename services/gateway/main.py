@@ -502,6 +502,7 @@ from services.gateway.routers.agents import router as _agents_router  # noqa: E4
 from services.gateway.routers.audit import router as _audit_router  # noqa: E402
 from services.gateway.routers.auth import router as _auth_router  # noqa: E402
 from services.gateway.routers.clerk import router as _clerk_router  # noqa: E402
+from services.gateway.routers.workspace import router as _workspace_router  # noqa: E402
 from services.gateway.routers.auto_response import (
     router as _auto_response_router,  # noqa: E402
 )
@@ -565,6 +566,7 @@ app.include_router(_users_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_clerk_router)
+app.include_router(_workspace_router)
 app.include_router(_tenant_router)
 app.include_router(_voice_router)
 app.include_router(_demo_router)

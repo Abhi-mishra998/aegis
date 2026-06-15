@@ -4,6 +4,7 @@ import asyncio
 import os
 import secrets
 import uuid
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Annotated, Any
 
@@ -650,6 +651,11 @@ async def get_tenant_metadata(
             "burst":                100,
             "daily_request_cap":    1_000_000,
             "monthly_request_cap":  None,
+            # Sprint 3 — Shadow mode. NULL = never in shadow mode (legacy
+            # tenant), otherwise an ISO-8601 timestamp the gateway checks
+            # against now() to decide whether to downgrade deny/escalate
+            # to `would_have_blocked`.
+            "shadow_mode_until":    None,
         }
 
     effective_rpm = tenant.rpm_limit or _TIER_RPM_DEFAULTS.get(tenant.tier.value, 60)
@@ -667,6 +673,10 @@ async def get_tenant_metadata(
         "daily_inference_cost_cap_usd": (
             tenant.daily_inference_cost_cap_usd
             if tenant.daily_inference_cost_cap_usd is not None else None
+        ),
+        "shadow_mode_until":    (
+            tenant.shadow_mode_until.isoformat()
+            if tenant.shadow_mode_until is not None else None
         ),
     }
 
@@ -745,6 +755,157 @@ async def upsert_tenant(
         "daily_request_cap":    daily_val,
         "monthly_request_cap":  monthly_val,
         "daily_inference_cost_cap_usd": cost_cap_val,
+    }
+
+
+# =============================================================================
+# Workspace / Shadow Mode (Sprint 3)
+# =============================================================================
+#
+# /workspace/me        — return signed-in workspace summary, including the
+#                        shadow_mode_until timestamp.
+# /workspace/exit-shadow-mode — OWNER-only. Clear the shadow window so the
+#                        next deny/escalate from the policy engine actually
+#                        blocks the customer's tool call.
+#
+# Both endpoints require X-Tenant-ID (set by gateway after JWT validation)
+# and reach the Tenant row via the same SQLAlchemy session the rest of the
+# router uses. The OWNER check reads the X-ACP-Role header the gateway
+# injects from the validated JWT (see services/gateway/_helpers.py:120).
+
+
+def _canonical_role(role: str | None) -> str:
+    """Project an X-ACP-Role header value onto the canonical Aegis vocab."""
+    from sdk.common.roles import canonical_role as _cr
+    return _cr(role)
+
+
+@router.get(
+    "/workspace/me",
+    summary="Return the signed-in workspace summary (including shadow mode)",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def workspace_me(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> dict:
+    """Owner-friendly view: name, tier, shadow_mode_until, agent counts."""
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+
+    if tenant is None:
+        # No row yet — webhook hasn't landed, or this is a pre-Sprint-1 tenant.
+        return {
+            "tenant_id":         x_tenant_id,
+            "name":              "Workspace",
+            "tier":              "basic",
+            "is_active":         True,
+            "shadow_mode_until": None,
+            "shadow_mode_active": False,
+            "shadow_mode_days_left": None,
+        }
+
+    now = datetime.utcnow()
+    shadow_until = tenant.shadow_mode_until
+    if shadow_until is not None and shadow_until.tzinfo is not None:
+        # Compare in naive UTC.
+        shadow_until_naive = shadow_until.replace(tzinfo=None)
+    else:
+        shadow_until_naive = shadow_until
+    shadow_active = bool(shadow_until_naive and shadow_until_naive > now)
+    days_left = (
+        int((shadow_until_naive - now).total_seconds() / 86400)
+        if shadow_active and shadow_until_naive else None
+    )
+
+    return {
+        "tenant_id":              str(tenant.tenant_id),
+        "name":                   tenant.name,
+        "tier":                   tenant.tier.value,
+        "is_active":              tenant.is_active,
+        "shadow_mode_until":      shadow_until.isoformat() if shadow_until else None,
+        "shadow_mode_active":     shadow_active,
+        "shadow_mode_days_left":  days_left,
+    }
+
+
+@router.post(
+    "/workspace/exit-shadow-mode",
+    summary="OWNER-only — exit shadow mode immediately (deny/escalate now blocks)",
+    dependencies=[Depends(verify_internal_secret)],
+    status_code=200,
+)
+async def workspace_exit_shadow_mode(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+    x_acp_role: Annotated[str | None, Header(alias="X-ACP-Role")] = None,
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
+) -> dict:
+    """
+    Flip ``tenants.shadow_mode_until`` to now()-1s so the next deny/escalate
+    from the decision engine actually blocks the customer's tool call.
+
+    Auth: relies on the gateway's verify_role(OWNER) dependency in the
+    proxy router AND on the X-ACP-Role header for defense-in-depth here.
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    if _canonical_role(x_acp_role) != "OWNER":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the workspace OWNER can exit shadow mode",
+        )
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    previous = tenant.shadow_mode_until
+    # Set to slightly-in-the-past so any in-flight downgrade check resolves
+    # to "no shadow window" immediately on the next request.
+    tenant.shadow_mode_until = datetime.utcnow() - timedelta(seconds=1)
+    await db.commit()
+
+    # Bust the gateway's TenantMetadataCache so the change is picked up on
+    # the very next /execute (cache TTL is otherwise ~10 minutes).
+    try:
+        await redis.delete(f"acp:tenant:meta:{tenant_uuid}")
+    except Exception as exc:
+        logger.warning("tenant_meta_cache_bust_failed", error=str(exc))
+
+    # Audit row — operator must always be able to prove who hit the switch.
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_uuid,
+            agent_id=None,
+            action="workspace_exit_shadow_mode",
+            metadata={
+                "actor":             x_acp_actor or "unknown",
+                "previous_until":    previous.isoformat() if previous else None,
+            },
+        )
+    except Exception as exc:
+        logger.warning("exit_shadow_audit_failed", error=str(exc))
+
+    return {
+        "status":            "ok",
+        "tenant_id":         str(tenant.tenant_id),
+        "shadow_mode_until": tenant.shadow_mode_until.isoformat(),
+        "previous_until":    previous.isoformat() if previous else None,
     }
 
 

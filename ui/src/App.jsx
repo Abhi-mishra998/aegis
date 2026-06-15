@@ -14,6 +14,7 @@ import { clearSessionMetadata } from './services/api';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import OnboardingWizard from './pages/OnboardingWizard';
+import ShadowModeReview from './pages/ShadowModeReview';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import ExecutiveDashboard from './pages/ExecutiveDashboard';
 import Settings from './pages/Settings';
@@ -237,6 +238,7 @@ function App() {
               <Route path="/login/*"  element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Login />} />
               <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Signup />} />
               <Route path="/onboarding" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
+              <Route path="/shadow-review" element={<ProtectedRoute><ShadowModeReview /></ProtectedRoute>} />
 
               {/* Flight Recorder is the homepage — tamper-evident replay is the wedge */}
               <Route path="/"          element={<Navigate to="/flight-recorder" />} />
