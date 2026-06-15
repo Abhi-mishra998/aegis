@@ -411,7 +411,7 @@ async def list_investigations(
     source_errors: list[str] = []
     events: list[DenialEvent] = []
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         logs, err = await _fetch_audit_logs(
             client,
             tenant_id=tenant_id,
@@ -516,7 +516,7 @@ async def replay_agent_behavior(
 
     agent_str = str(agent_id)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         # Fetch both sources concurrently
         import asyncio
 
@@ -642,7 +642,7 @@ async def get_investigation_profile(
     source_errors: list[str] = []
     agent_str = str(agent_id)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         logs, err = await _fetch_audit_logs(
             client,
             tenant_id=tenant_id,
@@ -759,7 +759,7 @@ async def get_blast_radius(
     worst_case_path: list[str] = []
     max_criticality = 0.0
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         data, err = await _fetch_blast_radius(client, tenant_id, agent_str)
 
     if err:
@@ -828,7 +828,7 @@ async def get_timeline(
     source_errors: list[str] = []
     timeline_events: list[TimelineEvent] = []
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         audit_task = asyncio.create_task(
             _fetch_audit_logs(client, tenant_id, agent_id=agent_str, limit=limit)
         )
@@ -978,7 +978,7 @@ async def export_investigation(
     if x_internal_secret and len(x_internal_secret) >= 4:
         exported_by = f"secret:{x_internal_secret[:4]}***"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         audit_task = asyncio.create_task(
             _fetch_audit_logs(client, tenant_id, agent_id=agent_str, limit=200)
         )

@@ -7,10 +7,73 @@ breaking changes bump the MAJOR.
 
 ## [Unreleased]
 
-Rolling sprint output from `sprint-1` through `sprint-6` is described in
-the per-sprint completion docs (`sprint-N-completed.md`). The summary
-below cross-references the canonical entries so a release-cut script can
-pull both.
+### Added — vNext refactor (Sprints 4-8)
+
+- **Sprint 4 — Incident Storyline Engine.** Every finding at tier ≥
+  escalate is grouped into a per-tenant kill-chain incident with a
+  MITRE tactic + technique chain, participating-agent union, status
+  transitions, and risk score. Read surface: `GET /storylines`,
+  `GET /storylines/{incident_id}`. Storage: Redis 24 h TTL. Pure
+  reconstruction in `services/security/incidents/storyline.py`.
+- **Sprint 5 — Identity & Access Graph + Blast Radius.** Per-tenant
+  cache of `agent → role → permission → resource`. Read surface:
+  `GET /iag/agents/{agent_id}`,
+  `GET /iag/incidents/{incident_id}/blast-radius`. PostgreSQL ingestion
+  adapter ships; IAM + Vault adapters deferred.
+- **Sprint 6 — Auto-Remediation Framework.** On quarantine: revoke
+  the agent's API key (per-tenant Redis set, checked at auth),
+  publish to the token-revocation channel, optionally page on-call via
+  webhook, write an audit row. Per-tenant policy, idempotent ledger,
+  bounded webhook retry. Read surface: `GET/PUT /remediation/policy`,
+  `GET /remediation/incidents/{id}`,
+  `POST /remediation/incidents/{id}/replay`,
+  `POST /remediation/dry-run`.
+- **Sprint 7 — Threat-Intel Provider Layer.** Pluggable IOC framework
+  with six kinds (`exfil_host`, `c2_domain`, `offshore_token`,
+  `destructive_shell`, `malicious_path`, `privilege_token`). Per-tenant
+  Redis cache plus a `_global` cross-tenant overlay. `StaticListProvider`
+  and `HttpFeedProvider` (text + JSON, bounded 5xx retry, fail-fast on
+  4xx). Read surface: `GET/POST/DELETE /threat-intel/iocs`,
+  `GET/PUT /threat-intel/feeds/{name}`, `POST /threat-intel/refresh`.
+  Canonical-evaluator runtime hook deferred to Sprint 7.5.
+- **Sprint 8 — Performance + Rego/Python convergence.**
+  `risk_pipeline.cumulative_scores` now collapses three sequential
+  ZRANGEBYSCORE calls into a single Redis pipeline RTT (sequential
+  fallback on pipeline error). One `pattern_catalog.py` is the single
+  source of truth for `EXFIL_HOSTS` / `OFFSHORE_TOKENS` /
+  `EXTERNAL_EGRESS_HOSTS` / `PERSONAL_EMAIL_DOMAINS`; `rego_emitter.py`
+  generates the corresponding Rego set literals between sentinel-
+  delimited blocks; `tests/policy/test_rego_drift.py` fails the build
+  on drift.
+- **AEVF `aevf/0.1.0` — open verification standard.** `docs/AEVF/spec.md`
+  publishes the audit chain format. `aegis-aevf` on PyPI is the
+  reference verifier — six independent checks, zero network calls to
+  Aegis.
+- **Audit alembic AppleDouble defense.** `sdk/common/alembic_env.py`
+  strips macOS `._*` files from `versions/` before alembic walks the
+  directory, so a stale tar deploy can't take audit down with
+  `SyntaxError: source code string cannot contain null bytes`.
+
+### Added — operations
+
+- CloudTrail multi-region trail (`acp-mgmt-events`) with log-file
+  validation and a dedicated S3 bucket
+  (`acp-cloudtrail-628478946931`, AES-256 default encryption, public-
+  access block ON, 90-day lifecycle).
+- VPC gateway endpoints for S3 + DynamoDB on `acp-prodha-vpc` — free,
+  shaves NAT data charges.
+
+### Added — SDK release
+
+- `aegis-anthropic`, `aegis-openai`, `aegis-langchain` bumped to 1.0.1
+  (license, project URLs, per-Python-version classifiers, `__version__`
+  exported).
+- `aegis-bedrock` 1.0.0 — first git landing + first PyPI upload.
+- `aegis-aevf` 1.0.0 — offline AEVF verifier.
+
+---
+
+## Legacy entries (Sprints 1-6 of the platform pre-vNext)
 
 ### Added — security
 

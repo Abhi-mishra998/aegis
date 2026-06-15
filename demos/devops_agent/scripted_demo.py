@@ -21,7 +21,7 @@ Usage:
     .venv/bin/python demos/devops_agent/scripted_demo.py
 
 Environment overrides:
-    ACP_GATEWAY_URL   (default http://localhost:8000)
+    ACP_GATEWAY_URL   (default https://ha.aegisagent.in)
     ACP_CREDS_FILE    (default demos/devops_agent/.demo_creds.json)
     ACP_DRY_RUN       (default 0 — set to 1 for offline mode)
 """
@@ -43,7 +43,7 @@ from demos.devops_agent.k8s_signals import K8sSignalEngine
 from demos.devops_agent.kubectl_wrapper import KubectlWrapper
 from demos.devops_agent.mock_k8s import MockK8sCluster
 
-GATEWAY  = os.getenv("ACP_GATEWAY_URL", "http://localhost:8000")
+GATEWAY  = os.getenv("ACP_GATEWAY_URL", "https://ha.aegisagent.in")
 DRY_RUN  = os.getenv("ACP_DRY_RUN", "0") == "1"
 
 _CREDS_FILE = Path(

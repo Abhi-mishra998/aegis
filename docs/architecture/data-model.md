@@ -8,7 +8,7 @@ All connections go through PgBouncer (`acp_pgbouncer`) on port 6432. The applica
 
 ## Postgres databases
 
-The platform runs nine application-owned Postgres databases plus the `acp` bootstrap. The live deployment lives on AWS RDS `acp-postgres-dev` (Single-AZ `db.t4g.micro`; production-class deployments would add a read replica). Local laptop development uses a single `acp_postgres` container that hosts the same set of logical databases.
+The platform runs nine application-owned Postgres databases plus the `acp` bootstrap. The live deployment lives on AWS RDS `acp-prodha-postgres` (Postgres 15.18, **`db.t3.small` Multi-AZ** as of 2026-06-13 — automatic failover to the standby in `ap-south-1b` on primary failure within ~60 s; a dedicated read replica is planned for forensics replay and heavy aggregator scans). Local laptop development uses a single `acp_postgres` container that hosts the same set of logical databases.
 
 | Database | Owner service | Notes |
 |---|---|---|
@@ -22,7 +22,7 @@ The platform runs nine application-owned Postgres databases plus the `acp` boots
 | `acp_identity_graph` | identity_graph | Typed graph: nodes, edges, trust scores, drift signals, compromise simulation history. |
 | `acp_flight_recorder` | flight_recorder | Per-execution timelines, steps, snapshots, artifacts. |
 | `acp_autonomy` | autonomy | Multi-agent contracts, contract violations, human override events, playbooks, playbook runs. |
-| (read replica) | — | On multi-AZ deployments, a read replica handles forensics replay queries, heavy aggregator scans, and point-in-time recovery. Absent on the current Single-AZ dev deployment — forensics queries share the writer instance until a replica is added. |
+| (read replica) | — | A dedicated read replica would handle forensics replay queries, heavy aggregator scans, and point-in-time recovery. Not yet provisioned — forensics queries currently share the writer; the Multi-AZ standby provides failover, not read scaling. |
 
 ## Tables by service
 
@@ -50,8 +50,8 @@ Indexes: `agents.tenant_id`, `agents.deleted_at`, `permissions.agent_id`.
 
 | Table | Purpose | Notable columns |
 |---|---|---|
-| `audit_logs` | The signed audit chain. The primary record of every decision Aegis has ever made | `id`, `tenant_id`, `agent_id`, `action`, `decision`, `findings` (JSONB), `metadata_json` (JSONB), `event_hash`, `prev_hash`, `signature`, `key_fingerprint`, `created_at`, `shard` (computed) |
-| `transparency_roots` | Daily Merkle roots per tenant, with chain links to the previous day's root | `id`, `tenant_id`, `date`, `merkle_root`, `prev_root_hash`, `leaf_count`, `leaf_range`, `signing_key_fingerprint`, `signature`, `sealed_at` |
+| `audit_logs` | The signed audit chain. The primary record of every decision Aegis has ever made. Rows are the unit of AEVF verification — each row's `event_hash` is rebuildable from the canonical six-field recipe documented in the [AEVF Spec](../AEVF/spec.md) | `id`, `tenant_id`, `agent_id`, `action`, `decision`, `findings` (JSONB), `metadata_json` (JSONB), `event_hash`, `prev_hash`, `signature`, `key_fingerprint`, `created_at`, `shard` (computed) |
+| `transparency_roots` | Daily Merkle roots per tenant, with chain links to the previous day's root. The roots are what AEVF V4 (root signature) and V5 (cross-day chain) verify against | `id`, `tenant_id`, `date`, `merkle_root`, `prev_root_hash`, `leaf_count`, `leaf_range`, `signing_key_fingerprint`, `signature`, `sealed_at` |
 | `transparency_historical_keys` | Retired signing keys, kept so old receipts continue to verify after rotation | `key_fingerprint`, `public_key_pem`, `rotated_at`, `tenant_id` |
 | `audit_notes` | Analyst-written notes attached to an audit row | `id`, `audit_id` (FK → `audit_logs.id`), `tenant_id`, `created_by`, `note_type`, `body`, `created_at` |
 | `pending_usage_events` | Outbox: billing events emitted from audit, drained by the usage worker | `id`, `audit_id`, `tenant_id`, `agent_id`, `amount_usd`, `retry_count`, `created_at` |
@@ -61,6 +61,8 @@ Indexes: `agents.tenant_id`, `agents.deleted_at`, `permissions.agent_id`.
 Indexes: `audit_logs.tenant_id`, `audit_logs.agent_id`, `audit_logs.created_at`, `audit_logs.action`. `transparency_roots.tenant_id, date` UNIQUE.
 
 The `audit_logs` table grows the fastest. Production deployments enable monthly partitioning by `created_at` (managed externally to the application schema).
+
+**Retention floor (DPDP):** India DPDP Act 2023 + Rules (notified 2025-11-13) prescribes a 365-day minimum retention for the audit chain backing a significant data fiduciary. The `/compliance/dpdp` endpoint reports `retention_assessment.meets_dpdp_minimum` honestly — short windows produce `false`. Aegis does not silently pad the number. See [Compliance UI](../ui/operations/compliance.md) and [Audit service](../services/audit.md#a5a6--aevf--dpdp--grc-additions-2026-06-14).
 
 ### usage (`acp_usage`)
 
@@ -120,7 +122,7 @@ Indexes: `graph_nodes.tenant_id, node_type`, `graph_edges.tenant_id, src_node_id
 
 ## Redis keys
 
-Aegis uses Redis 7 (ElastiCache `acp-redis-dev` `cache.t3.micro` on the live deployment, `acp_redis` container locally). Two databases: db 0 for runtime state, db 1 for queues and outboxes.
+Aegis uses Redis 7 (ElastiCache replication group `acp-prodha-redis` — primary in `ap-south-1a` + reader in `ap-south-1b`, automatic failover — on the live deployment; `acp_redis` container locally). Two databases: db 0 for runtime state, db 1 for queues and outboxes.
 
 | Key pattern | Purpose | TTL |
 |---|---|---|

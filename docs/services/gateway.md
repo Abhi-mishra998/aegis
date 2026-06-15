@@ -192,10 +192,10 @@ All metrics scrape from `/metrics` on the gateway pod and are visualized on `inf
 - **Image**: `infra-gateway` built from `services/gateway/Dockerfile`.
 - **Container**: `acp_gateway`.
 - **Port**: 8000 inside the Docker network; not exposed to the host (reached through Nginx).
-- **Replicas**: 1 per EC2 host today; uvicorn workers set via env `UVICORN_WORKERS` (default 4).
+- **Replicas**: 1 per EC2 host today; uvicorn workers fixed at **`--workers 2`** in `infra/docker-compose.yml` (2026-06-13 — was 4; OOM-killed under load against the 768 MB prod-ha memory cap).
 - **Healthcheck**: `GET /health` returns `200 {"status":"ok"}` if the FastAPI app started.
 - **Readiness**: `GET /readiness` runs a deep probe of every downstream service plus Redis. Used by deploy scripts before traffic shift.
-- **Env vars consumed**: `REDIS_URL`, `INTERNAL_SECRET`, `IDENTITY_SERVICE_URL`, `REGISTRY_SERVICE_URL`, `POLICY_SERVICE_URL`, `DECISION_SERVICE_URL`, `AUDIT_SERVICE_URL`, `BEHAVIOR_SERVICE_URL`, `USAGE_SERVICE_URL`, `AUTONOMY_SERVICE_URL`, `FLIGHT_RECORDER_SERVICE_URL`, `IDENTITY_GRAPH_SERVICE_URL`, `FORENSICS_SERVICE_URL`, `API_SERVICE_URL`, `OPA_URL`, `ENVIRONMENT`, `DECISION_GATHER_TOTAL_TIMEOUT` (default 1.5s), and the Voice Guide bridge: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (used only by `routers/voice.py` to sign short-lived LiveKit JWTs).
+- **Env vars consumed**: `REDIS_URL`, `INTERNAL_SECRET`, `IDENTITY_SERVICE_URL`, `REGISTRY_SERVICE_URL`, `POLICY_SERVICE_URL`, `DECISION_SERVICE_URL`, `AUDIT_SERVICE_URL`, `BEHAVIOR_SERVICE_URL`, `USAGE_SERVICE_URL`, `AUTONOMY_SERVICE_URL`, `FLIGHT_RECORDER_SERVICE_URL`, `IDENTITY_GRAPH_SERVICE_URL`, `FORENSICS_SERVICE_URL`, `API_SERVICE_URL`, `OPA_URL`, `ENVIRONMENT`, `DECISION_GATHER_TOTAL_TIMEOUT` (default 1.5s), `DATABASE_URL` (must point at `acp_audit`, not the legacy `acp` DB — `shadow_eval_hook.py` is the only consumer and it reads from the `shadow_policies` table that lives in `acp_audit`), `GROQ_API_KEY` (for the `/demo/groq-agent` route — never embedded in the UI bundle), and the Voice Guide bridge: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (used only by `routers/voice.py` to sign short-lived LiveKit JWTs).
 - **Restart policy**: `unless-stopped` in compose.
 - **Resources**: Not constrained today; the gateway's footprint is ~250 MB resident.
 
@@ -212,7 +212,7 @@ The gateway exposes ~90 routes. The most-trafficked tags:
 | `policy` | 4 | Policy Builder, Policy Sim |
 | `billing` | 6 | Billing page, Usage dashboards |
 | `usage` | 3 | Usage dashboard, Anomalies |
-| `compliance` | 4 | Compliance page exports |
+| `compliance` | 6 | Compliance page exports (GET `/compliance/export/{bundle_type}` added 2026-06-13 for the UI's "Download Bundle" button — was a backend-only POST before) |
 | `forensics` | 6 | Forensics page |
 | `flight` | 3 | Flight Recorder |
 | `autonomy` | 6 | Autonomy Contracts page |
@@ -223,6 +223,7 @@ The gateway exposes ~90 routes. The most-trafficked tags:
 | `sso` | 3 | SSO settings |
 | `execution` | 2 | `/execute` and `/execute/{tool_name}` |
 | `receipts` / `transparency` | 8 | Receipt verification, transparency proofs |
+| `demo` | 1 | `POST /demo/groq-agent` — the Live Demo page. Server-side Groq call → loops back to `/execute` for each suggested tool call. See [Live Demo](../ui/primary/live-demo.md). |
 
 For the full list see [API Reference](../api/reference.md) (generated from `/openapi.json`).
 
@@ -231,7 +232,7 @@ For the full list see [API Reference](../api/reference.md) (generated from `/ope
 ### Mint a token
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/token \
+curl -sS -X POST https://ha.aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"admin@acp.local","password":"REDACTED"}'
@@ -240,7 +241,7 @@ curl -sS -X POST https://dev.aegisagent.in/auth/token \
 ### List agents
 
 ```bash
-curl -sS https://dev.aegisagent.in/agents \
+curl -sS https://ha.aegisagent.in/agents \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -248,7 +249,7 @@ curl -sS https://dev.aegisagent.in/agents \
 ### Execute a tool (the main event)
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/execute \
+curl -sS -X POST https://ha.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "X-Agent-ID: $AGENT_ID" \

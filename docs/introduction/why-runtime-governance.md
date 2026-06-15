@@ -106,4 +106,4 @@ If any of those is false, you may be better served by a static review pipeline, 
 - [What is Aegis](what-is-aegis.md) — the short product overview.
 - [Quickstart](quickstart.md) — first authenticated call, first signed audit row.
 - [System Overview](../architecture/system-overview.md) — the full architecture diagram with code references.
-- [Threat Scenarios](../security/threat-scenarios.md) — the four shipped attack cases with exact policy rules that block them.
+- [Threat Scenarios](../security/threat-scenarios.md) — the shipped attack cases (PII bulk export, RCE, SQL injection, K8s prod-namespace abuse, external-domain PII exfil, system-path access) and the Rego rules that block each.

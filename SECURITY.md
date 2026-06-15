@@ -2,15 +2,18 @@
 
 ## Supported versions
 
-| Version  | Status        | Security fixes |
-|----------|---------------|----------------|
-| `main`   | active        | yes            |
-| 0.2.x    | current       | yes            |
-| 0.1.x    | maintenance   | critical only  |
-| < 0.1    | unsupported   | no             |
+Aegis is a single-trunk codebase. Security fixes go to `main` and the
+reference deployment at `aegisagent.in` tracks it. The published SDKs
+on PyPI (`aegis-anthropic`, `aegis-openai`, `aegis-langchain`,
+`aegis-bedrock`, `aegis-aevf`) are versioned independently — see each
+package's `__version__` for the supported line.
 
-Releases are tagged in git; `acp.__version__` matches the tag. The Production
-deployment at `aegisagent.in` tracks `main`.
+| Surface           | Supported | Notes                                  |
+|-------------------|-----------|----------------------------------------|
+| `main`            | yes       | reference deployment tracks this       |
+| Last tagged release | yes     | security backports for ≥ 90 days        |
+| Previous tagged release | critical only | RCE / auth bypass / tenant break |
+| Older             | no        | upgrade before reporting               |
 
 ## Reporting a vulnerability
 
@@ -93,10 +96,19 @@ If you can break any of these, please report:
 
 ## What we have done
 
-- Audit chain implementation: `services/audit/writer.py:64-96` (PostgreSQL
-  advisory lock + per-row `prev_hash` linkage, verified across 13,400+ rows
-  in production with zero violations).
-- SSRF guard on autonomy webhook executor:
+- Audit chain: PostgreSQL advisory lock + per-row `prev_hash` linkage
+  in `services/audit/writer.py`. Daily Merkle roots signed with ed25519,
+  envelope-encrypted under an AWS KMS customer key, chained via
+  `prev_root_hash`. Public roots bucket lets any third party verify
+  offline.
+- Open verification format: AEVF `aevf/0.1.0` published at
+  [`docs/AEVF/spec.md`](docs/AEVF/spec.md). Reference verifier
+  (`aegis-aevf` on PyPI) runs six independent checks with zero network
+  calls to Aegis.
+- Auto-Remediation revoked-agents set (Sprint 6): single SISMEMBER on
+  every authenticated request rejects tokens for an agent whose
+  incident reached quarantine.
+- SSRF guard on the autonomy webhook executor:
   `services/autonomy/webhook_executor.py:_assert_safe_webhook_url`.
 - Cross-tenant kill-switch protection:
   `services/gateway/_helpers.py:assert_path_tenant_matches_jwt` and
@@ -106,7 +118,15 @@ If you can break any of these, please report:
   `services/gateway/auth.py:run_revocation_listener`.
 - Network isolation: every internal service port is bound to `127.0.0.1`
   on the host (`infra/docker-compose.yml`). Only the gateway and UI are
-  reachable externally.
+  reachable externally. In prod-ha, gateway and UI sit behind an ALB;
+  every other service is in private subnets.
+- Pattern catalog single source of truth (Sprint 8): one Python module
+  (`services/policy/pattern_catalog.py`) holds the curated IOC lists;
+  the OPA Rego file is generated from it and CI fails the build on
+  drift (`tests/policy/test_rego_drift.py`).
+- AWS posture: CloudTrail multi-region trail with log-file validation
+  enabled; S3 default encryption on every Aegis bucket; public-access
+  block on; KMS customer key for receipt-signing envelope.
 
 ## What we have NOT done (honest disclosure)
 

@@ -46,7 +46,7 @@ _DIM    = "\033[2m"
 
 DRY_RUN = os.getenv("ACP_DRY_RUN", "0") == "1"
 
-_AUTONOMY_URL = os.getenv("ACP_AUTONOMY_URL", "http://localhost:8015")
+_AUTONOMY_URL = os.getenv("ACP_AUTONOMY_URL", "https://ha.aegisagent.in")
 _CREDS_FILES = [
     Path(__file__).parent / "devops_agent" / ".demo_creds.json",
     Path(__file__).parent / "support_agent" / ".demo_creds.json",

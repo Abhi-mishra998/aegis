@@ -155,7 +155,7 @@ All exposed under `/forensics` at the gateway proxy.
 ### List high-risk investigations from the last 24 hours
 
 ```bash
-curl -sS "https://dev.aegisagent.in/forensics/investigation?min_risk=0.7&limit=20" \
+curl -sS "https://ha.aegisagent.in/forensics/investigation?min_risk=0.7&limit=20" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | {audit_id, agent_id, tool_name, risk_score, occurred_at}'
@@ -164,7 +164,7 @@ curl -sS "https://dev.aegisagent.in/forensics/investigation?min_risk=0.7&limit=2
 ### Replay the last 20 actions of an agent
 
 ```bash
-curl -sS "https://dev.aegisagent.in/forensics/replay/$AGENT_ID?limit=20" \
+curl -sS "https://ha.aegisagent.in/forensics/replay/$AGENT_ID?limit=20" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.events[] | {tool_name, decision, risk_score, timestamp}'
@@ -173,7 +173,7 @@ curl -sS "https://dev.aegisagent.in/forensics/replay/$AGENT_ID?limit=20" \
 ### Export a PDF for legal hold
 
 ```bash
-EXPORT_ID=$(curl -sS -X POST https://dev.aegisagent.in/forensics/export/$AUDIT_ID \
+EXPORT_ID=$(curl -sS -X POST https://ha.aegisagent.in/forensics/export/$AUDIT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -181,12 +181,12 @@ EXPORT_ID=$(curl -sS -X POST https://dev.aegisagent.in/forensics/export/$AUDIT_I
   | jq -r '.data.export_id')
 
 # Poll until ready
-while [ "$(curl -sS https://dev.aegisagent.in/forensics/export/$EXPORT_ID/status \
+while [ "$(curl -sS https://ha.aegisagent.in/forensics/export/$EXPORT_ID/status \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq -r '.data.status')" != "ready" ]; do sleep 2; done
 
-curl -sS https://dev.aegisagent.in/forensics/export/$EXPORT_ID/status \
+curl -sS https://ha.aegisagent.in/forensics/export/$EXPORT_ID/status \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq -r '.data.signed_url'
@@ -210,7 +210,7 @@ curl -sS https://dev.aegisagent.in/forensics/export/$EXPORT_ID/status \
 - **The blast-radius cache TTL is 60 seconds.** Tight enough that operators see fresh data; loose enough that re-opening the same investigation is instant.
 - **No write paths means no SQL injection surface.** All filters are typed (UUIDs, integers, ISO dates). Free-form text filters do not exist in the API.
 - **Cross-source joins are not transactional.** The audit row may be from 10 minutes ago; the identity graph state may have changed since. Investigations show timestamps to make the disparity visible.
-- **Read DSNs to RDS replica.** On multi-AZ deployments, heavy forensic queries route to a read replica to keep the primary's write throughput steady. The current dev deployment is Single-AZ (`acp-postgres-dev` only); reads share the writer until a replica is added.
+- **Read DSNs to RDS replica.** The current prod-ha deployment uses RDS Multi-AZ; the standby exists for failover, not for read scaling. A dedicated read replica is planned so heavy forensic queries route off the primary; today, reads share the writer's connection pool.
 
 ## Next
 

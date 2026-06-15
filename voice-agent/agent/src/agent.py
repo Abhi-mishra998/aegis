@@ -1,12 +1,21 @@
 """Aegis Voice Guide — production v2.
 
-Pipeline (locked per AGENT_V2.md, 2026-06-01):
-  Deepgram STT (nova-3) -> Groq llama-3.3-70b-versatile -> Cartesia TTS (sonic-3)
+Pipeline (locked per AGENT_V2.md, 2026-06-02):
+  Deepgram STT (nova-3, English) -> Groq llama-3.3-70b-versatile -> Cartesia TTS (sonic-3)
   fallback: Groq -> Gemini 2.5 Flash-Lite (if GOOGLE_API_KEY is set)
 
-RAG: hybrid BM25 + dense + cross-encoder reranker (rag.py).
+RAG: hybrid BM25 + dense + cross-encoder reranker (rag.py), top-2 chunks.
 Turn detection: Silero VAD + LiveKit MultilingualModel + tuned endpointing.
-Chat history truncated to last 8 messages each turn to stay under Groq's TPM.
+Chat history truncated to last MAX_CTX_ITEMS each turn to stay under Groq's TPM.
+
+Audit-fixes 2026-06-02:
+  - SESSION_MAX_SECONDS default 300→1800 (interview-length conversations).
+  - SESSION_IDLE_SECONDS now actually wired (was dead code).
+  - Greeting via session.say() — no LLM call burned on a static string.
+  - Deepgram language="en" (was "multi"; spec is English-only).
+  - search_aegis_docs returns top_n=2 (matches the design token budget).
+  - FallbackAdapter attempt_timeout 10s→4s (faster degraded mode).
+  - Per-turn latency log: RAG ms + LLM TTFT ms + turn total ms (NFR-5).
 """
 
 from __future__ import annotations
@@ -15,6 +24,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -78,16 +88,19 @@ GREETING = MODELFILE.param_str(
 )
 
 # Keep only this many items of chat history per LLM call (TPM safety on Groq).
-MAX_CTX_ITEMS = 8
+# A tool-using turn consumes ~3 items (fn_call + fn_output + assistant msg),
+# so 6 holds the previous tool turn + the current one. Matches AGENT_V2.md
+# §9.2 "Truncating chat history to last ~6 messages per call".
+MAX_CTX_ITEMS = 6
 
-# Hard cap on a single conversation. Groq's free RPD is 14,400; a long voice
-# session can chew through that. After this many seconds we close the session
-# regardless of activity. Configurable via env so demos can be longer.
-SESSION_MAX_SECONDS = int(os.environ.get("AEGIS_SESSION_MAX_SECONDS", "300"))
+# Hard cap on a single conversation. The gateway TOKEN_TTL_SECONDS must be
+# >= this value so the LiveKit JWT outlives the agent session.
+# Override via AEGIS_SESSION_MAX_SECONDS in the systemd EnvironmentFile.
+SESSION_MAX_SECONDS = int(os.environ.get("AEGIS_SESSION_MAX_SECONDS", "1800"))
 
-# If the user is silent this long, end the session (saves Groq quota when a
-# tab is left open in a background).
-SESSION_IDLE_SECONDS = int(os.environ.get("AEGIS_SESSION_IDLE_SECONDS", "120"))
+# If the user is silent (no completed turn) this long, close the session.
+# Saves quota on tabs left open in a background. Set to 0 to disable.
+SESSION_IDLE_SECONDS = int(os.environ.get("AEGIS_SESSION_IDLE_SECONDS", "180"))
 
 # Groq's llama-3.3-70b sometimes emits the tool call as visible text content
 # instead of via the structured tool_calls channel. The Modelfile tells the
@@ -103,17 +116,28 @@ _FUNCTION_TAG_RE = re.compile(
 class AegisGuideAgent(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=INSTRUCTIONS)
+        # Updated by `on_user_turn_completed` so the idle watchdog can tell
+        # whether anyone is still talking. Starts at session-start time so
+        # opening the panel and walking away still triggers idle close.
+        self.last_activity_ts: float = time.monotonic()
+        self.turn_count: int = 0
 
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
-        """Truncate chat history to a small window before each LLM call.
+        """Truncate chat history + tick the activity timestamp.
 
         Voice conversations grow context unboundedly otherwise; Groq's free
         tier caps at 12 k TPM, and large RAG-injected context blows through it.
         Truncate keeps system msg + last N items.
         """
         turn_ctx.truncate(max_items=MAX_CTX_ITEMS)
+        self.last_activity_ts = time.monotonic()
+        self.turn_count += 1
+        logger.info(
+            "turn_started turn=%d ctx_items=%d",
+            self.turn_count, len(turn_ctx.items),
+        )
 
     async def tts_node(self, text, model_settings):
         """Filter `<function=...>` tool-call syntax out of text before TTS.
@@ -164,30 +188,36 @@ class AegisGuideAgent(Agent):
             query: A short focused natural-language query, e.g.
                 "kill switch behavior", "enforce mode rollout".
         """
-        hits = knowledge.search(query, top_n=3)
+        t0 = time.monotonic()
+        # top_n=2 keeps per-call input token count predictable: ~600 tokens of
+        # corpus content + ~80 tokens of wrapper instruction. The reranker
+        # already filters down from ~20 candidates so two is enough.
+        hits = knowledge.search(query, top_n=2)
+        rag_ms = int((time.monotonic() - t0) * 1000)
+
         if not hits:
+            logger.info("rag_no_hits query=%r ms=%d", query[:60], rag_ms)
+            # Fall through to general expertise rather than refusing — the
+            # Modelfile contract says: when docs are silent, answer from
+            # general knowledge but DON'T invent Aegis specifics.
             return (
-                "The Aegis docs don't have a clear section on that. Tell the "
-                "user the docs don't cover it and either answer from general "
-                "knowledge or ask a clarifying question."
+                "The Aegis docs don't have a focused section on that. Answer "
+                "from general cybersecurity knowledge if you can, or ask a "
+                "clarifying question. Do NOT invent Aegis-specific facts."
             )
+
         logger.info(
-            "rag hits: %s",
+            "rag_hits query=%r ms=%d hits=%s",
+            query[:60], rag_ms,
             [(h.source, round(h.score, 3)) for h in hits],
         )
-        # Instruct the LLM to quote rather than paraphrase, briefly attributing
-        # the source area (e.g. "kill-switch runbook") — never reading paths aloud.
         body = "\n\n---\n\n".join(
-            f"[source: {h.source}]\n{h.text}" for h in hits
+            f"[{h.source}]\n{h.text}" for h in hits
         )
-        return (
-            "Use these doc excerpts to answer. Quote specific Aegis terms verbatim "
-            "rather than paraphrasing. Briefly mention which doc area it came from "
-            "(e.g. 'per the kill-switch runbook'), but do NOT read file paths or "
-            "URLs aloud. If the excerpts don't actually answer the user's question, "
-            "say so plainly.\n\n"
-            f"{body}"
-        )
+        # Compact wrapper — the persona prompt already covers quote-verbatim,
+        # cite-source-briefly, no-paths-aloud. Repeating it here on every
+        # tool call wastes ~80 tokens per turn.
+        return f"Quote Aegis terms verbatim. If these don't answer, say so.\n\n{body}"
 
 
 def _build_groq() -> lk_openai.LLM:
@@ -227,7 +257,10 @@ def _build_llm():
     primary = _build_groq()
     if os.environ.get("GOOGLE_API_KEY"):
         logger.info("LLM: Groq primary + Gemini fallback")
-        return FallbackAdapter([primary, _build_gemini()], attempt_timeout=10.0)
+        # 4 s is tight enough that a hanging Groq call doesn't burn 10 s of
+        # dead air for the user, but long enough that Groq's normal ~200 ms
+        # TTFT + a slow streaming response (up to ~2-3 s) still wins.
+        return FallbackAdapter([primary, _build_gemini()], attempt_timeout=4.0)
     logger.info("LLM: Groq only (no GOOGLE_API_KEY for fallback)")
     return primary
 
@@ -254,12 +287,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
     session = AgentSession(
         stt=deepgram.STT(
+            # English-only per AGENT_V2.md §1.2 — multilingual added 150-300 ms
+            # of STT latency per turn and increased Aegis-term mishears.
             model="nova-3",
-            language="multi",
+            language="en",
             keyterm=AEGIS_KEYTERMS,
         ),
         llm=_build_llm(),
-        tts=cartesia.TTS(model="sonic-3"),
+        # Hotfix 2026-06-10: Cartesia free-tier credits exhausted (HTTP 402
+        # on the streaming WSS endpoint), so TTS swapped to Deepgram Aura-2
+        # (default voice `aura-2-andromeda-en`). Restore cartesia.TTS once the
+        # Cartesia account is topped up.
+        tts=deepgram.TTS(),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
         min_endpointing_delay=0.4,
@@ -271,38 +310,86 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     ctx.add_shutdown_callback(session.aclose)
 
+    agent = AegisGuideAgent()
     await session.start(
-        agent=AegisGuideAgent(),
+        agent=agent,
         room=ctx.room,
         room_options=room_io.RoomOptions(audio_input=room_io.AudioInputOptions()),
     )
 
-    await session.generate_reply(instructions=f"Say exactly: {GREETING}")
+    # session.say plays a static TTS phrase without burning an LLM call.
+    # generate_reply for a fixed greeting wasted ~200 tokens of TPM budget
+    # per session — the busiest moment, because cold-start models are also
+    # loading. Use direct TTS instead.
+    try:
+        await session.say(GREETING)
+    except Exception:
+        # Older livekit-agents versions don't have session.say — fall back to
+        # the LLM-driven greeting rather than silently launching mute.
+        logger.warning("session.say unavailable, falling back to generate_reply")
+        await session.generate_reply(instructions=f"Say exactly: {GREETING}")
 
-    # Hard cap on session duration so a forgotten-tab session can't churn
-    # Groq/Deepgram/Cartesia free quota for hours. Cancelled cleanly when
-    # the session ends normally via shutdown_callback.
+    session_start = time.monotonic()
+
+    # Hard cap on session duration. The gateway TOKEN_TTL_SECONDS must be
+    # >= SESSION_MAX_SECONDS or the LiveKit JWT expires mid-conversation.
     async def _session_timeout_guard() -> None:
         try:
             await asyncio.sleep(SESSION_MAX_SECONDS)
         except asyncio.CancelledError:
             return
         logger.warning(
-            "session_timeout_hit seconds=%d room=%s — closing",
-            SESSION_MAX_SECONDS, ctx.room.name,
+            "session_timeout_hit seconds=%d room=%s turns=%d — closing",
+            SESSION_MAX_SECONDS, ctx.room.name, agent.turn_count,
         )
         try:
-            await session.generate_reply(
-                instructions="Say only: time's up — disconnecting to keep costs bounded. "
-                             "Reconnect anytime to continue."
+            await session.say(
+                "We're at the session limit — disconnecting to keep costs bounded. "
+                "Reconnect anytime to continue."
             )
         except Exception:
             pass
         await asyncio.sleep(3.5)
         await session.aclose()
 
+    # Idle watchdog — closes the session if nobody talks for SESSION_IDLE_SECONDS.
+    # Resets on every completed user turn via AegisGuideAgent.on_user_turn_completed.
+    async def _idle_watchdog() -> None:
+        if SESSION_IDLE_SECONDS <= 0:
+            return
+        while True:
+            try:
+                await asyncio.sleep(15.0)
+            except asyncio.CancelledError:
+                return
+            idle_for = time.monotonic() - agent.last_activity_ts
+            if idle_for >= SESSION_IDLE_SECONDS:
+                uptime = int(time.monotonic() - session_start)
+                logger.warning(
+                    "session_idle_close idle_for=%ds uptime=%ds turns=%d room=%s",
+                    int(idle_for), uptime, agent.turn_count, ctx.room.name,
+                )
+                try:
+                    await session.say(
+                        "Going quiet to save quota — talk again any time."
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(2.5)
+                await session.aclose()
+                return
+
     timeout_task = asyncio.create_task(_session_timeout_guard())
-    ctx.add_shutdown_callback(lambda: timeout_task.cancel())
+    idle_task = asyncio.create_task(_idle_watchdog())
+
+    # add_shutdown_callback does `await callback()`, so the callback must
+    # return an awaitable. `Task.cancel()` returns a bool, so a plain
+    # sync function or lambda here raises TypeError during shutdown.
+    async def _cancel_guards() -> None:
+        timeout_task.cancel()
+        idle_task.cancel()
+
+    ctx.add_shutdown_callback(_cancel_guards)
 
 
 if __name__ == "__main__":

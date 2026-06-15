@@ -12,65 +12,8 @@ from services.security.threatintel.ioc import (
 )
 
 
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.kv: dict[str, str] = {}
-        self.sets: dict[str, set[str]] = {}
-        self.hashes: dict[str, dict[str, str]] = {}
-
-    async def set(self, k, v, ex=None, nx=False):
-        if nx and k in self.kv:
-            return False
-        self.kv[k] = str(v)
-        return True
-
-    async def get(self, k):
-        v = self.kv.get(k)
-        return v.encode() if isinstance(v, str) else v
-
-    async def delete(self, k):
-        n = 0
-        if k in self.sets:
-            del self.sets[k]; n += 1
-        if k in self.kv:
-            del self.kv[k]; n += 1
-        if k in self.hashes:
-            del self.hashes[k]; n += 1
-        return n
-
-    async def expire(self, k, ex):
-        return True
-
-    async def sadd(self, k, *vals):
-        s = self.sets.setdefault(k, set())
-        before = len(s)
-        s.update(str(v) for v in vals)
-        return len(s) - before
-
-    async def srem(self, k, *vals):
-        s = self.sets.get(k, set())
-        before = len(s)
-        for v in vals:
-            s.discard(str(v))
-        return before - len(s)
-
-    async def smembers(self, k):
-        return {v.encode() for v in self.sets.get(k, set())}
-
-    async def hset(self, k, field=None, value=None, mapping=None, **kw):
-        h = self.hashes.setdefault(k, {})
-        if field is not None:
-            h[field] = str(value) if value is not None else ""
-        if mapping:
-            for kk, vv in mapping.items():
-                h[kk] = str(vv) if vv is not None else ""
-        for kk, vv in kw.items():
-            h[kk] = str(vv) if vv is not None else ""
-        return 1
-
-    async def hgetall(self, k):
-        h = self.hashes.get(k, {})
-        return {kk.encode(): vv.encode() for kk, vv in h.items()}
+# Phase-2 cleanup 2026-06-15 — fake moved to tests/security/_fakes.py.
+from tests.security._fakes import FakeRedis as _FakeRedis
 
 
 @pytest.mark.asyncio

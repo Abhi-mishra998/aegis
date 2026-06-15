@@ -1,4 +1,8 @@
 {
+  "status": "deprecated",
+  "superseded_by": "reports/gateway_p95.json",
+  "harness": "scripts/bench/gateway_p95.py",
+  "note": "This file was created during Sprint 2 but never populated — `after` was null. Sprint 0 (2026-06-12) replaces it with a runnable harness whose output lands in `reports/gateway_p95.json` and is quoted as the single canonical p95 number in the README and the GitBook. Do not cite this file.",
   "targets": {
     "execute_valid": {
       "p99_ms": 250

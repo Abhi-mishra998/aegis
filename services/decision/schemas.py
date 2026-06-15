@@ -59,6 +59,14 @@ class DecisionContext(BaseModel):
     policy_allowed: bool    = True
     policy_reason:  str | None = None
     policy_risk_adjustment: float = 0.0
+    # 2026-06-15 — distinguish hard-deny rules (DROP TABLE, /etc/passwd,
+    # $25M wires above hard cap) from escalate-required rules
+    # ($250K external wires, kubectl delete prod, terraform destroy).
+    # When the policy port returns escalate_only=False AND denied=True, the
+    # router stamps this flag so the decision engine maps to DENY instead
+    # of ESCALATE. Without the flag, the engine's threshold table would
+    # always send policy-denied actions to ESCALATE (0.70 band).
+    policy_hard_deny: bool = False
 
     # Risk signals [0.0–1.0 each]
     inference_risk:   float = Field(default=0.0, ge=0.0, le=1.0)

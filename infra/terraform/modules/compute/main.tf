@@ -46,9 +46,11 @@ resource "aws_instance" "app" {
   }
 
   metadata_options {
-    http_tokens                 = "required" # IMDSv2 mandatory
-    http_endpoint               = "enabled"
-    http_put_response_hop_limit = 1
+    http_tokens   = "required" # IMDSv2 mandatory
+    http_endpoint = "enabled"
+    # hop_limit=2 so docker containers (1 hop via the bridge interface)
+    # can reach IMDSv2 — required for boto3 → SSM → instance-role creds.
+    http_put_response_hop_limit = 2
   }
 
   tags = merge(var.tags, {

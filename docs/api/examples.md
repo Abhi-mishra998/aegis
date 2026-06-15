@@ -7,7 +7,7 @@
 Set these environment variables once. They thread through every example.
 
 ```bash
-export AEGIS_HOST=https://dev.aegisagent.in
+export AEGIS_HOST=https://ha.aegisagent.in
 export AEGIS_TENANT_ID=<your-tenant-uuid>
 export AEGIS_EMAIL=<your-admin-email>
 # Do NOT export the password to a shared shell. Pipe it in or use AWS Secrets Manager.

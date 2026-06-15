@@ -166,8 +166,17 @@ class DecisionEngine:
 
         assert_risk_valid(final_score, context=f"agent={ctx.agent_id} tool={ctx.tool}")
 
-        # Step 6: Action
-        action = _action_from_score(final_score)
+        # Step 6: Action — with the 2026-06-15 hard-deny override.
+        # The threshold table doesn't have a DENY band; it goes 0.70=ESCALATE,
+        # 0.90=KILL. That's why $25M wires above hard cap returned ESCALATE
+        # — the policy denial drove the score to 0.95+ but landed in KILL or
+        # ESCALATE. For policy rules tagged `hard_deny`, force DENY so the
+        # gateway returns a real block instead of an approval-required.
+        if ctx.policy_hard_deny:
+            action = ExecutionAction.DENY
+            final_score = max(final_score, 0.90)
+        else:
+            action = _action_from_score(final_score)
 
         # Step 7: Build the canonical-vocabulary `findings` + the diagnostic
         # `signals_evaluated` map. Sprint 2.2 (2026-05-15):

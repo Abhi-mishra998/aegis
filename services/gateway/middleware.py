@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 import urllib.parse
 import uuid
@@ -100,6 +101,8 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/iag",
     # Sprint 6 — Auto-Remediation read + control API. Operator surface.
     "/remediation",
+    # Sprint 7 — Threat-Intel IOC + feed control API. Operator surface.
+    "/threat-intel",
     "/metrics",
     "/risk",
     "/stream",
@@ -133,6 +136,11 @@ _MANAGEMENT_PATH_PREFIXES = (
     # Voice Guide bridge — mints LiveKit JWTs and reports worker status.
     # Pure read-only management surface, no agent execution semantics.
     "/voice",
+    # /demo/groq-agent calls Groq + loops back to /execute on the operator's
+    # behalf. The outer call itself isn't an agent tool invocation, so it
+    # must skip the tool-name extraction; the inner /execute calls take the
+    # normal hot path.
+    "/demo",
 )
 
 # Configuration from global settings
@@ -174,8 +182,24 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        async with self.semaphore:
-            return await self._dispatch_with_resilience(request, call_next)
+        # Sprint 3.2 — open the OpenTelemetry root span for this /execute
+        # decision. The span context flows into every downstream client
+        # via the FastAPI / httpx instrumentation already loaded by the
+        # service boot, and into the 11-stage child spans the middleware
+        # emits from this point on. Vendor-neutral by design — Sprint 8
+        # ships CloudWatch / Datadog / Grafana exporters that consume the
+        # same span tree without any code change here.
+        from sdk.common.otel_pipeline import decision_span  # noqa: PLC0415
+        request_id_hdr = request.headers.get("X-Request-ID")
+        with decision_span(
+            request_id=request_id_hdr or "pending",
+            tenant_id=request.headers.get("X-Tenant-ID"),
+            agent_id=request.headers.get("X-Agent-ID"),
+            tool=None,                                        # filled in by stage spans
+            session_id=request.headers.get("X-Session-ID"),
+        ):
+            async with self.semaphore:
+                return await self._dispatch_with_resilience(request, call_next)
 
     async def _dispatch_with_resilience(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -260,6 +284,32 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 action = "kill"
                 raise HTTPException(status_code=403, detail="Tenant blocked due to security violation")
 
+            # --- 5.0 SPRINT B — agent quarantine short-circuit ---
+            # When a compromised agent is auto-quarantined (runaway loop, slow
+            # exfil pattern, manual operator action), every subsequent /execute
+            # returns 403 immediately without burning policy/decision/behavior
+            # CPU. The flag is a Redis-backed setex so quarantine survives a
+            # gateway restart and auto-clears after 24h unless re-armed.
+            try:
+                from services.gateway._behavior_aggregator import is_quarantined
+                _q, _q_reason = await is_quarantined(self.redis, t_id_str, str(agent_id))
+            except Exception:
+                _q, _q_reason = False, ""
+            if _q:
+                logger.warning(
+                    "agent_quarantine_short_circuit",
+                    agent_id=str(agent_id), reason=_q_reason,
+                )
+                await self._log_audit(
+                    t_id_str, agent_id, "execute_tool", "agent_quarantined",
+                    "block", _q_reason or "agent quarantined", request_id,
+                    {"trigger": _q_reason},
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"agent_quarantined: {_q_reason or 'compromised behavior pattern'}",
+                )
+
             # --- 5a. /execute sliding-window rate limit (sequential burst) ---
             # The 60-second token bucket (10 000 rpm) is too coarse to catch
             # rapid sequential probing. This 10-second INCR window fires first
@@ -295,6 +345,10 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
 
             tool_name = await self._get_tool_name(request)
             logger.info("policy_check_called", agent_id=str(agent_id), tool=tool_name, tenant_id=t_id_str)
+            # Sprint B follow-up: bind tool to contextvars so _deny() can
+            # bucket the runaway-loop counter per (agent, tool) instead of
+            # blending all tools under "unknown_tool".
+            structlog.contextvars.bind_contextvars(tool=tool_name)
 
             # Flight Recorder: OPEN as soon as we have the canonical tool name.
             # Doing this BEFORE the security/decision/autonomy phases means even
@@ -302,10 +356,16 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             # only opened after autonomy approval, leaving block paths invisible
             # to the replay UI). The matching close lives in the `finally`
             # clause below — fire-and-forget by design; never blocks /execute.
+            # Sprint 3.5 — accept X-Session-ID at the gateway so consecutive
+            # /execute calls land in the same Session Explorer row. The header
+            # is informational (no auth load); a missing header just means
+            # the timeline is not part of a multi-turn session.
+            session_id_hdr = request.headers.get("X-Session-ID")
             asyncio.create_task(_safe_bg(emit_timeline_start(
                 self.redis, tenant_id=t_id_str, request_id=request_id,
                 agent_id=str(agent_id), tool=tool_name,
                 metadata={"tier": tier},
+                session_id=session_id_hdr,
             )))
             _flight_opened = True
 
@@ -363,10 +423,16 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 if raw_body:
                     body_dict = json.loads(raw_body)
                     if isinstance(body_dict, dict):
-                        # Collect all string values from input, parameters, and payload
+                        # Collect all string values from input, parameters, payload,
+                        # AND arguments — the canonical /execute envelope is
+                        # `{tool, arguments}` (as the gateway docs + the
+                        # integration SDKs all use). Without `arguments` in this
+                        # list, every action-semantics check downstream sees an
+                        # empty arg block and lets destructive calls through.
                         _input_dict = body_dict.get("input") or {}
                         _params_dict = body_dict.get("parameters") or {}
                         _payload_dict = body_dict.get("payload") or {}
+                        _args_dict   = body_dict.get("arguments") or {}
                         _all_params: dict = {}
                         if isinstance(_input_dict, dict):
                             _all_params.update(_input_dict)
@@ -374,6 +440,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             _all_params.update(_params_dict)
                         if isinstance(_payload_dict, dict):
                             _all_params.update(_payload_dict)
+                        if isinstance(_args_dict, dict):
+                            _all_params.update(_args_dict)
                         # Also check top-level string fields (query, sql, path)
                         for _top_k in ("query", "sql", "path", "command", "cmd"):
                             _top_v = body_dict.get(_top_k)
@@ -416,7 +484,38 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                                     )
                                     _m = _re.match(r"((?:\.\./)+)", _v)
                                     _pt = _m.group(1) if _m else (_v[:20] if _v.startswith("/") else "../")
-                                    resp = self._deny(f"Security: Path traversal detected: '{_pt}'", 403)
+                                    # ARCH-4 2026-06-15 — pre-policy file-read
+                                    # denies (path traversal + sensitive paths)
+                                    # must also surface canonical findings +
+                                    # policy_id so the SOC sees WHY. Before,
+                                    # /etc/passwd blocked with findings=[].
+                                    _pre_finding = (
+                                        "system_sensitive_path" if (
+                                            _decoded_v.startswith(("/etc/", "/proc/", "/sys/"))
+                                            or _v.startswith(("/etc/", "/proc/", "/sys/"))
+                                        ) else
+                                        "cloud_credential_path" if (
+                                            "aws" in _vl or "kube" in _vl or "docker" in _vl
+                                        ) else
+                                        "ssh_credential_path" if (
+                                            "/root/" in _vl or ".ssh" in _vl or "id_rsa" in _vl
+                                        ) else
+                                        "path_traversal_detected"
+                                    )
+                                    _pre_policy_id = {
+                                        "system_sensitive_path":   "SEC-PATH-001",
+                                        "cloud_credential_path":   "SEC-CRED-001",
+                                        "ssh_credential_path":     "SEC-CRED-001",
+                                        "path_traversal_detected": "SEC-PATH-002",
+                                    }[_pre_finding]
+                                    resp = self._deny(
+                                        f"Security: Path traversal detected: '{_pt}'", 403,
+                                        findings=[_pre_finding],
+                                        reason=_pre_finding,
+                                        policy_id=_pre_policy_id,
+                                        risk_score=95,
+                                        explanation=f"Pre-policy block: '{_v[:80]}' matches {_pre_finding}.",
+                                    )
                                     await self._log_audit(
                                         t_id_str, agent_id, "execute_tool", tool_name, "block",
                                         "path_traversal_detected", request_id,
@@ -622,6 +721,484 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             if _sk in _all_params:
                                 tool_metadata["sql"] = _all_params[_sk]
                                 break
+
+                        # R0 — Sprint refactor: pass the whole action shape
+                        # to OPA via metadata.arguments so the rego rule can
+                        # key destructive denials off CONTENT (the command,
+                        # the query, the path, the URL), not off tool name
+                        # or hardcoded agent risk level.
+                        #
+                        # _normalize_for_match: lowercase + strip SQL inline
+                        # comments + collapse whitespace + URL-decode once.
+                        # Defeats `DROP/**/TABLE`, `DrOp%20TaBlE`, `rm  -rf`.
+                        def _normalize_for_match(s: str) -> str:
+                            if not isinstance(s, str):
+                                return ""
+                            try:
+                                _s = urllib.parse.unquote(s)
+                            except Exception:
+                                _s = s
+                            _s = _re.sub(r"/\*.*?\*/", " ", _s, flags=_re.DOTALL)
+                            _s = _re.sub(r"--[^\n]*", " ", _s)
+                            _s = _re.sub(r"\s+", " ", _s)
+                            return _s.strip().lower()
+
+                        _cmd = next(
+                            (str(_all_params[k]) for k in ("command", "cmd", "shell", "bash")
+                             if isinstance(_all_params.get(k), str)),
+                            "",
+                        )
+                        _qry = next(
+                            (str(_all_params[k]) for k in _SQL_FIELDS
+                             if isinstance(_all_params.get(k), str)),
+                            "",
+                        )
+                        _url = next(
+                            (str(_all_params[k]) for k in ("url", "uri", "endpoint")
+                             if isinstance(_all_params.get(k), str)),
+                            "",
+                        )
+                        # final-sprint v3 R0 deep-fix: row_limit + k8s namespace
+                        # ─────────────────────────────────────────────────────────────
+                        # row_limit: parsed from SQL `LIMIT N` so the rego bulk-PII
+                        #   rule can deny when the LLM does not bound the read.
+                        #   -1 sentinel = no explicit LIMIT in query (treat as
+                        #   "unbounded" = exceeds every risk-level threshold).
+                        # k8s_namespace: substring extracted from kubectl/helm
+                        #   commands so the rego prod-namespace rule can fire on
+                        #   prod-shaped targets only, instead of blanket-denying
+                        #   every `kubectl delete`.
+                        _qry_norm = _normalize_for_match(_qry)
+                        _row_limit: int = -1
+                        _m_limit = re.search(r"\blimit\s+(\d+)", _qry_norm)
+                        if _m_limit:
+                            try:
+                                _row_limit = int(_m_limit.group(1))
+                            except ValueError:
+                                _row_limit = -1
+                        _cmd_norm = _normalize_for_match(_cmd)
+                        _k8s_ns = ""
+                        # `kubectl delete ns <name>` / `kubectl delete namespace <name>` /
+                        # `kubectl -n <name> delete ...` / `helm uninstall <release> -n <name>`.
+                        for _pat in (
+                            r"kubectl\s+(?:-n|--namespace=?)\s+(\S+)",
+                            r"kubectl\s+delete\s+(?:ns|namespace)\s+(\S+)",
+                            r"kubectl\s+delete\s+\S+\s+(?:-n|--namespace=?)\s+(\S+)",
+                            r"helm\s+(?:uninstall|delete)\s+\S+(?:\s+-n|\s+--namespace=?)\s+(\S+)",
+                        ):
+                            _mns = re.search(_pat, _cmd_norm)
+                            if _mns:
+                                _k8s_ns = _mns.group(1).strip("'\"")
+                                break
+
+                        # SPRINT enterprise-grade 2026-06-14:
+                        # Action-normalization fields. Convert the canonical
+                        # SDK tool call into business-intent fields so the
+                        # action-semantics layer can ladder by intent, not
+                        # by raw string match.
+                        #
+                        # k8s_verb: get / logs / scale / delete / drain / …
+                        _k8s_verb = ""
+                        _mkv = re.search(r"kubectl\s+(\w+)", _cmd_norm)
+                        if _mkv:
+                            _k8s_verb = _mkv.group(1)
+
+                        # iac_tool + iac_action: terraform/pulumi/cdk +
+                        # apply/plan/destroy/down. Tier-1 destructive.
+                        _iac_tool = ""
+                        _iac_action = ""
+                        _mi = re.search(r"\b(terraform|pulumi|cdk)\s+(\w[\w\-]*)", _cmd_norm)
+                        if _mi:
+                            _iac_tool = _mi.group(1)
+                            _iac_action = _mi.group(2)
+                        elif " cloudformation " in _cmd_norm:
+                            _mi2 = re.search(r"cloudformation\s+(\S+)", _cmd_norm)
+                            if _mi2:
+                                _iac_tool = "aws cloudformation"
+                                _iac_action = _mi2.group(1)
+
+                        # amount_usd: pull a numeric amount from common body
+                        # field names — money-movement http_request shapes.
+                        # ALSO recurse one level into `body` because canonical
+                        # http_request callers nest the payload there.
+                        _amount_usd: int = 0
+                        _amt_search_scopes = [_all_params]
+                        _nested_body = _all_params.get("body")
+                        if isinstance(_nested_body, dict):
+                            _amt_search_scopes.append(_nested_body)
+                        for _scope in _amt_search_scopes:
+                            if _amount_usd:
+                                break
+                            for _amt_k in ("amount_usd", "amount", "value",
+                                           "total", "settlement_amount"):
+                                _amt_v = _scope.get(_amt_k)
+                                if isinstance(_amt_v, (int, float)):
+                                    _amount_usd = int(_amt_v)
+                                    break
+                                if isinstance(_amt_v, str):
+                                    _amt_clean = re.sub(r"[\$,\s]", "", _amt_v)
+                                    try:
+                                        _amount_usd = int(float(_amt_clean))
+                                        break
+                                    except ValueError:
+                                        continue
+
+                        # recipient_domain + recipient_kind. Recipient kind
+                        # is "external"/"offshore" if the recipient string
+                        # carries those tokens; "internal" if it matches a
+                        # canonical internal pattern; else "unknown".
+                        _recipient_dom = ""
+                        _url_host_match = re.search(
+                            r"https?://([^/]+)", _url or "")
+                        if _url_host_match:
+                            _recipient_dom = _url_host_match.group(1).lower()
+                        if not _recipient_dom:
+                            for _rk in ("to", "recipient", "destination",
+                                        "beneficiary"):
+                                _rv = _all_params.get(_rk)
+                                if isinstance(_rv, str) and "@" in _rv:
+                                    _recipient_dom = _rv.split("@", 1)[1].lower()
+                                    break
+                        _recipient_kind = "unknown"
+                        _payload_blob = (
+                            json.dumps(_all_params, default=str).lower()
+                        )
+                        if any(t in _payload_blob for t in
+                                ("offshore", "external", "beneficiary-offshore")):
+                            _recipient_kind = "offshore"
+                        elif any(t in _payload_blob for t in
+                                ("internal", "acme-ops", "@apexbank.internal")):
+                            _recipient_kind = "internal"
+
+                        # contains_pii: heuristic on column names + body
+                        # blob for ssn / credit_card / dob / passport.
+                        _pii_markers = (
+                            "ssn", "social_security_number",
+                            "credit_card", "creditcard", "card_number",
+                            "passport", "drivers_license", "tax_id",
+                            "date_of_birth", "dob ",
+                            "medical_record", "diagnosis", "phi",
+                        )
+                        _contains_pii = any(
+                            m in _qry_norm or m in _payload_blob
+                            for m in _pii_markers
+                        )
+
+                        # SPRINT B 2026-06-14 (L3 behavior) — slow-exfil
+                        # detector. Aggregates row_count over a 1h sliding
+                        # window per (tenant, agent, table). L2 only saw
+                        # `row_limit` per call; this is the cumulative.
+                        from services.gateway._behavior_aggregator import (
+                            extract_table_norm, record_and_sum_rows,
+                        )
+                        _table_norm = extract_table_norm(_qry_norm)
+                        _cumulative_rows_1h = 0
+                        if _table_norm and _row_limit > 0:
+                            try:
+                                _cumulative_rows_1h = await record_and_sum_rows(
+                                    self.redis, t_id_str, agent_id,
+                                    _table_norm, _row_limit,
+                                )
+                            except Exception as _bx:
+                                logger.warning(
+                                    "behavior_agg_unavailable", error=str(_bx),
+                                )
+
+                        # ADR-shift 2026-06-15 (L4 session intelligence) —
+                        # classify this action and check if the trailing
+                        # session sequence forms a known attack chain.
+                        # When it does, inject `attack_chain` into the
+                        # tool_metadata so the policy layer can deny based
+                        # on the kill chain, not just the tool call.
+                        _attack_chain = ""
+                        _attack_chain_severity = ""
+                        _action_class = "benign"
+                        try:
+                            from services.gateway._session_intelligence import (
+                                classify_action, match_attack_chain,
+                                record_session_action,
+                            )
+                            _action_class = classify_action(
+                                tool=tool_name,
+                                query_norm=_qry_norm,
+                                command_norm=_cmd_norm,
+                                path=str(_all_params.get("path", "")),
+                                url=_url,
+                                raw_norm=_normalize_for_match(
+                                    json.dumps(_all_params, default=str)[:2000]),
+                                row_limit=_row_limit,
+                                contains_pii=False,  # filled below
+                            )
+                            _session_id_hdr = request.headers.get("X-Session-ID") or ""
+                            if _session_id_hdr:
+                                _seq = await record_session_action(
+                                    self.redis,
+                                    session_id=_session_id_hdr,
+                                    action_class=_action_class,
+                                )
+                                _chain = match_attack_chain(_seq)
+                                if _chain is not None:
+                                    _attack_chain, _attack_chain_severity = _chain
+                                    logger.critical(
+                                        "session_attack_chain_detected",
+                                        session_id=_session_id_hdr,
+                                        chain=_attack_chain,
+                                        severity=_attack_chain_severity,
+                                        agent_id=str(agent_id),
+                                    )
+                                    # ADR-shift 2026-06-15 (P2) — when the
+                                    # chain hits `deny` severity (clear
+                                    # exfiltration intent), auto-contain
+                                    # the agent in addition to denying this
+                                    # call. The cascade: Redis quarantine
+                                    # flag set, audit row emitted, incident
+                                    # published, SOC webhook fired (the
+                                    # existing autonomy webhook pipeline
+                                    # already handles Slack / PagerDuty).
+                                    if _attack_chain_severity == "deny":
+                                        try:
+                                            from services.gateway._behavior_aggregator import (
+                                                quarantine_agent,
+                                            )
+                                            await quarantine_agent(
+                                                self.redis, t_id_str, str(agent_id),
+                                                f"attack_chain:{_attack_chain}",
+                                            )
+                                            # incident publish + SOC notify
+                                            await self._log_audit(
+                                                t_id_str, agent_id,
+                                                "agent_quarantined",
+                                                tool_name, "block",
+                                                f"attack_chain_auto_contain:{_attack_chain}",
+                                                request_id,
+                                                {"chain": _attack_chain,
+                                                 "severity": _attack_chain_severity,
+                                                 "session_id": _session_id_hdr},
+                                            )
+                                            asyncio.create_task(_safe_bg(
+                                                service_client.publish_incident_event(
+                                                    tenant_id=t_id_str,
+                                                    agent_id=str(agent_id),
+                                                    severity="CRITICAL",
+                                                    trigger="attack_chain_detected",
+                                                    title=f"Attack chain auto-contained: {_attack_chain}",
+                                                    risk_score=1.0,
+                                                    tool=tool_name,
+                                                    request_id=request_id,
+                                                    reasons=[
+                                                        f"chain:{_attack_chain}",
+                                                        f"session:{_session_id_hdr[:16]}",
+                                                    ],
+                                                )))
+                                        except Exception as _qx:
+                                            logger.warning(
+                                                "auto_contain_failed",
+                                                error=str(_qx),
+                                            )
+                        except Exception as _six:
+                            logger.warning("session_intel_failed", error=str(_six))
+
+                        # ADR-shift 2026-06-15 (P1 baseline) — every call
+                        # also bumps the per-agent baseline (tool freq,
+                        # hour-of-day, daily count, target table) and
+                        # surfaces deviation findings (unusual_tool,
+                        # unusual_hour, burst_3sigma, unusual_target).
+                        _baseline_findings: list[str] = []
+                        try:
+                            from services.behavior._baseline import (
+                                record_and_score,
+                                record_risk_score,
+                            )
+                            _baseline_findings = await record_and_score(
+                                self.redis,
+                                tenant_id=t_id_str,
+                                agent_id=str(agent_id),
+                                tool=tool_name,
+                                table_norm=_table_norm or None,
+                            )
+                            # ARCH-5 2026-06-15 — also record the per-call
+                            # inherent risk score and surface drift findings
+                            # when the agent's behaviour deviates from its
+                            # 100-call rolling baseline by >3σ.
+                            try:
+                                from services.policy.canonical import normalize as _cn_for_drift
+                                _c_for_drift = _cn_for_drift(tool_name, _all_params)
+                                _inh = int(_c_for_drift.get("risk_score_inherent") or 0)
+                                _drift = await record_risk_score(
+                                    self.redis,
+                                    agent_id=str(agent_id),
+                                    risk_score=_inh,
+                                )
+                                _baseline_findings.extend(_drift)
+                            except Exception as _drx:
+                                logger.warning("baseline_drift_failed", error=str(_drx))
+                        except Exception as _bx:
+                            logger.warning("baseline_record_failed", error=str(_bx))
+
+                        tool_metadata["arguments"] = {
+                            "command":         _cmd,
+                            "command_norm":    _cmd_norm,
+                            "query":           _qry,
+                            "query_norm":      _qry_norm,
+                            "path":            _all_params.get("path", ""),
+                            "url":             _url,
+                            "raw_norm":        _normalize_for_match(
+                                json.dumps(_all_params, default=str)[:2000]
+                            ),
+                            "row_limit":       _row_limit,
+                            "table_norm":      _table_norm,
+                            "cumulative_rows_1h": _cumulative_rows_1h,
+                            "k8s_namespace":   _k8s_ns,
+                            "k8s_verb":        _k8s_verb,
+                            "iac_tool":        _iac_tool,
+                            "iac_action":      _iac_action,
+                            "amount_usd":      _amount_usd,
+                            "recipient_domain": _recipient_dom,
+                            "recipient_kind":  _recipient_kind,
+                            "contains_pii":    _contains_pii,
+                            # ADR-shift 2026-06-15 — surface the
+                            # session-intel classification + chain match
+                            # so the policy layer can deny on the kill
+                            # chain instead of the individual tool call.
+                            "action_class":    _action_class,
+                            "attack_chain":    _attack_chain,
+                            "attack_chain_severity": _attack_chain_severity,
+                            "baseline_findings": _baseline_findings,
+                        }
+                        # ARCH-1 2026-06-15 — Canonical Action Model.
+                        # Attach a single normalized view of WHAT this tool
+                        # call is actually trying to do, regardless of which
+                        # tool name or argument shape the SDK used. Policy
+                        # rules read canonical.* instead of fishing through
+                        # raw arg paths. Closes the entire class of
+                        # "rule reads x.y, gateway puts at x.z" bugs.
+                        try:
+                            from services.policy.canonical import normalize as _canonical_normalize
+                            _canonical = _canonical_normalize(tool_name, _all_params)
+                            # Carry the session-intel chain + baseline into
+                            # the canonical view so all signals live in one
+                            # bag.
+                            if _attack_chain:
+                                _canonical["attack_chain"] = _attack_chain
+                                _canonical["attack_chain_severity"] = _attack_chain_severity
+                            if _baseline_findings:
+                                _canonical["baseline_findings"] = _baseline_findings
+                            tool_metadata["arguments"]["canonical"] = _canonical
+                        except Exception as _cnx:
+                            logger.warning("canonical_normalize_failed", error=str(_cnx))
+
+                        # GAP-5 2026-06-15 — Cross-agent kill-chain detector.
+                        # Record this action_type + target into the per-tenant
+                        # window. If the trailing 15min contains a kill chain
+                        # across 2+ distinct agents, stamp `cross_agent_chain`
+                        # into the canonical so the policy engine quarantines.
+                        try:
+                            from services.policy.cross_agent_correlation import (
+                                record_action as _xa_record,
+                                detect_chain as _xa_detect,
+                                derive_target_key as _xa_target,
+                                flag_agents as _xa_flag,
+                                is_flagged as _xa_is_flagged,
+                            )
+                            _xa_already = await _xa_is_flagged(
+                                self.redis, t_id_str, str(agent_id),
+                            )
+                            await _xa_record(
+                                self.redis,
+                                tenant_id=t_id_str,
+                                agent_id=str(agent_id),
+                                action_type=_canonical.get("action_type") or "",
+                                target_key=_xa_target(_canonical),
+                                pii_present=bool(_canonical.get("contains_pii_columns")),
+                            )
+                            # GAP-5 v4 — only consult the detector when the
+                            # current call itself looks like exfil (the
+                            # completing step IS the data leaving). A
+                            # benign external POST (S3 archive, weather
+                            # API, internal-API POST) doesn't complete a
+                            # kill chain even if other tenant agents did
+                            # PII reads earlier.
+                            _cur_findings = set(_canonical.get("signal_findings") or [])
+                            _is_exfil_completing = bool(_cur_findings & {
+                                "known_exfil_destination",
+                                "external_pii_exfil",
+                                "external_post_pii_unknown_dest",
+                            })
+                            if _is_exfil_completing:
+                                _xa_chain = await _xa_detect(
+                                    self.redis, tenant_id=t_id_str,
+                                    current_agent_id=str(agent_id),
+                                    current_action_type=_canonical.get("action_type") or "",
+                                    current_target_key=_xa_target(_canonical),
+                                )
+                            else:
+                                _xa_chain = None
+                            if _xa_already or _xa_chain:
+                                _canonical["cross_agent_chain"] = _xa_chain or {"already_flagged": True}
+                                sigfs = list(_canonical.get("signal_findings") or [])
+                                if "cross_agent_kill_chain" not in sigfs:
+                                    sigfs.append("cross_agent_kill_chain")
+                                    _canonical["signal_findings"] = sigfs
+                                    _canonical["risk_score_inherent"] = max(
+                                        int(_canonical.get("risk_score_inherent") or 0),
+                                        95,
+                                    )
+                            if _xa_chain and not _xa_already:
+                                # Mark every participating agent so subsequent
+                                # calls from any of them also short-circuit.
+                                await _xa_flag(
+                                    self.redis, t_id_str, _xa_chain.get("agent_ids") or [],
+                                )
+                        except Exception as _xax:
+                            logger.warning("cross_agent_corr_failed", error=str(_xax))
+
+                        # ARCH-2 2026-06-15 — Signal → Finding → Risk pipeline.
+                        # Record this call's inherent findings into the
+                        # session + agent risk buckets, then read the
+                        # cumulative score. Policy reads metadata.cumulative
+                        # and folds it into the tier decision.
+                        try:
+                            from services.policy.risk_pipeline import (
+                                record_signals as _rp_record,
+                                cumulative_scores as _rp_scores,
+                                combine_scores as _rp_combine,
+                                tier_from_score as _rp_tier,
+                                explain_cumulative as _rp_explain,
+                            )
+                            _per_call_findings = list(_canonical.get("signal_findings") or [])
+                            if _attack_chain:
+                                _per_call_findings.append(f"attack_chain:{_attack_chain}")
+                            await _rp_record(
+                                self.redis,
+                                tenant_id=t_id_str,
+                                agent_id=str(agent_id),
+                                session_id=_session_id_hdr or None,
+                                findings=_per_call_findings,
+                            )
+                            # GAP-2 — 4-value return: session, agent (60min), agent_long (7d), recent.
+                            _ss, _as, _al, _recent = await _rp_scores(
+                                self.redis,
+                                tenant_id=t_id_str,
+                                agent_id=str(agent_id),
+                                session_id=_session_id_hdr or None,
+                            )
+                            _per_call = int(_canonical.get("risk_score_inherent") or 0)
+                            _effective = _rp_combine(_per_call, _ss, _as, _al)
+                            _cum_tier = _rp_tier(_effective)
+                            tool_metadata["arguments"]["cumulative"] = {
+                                "per_call_score":  _per_call,
+                                "session_score":   _ss,
+                                "agent_score":     _as,
+                                "agent_long_score": _al,
+                                "effective_score": _effective,
+                                "tier":            _cum_tier,
+                                "recent_findings": _recent,
+                                "explanation":     _rp_explain(
+                                    _per_call, _ss, _as, _effective, _cum_tier, _recent, _al,
+                                ),
+                            }
+                        except Exception as _rpx:
+                            logger.warning("risk_pipeline_failed", error=str(_rpx))
             except json.JSONDecodeError:
                 pass
 
@@ -657,16 +1234,143 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 status="ok" if action in ("allow", "monitor") else "deny",
             )))
 
+            # Sprint 6 — Shadow-mode hook. Fire-and-forget; NEVER awaited,
+            # NEVER alters `decision` or `action`, NEVER raises into the
+            # request handler. Records what each shadow-mode policy WOULD
+            # have decided so an operator can review before promoting it
+            # to enforce. Disabled in environments without the audit DB by
+            # design — the schedule() helper returns None and we move on.
+            try:
+                from services.gateway.shadow_eval_hook import schedule as _schedule_shadow
+                _payload_for_shadow = None
+                try:
+                    _payload_for_shadow = (
+                        request.state.tool_input
+                        if hasattr(request.state, "tool_input") else None
+                    )
+                    if _payload_for_shadow is None and isinstance(tool_metadata, dict):
+                        _payload_for_shadow = tool_metadata.get("payload")
+                except Exception:
+                    _payload_for_shadow = None
+                _schedule_shadow(
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    request_id=request_id,
+                    audit_id=None,
+                    tool=tool_name,
+                    payload=str(_payload_for_shadow) if _payload_for_shadow else None,
+                    payload_hash=getattr(proxy_res, "prompt_hash", None),
+                    real_action=action,
+                    risk_score=float(getattr(decision, "risk", 0.0) or 0.0),
+                    inference_risk=float(risk_score) if risk_score is not None else None,
+                    behavior_risk=None,
+                )
+            except Exception:
+                logger.exception("shadow_eval_dispatch_failed")
+
             if decision.action in (ExecutionAction.KILL, ExecutionAction.DENY, ExecutionAction.ESCALATE):
                 if decision.action == ExecutionAction.KILL:
                     await self._kill_token(request)
+                # 2026-06-15 — surface BOTH the canonical findings (for
+                # SDK-side branching on a stable vocabulary) AND the
+                # rule-specific policy_reason from the decision metadata
+                # (so a buyer's audit log sees "wire_above_hard_cap" not
+                # the opaque "policy_deny"). The engine stamps the raw
+                # rego/Python-port reason into decision.metadata.
+                policy_reason_raw = (
+                    decision.metadata.get("policy_reason")
+                    if isinstance(decision.metadata, dict) else None
+                )
+                # Strip the internal __escalate suffix before exposing.
+                if isinstance(policy_reason_raw, str):
+                    policy_reason_raw = policy_reason_raw.replace("__escalate", "")
+                # findings = canonical + the raw rule name appended so SDKs
+                # have BOTH the vocabulary entry and the specific reason.
+                response_findings = list(decision.findings or []) or list(reasons)
+                if policy_reason_raw and policy_reason_raw not in response_findings:
+                    response_findings.append(policy_reason_raw)
+                primary_reason = policy_reason_raw or (
+                    decision.findings[0] if decision.findings
+                    else (reasons[0] if reasons else None)
+                )
+                # ARCH-4 2026-06-15 — pull explainability fields off
+                # decision.metadata (decision service stamped them there
+                # from the policy fast-path response).
+                _decision_meta = decision.metadata if isinstance(decision.metadata, dict) else {}
+                _resp_policy_id   = str(_decision_meta.get("policy_id") or "")
+                _resp_explanation = str(_decision_meta.get("explanation") or "")
+                _resp_risk_score  = int(_decision_meta.get("policy_risk_score") or 0)
+                # FUP-4 2026-06-15 — surface SEC + GOV engine slices.
+                _resp_security    = _decision_meta.get("security") or None
+                _resp_governance  = _decision_meta.get("governance") or None
+                # Sprint 1 2026-06-15 — MITRE ATT&CK tag. Looked up against
+                # the central signal registry from the canonical findings
+                # we already have on hand; no extra Redis or HTTP cost.
+                _resp_mitre = None
+                try:
+                    from services.security.signal_registry import mitre_for_finding
+                    for _f in response_findings:
+                        _m = mitre_for_finding(_f)
+                        if _m:
+                            _resp_mitre = _m
+                            break
+                except Exception:
+                    pass
                 if decision.action == ExecutionAction.ESCALATE:
-                    resp = self._escalate(f"Action escalated. Reasons: {', '.join(reasons)}")
+                    resp = self._escalate(
+                        f"Action escalated. Reasons: {', '.join(reasons)}",
+                        findings=response_findings,
+                        reason=primary_reason,
+                        policy_id=_resp_policy_id or None,
+                        risk_score=_resp_risk_score or None,
+                        explanation=_resp_explanation or None,
+                        security=_resp_security,
+                        governance=_resp_governance,
+                        mitre=_resp_mitre,
+                    )
                 else:
-                    resp = self._deny(f"Security Block: {', '.join(reasons)}", 403)
+                    resp = self._deny(
+                        f"Security Block: {', '.join(reasons)}", 403,
+                        findings=response_findings,
+                        reason=primary_reason,
+                        policy_id=_resp_policy_id or None,
+                        risk_score=_resp_risk_score or None,
+                        explanation=_resp_explanation or None,
+                        security=_resp_security,
+                        governance=_resp_governance,
+                        mitre=_resp_mitre,
+                    )
 
                 # Guaranteed Logging + Billing for Security Block (synchronous)
                 await self._log_decision(t_id_str, agent_id, tool_name, decision, request_id, tokens)
+
+                # R4: publish to the incident-event queue so Incidents/UI
+                # populates from real denials, not a seeded fixture. Severity
+                # maps off the gateway decision: KILL → CRITICAL (the agent
+                # got pulled), DENY → HIGH, ESCALATE → MEDIUM (pending
+                # operator approval). Fire-and-forget; the request path
+                # must never block on the alert publish.
+                _sev = (
+                    "CRITICAL" if decision.action == ExecutionAction.KILL
+                    else "MEDIUM" if decision.action == ExecutionAction.ESCALATE
+                    else "HIGH"
+                )
+                _trigger = (
+                    "agent_killed" if decision.action == ExecutionAction.KILL
+                    else "escalation_required" if decision.action == ExecutionAction.ESCALATE
+                    else "policy_denied"
+                )
+                asyncio.create_task(_safe_bg(service_client.publish_incident_event(
+                    tenant_id=t_id_str,
+                    agent_id=str(agent_id),
+                    severity=_sev,
+                    trigger=_trigger,
+                    title=f"{decision.action.name}: {tool_name}",
+                    risk_score=float(getattr(decision, "risk", 0.0) or 0.0),
+                    tool=tool_name,
+                    request_id=request_id,
+                    reasons=list(reasons) if reasons else [],
+                )))
 
                 # Sprint 4 — Incident Storyline. Append this enforcement
                 # outcome onto the storyline keyed by (tenant, session) →
@@ -681,7 +1385,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                     from services.security import signal_registry as _sigreg
 
                     _findings_for_story = list(
-                        (decision.findings or tool_metadata.get("signal_findings") or [])
+                        (decision.findings or _canonical.get("signal_findings") or [])
                     )
                     # Primary finding = first non-attack-chain finding; falls
                     # back to the attack_chain wrapper itself if that's all
@@ -692,7 +1396,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         _findings_for_story[0] if _findings_for_story else "",
                     )
                     _mitre = _sigreg.mitre_for_finding(_primary) if _primary else {}
-                    _xagent_chain = tool_metadata.get("cross_agent_chain") if isinstance(tool_metadata, dict) else None
+                    _xagent_chain = _canonical.get("cross_agent_chain") if isinstance(_canonical, dict) else None
                     _tier_str = (
                         "kill" if decision.action == ExecutionAction.KILL
                         else "deny" if decision.action == ExecutionAction.DENY
@@ -720,7 +1424,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         objective=str(_mitre.get("objective") or ""),
                         tier=_tier_str,
                         policy_id=str(_policy_id_for_story),
-                        target=str(tool_metadata.get("target") or "") if isinstance(tool_metadata, dict) else "",
+                        target=str(_canonical.get("target") or "") if isinstance(_canonical, dict) else "",
                         explanation=_explanation,
                         risk_score=int(float(getattr(decision, "risk", 0.0) or 0.0) * 100),
                         cross_agent_chain=_xagent_chain if isinstance(_xagent_chain, dict) else None,
@@ -849,6 +1553,41 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 risk_score=risk_score, request_id=request_id,
                 attributes={"tier": tier, "status": response.status_code},
             )))
+            # SPRINT B — L3 runaway-loop detector. If this agent is on a
+            # treadmill of failures (50+ 4xx/5xx in 5 minutes on the same
+            # tool), auto-quarantine. The next /execute is short-circuited
+            # by the check at the top of dispatch. This means a compromised
+            # agent stops dead within seconds, instead of burning policy/
+            # decision CPU for the rest of the attacker's loop.
+            if response.status_code >= 400:
+                try:
+                    from services.gateway._behavior_aggregator import (
+                        record_failure, quarantine_agent,
+                        RUNAWAY_FAILURE_THRESHOLD,
+                    )
+                    cumulative_failures = await record_failure(
+                        self.redis, t_id_str, str(agent_id), tool_name,
+                    )
+                    if cumulative_failures > RUNAWAY_FAILURE_THRESHOLD:
+                        await quarantine_agent(
+                            self.redis, t_id_str, str(agent_id),
+                            f"runaway_loop:{tool_name}:{cumulative_failures}_failures_5m",
+                        )
+                        logger.critical(
+                            "agent_auto_quarantined_runaway_loop",
+                            agent_id=str(agent_id), tool=tool_name,
+                            failures=cumulative_failures,
+                        )
+                        await self._log_audit(
+                            t_id_str, agent_id, "agent_quarantined",
+                            tool_name, "block",
+                            "runaway_loop_auto_quarantine",
+                            request_id,
+                            {"failures_5m": cumulative_failures},
+                        )
+                except Exception as _bx:
+                    logger.warning("runaway_loop_record_failed", error=str(_bx))
+
             # Flight Recorder close — emitted from the `finally` clause below so
             # this single emission covers success, block, and exception paths.
             _flight_final["decision"] = action
@@ -1086,6 +1825,45 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 flight_final["decision"] = "block"
             flight_final["status"] = "failed"
             flight_final["risk"]   = risk_score or 0.0
+
+        # 4. Sprint B follow-up 2026-06-14 — runaway-loop counter. Every
+        # 4xx/5xx response (whether returned via HTTPException, autonomy
+        # deny, or policy escalate) flows through here. Tick the per-
+        # (agent, tool) failure window; once it crosses
+        # RUNAWAY_FAILURE_THRESHOLD inside 5 minutes the agent is auto-
+        # quarantined and every subsequent /execute short-circuits in the
+        # dispatch entry. The success-path-only hook in the prior sprint
+        # missed this — denies never went through it.
+        try:
+            if e.status_code >= 400 and t_id_str != "unknown" and tool_name and tool_name != "unknown_tool":
+                from services.gateway._behavior_aggregator import (
+                    record_failure, quarantine_agent, is_quarantined,
+                    RUNAWAY_FAILURE_THRESHOLD,
+                )
+                cumulative = await record_failure(
+                    self.redis, t_id_str, str(agent_id), tool_name,
+                )
+                if cumulative > RUNAWAY_FAILURE_THRESHOLD:
+                    already, _ = await is_quarantined(self.redis, t_id_str, str(agent_id))
+                    if not already:
+                        await quarantine_agent(
+                            self.redis, t_id_str, str(agent_id),
+                            f"runaway_loop:{tool_name}:{cumulative}_failures_5m",
+                        )
+                        logger.critical(
+                            "agent_auto_quarantined_runaway_loop",
+                            agent_id=str(agent_id), tool=tool_name,
+                            failures=cumulative,
+                        )
+                        await self._log_audit(
+                            t_id_str, agent_id, "agent_quarantined",
+                            tool_name, "block",
+                            "runaway_loop_auto_quarantine",
+                            request_id,
+                            {"failures_5m": cumulative},
+                        )
+        except Exception as _runx:
+            logger.warning("runaway_loop_record_failed", error=str(_runx))
 
         return self._deny(e.detail, e.status_code)
 

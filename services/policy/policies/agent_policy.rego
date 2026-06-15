@@ -14,9 +14,31 @@ default reason := "no match found"
 # =========================
 
 main := {
-	"allow": allowed,
-	"reason": msg,
+	"allow": allowed_final,
+	"reason": msg_final,
 	"risk_adjustment": adjustment + risk_adjustment,
+}
+
+# 2026-06-14 enterprise-grade: fold action-semantics deny into main.allow.
+# Previously `main.allow` only depended on the permission-check `allowed`,
+# so action_semantics_deny.rego was unreachable at runtime — every
+# destructive command/query slipped past the slow path. This rule layers
+# the semantic deny on top of the permission decision so the slow path
+# matches the new fast-path Python port.
+allowed_final := false if {
+	action_semantics_deny
+}
+
+allowed_final := allowed if {
+	not action_semantics_deny
+}
+
+msg_final := reason if {
+	action_semantics_deny
+}
+
+msg_final := msg if {
+	not action_semantics_deny
 }
 
 # =========================

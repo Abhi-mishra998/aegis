@@ -40,5 +40,5 @@ Automated rotation (via `scripts/maintenance/rotate_transparency_key.py`) counts
 ## References
 - `docs/runbooks/key_rotation.md` — step-by-step procedure
 - `scripts/maintenance/rotate_transparency_key.py` — automated rotation script
-- `services/audit/transparency_signer.py` — signing implementation
+- `services/audit/signer.py` — signing implementation
 - `sdk/common/merkle.py` — Merkle tree and root chaining logic

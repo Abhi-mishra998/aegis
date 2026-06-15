@@ -18,7 +18,7 @@ Both are HS256-signed with `JWT_SECRET_KEY`. Default TTL is 15 minutes (`JWT_EXP
 ### Request
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/token \
+curl -sS -X POST https://ha.aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: <tenant-uuid>" \
   -d '{"email":"alice@acme.com","password":"<REDACTED>"}'
@@ -58,7 +58,7 @@ The response also sets an `acp_token` HTTPOnly cookie scoped to the platform's d
 ### Request
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/agent/token \
+curl -sS -X POST https://ha.aegisagent.in/auth/agent/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: <tenant-uuid>" \
   -H "X-Internal-Secret: <internal-secret>" \
@@ -104,7 +104,7 @@ The validated payload is stored on `request.state.role`, `request.state.tenant_i
 ## Refresh
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/refresh \
+curl -sS -X POST https://ha.aegisagent.in/auth/refresh \
   -H "Authorization: Bearer <old-token>" \
   -H "X-Tenant-ID: <tenant-uuid>"
 ```
@@ -118,7 +118,7 @@ SDKs handle refresh transparently on 401. Curl callers should re-login if the to
 ### Revoke own token (logout)
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/logout \
+curl -sS -X POST https://ha.aegisagent.in/auth/logout \
   -H "Authorization: Bearer <token>" \
   -H "X-Tenant-ID: <tenant-uuid>"
 ```
@@ -128,7 +128,7 @@ Adds the JTI to `acp:revoked_jti:{jti}` with TTL matching the remaining JWT expi
 ### Revoke someone else's token
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/revoke \
+curl -sS -X POST https://ha.aegisagent.in/auth/revoke \
   -H "Authorization: Bearer <admin-token>" \
   -H "X-Tenant-ID: <tenant-uuid>" \
   -H "Content-Type: application/json" \
@@ -158,7 +158,7 @@ When the tenant has SSO configured, users log in via the IdP rather than via loc
 
 ```bash
 # Start the flow — redirects to the IdP
-curl -sS -L https://dev.aegisagent.in/auth/sso/google?tenant_id=<tenant-uuid>
+curl -sS -L https://ha.aegisagent.in/auth/sso/google?tenant_id=<tenant-uuid>
 
 # After IdP authentication, the user is redirected to the callback:
 # /auth/sso/google/callback?code=...&state=...
@@ -194,7 +194,7 @@ Aegis additionally supports `acp_*`-prefixed API keys for SDK integrations. The 
 Validation goes through `POST /api-keys/validate`:
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/api-keys/validate \
+curl -sS -X POST https://ha.aegisagent.in/api-keys/validate \
   -H "Content-Type: application/json" \
   -d '{"api_key":"acp_..."}'
 ```

@@ -43,7 +43,7 @@ Every engage and disengage produces an audit row (`action="kill_switch_engaged"`
 
 The gateway reads `acp:kill_switch:{tenant_id}` on every request (no caching). Once the Redis key is set, every gateway worker observes the new state within one request lifetime. Under sustained traffic, the propagation lag is under 5 seconds tenant-wide.
 
-All gateway workers read from the same ElastiCache cluster, so propagation is uniform — on the current single-EC2 dev deployment that's one host, and on a future multi-EC2 deployment every host sees the engage event within one Redis-read RTT.
+All gateway workers across both ASG hosts read from the same ElastiCache replication group, so propagation is uniform — every host across the Multi-AZ ASG sees the engage event within one Redis-read RTT.
 
 ## Fail-closed posture
 

@@ -171,7 +171,7 @@ The `acp_identity` database is read-only from every other service's perspective.
 ### Log in (the same as Quickstart)
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/token \
+curl -sS -X POST https://ha.aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"admin@acp.local","password":"REDACTED"}'
@@ -180,7 +180,7 @@ curl -sS -X POST https://dev.aegisagent.in/auth/token \
 ### Create a new user (ADMIN only)
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/users \
+curl -sS -X POST https://ha.aegisagent.in/auth/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -196,7 +196,7 @@ curl -sS -X POST https://dev.aegisagent.in/auth/users \
 ### Provision an agent credential
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auth/credentials \
+curl -sS -X POST https://ha.aegisagent.in/auth/credentials \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "X-Internal-Secret: $INTERNAL_SECRET" \

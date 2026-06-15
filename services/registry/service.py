@@ -33,9 +33,15 @@ async def _invalidate_agent_caches(agent_id: uuid.UUID) -> None:
         return
     agent_meta_key = f"acp:agent:meta:{agent_id}"
     policy_pattern = f"acp:policy:*:a:{agent_id}:*"
+    # 2026-06-15 — write-through tombstone. The gateway's AgentMetadataCache
+    # honours this and returns None for the next 15s, forcing every
+    # fetch to hit Registry directly (which always reads fresh DB).
+    # Closes the buyer-visible "first call after grant fails" race.
+    dirty_key = f"acp:agent:perms_dirty:{agent_id}"
 
     try:
         await _registry_redis.delete(agent_meta_key)
+        await _registry_redis.setex(dirty_key, 15, "1")
         # PE-1 FIX: use SCAN instead of KEYS (non-blocking)
         async for key in _registry_redis.scan_iter(match=policy_pattern, count=100):
             await _registry_redis.delete(key)

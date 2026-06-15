@@ -10,6 +10,19 @@
 > **THE ONE RULE.** Do not guess. Do not trial-and-error. When you need a credential, an account detail, an instance choice, or any decision the user can simply tell you — **stop, ask, wait, confirm, then proceed.** Never launch a billable AWS resource without explicit cost approval in writing.
 >
 > Dated **June 2026**. Items marked ⚠️ drift (provider quotas, AWS prices, model strings) — confirm before relying on them. Never invent a value to fill a gap; ask.
+>
+> **2026-06-02 hardening (audit-driven).** First field testing revealed the agent
+> went silent after ~2 answers and capped sessions at 5 min. Root causes: per-call
+> input tokens blew through Groq's 12 k TPM (oversized system prompt + top_n=3
+> RAG + tool-call history), and `SESSION_MAX_SECONDS` was hardcoded to 300.
+> Fixes shipped: `SESSION_MAX_SECONDS=1800`, `SESSION_IDLE_SECONDS=180` (was dead
+> code, now wired), `top_n=2`, `MAX_CTX_ITEMS=6`, Deepgram `language="en"`,
+> greeting via `session.say` (no LLM call), `FallbackAdapter attempt_timeout=4.0`,
+> `frequency_penalty 0.6→0.3`, `num_predict 160→140`, system prompt halved.
+> Gateway `TOKEN_TTL_SECONDS` follows the agent's `SESSION_MAX_SECONDS` via
+> `AEGIS_VOICE_TOKEN_TTL`. Inline code samples below are the *original* design
+> snapshot — defer to `agent/src/agent.py` + `agent/persona/Modelfile` for
+> current values.
 
 ---
 

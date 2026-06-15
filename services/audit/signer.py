@@ -228,7 +228,14 @@ def _generate_and_persist(path: Path) -> tuple[ed25519.Ed25519PrivateKey, str]:
 
 
 def get_signer() -> ReceiptSigner:
-    """The ed25519 key used to sign individual execution receipts."""
+    """The ed25519 key used to sign individual execution receipts.
+
+    Sprint 1.3: key custody routes through
+    :class:`sdk.common.signing_keys.SigningKeyProvider`. By default the
+    provider is :class:`LocalFileSigningKeyProvider` (the previous behavior).
+    Set ``RECEIPT_SIGNING_PROVIDER=kms`` to switch to KMS envelope encryption
+    so the plaintext PEM never touches disk.
+    """
     global _signer
     if _signer is not None:
         return _signer
@@ -236,15 +243,19 @@ def get_signer() -> ReceiptSigner:
         if _signer is not None:
             return _signer
 
-        key_path = Path(os.environ.get("RECEIPT_SIGNING_KEY_PATH") or _DEFAULT_KEY_PATH)
-        priv = _load_from_env()
-        source = "env"
-        if priv is None:
-            priv = _load_from_disk(key_path)
-            source = f"disk:{key_path}"
-        if priv is None:
-            priv, source = _generate_and_persist(key_path)
+        from sdk.common.signing_keys import provider_from_env  # noqa: PLC0415
 
+        key_path = Path(os.environ.get("RECEIPT_SIGNING_KEY_PATH") or _DEFAULT_KEY_PATH)
+        provider = provider_from_env(
+            provider_env="RECEIPT_SIGNING_PROVIDER",
+            pem_env="RECEIPT_SIGNING_PRIVATE_KEY",
+            disk_path=key_path,
+            kms_key_id_env="RECEIPT_SIGNING_KMS_KEY_ID",
+            kms_blob_env="RECEIPT_SIGNING_KMS_CIPHERTEXT_B64",
+            kms_s3_uri_env="RECEIPT_SIGNING_KMS_CIPHERTEXT_S3_URI",
+            ssm_parameter_env="RECEIPT_SIGNING_SSM_PARAMETER",
+        )
+        priv, source = provider.load()
         _signer = ReceiptSigner(priv, source=source)
         return _signer
 
@@ -266,30 +277,30 @@ def get_root_signer() -> ReceiptSigner:
         if _root_signer is not None:
             return _root_signer
 
+        from sdk.common.signing_keys import provider_from_env  # noqa: PLC0415
+
+        # The root key is independently configurable. If nothing's set we fall
+        # back to the receipt signer for back-compat with single-key deployments.
+        provider_choice = os.environ.get("ROOT_SIGNING_PROVIDER", "").strip().lower()
         env_path = os.environ.get("ROOT_SIGNING_KEY_PATH")
         env_pem = os.environ.get("ROOT_SIGNING_PRIVATE_KEY")
-        if not env_path and not env_pem:
-            # No separate root key configured — reuse the receipt signer.
+        env_kms_key = os.environ.get("ROOT_SIGNING_KMS_KEY_ID")
+        if not provider_choice and not env_path and not env_pem and not env_kms_key:
             _root_signer = get_signer()
-            log.info("root_signer_reuses_receipt_key", reason="ROOT_SIGNING_KEY_PATH unset")
+            log.info("root_signer_reuses_receipt_key", reason="no root-key config set")
             return _root_signer
 
-        priv: ed25519.Ed25519PrivateKey | None = None
-        source = "env"
-        if env_pem:
-            try:
-                pem = base64.b64decode(env_pem)
-            except Exception:
-                pem = env_pem.encode("ascii")
-            priv = _load_pem_private(pem)
-
         key_path = Path(env_path) if env_path else _DEFAULT_ROOT_KEY_PATH
-        if priv is None:
-            priv = _load_from_disk(key_path)
-            source = f"disk:{key_path}"
-        if priv is None:
-            priv, source = _generate_and_persist(key_path)
-
+        provider = provider_from_env(
+            provider_env="ROOT_SIGNING_PROVIDER",
+            pem_env="ROOT_SIGNING_PRIVATE_KEY",
+            disk_path=key_path,
+            kms_key_id_env="ROOT_SIGNING_KMS_KEY_ID",
+            kms_blob_env="ROOT_SIGNING_KMS_CIPHERTEXT_B64",
+            kms_s3_uri_env="ROOT_SIGNING_KMS_CIPHERTEXT_S3_URI",
+            ssm_parameter_env="ROOT_SIGNING_SSM_PARAMETER",
+        )
+        priv, source = provider.load()
         _root_signer = ReceiptSigner(priv, source=f"root:{source}")
         return _root_signer
 

@@ -37,6 +37,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+# Single source of truth for the event-hash function (sdk/common/audit_hash.py).
+# Reusing it here guarantees the verifier's recomputation is bit-identical to
+# the writer's at services/audit/writer.py:L83-91. If this import grows fragile,
+# duplicate the body — but then add a lockstep test that the two implementations
+# return the same digest for a fixed corpus of inputs.
+from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash
+
 # ── Canonical JSON (must match server exactly) ────────────────────────────
 
 
@@ -206,6 +213,168 @@ def verify_inclusion(leaf_hex: str, proof: dict[str, Any], expected_root: str) -
     return cur.hex() == expected_root
 
 
+def recompute_event_hash(receipt: dict[str, Any]) -> str:
+    """Recompute the event_hash for a receipt's business content.
+
+    This is the independent check that closes the audit finding C9: an
+    attacker who flips a byte in ``event_hash`` (and has the signing key) can
+    re-sign, but cannot also rewrite the rest of the receipt without breaking
+    the prev_hash linkage of every later row in the same shard. By recomputing
+    here we surface ``event_hash`` tampering before signature verification —
+    cheap, deterministic, and key-independent.
+    """
+    return compute_event_hash(
+        prev_hash=receipt.get("prev_hash") or GENESIS_HASH,
+        tenant_id=receipt.get("tenant_id") or "",
+        agent_id=receipt.get("agent_id") or "",
+        action=receipt.get("action") or "",
+        tool=receipt.get("tool"),
+        decision=receipt.get("decision") or "",
+        request_id=receipt.get("request_id"),
+    )
+
+
+def verify_shard_chains(
+    receipt_payloads: list[dict[str, Any]],
+) -> tuple[bool, list[str]]:
+    """Walk every (tenant_id, chain_shard) chain implied by the receipts.
+
+    For each shard:
+      1. Sort by timestamp ascending.
+      2. The first row's ``prev_hash`` must equal :data:`GENESIS_HASH`.
+      3. Each row's ``prev_hash`` must equal the prior row's claimed
+         ``event_hash``.
+      4. Each row's ``event_hash`` must equal :func:`recompute_event_hash` over
+         its own business content — catches in-place mutation of the hash
+         field even when the attacker controls the signing key.
+
+    Returns ``(ok, errors)``. ``errors`` is a list of human-readable messages,
+    one per chain break.
+    """
+    errors: list[str] = []
+    shards: dict[tuple[str, int], list[dict[str, Any]]] = {}
+
+    for payload in receipt_payloads:
+        receipt = payload.get("receipt") or {}
+        tid = receipt.get("tenant_id") or ""
+        try:
+            shard = int(receipt.get("chain_shard") or 0)
+        except (TypeError, ValueError):
+            errors.append(
+                f"receipt {receipt.get('execution_id', '<?>')}: "
+                f"non-integer chain_shard"
+            )
+            continue
+        shards.setdefault((tid, shard), []).append(payload)
+
+    for (tid, shard), payloads in sorted(shards.items()):
+        # Sort by timestamp; fall back to execution_id for tie-breaking.
+        payloads = sorted(
+            payloads,
+            key=lambda p: (
+                (p.get("receipt") or {}).get("timestamp") or "",
+                (p.get("receipt") or {}).get("execution_id") or "",
+            ),
+        )
+
+        expected_prev = GENESIS_HASH
+        for payload in payloads:
+            receipt = payload.get("receipt") or {}
+            exec_id = receipt.get("execution_id", "<?>")
+
+            # (4) Independent event_hash recomputation.
+            claimed = receipt.get("event_hash")
+            recomputed = recompute_event_hash(receipt)
+            if claimed != recomputed:
+                errors.append(
+                    f"receipt {exec_id} (tenant={tid}, shard={shard}): "
+                    f"event_hash mismatch — claimed={claimed!r}, "
+                    f"recomputed={recomputed!r}"
+                )
+
+            # (2) + (3) prev_hash linkage.
+            actual_prev = receipt.get("prev_hash") or GENESIS_HASH
+            if actual_prev != expected_prev:
+                errors.append(
+                    f"receipt {exec_id} (tenant={tid}, shard={shard}): "
+                    f"prev_hash break — expected {expected_prev!r}, "
+                    f"got {actual_prev!r}"
+                )
+
+            # Use the CLAIMED event_hash for the next link so the chain
+            # continues to be checkable even after a mismatch is logged.
+            expected_prev = claimed or recomputed
+
+    return (not errors), errors
+
+
+def detect_truncation(
+    receipt_payloads: list[dict[str, Any]],
+    signed_roots: list[dict[str, Any]],
+) -> tuple[bool, list[str]]:
+    """Detect that the last row of every (tenant, shard) chain is anchored.
+
+    A truncation attack deletes the *tail* of a shard chain and then re-signs
+    everything that remains. The Merkle root for the day still verifies — it
+    just commits to fewer rows. We catch this by checking that every shard's
+    last row carries a ``timestamp`` no later than the latest signed root's
+    ``window_end`` (live-tail anchor) or ``root_date`` end-of-day.
+
+    Returns ``(no_truncation, warnings)``. ``warnings`` lists shards whose tail
+    is OUTSIDE every signed root window — those rows have no cryptographic
+    anchor and could in principle be deleted without producing a verifier
+    error. Sprint 1.2 closes this by sealing interim roots every 30s.
+    """
+    warnings: list[str] = []
+    if not signed_roots:
+        return True, []
+
+    # Per-tenant max(window_end / root_date end-of-day) — the latest signed
+    # anchor we have a receipt for. ``window_end`` (Sprint 1.2) pins the
+    # precise moment a root committed to. Pre-Sprint-1.2 roots only carry
+    # ``root_date``; we treat those as anchoring the END of their UTC day so
+    # the verifier doesn't false-flag historical exports.
+    latest_anchor: dict[str, str] = {}
+    for root in signed_roots:
+        receipt = root.get("receipt") or {}
+        tid = receipt.get("tenant_id") or root.get("tenant_id") or ""
+        window_end = receipt.get("window_end") or root.get("window_end")
+        if window_end:
+            anchor = window_end
+        else:
+            root_date = receipt.get("root_date") or root.get("root_date") or ""
+            # Lexicographic compare works because both sides are ISO-8601.
+            # End-of-day is "<root_date>T23:59:59.999999+00:00" — wider than
+            # any same-day receipt timestamp, narrower than any later day.
+            anchor = f"{root_date}T23:59:59.999999+00:00" if root_date else ""
+        if anchor and anchor > latest_anchor.get(tid, ""):
+            latest_anchor[tid] = anchor
+
+    # Per (tenant, shard) latest receipt timestamp.
+    shard_last: dict[tuple[str, int], str] = {}
+    for payload in receipt_payloads:
+        receipt = payload.get("receipt") or {}
+        tid = receipt.get("tenant_id") or ""
+        try:
+            shard = int(receipt.get("chain_shard") or 0)
+        except (TypeError, ValueError):
+            continue
+        ts = receipt.get("timestamp") or ""
+        if ts > shard_last.get((tid, shard), ""):
+            shard_last[(tid, shard)] = ts
+
+    for (tid, shard), ts in shard_last.items():
+        anchor = latest_anchor.get(tid, "")
+        if anchor and ts > anchor:
+            warnings.append(
+                f"tenant={tid} shard={shard}: latest receipt timestamp "
+                f"{ts!r} is past the most recent signed root anchor {anchor!r} — "
+                f"this tail is not yet anchored and is vulnerable to truncation"
+            )
+
+    return (not warnings), warnings
+
+
 def verify_root_chain(roots: list[dict[str, Any]]) -> tuple[bool, str]:
     """Verify that a list of signed daily roots forms a consistent, append-only chain.
 
@@ -287,15 +456,29 @@ class ExportVerification:
     valid_inclusions: int = 0
     chain_ok: bool = False
     chain_error: str = ""
+    # Sprint 1: per-shard prev_hash + recomputed event_hash walk.
+    shard_chains_ok: bool = False
+    shard_chain_errors: list[str] = field(default_factory=list)
+    # Sprint 1: tail-anchoring check. Warnings here are not hard failures by
+    # themselves — they describe receipts whose tail isn't covered by any
+    # signed root. Sprint 1.2's interim anchor closes this gap.
+    truncation_ok: bool = False
+    truncation_warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        """True iff every check passed with zero errors."""
+        """True iff every cryptographic check passed with zero errors.
+
+        ``truncation_warnings`` is informational — a tail can be unanchored
+        without any tampering having occurred. The caller decides whether to
+        treat unanchored tails as failure (CI) or warning (dev export).
+        """
         return (
             self.valid_receipts == self.total_receipts
             and self.valid_inclusions == self.total_inclusions
             and self.chain_ok
+            and self.shard_chains_ok
             and not self.errors
         )
 
@@ -584,5 +767,28 @@ class AuditVerifier:
         else:
             # No roots to verify — chain is vacuously consistent
             result.chain_ok = True
+
+        # Sprint 1: independent shard-chain verification. Walk every
+        # (tenant, chain_shard) implied by the receipts and check both the
+        # prev_hash linkage and the event_hash recomputation. This catches
+        # tampering that a sole-signature check could miss when the attacker
+        # controls the key.
+        all_receipts: list[dict[str, Any]] = []
+        for rfile in receipt_files:
+            try:
+                all_receipts.append(json.loads(rfile.read_text()))
+            except (json.JSONDecodeError, OSError):
+                continue
+        shard_ok, shard_errors = verify_shard_chains(all_receipts)
+        result.shard_chains_ok = shard_ok
+        result.shard_chain_errors = shard_errors
+        for msg in shard_errors:
+            result.errors.append(f"shard chain: {msg}")
+
+        # Sprint 1: tail-anchoring (truncation) check. Informational — not a
+        # hard failure on its own (see ExportVerification.ok docstring).
+        trunc_ok, trunc_warnings = detect_truncation(all_receipts, signed_roots)
+        result.truncation_ok = trunc_ok
+        result.truncation_warnings = trunc_warnings
 
         return result

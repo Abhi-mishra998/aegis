@@ -421,6 +421,26 @@ def setup_app(app: FastAPI, service_name: str) -> None:
     # 1. Observability
     setup_logging(service_name)
     setup_tracing(app, service_name)
+    # 2026-06-15 — monkey-patch prometheus_fastapi_instrumentator's route
+    # walker. The library's _get_route_name iterates `app.routes` and reads
+    # `route.path`, but FastAPI 0.110+ exposes nested includes as
+    # `_IncludedRouter` objects without `.path`. The library then raises
+    # AttributeError on every request through such routes, returning 500
+    # for /agents POST and /agents/{id}/permissions specifically. Wrap the
+    # function to skip non-path entries instead of crashing.
+    try:
+        from prometheus_fastapi_instrumentator import routing as _pfi_routing
+        _orig_get_route_name = _pfi_routing._get_route_name
+        def _safe_get_route_name(scope, routes):  # type: ignore[no-untyped-def]
+            try:
+                return _orig_get_route_name(scope, routes)
+            except AttributeError:
+                # _IncludedRouter (no .path) — fall back to scope path.
+                return scope.get("path", "/")
+        _pfi_routing._get_route_name = _safe_get_route_name
+    except Exception:
+        # Library not installed or shape changed — don't block boot.
+        pass
     Instrumentator().instrument(app).expose(app)
 
     # 2. Security (CORS)

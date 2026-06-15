@@ -75,16 +75,40 @@ class RuleBasedDetector:
         """
         Scan text against all injection patterns.
 
+        Sprint 2.5 (closes audit C6): the scan runs against BOTH the raw
+        input AND the normalized form (NFKC + URL-decode + comment-strip
+        + whitespace-collapse + homoglyph-fold + lowercase). The legacy
+        pass on the raw text preserves matches against patterns that
+        depend on exact whitespace shape; the normalized pass catches the
+        bypasses the audit named — ``ignore/**/previous``, ``іɡnorе`` with
+        Cyrillic homoglyphs, ``%69%67nore``, ``IgNoRe``.
+
         Returns an InjectionResult with:
         - is_injection=True if any pattern fires
         - confidence=1.0 for a match (rules are high-precision)
-        - patterns_matched listing each fired pattern name
+        - patterns_matched listing each fired pattern name (without duplicates)
         """
+        from sdk.common.sql_normalize import normalize_for_detection  # noqa: PLC0415
+
         matched: list[str] = []
+        seen: set[str] = set()
+        # Pass 1 — raw text (legacy).
         for pattern, name, _severity in INJECTION_PATTERN_DEFS:
             if pattern.search(text):
-                matched.append(name)
-                logger.debug("rule_based_injection_match", pattern=name)
+                if name not in seen:
+                    matched.append(name)
+                    seen.add(name)
+                    logger.debug("rule_based_injection_match", pattern=name, pass_="raw")
+        # Pass 2 — normalized text. Catches obfuscated variants.
+        normalized = normalize_for_detection(text)
+        if normalized and normalized != text:
+            for pattern, name, _severity in INJECTION_PATTERN_DEFS:
+                if name in seen:
+                    continue
+                if pattern.search(normalized):
+                    matched.append(name)
+                    seen.add(name)
+                    logger.debug("rule_based_injection_match", pattern=name, pass_="normalized")
 
         if matched:
             return InjectionResult(

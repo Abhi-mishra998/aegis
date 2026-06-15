@@ -134,7 +134,7 @@ decisions across risk levels.
 
 - **All-allow trace** — the demo agent's `risk_level` was reset to `medium`
   or `low`. The OPA rule
-  `services/policy/policies/critical_destructive_deny.rego` only fires
+  `services/policy/policies/action_semantics_deny.rego` only fires
   for `critical`. Open `/agents`, set the demo agent back to `critical`,
   rerun.
 - **Empty step list** — Groq returned an object without a `tools` key. The

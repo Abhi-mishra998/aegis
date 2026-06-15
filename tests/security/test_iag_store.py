@@ -17,69 +17,8 @@ from services.security.iag.graph import (
 )
 
 
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.kv: dict[str, str] = {}
-        self.sets: dict[str, set[str]] = {}
-        self.hashes: dict[str, dict[str, str]] = {}
-        self.ttls: dict[str, int] = {}
-
-    async def set(self, k, v, ex=None, nx=False):
-        if nx and k in self.kv:
-            return False
-        self.kv[k] = str(v)
-        if ex:
-            self.ttls[k] = ex
-        return True
-
-    async def get(self, k):
-        v = self.kv.get(k)
-        return v.encode() if isinstance(v, str) else v
-
-    async def delete(self, k):
-        n = 0
-        if k in self.sets:
-            del self.sets[k]
-            n += 1
-        if k in self.kv:
-            del self.kv[k]
-            n += 1
-        if k in self.hashes:
-            del self.hashes[k]
-            n += 1
-        return n
-
-    async def expire(self, k, ex):
-        self.ttls[k] = ex
-        return True
-
-    async def sadd(self, k, *vals):
-        s = self.sets.setdefault(k, set())
-        before = len(s)
-        s.update(str(v) for v in vals)
-        return len(s) - before
-
-    async def smembers(self, k):
-        return {v.encode() for v in self.sets.get(k, set())}
-
-    async def hset(self, k, field=None, value=None, mapping=None, **kw):
-        h = self.hashes.setdefault(k, {})
-        wrote = 0
-        if field is not None:
-            h[field] = str(value) if value is not None else ""
-            wrote += 1
-        if mapping:
-            for kk, vv in mapping.items():
-                h[kk] = str(vv) if vv is not None else ""
-                wrote += 1
-        for kk, vv in kw.items():
-            h[kk] = str(vv) if vv is not None else ""
-            wrote += 1
-        return wrote
-
-    async def hgetall(self, k):
-        h = self.hashes.get(k, {})
-        return {kk.encode(): vv.encode() for kk, vv in h.items()}
+# Phase-2 cleanup 2026-06-15 — fake moved to tests/security/_fakes.py.
+from tests.security._fakes import FakeRedis as _FakeRedis
 
 
 @pytest.mark.asyncio

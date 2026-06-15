@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from redis.asyncio import Redis as _Redis
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -320,10 +320,19 @@ async def add_override(
     payload: OverrideIn,
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
+    x_acp_role: Annotated[str | None, Header(alias="X-ACP-Role")] = None,
 ) -> APIResponse[OverrideOut]:
+    # Actor attribution: prefer gateway-injected headers (JWT-validated `sub`
+    # and `role`) over client-supplied body fields. The gateway sets
+    # X-ACP-Actor/X-ACP-Role from request.state after auth (services/gateway/
+    # _mw_auth.py); they cannot be spoofed by the browser. Body fields remain
+    # the fallback for direct service-to-service calls that bypass the gateway.
+    actor = x_acp_actor or payload.actor
+    actor_role = x_acp_role or payload.actor_role
     ev = HumanOverrideEvent(
         tenant_id=tenant_id, org_id=tenant_id,
-        actor=payload.actor, actor_role=payload.actor_role,
+        actor=actor, actor_role=actor_role,
         event_type=payload.event_type,
         target_kind=payload.target_kind, target_id=payload.target_id,
         request_id=payload.request_id, reason=payload.reason,

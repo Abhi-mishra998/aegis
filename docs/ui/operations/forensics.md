@@ -59,7 +59,7 @@ Yes. URL parameter `?agent=...` takes precedence over the sidebar picker. Direct
 - **PDF export stuck in `queued`**: very large investigations can take 30+ seconds. The worker queue caps concurrent exports at 4. Inspect Settings → System Health if the queue is persistently slow.
 - **Signed URL expires in 24 hours**: re-export to refresh. The PDF content is regenerated each time, so the signature is fresh.
 - **Cross-source joins not transactional**: the audit row may be from 10 minutes ago; the identity graph state may have changed since. Timestamps are shown on every panel so the disparity is visible.
-- **Read DSN routes to RDS replica**: on multi-AZ deployments, heavy forensics queries hit the read replica. The current dev deployment is Single-AZ (`acp-postgres-dev` only), so reads and writes share the same instance — expect heavier forensics queries to compete for the same connection pool until a replica is added.
+- **Read DSN routes to RDS replica**: the current prod-ha deployment uses RDS Multi-AZ but does not yet have a dedicated read replica — the Multi-AZ standby exists for failover, not for read scaling. Heavy forensics queries share the writer's connection pool until a read replica is provisioned.
 - **Per-EC2 flap**: `/forensics/*` is proxied via `proxy_forensics` and is stable.
 
 ## Related docs

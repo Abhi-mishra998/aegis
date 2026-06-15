@@ -1,10 +1,13 @@
 # What is Aegis?
 
-**Aegis is a runtime governance and security control plane for AI agents.**
+**Aegis is a runtime governance control plane for AI agents — and the open verification standard (AEVF) for the evidence those decisions produce.**
 
-Every agent action — executing SQL, invoking an API, modifying cloud infrastructure, accessing customer data — is evaluated before it reaches the target system. Aegis applies authentication, policy controls, behavioral analysis, rate limits, autonomy constraints, and per-tenant governance rules in real time. Actions that violate policy are blocked at the gateway. Allowed actions pass through with a p95 evaluation latency of about 21 ms in the current production deployment.
+Every agent action — executing SQL, invoking an API, modifying cloud infrastructure, accessing customer data — is evaluated before it reaches the target system. Aegis applies authentication, policy controls, behavioral analysis, rate limits, autonomy constraints, and per-tenant governance rules in real time. Actions that violate policy are blocked at the gateway. Allowed actions pass through with an end-to-end p95 of about 34 ms on the prod-ha deployment (2× `m6g.medium` Graviton ASG behind ALB, Multi-AZ); the number is measured by `scripts/qa/test_prodha.py`.
 
-Every decision — allowed or denied — is recorded in a tamper-evident cryptographic audit chain. Each row is signed (ed25519), linked to the previous row by hash, and rolled into a daily Merkle transparency root. This gives security, compliance, and forensic teams a verifiable history of agent behavior that cannot be silently modified after the fact.
+Every decision — allowed or denied — is recorded in a tamper-evident cryptographic audit chain. Each row is signed (ed25519), linked to the previous row by hash, and rolled into a daily Merkle transparency root. The bundle format and verification algorithm are published as an open standard — **[AEVF](../AEVF/README.md), version `aevf/0.1.0`** — so an auditor can verify the evidence offline, with the reference implementation from PyPI (`pip install aegis-aevf`), **without trusting the vendor that produced it**.
+
+> **The product promise — one sentence:**
+> *"Don't trust us. Download the bundle, run the open verifier, prove the record wasn't altered — offline, no Aegis account, no API key, no network call."*
 
 ## What it does
 
@@ -46,19 +49,22 @@ Aegis provides both. It runs as a service in front of the agents. Agents call it
 - **Forensics** — investigation listing, replay, blast-radius, timeline, and PDF export.
 - **Behavioral firewall** — per-tenant degraded-mode policy (`block_high_risk` / `block_all` / `allow_with_audit`) with unconditional audit emission on every consult.
 
-## Production deployment
+## Reference deployment
 
-- **2× EC2** behind an Application Load Balancer at `aegisagent.in`
-- **24 containers** per host: 12 application services plus Postgres, Redis, OPA, PgBouncer, Prometheus, Grafana, Jaeger, Alertmanager, and supporting workers
-- **Postgres (RDS)** for application state, **Redis (ElastiCache)** for caches and Pub/Sub, **S3** for receipts and tenant exports
+The current live deployment is the **prod-ha environment** at `ha.aegisagent.in`, cut over 2026-06-13. Multi-AZ HA stack. The earlier single-EC2 dev environment (formerly at `dev.aegisagent.in`) and the 2026-06-01 single-EC2 reference have both been folded into this one URL.
 
-## What's measured in production
+- **2× EC2 ASG** (`m6g.medium` Graviton, 1 vCPU / 4 GB each) across `ap-south-1a + 1b` behind an Application Load Balancer
+- **22 containers per instance**: 16 application services + Postgres (pgbouncer fronted), Redis, OPA, bundle server, Prometheus, Grafana, Jaeger, Alertmanager
+- **Postgres (RDS Multi-AZ, `db.t3.small`)** for application state, **Redis (ElastiCache replication group, primary + reader)** for caches and Pub/Sub, **S3** for receipts and tenant exports
+- **WAFv2** in front (Common rules + KnownBadInputs + SQLi + per-IP rate limit), **KMS-rooted ed25519 signing keys** in SSM SecureString
 
-- **p95 gateway evaluation latency**: ~21 ms
-- **Kill switch propagation**: < 5 seconds, tenant-wide
-- **Attack-scenario block rate**: 100% on the four shipped test cases (PII exfiltration via bulk CRM export, RCE via `rm -rf`, SQL injection via `DROP TABLE`, k8s production namespace deletion)
+## What's measured on the reference deployment
+
+- **End-to-end p95 latency**: ~34 ms (`/system/health`, measured by `scripts/qa/test_prodha.py`)
+- **Kill switch propagation**: per-request Redis check (sub-second) plus a 30 s rehydration loop that restores the flag if Redis is flushed; see [Kill Switch](../security/kill-switch.md)
+- **Attack-scenario block rate**: 100% on the four scripted demo payloads (PII bulk export, `rm -rf`, `DROP TABLE`, k8s namespace delete). Generalization beyond those exact strings is in progress (see Sprint 2 in the roadmap)
 - **Audit chain integrity violations**: 0 in the live chain (5,409+ decisions)
-- **Test suite**: 2,044+ tests
+- **Test suite**: ~1,322 unique `def test_` functions across `tests/` and `services/*/tests/`
 
 ## Who it's for
 

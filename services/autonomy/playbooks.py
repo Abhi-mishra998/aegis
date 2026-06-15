@@ -1,5 +1,5 @@
 """
-Auto-remediation Playbooks Engine (Day 13-14)
+Auto-remediation Playbooks Engine
 
 A playbook is a named, ordered list of steps that execute automatically
 in response to a trigger event (SOAR-style runbook).
@@ -8,9 +8,26 @@ Models:
   Playbook       — named runbook with trigger_conditions + steps (JSON)
   PlaybookRun    — execution record per trigger invocation
 
-Action types (v1 — logged only; execution hooks added later):
-  KILL_AGENT, ISOLATE_AGENT, BLOCK_TOOL, THROTTLE,
-  REVOKE_KEY, SEND_ALERT, WEBHOOK
+Action types (Sprint 2b — all seven are now wired to real executors in
+``services/autonomy/webhook_executor.execute_step``):
+
+  * ``KILL_AGENT``    — PATCH ``{registry}/agents/{id}`` with status=suspended.
+  * ``ISOLATE_AGENT`` — PATCH same endpoint with status=isolated (rate-limit
+    without full suspend).
+  * ``BLOCK_TOOL``    — POST ``{registry}/agents/{id}/permissions`` with
+    ``action=DENY`` for the named tool.
+  * ``THROTTLE``      — POST ``{api}/internal/throttle`` with a rate string.
+  * ``REVOKE_KEY``    — DELETE ``{api}/api-keys/{key_id}``.
+  * ``SEND_ALERT``    — Slack incoming-webhook OR PagerDuty Events API v2.
+  * ``WEBHOOK``       — Generic POST/GET to a user-supplied URL.
+
+All HTTP calls carry ``X-Internal-Secret`` (the mesh-auth fallback) or the
+ES256 mesh JWT (Sprint 1.4) so the registry / api services treat them as
+trusted internal traffic.
+
+The pre-Sprint-2b docstring claimed "v1 — logged only" — that label was
+stale once the executors landed; this rewrite makes the contract accurate
+again so the audit's C17 finding can be closed honestly.
 """
 from __future__ import annotations
 
@@ -118,7 +135,9 @@ async def execute_playbook(
     Load the playbook, iterate its steps, record each result, and persist
     a PlaybookRun. Returns the completed run record.
 
-    V1 semantics: steps are logged/simulated, not actually executed.
+    Sprint 2b — each step is dispatched to
+    ``services/autonomy/webhook_executor.execute_step`` which calls the
+    real downstream endpoint (registry, api, Slack, PagerDuty, …).
     Partial failures set status=partial if ≥1 step succeeded.
     """
     from sqlalchemy import select, update  # local to avoid circular at module load

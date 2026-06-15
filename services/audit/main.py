@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -326,6 +327,31 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         run_report_delivery_worker(get_session_factory())
     )
 
+    # 2026-06-13 — Sprint 5 — Attack Evaluation Suite runner.
+    # Polls eval_jobs for queued runs, replays each dataset case through
+    # the REAL gateway /execute, scores results, snapshots per-rule trend.
+    # Gated on AEGIS_EVAL_USER+AEGIS_EVAL_PASSWORD being set; otherwise
+    # the worker logs a warning and stays idle so the rest of the audit
+    # service still boots in dev environments without eval credentials.
+    eval_task = None
+    if os.getenv("AEGIS_EVAL_USER") and os.getenv("AEGIS_EVAL_PASSWORD"):
+        from services.audit.evaluation_runner import run_forever as _eval_run_forever
+        eval_task = asyncio.create_task(_eval_run_forever())
+    else:
+        logger.info(
+            "eval_runner_disabled",
+            reason="AEGIS_EVAL_USER / AEGIS_EVAL_PASSWORD not set",
+        )
+
+    # 2026-06-13 — Sprint 6 — Online evaluation worker (shadow-mode drift).
+    # Polls per-tenant configs, scores recent shadow_decisions rows, writes
+    # snapshots and fires a notification when FP rate crosses threshold.
+    # Always-on (no creds required) since it only reads DB rows the gateway
+    # has already written. If no tenant has an online_eval_configs row it
+    # exits the inner loop in microseconds and goes back to sleep.
+    from services.audit.online_eval_worker import run_forever as _online_eval_run_forever
+    online_eval_task = asyncio.create_task(_online_eval_run_forever())
+
     logger.info("audit_service_started")
     yield
 
@@ -338,6 +364,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     outbox_task.cancel()
     transparency_task.cancel()
     delivery_task.cancel()
+    if eval_task is not None:
+        eval_task.cancel()
+    online_eval_task.cancel()
 
     # Wait for consumer to finish processing current batch
     try:
@@ -382,6 +411,11 @@ setup_app(app, "audit")
 app.include_router(router)
 app.include_router(pending_router)
 
+# Sprint 4 — Fleet dashboard endpoints (KPIs, time-series, agent-health, recent-events)
+from services.audit.fleet_router import fleet_router  # noqa: E402
+
+app.include_router(fleet_router)
+
 from services.audit.reports import router as reports_router  # noqa: E402
 
 app.include_router(reports_router)
@@ -410,6 +444,21 @@ app.include_router(_notifications_router)
 from services.audit.compliance import incidents_router  # noqa: E402
 
 app.include_router(incidents_router)
+
+# Sprint 5 — Attack Evaluation Suite: datasets, evaluators, jobs, efficacy.
+from services.audit.evaluation_router import evaluation_router  # noqa: E402
+
+app.include_router(evaluation_router)
+
+# Sprint 6 — Shadow-mode policies + online evaluation.
+from services.audit.shadow_router import shadow_router  # noqa: E402
+
+app.include_router(shadow_router)
+
+# Sprint 7 — Policy Playground (validate, replay, publish).
+from services.audit.playground_router import playground_router  # noqa: E402
+
+app.include_router(playground_router)
 
 
 # ── Receipt key endpoint (top-level, not under /logs) ───────────────────

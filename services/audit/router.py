@@ -11,6 +11,7 @@ from __future__ import annotations
 import json as _json
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -269,10 +270,20 @@ async def list_logs(
     agent_id: uuid.UUID | None = None,
     action: str | None = None,
     decision: str | None = None,
+    tool: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
     limit: int = Query(10, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> APIResponse[AuditLogListResponse]:
-    """List audit logs with filtering and pagination."""
+    """List audit logs with filtering and pagination.
+
+    Supports the same filter set as the POST /search variant so the UI
+    can stay on GET. Reason: AWS WAFv2 SQLi managed rule blocks JSON
+    bodies that contain ``"limit":<n>`` (it reads ``LIMIT N`` as SQL
+    injection), so the search-by-POST path returned HTML 403 from the
+    edge. GET query params bypass body inspection.
+    """
     query = select(AuditLog).where(AuditLog.tenant_id == tenant_id)
 
     if agent_id:
@@ -281,6 +292,12 @@ async def list_logs(
         query = query.where(AuditLog.action == action)
     if decision:
         query = query.where(AuditLog.decision == decision)
+    if tool:
+        query = query.where(AuditLog.tool == tool)
+    if start_date:
+        query = query.where(AuditLog.timestamp >= start_date)
+    if end_date:
+        query = query.where(AuditLog.timestamp <= end_date)
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)

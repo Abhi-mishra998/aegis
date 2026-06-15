@@ -150,6 +150,7 @@ def _sign_root(
     prev_root_hash: str | None = None,
     leaf_range_start_id: uuid.UUID | None = None,
     leaf_range_end_id: uuid.UUID | None = None,
+    window_end: datetime | None = None,
 ) -> dict[str, Any]:
     """Sign the daily root commitment.
 
@@ -168,10 +169,18 @@ def _sign_root(
     to. A customer with an export can recompute the exact same root from
     rows in that range — no ambiguity about which 60-second window of late
     audit writes were or weren't included.
+
+    `window_end` (Sprint 1.2, live-tail anchoring): when set, pins the precise
+    UTC instant the root commits to. The scheduler refreshes today's root
+    every ``TRANSPARENCY_SCHEDULER_INTERVAL`` seconds and bumps ``window_end``
+    forward, so any audit row whose timestamp is past the most recent
+    ``window_end`` is detectably unanchored. Without this field the verifier
+    would have to wait for midnight to know whether a tail row was committed
+    — a 24-hour truncation window the audit (C9) flagged as critical.
     """
     signer = get_root_signer()
     payload = {
-        "version":              3,
+        "version":              4,
         "kind":                 "transparency_root",
         "tenant_id":            str(tenant_id),
         "root_date":            root_date.isoformat(),
@@ -180,6 +189,7 @@ def _sign_root(
         "leaf_count":           leaf_count,
         "leaf_range_start_id":  str(leaf_range_start_id) if leaf_range_start_id else None,
         "leaf_range_end_id":    str(leaf_range_end_id) if leaf_range_end_id else None,
+        "window_end":           window_end.isoformat() if window_end else None,
     }
     import base64
     sig = signer._priv.sign(canonical_json(payload))  # noqa: SLF001 — intentional
@@ -224,9 +234,17 @@ async def compute_root(
         leaf_range_end_id = rows[-1].id
 
     signer = get_root_signer()
+    # Sprint 1.2: anchor a precise window_end so the verifier can detect a
+    # tail row that lands after the last sealed root.
+    today = datetime.now(UTC).date()
+    if day < today:
+        window_end = datetime(day.year, day.month, day.day, 23, 59, 59, 999_999, tzinfo=UTC)
+    else:
+        window_end = datetime.now(UTC)
     signed = _sign_root(
         tenant_id, day, root, len(leaves),
         prev_root_hash=prev_hash,
+        window_end=window_end,
         leaf_range_start_id=leaf_range_start_id,
         leaf_range_end_id=leaf_range_end_id,
     )

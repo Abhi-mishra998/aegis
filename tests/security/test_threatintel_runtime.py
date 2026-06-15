@@ -13,23 +13,8 @@ from services.security.threatintel.ioc import (
 )
 
 
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.sets: dict[str, set[str]] = {}
-        self.hashes: dict[str, dict[str, str]] = {}
-
-    async def expire(self, k, ex): return True
-    async def sadd(self, k, *vals):
-        s = self.sets.setdefault(k, set())
-        before = len(s); s.update(str(v) for v in vals); return len(s) - before
-    async def smembers(self, k):
-        return {v.encode() for v in self.sets.get(k, set())}
-    async def hset(self, k, field=None, value=None, mapping=None, **kw):
-        h = self.hashes.setdefault(k, {})
-        if mapping:
-            for kk, vv in mapping.items():
-                h[kk] = str(vv) if vv is not None else ""
-        return 1
+# Phase-2 cleanup 2026-06-15 — fake moved to tests/security/_fakes.py.
+from tests.security._fakes import FakeRedis as _FakeRedis
 
 
 class _BrokenRedis:

@@ -377,49 +377,145 @@ def _cmd_verify_receipt_offline(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify_chain_offline(args: argparse.Namespace) -> int:
-    """acp verify chain <roots-dir>
+    """acp verify chain <path>
 
-    Verify that every JSON file in ``<roots-dir>`` forms a consistent
-    append-only chain of daily Merkle roots.  No network access required.
+    End-to-end audit-chain verification, fully offline.
+
+    Sprint 1 — before this change, the CLI only walked the daily-root chain
+    (root → prev_root → ...) and reported "chain consistent" without ever
+    verifying per-receipt signatures, the shard-internal prev_hash linkage,
+    or independently recomputing event_hash. The audit (C9) flagged this as
+    a credibility hole — a chain with a tampered row could be reported as
+    valid. This command now runs the full :class:`AuditVerifier` over an
+    export bundle and reports each layer separately so an operator can see
+    exactly which property held.
+
+    ``<path>`` may be:
+      * An export-bundle directory (expected layout: ``keys/``, ``receipts/``,
+        ``proofs/``, ``roots/`` — see :meth:`AuditVerifier.verify_export`),
+        in which case the full verification runs.
+      * A roots-only directory of ``*.json`` files, in which case only the
+        root-of-roots chain is walked (back-compat, gated by ``--roots-only``
+        or by the absence of a ``receipts/`` subdirectory).
     """
+    from .verifier import AuditVerifier
     from .verifier import verify_root_chain as _verify_root_chain
 
-    roots_dir = Path(args.roots_dir)
-    if not roots_dir.is_dir():
+    target = Path(args.roots_dir)
+    if not target.is_dir():
         return _emit(
-            {"ok": False, "lines": [f"error: {roots_dir}: not a directory"]},
+            {"ok": False, "lines": [f"error: {target}: not a directory"]},
             getattr(args, "json", False),
         )
 
-    root_files = sorted(roots_dir.glob("*.json"))
-    if not root_files:
-        return _emit(
-            {"ok": False, "lines": [f"error: no .json files found under {roots_dir}"]},
-            getattr(args, "json", False),
-        )
+    roots_only = getattr(args, "roots_only", False) or not (target / "receipts").is_dir()
 
-    roots: list[Any] = []
-    for rp in root_files:
-        try:
-            roots.append(_load_json(rp))
-        except SystemExit as exc:
+    if roots_only:
+        # Back-compat: roots-only walk.
+        # Prefer an explicit roots/ subdir if it exists, otherwise treat the
+        # directory itself as the roots dir.
+        sub = target / "roots"
+        root_dir = sub if sub.is_dir() else target
+
+        root_files = sorted(root_dir.glob("*.json"))
+        if not root_files:
             return _emit(
-                {"ok": False, "lines": [str(exc)]},
+                {"ok": False, "lines": [f"error: no .json files found under {root_dir}"]},
                 getattr(args, "json", False),
             )
 
-    chain_ok, chain_error = _verify_root_chain(roots)
-    icon = "✓" if chain_ok else "✗"
+        roots: list[Any] = []
+        for rp in root_files:
+            try:
+                roots.append(_load_json(rp))
+            except SystemExit as exc:
+                return _emit(
+                    {"ok": False, "lines": [str(exc)]},
+                    getattr(args, "json", False),
+                )
+
+        chain_ok, chain_error = _verify_root_chain(roots)
+        icon = "✓" if chain_ok else "✗"
+        lines = [
+            f"roots directory:  {root_dir}",
+            f"  roots loaded:   {len(roots)}",
+            f"  {icon}  root chain consistent: {'yes' if chain_ok else 'no'}",
+        ]
+        if chain_error:
+            lines.append(f"     {chain_error}")
+        lines += ["", "OK" if chain_ok else "FAIL"]
+        return _emit(
+            {
+                "ok":          chain_ok,
+                "mode":        "roots-only",
+                "roots":       len(roots),
+                "chain_error": chain_error,
+                "lines":       lines,
+            },
+            getattr(args, "json", False),
+        )
+
+    # Full export-bundle verification.
+    try:
+        verifier = AuditVerifier.from_export_dir(target)
+    except FileNotFoundError as exc:
+        return _emit(
+            {"ok": False, "lines": [f"error: {exc}"]},
+            getattr(args, "json", False),
+        )
+
+    result = verifier.verify_export(target)
+    ok = result.ok
+
+    icon = lambda b: "✓" if b else "✗"  # noqa: E731
+    sig_ok = result.valid_receipts == result.total_receipts
+    incl_ok = result.valid_inclusions == result.total_inclusions
+
     lines = [
-        f"roots directory: {roots_dir}",
-        f"  roots loaded:  {len(roots)}",
-        f"  {icon}  chain consistent: {'yes' if chain_ok else 'no'}",
+        f"export bundle:        {target}",
+        f"  receipts loaded:    {result.total_receipts}",
+        f"  {icon(sig_ok)}  ed25519 signatures:  {result.valid_receipts}/{result.total_receipts}",
+        f"  {icon(incl_ok)}  Merkle inclusion:    {result.valid_inclusions}/{result.total_inclusions}",
+        f"  {icon(result.shard_chains_ok)}  shard prev_hash + event_hash recomputation: "
+        f"{'pass' if result.shard_chains_ok else 'FAIL'}",
+        f"  {icon(result.chain_ok)}  daily-root chain:    {'consistent' if result.chain_ok else 'BROKEN'}",
+        f"  {'!' if result.truncation_warnings else icon(True)}  tail anchoring:      "
+        f"{'anchored' if result.truncation_ok else f'{len(result.truncation_warnings)} unanchored tail(s)'}",
     ]
-    if chain_error:
-        lines.append(f"     {chain_error}")
-    lines += ["", "OK" if chain_ok else "FAIL"]
+    if result.chain_error:
+        lines.append(f"     root chain: {result.chain_error}")
+    # Surface up to a handful of specific errors so an operator can act.
+    for msg in result.shard_chain_errors[:3]:
+        lines.append(f"     shard:      {msg}")
+    for msg in result.errors[:3]:
+        lines.append(f"     error:      {msg}")
+    for msg in result.truncation_warnings[:3]:
+        lines.append(f"     truncation: {msg}")
+    if len(result.errors) > 3 or len(result.shard_chain_errors) > 3:
+        lines.append(
+            f"     ... ({len(result.errors)} total errors, "
+            f"{len(result.shard_chain_errors)} shard-chain errors)"
+        )
+
+    lines += ["", "OK" if ok else "FAIL"]
+
     return _emit(
-        {"ok": chain_ok, "roots": len(roots), "chain_error": chain_error, "lines": lines},
+        {
+            "ok":                  ok,
+            "mode":                "full",
+            "receipts":            result.total_receipts,
+            "valid_receipts":      result.valid_receipts,
+            "valid_inclusions":    result.valid_inclusions,
+            "total_inclusions":    result.total_inclusions,
+            "shard_chains_ok":     result.shard_chains_ok,
+            "shard_chain_errors":  result.shard_chain_errors,
+            "chain_ok":            result.chain_ok,
+            "chain_error":         result.chain_error,
+            "truncation_ok":       result.truncation_ok,
+            "truncation_warnings": result.truncation_warnings,
+            "errors":              result.errors,
+            "lines":               lines,
+        },
         getattr(args, "json", False),
     )
 
@@ -780,9 +876,25 @@ def main(argv: list[str] | None = None) -> int:
 
     p_vchain = vsub.add_parser(
         "chain",
-        help="verify a directory of daily root JSON files form an append-only chain",
+        help=(
+            "verify an audit-chain export end-to-end (signatures + shard "
+            "prev_hash + event_hash recomputation + Merkle inclusion + root chain). "
+            "Pass --roots-only to walk just the daily-root chain."
+        ),
     )
-    p_vchain.add_argument("roots_dir", metavar="roots-dir", help="directory containing YYYY-MM-DD.json root files")
+    p_vchain.add_argument(
+        "roots_dir",
+        metavar="path",
+        help=(
+            "either an export-bundle directory (full verification, the default) "
+            "or a roots/ directory of YYYY-MM-DD.json files (roots-only walk)"
+        ),
+    )
+    p_vchain.add_argument(
+        "--roots-only",
+        action="store_true",
+        help="walk the daily-root chain only; skip per-receipt verification (back-compat)",
+    )
     p_vchain.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p_vchain.set_defaults(func=_cmd_verify_chain_offline)
 

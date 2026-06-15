@@ -203,3 +203,46 @@ async def delete_agent(agent_id: str, request: Request) -> Any:
             agent_id=agent_id,
         )
     return passthrough(resp)
+
+
+# Sprint B 2026-06-14 — quarantine routes (blast radius).
+@router.post("/agents/{agent_id}/quarantine", tags=["agents"])
+async def quarantine_agent_proxy(agent_id: str, request: Request) -> Any:
+    """Proxy → Registry: quarantine an agent.
+
+    The body is optional `{reason: str}`. The registry handler sets the
+    Redis flag the gateway middleware short-circuits on AND flips the
+    persistent status. Publishes an SSE event so the Fleet UI lights up.
+    """
+    try:
+        body = await request.json() if request.headers.get("content-length") else {}
+    except Exception:
+        body = {}
+    resp = await request.app.state.client.post(
+        f"{_base()}/agents/{agent_id}/quarantine",
+        json=body, headers=internal_headers(request),
+    )
+    tenant_id_str = request.headers.get("X-Tenant-ID", "")
+    if tenant_id_str and resp.status_code in (200, 201):
+        await publish_event(
+            _redis, tenant_id_str, "agent_quarantined",
+            {"agent_id": agent_id, "reason": body.get("reason", "manual")},
+            agent_id=agent_id,
+        )
+    return passthrough(resp)
+
+
+@router.delete("/agents/{agent_id}/quarantine", tags=["agents"])
+async def release_quarantine_proxy(agent_id: str, request: Request) -> Any:
+    """Proxy → Registry: release agent from quarantine."""
+    resp = await request.app.state.client.delete(
+        f"{_base()}/agents/{agent_id}/quarantine",
+        headers=internal_headers(request),
+    )
+    tenant_id_str = request.headers.get("X-Tenant-ID", "")
+    if tenant_id_str and resp.status_code in (200, 204):
+        await publish_event(
+            _redis, tenant_id_str, "agent_quarantine_released",
+            {"agent_id": agent_id}, agent_id=agent_id,
+        )
+    return passthrough(resp)

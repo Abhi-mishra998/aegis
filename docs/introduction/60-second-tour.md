@@ -2,7 +2,7 @@
 
 **A guided walkthrough of the Aegis web UI. Sixty seconds, eight stops, every part of the platform.**
 
-The live deployment is at [aegisagent.in](https://dev.aegisagent.in). For credentials, see [Quickstart](quickstart.md).
+The live deployment is at [aegisagent.in](https://ha.aegisagent.in). For credentials, see [Quickstart](quickstart.md).
 
 ## What you'll see
 
@@ -65,7 +65,7 @@ The above is the order a buyer or evaluator should walk in. The remaining surfac
 - **Autonomy** — multi-agent contracts: cross-tenant rules, time windows, delegation caps.
 - **Playbooks** — pre-built remediation workflows; can be auto-triggered by decision events.
 - **Auto Response** — rule-based automation with simulate / rollback / approval pipelines.
-- **Compliance** — SOC 2, EU AI Act, NIST AI RMF report generation against the audit chain.
+- **Compliance** — SOC 2, EU AI Act, NIST AI RMF, and (added 2026-06-13) **India DPDP Act 2023 + Rules** report generation against the audit chain. Each report carries an AEVF back-reference so an external auditor can verify the bundle offline via `aegis-verify`. A6 adds a GRC export (CSV / JSON) shaped for Vanta / Drata / Secureframe / Hyperproof ingestion.
 - **Attack Sim** — extended catalog of attack payloads beyond the four Playground scenarios.
 - **Open Source** — the project's open-source landing page (Apache 2.0, GitHub link, contribution path).
 

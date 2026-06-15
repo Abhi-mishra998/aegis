@@ -2,6 +2,15 @@
 
 *The signing scheme, the prev-hash chain, the daily Merkle root, and the verification algorithm. Every other security claim in Aegis is anchored on this one.*
 
+> **The chain format and verification algorithm described on this page are
+> published as the open standard [AEVF (Aegis Evidence Verification Format)
+> `aevf/0.1.0`](../AEVF/README.md).** The reference verifier ships on PyPI as
+> `pip install aegis-aevf` and runs entirely offline — no Aegis account, no
+> API key, no network call. This page is the *internal* description of how
+> rows are produced; the AEVF spec is the *external* contract for verifying
+> them. The two MUST stay in lock-step; the parity test
+> `tools/aegis_verify/tests/test_no_network.py` enforces this.
+
 ## What it guarantees
 
 Three properties that together let a third party trust the audit log without trusting the platform:
@@ -145,17 +154,124 @@ This is the strongest guarantee Aegis offers: even if every Aegis-controlled sec
 
 ## Key storage and rotation
 
-Source: `services/audit/signer.py:42-55`.
+Source: `services/audit/signer.py` + `sdk/common/signing_keys.py` (Sprint 1.3).
 
-Key precedence at load time:
+Pre-Sprint-1 deployments read the signing key directly from
+`/data/keys/receipt-signing.pem` on the audit container's filesystem — the
+same blast radius as the database. The audit (C9 / S5) called this out as
+incompatible with a tamper-evident claim: a database-compromising attacker
+also has the key.
 
-1. **`RECEIPT_SIGNING_PRIVATE_KEY` env var** (base64 PEM) — preferred for production. The secret is mounted as an env var; no key on disk.
-2. **`/data/keys/receipt-signing.pem`** on the audit container (persistent volume) — survives restarts.
-3. **Generated fresh in memory with a log warning** — acceptable only in tests.
+Sprint 1.3 introduces a `SigningKeyProvider` abstraction. Three providers ship:
 
-The corresponding public key is recorded on every row as `key_fingerprint`. When the operator rotates, the old key's fingerprint is promoted to `transparency_historical_keys` BEFORE any row is written with the new key. The runbook ([Key Rotation](../operations/key-rotation.md)) enforces this order.
+| Provider | Storage | Recommended for |
+|---|---|---|
+| `SsmSigningKeyProvider` | AWS Systems Manager Parameter Store (SecureString, KMS-encrypted at rest) | **production** |
+| `AwsKmsSigningKeyProvider` | KMS-wrapped blob (envelope encryption) in env / S3 | production when the PEM is too large for SSM |
+| `LocalFileSigningKeyProvider` | PEM on disk / env var | dev only |
 
-A row signed by key K verifies against either the current key or any row in `transparency_historical_keys` with fingerprint K. Old receipts continue to verify after rotation.
+Env-var selection:
+
+```bash
+# Production default — matches the existing /aegis-voice-guide/* convention
+RECEIPT_SIGNING_PROVIDER=ssm
+RECEIPT_SIGNING_SSM_PARAMETER=/aegis-audit/receipt-signing-key
+AWS_REGION=ap-south-1
+
+# Independent root-signing key
+ROOT_SIGNING_PROVIDER=ssm
+ROOT_SIGNING_SSM_PARAMETER=/aegis-audit/root-signing-key
+
+# Optional KMS envelope-encryption alternative (for PEMs > 4 KB or shared
+# blobs in S3). The reference deployment provisions a customer CMK at
+# alias/aegis-audit-envelope (ap-south-1) with annual rotation enabled.
+# RECEIPT_SIGNING_PROVIDER=kms
+# RECEIPT_SIGNING_KMS_KEY_ID=alias/aegis-audit-envelope
+# RECEIPT_SIGNING_KMS_CIPHERTEXT_B64=<base64 of kms.Encrypt(PEM)>
+```
+
+The audit service calls `ssm:GetParameter(WithDecryption=True)` once at boot.
+The plaintext PEM exists only in process memory; CloudTrail records every
+access. Rotation is one `ssm:PutParameter` call plus the historical-key
+promotion ritual described below — no application restart required.
+
+Required IAM on the audit service's role: `ssm:GetParameter` on the
+parameter ARN and `kms:Decrypt` on the CMK encrypting the SecureString
+(typically `alias/aws/ssm`). Full operator walkthrough at
+[Key Rotation](../operations/key-rotation.md#sprint-13-ssm-parameter-store-path).
+
+The corresponding public key is recorded on every row as `key_fingerprint`.
+When the operator rotates, the old key's fingerprint is promoted to
+`transparency_historical_keys` BEFORE any row is written with the new key.
+A row signed by key K verifies against either the current key or any row in
+`transparency_historical_keys` with fingerprint K. Old receipts continue to
+verify after rotation.
+
+## Offline verifier (Sprint 1.1)
+
+Source: `sdk/acp_client/verifier.py`, `sdk/acp_client/cli.py`.
+
+Pre-Sprint-1, `acp verify chain <dir>` walked only the daily-root chain
+(`root → prev_root → …`) and reported "chain consistent" without ever
+checking per-receipt signatures, the shard-internal `prev_hash` linkage, or
+the `event_hash` recomputation. The audit (C9) flagged this — a single
+tampered receipt would slip through unnoticed.
+
+After Sprint 1.1 the CLI runs **five independent layers** when pointed at an
+export bundle:
+
+1. **ed25519 signature verification** against active + historical public keys
+   from `keys/active.pem` and `keys/historical/*.pem`.
+2. **Merkle inclusion proof verification** for each receipt against its
+   day's signed root.
+3. **Shard `prev_hash` walk** — groups receipts by `(tenant_id, chain_shard)`,
+   sorts by timestamp, asserts each row's `prev_hash` matches the previous
+   row's `event_hash` (or `GENESIS_HASH` for the first row).
+4. **Independent `event_hash` recomputation** — computes
+   `sha256(prev_hash + canonical(business_fields))` and compares to the
+   claimed `event_hash`. Catches in-place tamper even when the attacker
+   controls the signing key.
+5. **Daily-root chain consistency** — the legacy `root → prev_root` walk.
+
+Operator usage:
+
+```bash
+# Full verification of an export bundle (the default).
+acp verify chain ./my-export
+
+# Roots-only walk (back-compat with the pre-Sprint-1 behavior).
+acp verify chain ./my-export --roots-only
+```
+
+Adversarial tests in `tests/test_audit_chain_verifier.py` prove the verifier
+rejects: a flipped byte in `event_hash`, a re-signed tamper where the
+attacker controls the signing key, a deleted middle row, a swapped signing
+key, an unanchored tail, and a wrong `GENESIS_HASH` on the first row.
+
+## Live-tail anchoring (Sprint 1.2)
+
+Source: `services/audit/transparency_scheduler.py` + `transparency.py::_sign_root`.
+
+Pre-Sprint-1.2 the transparency scheduler defaulted to an hourly cadence and
+the audit (C9) flagged a 24-hour truncation window: a row written at
+00:01 UTC was only committed to a sealed Merkle root at midnight the next
+day, so a database-compromising attacker had up to 24 h to silently delete
+today's tail.
+
+Sprint 1.2 closes this:
+
+- Scheduler default cadence dropped from 3600s to **30s**
+  (`TRANSPARENCY_SCHEDULER_INTERVAL`).
+- Signed root payload now carries `window_end` — the precise UTC instant
+  the root committed to. For today's running root this advances on every
+  pass; for closed days it pins to end-of-day UTC.
+- The offline verifier reads `window_end` and flags any receipt whose
+  timestamp is past the most-recent signed anchor as an "unanchored tail."
+
+Net effect: a truncation attack on today's tail is detectable within
+seconds, not 24 hours. The closed-day semantics are unchanged — pre-1.2
+roots without `window_end` are treated as anchoring end-of-day so historical
+exports continue to verify cleanly.
 
 ## Worked example
 
@@ -197,6 +313,9 @@ A response of `{ "valid": true, "violations": [] }` is the only acceptable healt
 
 ## Next
 
+- [AEVF Overview](../AEVF/README.md) — the open standard published from this same construction (auditor-facing entry page)
+- [AEVF Spec](../AEVF/spec.md) — the byte-precise verification algorithm (V1–V6)
+- [Auditor Checklist](../AEVF/auditor-checklist.md) — 8-section reviewable checklist external auditors sign off against
 - [Audit service](../services/audit.md) — implementation and ops detail
 - [Key Rotation](../operations/key-rotation.md) — the operator runbook
 - [Audit Chain Violation runbook](../operations/runbooks/audit-chain-violation.md) — what to do when verify fails

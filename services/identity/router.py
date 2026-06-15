@@ -886,42 +886,49 @@ async def list_sso_providers() -> dict:
     return {"providers": enabled_providers()}
 
 
+_PKCE_REDIS_PREFIX = "acp:sso_pkce:"
+_PKCE_TTL_SECONDS = 600  # match the state token's max_age
+
+
 @router.get("/auth/sso/{provider}", summary="Initiate SSO login")
 async def sso_login(
     provider: str,
     request: Request,
+    redis: Annotated[Redis, Depends(get_redis)],
     tenant_id: str | None = None,
 ) -> RedirectResponse:
     """
     Redirect the browser to the OIDC provider's authorization endpoint.
-    `tenant_id` query param determines which tenant the SSO user belongs to.
-    Defaults to the demo tenant when omitted.
+    The `tenant_id` query parameter is REQUIRED — it determines which tenant the
+    SSO user will be associated with. There is no demo-tenant fallback.
+    A PKCE verifier is generated, stored in Redis under the state token, and
+    presented to the IdP token endpoint at callback (RFC 7636).
     """
-    from services.identity.oidc import _provider_cfg, enabled_providers, generate_state
+    from services.identity.oidc import build_auth_url, build_pkce_challenge, enabled_providers, generate_state
 
     if provider not in enabled_providers():
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider}' is not configured")
 
-    tid = tenant_id or "00000000-0000-0000-0000-000000000001"
-    state = generate_state(_SSO_STATE_SECRET, provider, tid)
+    if not tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail="tenant_id query parameter is required for SSO login",
+        )
+    try:
+        uuid.UUID(tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="tenant_id must be a valid UUID")
+
+    code_verifier, code_challenge = build_pkce_challenge()
+    state = generate_state(_SSO_STATE_SECRET, provider, tenant_id)
+
+    # Store the PKCE verifier under the state token. TTL bounded so the same
+    # state cannot be replayed beyond the auth-code lifetime.
+    await redis.setex(f"{_PKCE_REDIS_PREFIX}{state}", _PKCE_TTL_SECONDS, code_verifier)
 
     base = str(request.base_url).rstrip("/")
     redirect_uri = f"{base}/auth/sso/{provider}/callback"
-
-    cfg = _provider_cfg(provider)
-    from services.identity.oidc import _get_discovery
-    doc = await _get_discovery(provider)
-
-    from urllib.parse import urlencode
-    params = {
-        "client_id":     cfg["client_id"],
-        "redirect_uri":  redirect_uri,
-        "response_type": "code",
-        "scope":         cfg["scope"],
-        "state":         state,
-        "nonce":         secrets.token_urlsafe(16),
-    }
-    auth_url = f"{doc['authorization_endpoint']}?{urlencode(params)}"
+    auth_url = await build_auth_url(provider, redirect_uri, state, code_challenge)
     return RedirectResponse(auth_url, status_code=302)
 
 
@@ -955,16 +962,34 @@ async def sso_callback(
         logger.warning("sso_state_invalid", error=str(exc))
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
+    # The state carries the tenant_id the user kicked off SSO for; reject any
+    # malformed value rather than silently land them in the demo tenant.
     try:
         tenant_uuid = uuid.UUID(tenant_id_str)
     except ValueError:
-        tenant_uuid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+        logger.warning("sso_state_invalid_tenant", tenant_id=tenant_id_str)
+        raise HTTPException(status_code=400, detail="Invalid tenant_id in state parameter")
+
+    # PKCE — recover the verifier the /sso/{provider} handler stored under the
+    # state token. SET-EX-then-GETDEL would be ideal, but redis-py exposes
+    # GETDEL as get + delete; we issue both so the verifier cannot be replayed.
+    pkce_key = f"{_PKCE_REDIS_PREFIX}{state}"
+    code_verifier_raw = await redis.get(pkce_key)
+    await redis.delete(pkce_key)
+    if not code_verifier_raw:
+        logger.warning("sso_pkce_verifier_missing", provider=provider)
+        raise HTTPException(status_code=400, detail="PKCE verifier missing or expired")
+    code_verifier = (
+        code_verifier_raw.decode("ascii")
+        if isinstance(code_verifier_raw, bytes)
+        else code_verifier_raw
+    )
 
     base = str(request.base_url).rstrip("/")
     redirect_uri = f"{base}/auth/sso/{provider}/callback"
 
     try:
-        claims = await exchange_code(provider, code, redirect_uri)
+        claims = await exchange_code(provider, code, redirect_uri, code_verifier)
     except Exception as exc:
         logger.error("sso_code_exchange_failed", provider=provider, error=str(exc))
         return RedirectResponse("/?sso_error=exchange_failed", status_code=302)

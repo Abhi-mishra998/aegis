@@ -102,8 +102,8 @@ async def main():
     async with ACPClient(
         agent_id="my-agent-uuid",
         secret="YOUR_AGENT_SECRET",
-        gateway_url="https://dev.aegisagent.in",
-        identity_url="https://dev.aegisagent.in",
+        gateway_url="https://ha.aegisagent.in",
+        identity_url="https://ha.aegisagent.in",
     ) as client:
         await client.authenticate(tenant_id="YOUR_TENANT_UUID")
         result = await client.execute_tool(
@@ -125,7 +125,7 @@ The audit log captures every governance decision. Open **Audit Logs** in the das
 
 ```bash
 # Or via API:
-curl https://dev.aegisagent.in/audit/logs \
+curl https://ha.aegisagent.in/audit/logs \
   -H "Authorization: Bearer acp_YOUR_KEY" \
   -H "X-Tenant-ID: YOUR_TENANT_UUID" \
   | jq '.data.items[:3]'
@@ -163,7 +163,7 @@ From that point forward, any `delete_files`, `delete_records`, or similar tool c
 ```bash
 export AEGIS_API_KEY="acp_YOUR_KEY"
 export AEGIS_TENANT_ID="YOUR_TENANT_UUID"
-export AEGIS_URL="https://dev.aegisagent.in"   # default
+export AEGIS_URL="https://ha.aegisagent.in"   # default
 export AEGIS_AGENT_ID="my-agent"
 ```
 

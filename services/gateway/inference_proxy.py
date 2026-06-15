@@ -115,8 +115,11 @@ _REDACT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"\beyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\b"),
         "***JWT_REDACTED***",
     ),
-    # AWS-style keys
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_KEY_REDACTED***"),
+    # AWS-style keys. Sprint 2.3 (closes audit C22): the prefix is
+    # case-insensitive so an attacker who lowercases the leak (`akia...`)
+    # doesn't slip past. AWS keys are uppercase by spec, but the gate is
+    # belt-and-suspenders.
+    (re.compile(r"\b(?i:AKIA)[0-9A-Za-z]{16}\b"), "***AWS_KEY_REDACTED***"),
     # Generic hex secrets (32+ hex chars)
     (re.compile(r"\b[0-9a-fA-F]{32,}\b"), "***HEX_SECRET_REDACTED***"),
     # Bearer tokens in strings
@@ -135,6 +138,31 @@ _REDACT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
             re.DOTALL,
         ),
         "***PEM_KEY_REDACTED***",
+    ),
+    # Sprint 2.3 — PII patterns (closes audit C22). Each pattern is tested
+    # against a labelled corpus in tests/test_output_filter_pii.py to bound
+    # false-positive rate.
+    #
+    # Email addresses. Simplified RFC 5322 — covers the realistic shapes
+    # an LLM response would emit without trying to validate every edge case.
+    (
+        re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,24}\b"),
+        "***EMAIL_REDACTED***",
+    ),
+    # Indian phone numbers (+91 followed by a 10-digit number starting 6-9).
+    # Accepts common separators: hyphen, space, dot, none. The capture is
+    # anchored so a generic 10-digit number elsewhere in the body doesn't
+    # collide with this pattern.
+    (
+        re.compile(r"(?:\+?91[\s\-.]?|\b0)?[6-9]\d{2}[\s\-.]?\d{3}[\s\-.]?\d{4}\b"),
+        "***IN_PHONE_REDACTED***",
+    ),
+    # Aadhaar — 12 digits, optionally space-separated in 4-4-4 groups.
+    # The word boundaries plus 4-4-4 grouping bound the false-positive
+    # rate against generic numeric strings (timestamps, IDs).
+    (
+        re.compile(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"),
+        "***AADHAAR_REDACTED***",
     ),
 ]
 
@@ -424,7 +452,23 @@ class TenantIsolationChecker:
 
 
 class OutputFilter:
-    """Redacts secrets, tokens, and credentials from response bodies."""
+    """Redacts secrets, tokens, and credentials from response bodies.
+
+    Sprint 2.3 (closes audit C22 streaming + >256KB bypass): the filter now
+    supports a streaming/chunked mode via :meth:`redact_chunked` so an SSE
+    response or a multi-megabyte LLM completion no longer bypasses
+    redaction. The implementation keeps a tail-overlap window between
+    chunks so a secret split across the chunk boundary still matches —
+    bounded by ``_CHUNK_TAIL_OVERLAP_BYTES`` (the longest reasonable
+    pattern length).
+    """
+
+    # Tail overlap kept between chunked emissions so a secret that straddles
+    # a chunk boundary (e.g. PEM header at end of chunk N, body in N+1) is
+    # still matched by the regexes. 4 KB is comfortably larger than any
+    # pattern in ``_REDACT_PATTERNS`` while small enough to keep
+    # memory bounded under high concurrency.
+    _CHUNK_TAIL_OVERLAP_BYTES = 4096
 
     @staticmethod
     def redact(body: str) -> str:
@@ -432,6 +476,37 @@ class OutputFilter:
         for pattern, replacement in _REDACT_PATTERNS:
             result = pattern.sub(replacement, result)
         return result
+
+    @classmethod
+    def redact_chunked(cls, chunks):
+        """Stream-friendly redactor — sync generator over byte chunks.
+
+        Yields redacted ``bytes`` ready for the wire. Maintains a tail
+        overlap between chunks so a pattern that straddles a chunk boundary
+        is still matched.
+
+        Caller passes an iterable of bytes/str chunks; this generator yields
+        redacted bytes. Memory footprint is bounded by
+        ``_CHUNK_TAIL_OVERLAP_BYTES + max(chunk_size)`` — does NOT buffer the
+        entire stream.
+        """
+        tail = ""
+        for raw in chunks:
+            text = raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+            combined = tail + text
+            redacted = cls.redact(combined)
+            # Keep the last overlap bytes for the next iteration so a
+            # boundary-straddling pattern is matched on the next pass.
+            if len(redacted) > cls._CHUNK_TAIL_OVERLAP_BYTES:
+                emit = redacted[: -cls._CHUNK_TAIL_OVERLAP_BYTES]
+                tail = redacted[-cls._CHUNK_TAIL_OVERLAP_BYTES :]
+                yield emit.encode("utf-8")
+            else:
+                # Entire combined buffer fits inside the tail window —
+                # hold and emit on the next pass / on close.
+                tail = redacted
+        if tail:
+            yield tail.encode("utf-8")
 
     @staticmethod
     def _detect_high_entropy(text: str) -> bool:

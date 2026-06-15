@@ -24,7 +24,6 @@ policy port that wants to evaluate without re-extracting.
 """
 from __future__ import annotations
 
-import json
 import re
 import urllib.parse
 from typing import Any, Literal, TypedDict
@@ -422,8 +421,9 @@ def _extract_db(params: dict[str, Any], blob_lower: str) -> dict[str, Any]:
     qn = _normalize_for_match(query)
     out["query_norm"] = qn
 
-    # SELECT / INSERT / UPDATE / DELETE / DROP / TRUNCATE / ALTER
-    is_select = qn.startswith("select")
+    # Destructive DDL: DROP TABLE, TRUNCATE, ALTER TABLE … DROP, DROP SCHEMA,
+    # DROP DATABASE. We don't flag SELECT here — destructive intent is what
+    # the evaluator gates on; reads are handled by the row-limit signal.
     is_destructive_ddl = bool(re.search(
         r"\b(drop\s+table|truncate\s+table|alter\s+table\s+\S+\s+drop|drop\s+schema|drop\s+database)\b",
         qn, re.IGNORECASE

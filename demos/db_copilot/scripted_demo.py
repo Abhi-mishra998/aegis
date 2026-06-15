@@ -17,7 +17,7 @@ Usage:
     .venv/bin/python demos/db_copilot/scripted_demo.py
 
 Environment overrides:
-    ACP_GATEWAY_URL   (default http://localhost:8000)
+    ACP_GATEWAY_URL   (default https://ha.aegisagent.in)
     ACP_CREDS_FILE    (default demos/db_copilot/.demo_creds.json)
 """
 from __future__ import annotations
@@ -35,8 +35,8 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-GATEWAY = os.getenv("ACP_GATEWAY_URL", "http://localhost:8000")
-IDENTITY_URL = os.getenv("ACP_IDENTITY_URL", "http://localhost:8002")
+GATEWAY = os.getenv("ACP_GATEWAY_URL", "https://ha.aegisagent.in")
+IDENTITY_URL = os.getenv("ACP_IDENTITY_URL", "https://ha.aegisagent.in")
 INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "acp_internal_prod_secret_f93284h")
 
 _CREDS_FILE = Path(os.getenv("ACP_CREDS_FILE", Path(__file__).parent / ".demo_creds.json"))

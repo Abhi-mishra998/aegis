@@ -200,7 +200,6 @@ INCIDENT_TITLES_BY_SEVERITY = {
 INCIDENT_TRIGGERS = [
     "policy_engine",
     "behavior_firewall",
-    "anomaly_detector",
     "risk_score_threshold",
     "rate_limiter",
     "audit_chain_monitor",

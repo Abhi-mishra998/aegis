@@ -16,7 +16,7 @@ The Audit Trail is the platform's primary investigation surface for the durable 
 
 - **Header bar** — page title, agent-scope chip (shows which agent the view is filtered to), and a "Verify chain" button.
 - **KPI tiles** — Total decisions, Allow rate, Deny rate, Escalation rate. Computed from `/audit/logs/summary`.
-- **Search panel** — collapsible. Filters by tool, decision, date range, finding, and free-text. Hitting Search calls `/audit/logs/search`.
+- **Search panel** — collapsible. Filters by tool, decision, date range, finding, and free-text. Hitting Search calls `GET /audit/logs` with the filters as query params. (The page used to POST to `/audit/logs/search`; that path was blocked at the edge by AWS WAFv2's SQLi managed rule whenever the body contained `"limit":N`. The GET variant bypasses body inspection.)
 - **Logs table** — the main grid. Each row: timestamp, tool, decision, agent, risk score, findings, and a "row id" hash badge.
 - **Detail drawer** — opens to the right when you click any row. Tabs:
   - **Overview** — the full canonical row content.
@@ -32,7 +32,7 @@ The Audit Trail is the platform's primary investigation surface for the durable 
 |---|---|---|---|
 | Load KPIs | GET | `/audit/logs/summary` | audit |
 | List logs (paginated) | GET | `/audit/logs?limit={n}&offset={n}[&agent_id=...]` | audit |
-| Search logs | POST | `/audit/logs/search` | audit |
+| Search logs | GET | `/audit/logs?agent_id=…&decision=…&tool=…&start_date=…&end_date=…&limit=…&offset=…` | audit |
 | Verify chain integrity | GET | `/audit/logs/verify` | audit |
 | Fetch a row's signed receipt | GET | `/audit/logs/{id}/receipt` | audit |
 | Decision explanation | GET | `/audit/logs/{id}/explain` | audit |

@@ -53,6 +53,45 @@ OFFSHORE_TOKENS: tuple[str, ...] = (
 )
 
 
+# Phase-2 cleanup 2026-06-15 — broader "suspect egress" set.
+# `EXFIL_HOSTS` above is the narrow list of *known* exfil destinations the
+# attack-chain rules trigger on. Some detectors need a SUPERSET that also
+# captures third-party egress points that aren't clearly exfil-only but
+# show up in cross-arg PII compositions (tar+curl→external-vendor.com,
+# webhook fan-outs through requestbin, etc.). Modeling them as separate
+# tuples keeps each rule's intent surface clear — `is_known_exfil_dest`
+# stays narrow, `external-egress + PII marker` stays broad.
+#
+# EXTERNAL_EGRESS_HOSTS includes every EXFIL_HOSTS entry plus the
+# "suspect-but-not-clearly-exfil" supplements; consumers should NOT
+# union the two manually.
+_EXTRA_EGRESS_ONLY: tuple[str, ...] = (
+    "external-monitoring.io",
+    "external-vendor.com",
+    "requestbin.com",
+)
+
+EXTERNAL_EGRESS_HOSTS: tuple[str, ...] = tuple(
+    sorted(set(EXFIL_HOSTS) | set(_EXTRA_EGRESS_ONLY))
+)
+
+
+# Personal-email domains. The session-intelligence engine uses these to
+# spot "sendmail-to-personal-account" exfil patterns where the recipient
+# is a free webmail provider rather than a corporate domain. Pure-data,
+# not policy — operators can override per-tenant via threat-intel
+# (Sprint 7) once Sprint 7.5 wires runtime overlays in.
+PERSONAL_EMAIL_DOMAINS: tuple[str, ...] = (
+    "@gmail.com",
+    "@hotmail.com",
+    "@icloud.com",
+    "@outlook.com",
+    "@proton.me",
+    "@protonmail.com",
+    "@yahoo.com",
+)
+
+
 def _check_sorted_unique(name: str, items: tuple[str, ...]) -> None:
     """Defensive guard run at import time so a typo in the catalog
     raises immediately, not at the drift test."""
@@ -65,3 +104,11 @@ def _check_sorted_unique(name: str, items: tuple[str, ...]) -> None:
 
 _check_sorted_unique("EXFIL_HOSTS", EXFIL_HOSTS)
 _check_sorted_unique("OFFSHORE_TOKENS", OFFSHORE_TOKENS)
+_check_sorted_unique("EXTERNAL_EGRESS_HOSTS", EXTERNAL_EGRESS_HOSTS)
+_check_sorted_unique("PERSONAL_EMAIL_DOMAINS", PERSONAL_EMAIL_DOMAINS)
+# EXTERNAL_EGRESS_HOSTS must be a strict superset of EXFIL_HOSTS — if
+# this guard ever fires, someone removed an exfil host from the catalog
+# without also pulling it from the egress derivation.
+assert set(EXFIL_HOSTS).issubset(set(EXTERNAL_EGRESS_HOSTS)), (
+    "EXTERNAL_EGRESS_HOSTS must contain every EXFIL_HOSTS entry"
+)

@@ -23,10 +23,12 @@ from fastapi import APIRouter, HTTPException, Request
 router = APIRouter(tags=["voice"])
 
 AGENT_NAME = "aegis-guide"
-# 5 minutes — matches the agent-side SESSION_MAX_SECONDS hard cap. Bounds the
-# upper limit on free-tier quota burn per browser session. A reviewer can
-# always click the button again to mint a fresh token.
-TOKEN_TTL_SECONDS = 300
+# 30 minutes — matches the agent-side AEGIS_SESSION_MAX_SECONDS default
+# (see voice-agent/agent/src/agent.py). The JWT MUST outlive the agent
+# session or LiveKit will tear the room down mid-conversation. Override
+# via the AEGIS_VOICE_TOKEN_TTL env on the gateway if the agent is run
+# with a different cap.
+TOKEN_TTL_SECONDS = int(os.environ.get("AEGIS_VOICE_TOKEN_TTL", "1800"))
 
 
 def _require_authenticated_user(request: Request) -> str:
@@ -118,9 +120,10 @@ async def voice_token(request: Request) -> dict[str, Any]:
             "identity": identity,
             "agent_name": AGENT_NAME,
             "expires_in": TOKEN_TTL_SECONDS,
-            # The agent enforces its own SESSION_MAX_SECONDS independently;
-            # the UI uses this value to render a countdown. Agent-side default
-            # is also 300s, so they match unless an operator overrides it.
+            # The agent enforces its own AEGIS_SESSION_MAX_SECONDS hard cap
+            # plus an AEGIS_SESSION_IDLE_SECONDS watchdog; the UI uses this
+            # value to render a countdown. Both default to 1800 so they match
+            # unless an operator overrides one of them.
             "session_max_seconds": TOKEN_TTL_SECONDS,
         },
     }

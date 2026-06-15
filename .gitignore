@@ -62,11 +62,67 @@ ui/.env.local
 #   SECRETS.md        filename alone is a red flag; superseded by docs/security/secret-management.md
 #   docs/quickstart.md  superseded by docs/introduction/quickstart.md
 #   docs/runbooks/    superseded by docs/operations/runbooks/
+#   CLIENT.md         operator/customer walkthrough — contains demo password admin1234
 docs/client01.md
 docs/ops_metrics.md
 docs/SECRETS.md
 docs/quickstart.md
 docs/runbooks/
+CLIENT.md
+
+# ==========================================
+# Session audit + ops artifacts
+# ==========================================
+# Anything generated under audit_*/, FIXES_*.md, or similar one-shot session
+# dirs is *operational evidence*, not product source. These often contain
+# OpenAPI dumps, probe results, hit counts, JWT lengths, demo passwords,
+# and account ids — fine for the operator's working tree, NOT for git.
+audit_*/
+FIXES_APPLIED.md
+HONEST_STATUS_*.md
+DEPLOY_REPORT_*.md
+SPRINT_*_REPORT.md
+SOAK_REPORT_*.md
+session_*/
+reports/
+brutal_*.md
+debug_*.txt
+
+# ==========================================
+# AWS / cloud one-off credential files
+# Sprint A8 — defensive: catch every common .env.* shape so a future
+# .env.aws.staging / .env.aws.prod / .env.ci.local can't slip past
+# the per-folder .gitignore in voice-agent/.
+# ==========================================
+**/.env.aws*
+**/.env.ci*
+**/.env.staging*
+**/.env.prod*
+**/.env.production*
+**/.env.dev*
+**/.env.test*
+**/.env.local*
+**/aws_credentials
+**/.aws/credentials
+**/.aws/config
+
+# ==========================================
+# Secrets toolchain — never commit a real .pypirc / .npmrc with tokens
+# ==========================================
+.pypirc
+**/.pypirc
+.npmrc
+**/.npmrc
+.gem/credentials
+
+# ==========================================
+# Audit + verification helpers that leave creds on disk
+# ==========================================
+/tmp/aegis_token
+/tmp/aegis_apikey
+*aegis_token*
+*aegis_apikey*
+*aegis_jwt*
 
 # ==========================================
 # IDEs / Editors / OS
@@ -170,6 +226,25 @@ infra/terraform/**/*_override.tf.json
 infra/terraform/**/.terraformrc
 infra/terraform/**/terraform.rc
 
+# Phase-1 cleanup 2026-06-15. The patterns above only cover
+# infra/terraform; tfstate/tfvars elsewhere (voice-agent/infrastructure,
+# any future module) were a quiet risk — local audit found 4 .tfstate
+# files under voice-agent/ that the per-module rule missed. Broaden so
+# every tfstate / tfvars / .terraform/ in the tree is ignored.
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.tfvars.json
+**/.terraform/
+**/.terraform.lock.hcl
+
+# Phase-1 cleanup 2026-06-15 — defensive: macOS finder cruft + Python
+# build/cache that occasionally slipped past the per-module rules.
+**/.DS_Store
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+
 # Generated secret files (sprint-8.2 dev secrets path)
 # We keep secrets locally at /tmp/aegis-dev-secrets/ — outside the repo —
 # but also block any accidental in-repo creation.
@@ -177,3 +252,4 @@ infra/terraform/**/terraform.rc
 **/dev-creds.env
 **/prod-creds.env
 **/*-creds.env
+.env.pypi

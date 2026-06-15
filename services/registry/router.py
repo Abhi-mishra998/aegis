@@ -410,6 +410,96 @@ async def delete_agent(
 
 
 # =========================
+# QUARANTINE (Sprint B 2026-06-14 — blast-radius layer)
+# =========================
+# A compromised agent should stop dead within seconds, not require
+# operator log-on. POST /agents/{id}/quarantine sets a Redis flag the
+# gateway middleware short-circuits on AND flips registry.agents.status
+# to "quarantined" so the change survives a Redis flush + shows up in
+# Fleet UI. DELETE clears both.
+
+
+@router.post(
+    "/{agent_id}/quarantine",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+)
+async def quarantine_agent_endpoint(
+    request: Request,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    service: Annotated[AgentService, Depends(get_agent_service)],
+    agent_id: uuid.UUID,
+) -> APIResponse[dict]:
+    """Mark agent quarantined: Redis flag + status='quarantined' + audit row.
+    Idempotent — quarantining an already-quarantined agent is a no-op."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    body = await request.json() if request.headers.get("content-length") else {}
+    reason = (body.get("reason") if isinstance(body, dict) else None) or "manual"
+
+    _redis = get_redis_client(settings.REDIS_URL)
+    try:
+        key = f"acp:quarantine:{tenant_id}:{agent_id}"
+        await _redis.setex(key, 86_400, reason)
+
+        # Persistent status flip (survives Redis flush).
+        try:
+            await service.update_agent(
+                tenant_id, agent_id,
+                AgentUpdate(status="quarantined"),
+            )
+        except Exception as exc:
+            # If status enum doesn't accept the value we still hold the
+            # Redis flag — gateway short-circuit is the source of truth.
+            logger.warning("quarantine_status_update_skip", error=str(exc))
+
+        await push_audit_event(
+            redis=_redis, tenant_id=tenant_id, agent_id=agent_id,
+            action="agent_quarantined",
+            request_id=request_id, metadata={"reason": reason, "ttl_s": 86_400},
+        )
+    finally:
+        await _redis.aclose()
+
+    logger.warning("agent_quarantined", agent_id=str(agent_id), reason=reason)
+    return APIResponse(data={"agent_id": str(agent_id),
+                             "quarantined": True, "reason": reason,
+                             "ttl_seconds": 86_400})
+
+
+@router.delete(
+    "/{agent_id}/quarantine",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+)
+async def release_quarantine_endpoint(
+    request: Request,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    service: Annotated[AgentService, Depends(get_agent_service)],
+    agent_id: uuid.UUID,
+) -> APIResponse[dict]:
+    request_id = getattr(request.state, "request_id", "unknown")
+    _redis = get_redis_client(settings.REDIS_URL)
+    try:
+        await _redis.delete(f"acp:quarantine:{tenant_id}:{agent_id}")
+        try:
+            await service.update_agent(
+                tenant_id, agent_id,
+                AgentUpdate(status="active"),
+            )
+        except Exception as exc:
+            logger.warning("quarantine_release_status_update_skip", error=str(exc))
+        await push_audit_event(
+            redis=_redis, tenant_id=tenant_id, agent_id=agent_id,
+            action="agent_quarantine_released",
+            request_id=request_id, metadata={},
+        )
+    finally:
+        await _redis.aclose()
+
+    return APIResponse(data={"agent_id": str(agent_id), "quarantined": False})
+
+
+# =========================
 # PERMISSIONS
 # =========================
 

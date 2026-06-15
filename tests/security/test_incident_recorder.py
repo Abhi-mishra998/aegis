@@ -7,7 +7,6 @@ status transitions, and the get/list read API.
 """
 from __future__ import annotations
 
-import json
 
 import pytest
 
@@ -15,92 +14,8 @@ from services.security.incidents import recorder, store
 from services.security.incidents.storyline import STATUS_BLOCKED, STATUS_QUARANTINED
 
 
-# ---------------------------------------------------------------------------
-# Minimal async Redis fake — just the subset the recorder + store use.
-# ---------------------------------------------------------------------------
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.kv: dict[str, str] = {}
-        self.lists: dict[str, list[str]] = {}
-        self.hashes: dict[str, dict[str, str]] = {}
-        self.zsets: dict[str, dict[str, float]] = {}
-        self.ttls: dict[str, int] = {}
-
-    async def set(self, k, v, ex=None, nx=False):
-        if nx and k in self.kv:
-            return False
-        self.kv[k] = str(v)
-        if ex:
-            self.ttls[k] = ex
-        return True
-
-    async def get(self, k):
-        v = self.kv.get(k)
-        return v.encode() if isinstance(v, str) else v
-
-    async def expire(self, k, ex):
-        self.ttls[k] = ex
-        return True
-
-    async def rpush(self, k, *vals):
-        lst = self.lists.setdefault(k, [])
-        for v in vals:
-            lst.append(v if isinstance(v, str) else str(v))
-        return len(lst)
-
-    async def lrange(self, k, start, end):
-        lst = self.lists.get(k, [])
-        if end == -1:
-            return [x.encode() for x in lst]
-        return [x.encode() for x in lst[start: end + 1]]
-
-    async def hset(self, k, field=None, value=None, mapping=None, **kw):
-        # redis-py supports two call shapes the recorder relies on:
-        #   hset(name, field, value)           — single-field write
-        #   hset(name, mapping={field: value}) — batch write
-        h = self.hashes.setdefault(k, {})
-        wrote = 0
-        if field is not None:
-            h[field] = str(value) if value is not None else ""
-            wrote += 1
-        if mapping:
-            for kk, vv in mapping.items():
-                h[kk] = str(vv) if vv is not None else ""
-                wrote += 1
-        for kk, vv in kw.items():
-            h[kk] = str(vv) if vv is not None else ""
-            wrote += 1
-        return wrote
-
-    async def hsetnx(self, k, field, value):
-        h = self.hashes.setdefault(k, {})
-        if field in h:
-            return 0
-        h[field] = str(value)
-        return 1
-
-    async def hget(self, k, field):
-        h = self.hashes.get(k, {})
-        v = h.get(field)
-        return v.encode() if isinstance(v, str) else v
-
-    async def hgetall(self, k):
-        h = self.hashes.get(k, {})
-        return {kk.encode(): vv.encode() for kk, vv in h.items()}
-
-    async def zadd(self, k, mapping):
-        z = self.zsets.setdefault(k, {})
-        for m, s in mapping.items():
-            z[m] = float(s)
-        return len(mapping)
-
-    async def zrevrangebyscore(self, k, max_, min_, start=0, num=10):
-        z = self.zsets.get(k, {})
-        items = [(m, s) for m, s in z.items() if (min_ == "-inf" or s >= float(min_))
-                 and (max_ == "+inf" or s <= float(max_))]
-        items.sort(key=lambda x: x[1], reverse=True)
-        out = items[start: start + num]
-        return [m.encode() for m, _ in out]
+# Phase-2 cleanup 2026-06-15 — fake moved to tests/security/_fakes.py.
+from tests.security._fakes import FakeRedis as _FakeRedis
 
 
 # ---------------------------------------------------------------------------

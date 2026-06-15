@@ -60,7 +60,124 @@ async def compliance_tool_ledger(request: Request) -> Any:
     return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/tool-ledger", request)
 
 
+@router.get("/compliance/dpdp", tags=["compliance"])
+async def compliance_dpdp(request: Request) -> Any:
+    """Proxy → Audit service India DPDP Act + Rules (Nov 2025) evidence bundle (A5)."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/dpdp", request)
+
+
+@router.get("/compliance/export/grc", tags=["compliance"])
+async def compliance_export_grc(request: Request) -> Response:
+    """A6 — Stream GRC (Vanta / Drata) control-evidence export through.
+
+    Query params: period_start, period_end (ISO-8601), format (json|csv).
+    Streamed because the CSV variant can be tens of MB for a long period.
+    """
+    upstream_req = request.app.state.client.build_request(
+        "GET",
+        f"{_base()}/compliance/export/grc",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    upstream = await request.app.state.client.send(upstream_req, stream=True)
+
+    async def _relay() -> Any:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    forward_headers: dict[str, str] = {}
+    if "content-disposition" in upstream.headers:
+        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
+    if "content-length" in upstream.headers:
+        forward_headers["Content-Length"] = upstream.headers["content-length"]
+
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json"),
+        headers=forward_headers,
+    )
+
+
 # ── PDF exports (streamed) ───────────────────────────────────────────────
+
+@router.get("/compliance/verifiable-bundle/{framework}", tags=["compliance"])
+async def compliance_verifiable_bundle(framework: str, request: Request) -> Response:
+    """R2 — Proxy → audit service offline-verifiable evidence bundle.
+
+    framework ∈ {eu-ai-act, nist-ai-rmf, soc2}. Query params:
+    ``period_start``, ``period_end`` (ISO-8601). The downloaded JSON
+    is consumed by `python -m aegis_verify --bundle <file>` for
+    offline cryptographic verification.
+    """
+    upstream_req = request.app.state.client.build_request(
+        "GET",
+        f"{_base()}/compliance/verifiable-bundle/{framework}",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    upstream = await request.app.state.client.send(upstream_req, stream=True)
+
+    async def _relay() -> Any:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    forward_headers: dict[str, str] = {}
+    if "content-disposition" in upstream.headers:
+        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
+    if "content-length" in upstream.headers:
+        forward_headers["Content-Length"] = upstream.headers["content-length"]
+
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json"),
+        headers=forward_headers,
+    )
+
+
+@router.get("/compliance/export/{bundle_type}", tags=["compliance"])
+async def compliance_export_get(bundle_type: str, request: Request) -> Response:
+    """Proxy → ``GET /compliance/export/{bundle_type}`` (JSON bundle).
+
+    Streams the bundle JSON download. bundle_type ∈
+    {tool-ledger, eu-ai-act, nist-ai-rmf, soc2}. Query params:
+    ``period_start``, ``period_end`` (ISO-8601).
+    """
+    upstream_req = request.app.state.client.build_request(
+        "GET",
+        f"{_base()}/compliance/export/{bundle_type}",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    upstream = await request.app.state.client.send(upstream_req, stream=True)
+
+    async def _relay() -> Any:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    forward_headers: dict[str, str] = {}
+    if "content-disposition" in upstream.headers:
+        forward_headers["Content-Disposition"] = upstream.headers["content-disposition"]
+    if "content-length" in upstream.headers:
+        forward_headers["Content-Length"] = upstream.headers["content-length"]
+
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json"),
+        headers=forward_headers,
+    )
+
 
 @router.post("/compliance/export", tags=["compliance"])
 async def compliance_export(request: Request) -> Response:

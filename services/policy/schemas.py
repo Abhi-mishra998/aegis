@@ -82,6 +82,29 @@ class EvaluationResponse(BaseModel):
     reason: str
     risk_adjustment: float = 0.0
     evaluated_at: datetime
+    # ARCH-3/4 2026-06-15 — explainability + 5-tier classification.
+    # ``tier`` ∈ {allow, monitor, escalate, deny, quarantine}. ``findings`` is
+    # the canonical-vocabulary list of signals the evaluator matched. ``policy_id``
+    # is a stable rule identifier (e.g. "HC-PII-001", "FIN-WIRE-002") that the
+    # SOC can quote without parsing the prose explanation. ``risk_score`` is
+    # the inherent risk of this action on 0-100. Old clients ignoring these
+    # fields keep working — the existing ``allowed`` + ``reason`` contract is
+    # untouched.
+    tier: str = "allow"
+    findings: list[str] = []
+    policy_id: str = ""
+    risk_score: int = 0
+    explanation: str = ""
+    # ARCH-8 / FUP-4 2026-06-15 — split SEC + GOV engine slices so
+    # dashboards / SOC consoles can route adversarial vs governance traffic
+    # to distinct rotations. Each slice is {tier, findings, policy_id, risk_score}.
+    security:   dict = {}
+    governance: dict = {}
+    # Sprint 1 2026-06-15 — MITRE ATT&CK mapping for the primary finding.
+    # Empty dict when the finding isn't registered. Shape:
+    #   {"tactic": "TA0040", "technique": "T1657 Financial Theft",
+    #    "objective": "impact", "severity": "CRITICAL"}.
+    mitre: dict = {}
 
 
 # =========================

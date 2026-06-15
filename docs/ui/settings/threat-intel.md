@@ -52,7 +52,7 @@ No. The summary is tenant-level; the enrichment lookups are caller-agnostic.
 
 ## Related docs
 
-- [Intelligence service](../../services/intelligence.md)
+- [Learning service](../../services/learning.md) — cross-agent behavioural correlation
 - [API service](../../services/api.md)
 - [Forensics UI](../operations/forensics.md)
 

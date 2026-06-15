@@ -1,0 +1,40 @@
+# Aegis Security Disclosure Policy (RFC 9116)
+# https://www.rfc-editor.org/rfc/rfc9116
+#
+# We treat the security of our security product as a first-class
+# concern. If you find something, we want to hear from you — quickly,
+# privately, and with credit.
+
+Contact: mailto:security@aegisagent.in
+Contact: https://aegisagent.in/security/report
+Expires: 2027-06-13T23:59:59.000Z
+Encryption: https://aegisagent.in/.well-known/security-pgp-key.txt
+Preferred-Languages: en
+Canonical: https://aegisagent.in/.well-known/security.txt
+Policy: https://aegisagent.in/security/policy
+Hiring: https://aegisagent.in/careers
+
+# Scope
+# -----
+# In scope:
+#   * dev.aegisagent.in (reference deployment)
+#   * ha.aegisagent.in  (prod-ha environment when live)
+#   * any binary, container image, or SDK we publish
+#
+# Out of scope:
+#   * customer tenant data (we cannot consent on their behalf)
+#   * social engineering against staff
+#   * DoS, volumetric / network-layer testing without prior arrangement
+#
+# Safe harbour
+# ------------
+# Reports made in good faith following this policy will not be
+# prosecuted. We commit to:
+#   * acknowledge within 48 hours
+#   * triage within 5 business days
+#   * publish a fix or mitigation within 90 days for High/Critical
+#   * credit the reporter (with consent) in the changelog
+#
+# This file is signed with our ed25519 receipt-signing key (see
+# /receipts/key endpoint). A drift in the signature is a tampering
+# signal — report it via the Contact channels above.

@@ -9,7 +9,7 @@
 | `GROQ_API_KEY` | External LLM API | On compromise | Insight service only |
 | `POSTGRES_PASSWORD` | Database | 90 days | PgBouncer + all DB-connected services |
 | `ACP_AGE_PRIVATE_KEY` | Backup encryption | 180 days | `scripts/ops/backup.sh` decryption |
-| Transparency signing key | Audit root signing | 90 days | `services/audit/transparency_signer.py` |
+| Transparency signing key | Audit root signing | 90 days | `services/audit/signer.py` |
 
 ---
 
