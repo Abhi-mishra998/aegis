@@ -16,8 +16,15 @@
 <h3>
 🛡️ A runtime firewall for AI agents that <strong>blocks</strong> dangerous actions before they run,
 <br/>
-<strong>cryptographically proves</strong> what happened after, and now <strong>talks back</strong> when you ask it questions.
+<strong>cryptographically proves</strong> what happened after — under an <strong>open verification standard</strong> any auditor can run offline.
 </h3>
+
+<br/>
+
+<p>
+  <strong>📜 The product promise — one sentence:</strong><br/>
+  <em>"Don't trust us. Download the bundle, run the open verifier, prove the record wasn't altered — offline, no Aegis account, no API key, no network call."</em>
+</p>
 
 <br/>
 
@@ -66,10 +73,11 @@
 
 <!-- PROJECT HEALTH -->
 <p>
-  <img src="https://img.shields.io/badge/services-13-1f2937?style=flat-square&labelColor=111827" alt="services"/>
-  <img src="https://img.shields.io/badge/containers-22-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
-  <img src="https://img.shields.io/badge/e2e_p95-~70ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
+  <img src="https://img.shields.io/badge/services-16-1f2937?style=flat-square&labelColor=111827" alt="services"/>
+  <img src="https://img.shields.io/badge/containers-22%2Fhost-1f2937?style=flat-square&labelColor=111827" alt="containers"/>
+  <img src="https://img.shields.io/badge/e2e_p95-~34ms-22c55e?style=flat-square&labelColor=111827" alt="p95"/>
   <img src="https://img.shields.io/badge/audit_chain-violations_0-22c55e?style=flat-square&labelColor=111827" alt="audit chain"/>
+  <img src="https://img.shields.io/badge/AEVF-aevf%2F0.1.0_open_standard-8b5cf6?style=flat-square&labelColor=111827" alt="AEVF open standard"/>
   <img src="https://img.shields.io/badge/voice_agent-LIVE-FF4081?style=flat-square&labelColor=111827" alt="voice live"/>
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square&labelColor=111827" alt="license"/>
   <a href="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml"><img src="https://github.com/Abhi-mishra998/aegis/actions/workflows/test.yml/badge.svg" alt="Tests"/></a>
@@ -77,17 +85,17 @@
 
 <!-- LIVE DEPLOYMENT -->
 <p>
-  <a href="https://dev.aegisagent.in">
-    <img src="https://img.shields.io/badge/🟢_LIVE_DEPLOYMENT-dev.aegisagent.in-00E5A0?style=for-the-badge&labelColor=000000" alt="Live Deployment"/>
+  <a href="https://ha.aegisagent.in">
+    <img src="https://img.shields.io/badge/🟢_LIVE_DEPLOYMENT-ha.aegisagent.in-00E5A0?style=for-the-badge&labelColor=000000" alt="Live Deployment"/>
   </a>
   <img src="https://img.shields.io/badge/AWS-ap--south--1_Mumbai-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="AWS Mumbai"/>
-  <img src="https://img.shields.io/badge/EC2-m6g.medium_Graviton-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="EC2"/>
-  <img src="https://img.shields.io/badge/RDS-PostgreSQL_15_Single--AZ-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="RDS PostgreSQL"/>
+  <img src="https://img.shields.io/badge/ASG-2×_m6g.medium_Graviton_Multi--AZ-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="ASG"/>
+  <img src="https://img.shields.io/badge/RDS-PostgreSQL_15_Multi--AZ-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="RDS PostgreSQL"/>
 </p>
 
 <!-- CTA ROW -->
 <p>
-  <a href="https://dev.aegisagent.in"><img src="https://img.shields.io/badge/🌐_TRY_LIVE_DEMO-dev.aegisagent.in-00E5A0?style=for-the-badge&labelColor=000000" alt="Live Demo"/></a>
+  <a href="https://ha.aegisagent.in"><img src="https://img.shields.io/badge/🌐_TRY_LIVE_DEMO-ha.aegisagent.in-00E5A0?style=for-the-badge&labelColor=000000" alt="Live Demo"/></a>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/🚀_QUICK_START-1_min-3b82f6?style=for-the-badge&labelColor=000000" alt="Quick Start"/></a>
   <a href="./docs/architecture/system-overview.md"><img src="https://img.shields.io/badge/🏗️_ARCHITECTURE-deep_dive-8b5cf6?style=for-the-badge&labelColor=000000" alt="Architecture"/></a>
   <a href="./docs/voice-guide/_index.md"><img src="https://img.shields.io/badge/🎙️_VOICE_AGENT-now_in_navbar-FF4081?style=for-the-badge&labelColor=000000" alt="Voice Agent"/></a>
@@ -107,15 +115,19 @@
 
 ## 📖 Table of Contents
 
+- [What changed (2026-06-14)](#-what-changed-2026-06-14)
+- [What changed (2026-06-13)](#-what-changed-2026-06-13)
 - [What changed (2026-06-01)](#-what-changed-2026-06-01)
 - [What Aegis is](#%EF%B8%8F-what-aegis-is)
+- [AEVF — Open Verification Standard](#-aevf--open-verification-standard)
 - [The problem, stated plainly](#-the-problem-stated-plainly)
 - [How Aegis closes the gap](#%EF%B8%8F-how-aegis-closes-the-gap)
 - [Architecture at a glance](#%EF%B8%8F-architecture-at-a-glance)
 - [Voice Agent — in the navbar](#%EF%B8%8F-voice-agent--in-the-navbar)
-- [The 10-stage request pipeline](#-the-10-stage-request-pipeline)
+- [The 11-stage request pipeline](#-the-11-stage-request-pipeline)
 - [Cryptographic trust chain](#-cryptographic-trust-chain)
 - [SDK integration](#-sdk-integration)
+- [Evidence export](#-evidence-export)
 - [AWS deployment](#%EF%B8%8F-aws-deployment)
 - [Quick start](#-quick-start)
 - [Demo packs](#-demo-packs)
@@ -128,9 +140,90 @@
 
 ---
 
+## 🆕 What changed (2026-06-14)
+
+### AEVF — Aegis Evidence Verification Format, published as an open standard
+
+The audit chain format and verification algorithm are now published as **[AEVF `aevf/0.1.0`](./docs/AEVF/spec.md)** — a byte-precise, Apache-2.0-licensed spec under `docs/AEVF/`. An auditor can:
+
+1. Download a signed evidence bundle (any of the four frameworks Aegis supports).
+2. `pip install aegis-aevf` — the standalone reference verifier.
+3. Run `aegis-verify --bundle bundle.json` — **offline, no Aegis account, no API key, no network call**.
+4. Get a PASS / FAIL on six independent checks (V1–V6: bundle format, per-row event_hash, per-shard prev_hash chain, Merkle root signatures, cross-day root chain, retention metadata consistency).
+
+The folder contains the [spec](./docs/AEVF/spec.md), an [auditor checklist](./docs/AEVF/auditor-checklist.md), a [reference audit-report template](./docs/AEVF/reference-audit-report.md), and a deterministic [reference bundle](./docs/AEVF/reference-bundle-2026-06.json) (`sha256: 8a6f09f65c374edf44c811dba8f146c8d79dab9ed74e3c49920be759951f20fc`) you can verify in 60 seconds without running Aegis at all.
+
+### Three drop-in SDK wrappers shipped to PyPI
+
+- **`aegis-anthropic`** — wraps the Anthropic Python SDK; every `tool_use` block is pre-checked.
+- **`aegis-openai`** — wraps the OpenAI Python SDK; every `tool_calls` entry is pre-checked.
+- **`aegis-langchain`** — wraps any LangChain `AgentExecutor` / `Runnable`.
+
+All three are ~200 LOC of Python with one runtime dependency (`httpx`), Apache 2.0, fail-closed by default. Three-line install pattern documented at **[docs/integrations/sdk-wrappers.md](./docs/integrations/sdk-wrappers.md)**.
+
+### India DPDP Act 2023 + GRC evidence export
+
+- New `/compliance/dpdp` endpoint — signed evidence bundle mapped to DPDP §8(5)-8(9), §11, and Rules Schedule II (notified 2025-11-13). Reports `retention_assessment.meets_dpdp_minimum` honestly against the 365-day requirement.
+- New `/compliance/export/grc?format=json|csv` endpoint — Vanta / Drata / Secureframe / Hyperproof-ready evidence rows across all four frameworks (SOC 2 + EU AI Act + NIST AI RMF + DPDP).
+- Every row in every export — SIEM events too — now carries `aevf_bundle_url`, `aevf_event_hash`, `aevf_spec_version` so the auditor pivots from any GRC platform back to the verifiable AEVF bundle.
+
+### R0 + v3-deep action-semantics policy
+
+`services/policy/policies/action_semantics_deny.rego` denies on the *meaning* of the action, not on substring match: shell destruction, SQL DDL destruction, system-path access, **K8s production-namespace destruction** (namespace-aware: `prod`, `staging`, `payments`, `billing`, `customer`, `live`, `mainnet`), **risk-tunable PII row threshold** (critical=0, high=100, medium=1000, low=10000), and **external-domain PII exfil** on `email.send` / `http.post` / `webhook.send`. The Live Demo's three-scenario picker (`fintech_data_egress`, `devops_destruction`, `support_pii_exfil`) exercises each rule end-to-end.
+
+<br/>
+
+---
+
+## 🆕 What changed (2026-06-13)
+
+The 2026-06-13 cut-over notes:
+
+### Prod-ha cut-over — HA infrastructure is live
+
+The single-EC2 dev deployment was destroyed on 2026-06-13 and replaced with a Multi-AZ prod-ha stack: 2× `m6g.medium` EC2 across two AZs behind an ALB, `db.t3.small` RDS Multi-AZ, ElastiCache Redis with reader replica, WAFv2 (Common + KnownBadInputs + SQLi + per-IP rate limit), AWS Secrets Manager for 7 secrets, KMS-rooted ed25519 signing key in SSM SecureString. All five subdomains (`aegisagent.in`, `www`, `api`, `ha`, `dev`) now resolve to the new ALB. Voice agent (`i-059ed91510dee24e0`) preserved on its own EC2.
+
+`https://ha.aegisagent.in` is the canonical live URL. `/system/health` reports `12/12 services healthy, p95 ~34ms` against the 23/23 `scripts/qa/test_prodha.py` harness. Full report in `DEPLOY_REPORT_2026_06_13.md` + 14 deploy-time bugs catalogued + fixed.
+
+### Five sprints (5-9) shipped + reported
+
+Each shipped behind a SPRINT_*_REPORT.md and is wired in the UI sidebar under Operations:
+
+| Sprint | UI surface | Backend |
+|---|---|---|
+| 5 — Attack Evaluation Suite | `/evaluation` page | 560-case OWASP corpus + 3 evaluators + deterministic export bundle |
+| 6 — Shadow Mode | `/shadow-mode` page | Drift alerts + 60-second demo script + per-tenant shadow eval |
+| 7 — Policy Replay | `/policy-replay` page | Rules→Rego compiler + historical replay against a draft policy |
+| 8 — Distribution | — (server + extension) | OTel HTTP exporter, MCP server (4 governance tools), VS Code extension |
+| 9 — HA Terraform | — (infra) | prod-ha multi-AZ stack, DR evidence harness, KMS prod-guard |
+
+### Approval Inbox UI for autonomy ESCALATE
+
+`/approval-inbox` page. The autonomy contracts already emit ESCALATE decisions; this page is the operator surface — pending escalations on the left, payload + risk + matched rule on the right, Approve / Reject buttons that POST to `/autonomy/overrides`. The actor on the override is taken from the gateway-injected `X-ACP-Actor` header (JWT `sub`) — browser-supplied values are ignored.
+
+### Compliance evidence-bundle download wired end-to-end
+
+`Compliance.jsx` now successfully POSTs to `/compliance/export?format=pdf` (was 405 GET) and there's a new `exportJsonBundle` helper for the GET `/compliance/export/{eu-ai-act|soc2|nist-ai-rmf|tool-ledger}` JSON path that ships signed evidence bundles per Sprint 9.
+
+### Minimal-mode self-host topology
+
+New `infra/minimal/` shape: 3 docker services (Postgres + Redis + `aegis-core`) with all 9 inner Aegis processes supervised inside the `aegis-core` container. One externally-reachable port (`:8000`). Bundled image is `aegis/core:minimal`; parity test at `scripts/qa/test_minimal_mode.sh` verifies R0 destructive denials + R2 evidence bundles. Validated end-to-end on a throwaway EC2 (10/10 assertions pass). See `infra/minimal/README.md`.
+
+### Incidents populate from real denials
+
+The gateway middleware now publishes to the `acp:incidents:queue` Redis stream every time a tool call is denied, killed, or escalated. The api service's consumer reads from the stream, dedups within a 5-minute window, and writes signed Incident rows. The `/incidents` page no longer ships a blank grid — it lights up the moment the demo triggers its first block.
+
+### Three live-demo scenarios across three risk profiles
+
+`/live-demo` now ships a scenario picker — **Fintech (medium)**, **DevOps (low)**, **Support (medium)** — each provisioning its own agent at the stated risk level. Each scenario has three buyer-editable suggested prompts; the deny still comes from action semantics (`DROP TABLE`, `rm -rf`, `kubectl delete`, external-domain PII egress) regardless of which prompt the buyer types, so the demo holds up when they change the wording or flip the risk level. Every deny links one click to the signed receipt → offline verifier (`tools/aegis_verify/`). Automated end-to-end harness at `scripts/qa/test_demo_scenarios.py`.
+
+<br/>
+
+---
+
 ## 🆕 What changed (2026-06-01)
 
-This is a non-trivial revision of Aegis. Major shifts you should know about before you read further:
+This was the previous revision. Major shifts you should know about before you read further:
 
 ### Voice Agent now ships inside the Aegis UI
 
@@ -140,7 +233,7 @@ Three independent layers cap each session at 5 minutes (gateway JWT TTL + agent 
 
 ### Live deployment moved from prod to dev
 
-The historical two-EC2 production stack at `aegisagent.in` was decommissioned on 2026-06-01 after a full `terraform destroy + apply` rebuild surfaced 11 non-obvious infra bugs ([catalogued here](./docs/operations/deployment.md#non-obvious-gotchas-catalogued-during-the-2026-06-01-dev-rebuild)). The single-EC2 dev environment at **`https://dev.aegisagent.in`** is the live deployment today, sized for ~10 concurrent reviewers at ~$22–45/mo.
+The historical two-EC2 production stack at `aegisagent.in` was decommissioned on 2026-06-01 after a full `terraform destroy + apply` rebuild surfaced 11 non-obvious infra bugs ([catalogued here](./docs/operations/deployment.md#non-obvious-gotchas-catalogued-during-the-2026-06-01-dev-rebuild)). The single-EC2 dev environment at `dev.aegisagent.in` was the live deployment until the **2026-06-13 prod-ha cut-over** documented above. All `aegisagent.in` subdomains now resolve to the Multi-AZ ASG behind the prod-ha ALB; `https://ha.aegisagent.in` is the canonical URL.
 
 ### GitBook refreshed across four sprints
 
@@ -166,17 +259,25 @@ The voice agent's `Modelfile` was rewritten to sound like a peer engineer, not a
 
 **📦 What's in the box**
 
-- **13 application services** running across **22 containers** on a single Graviton EC2 (`m6g.medium`)
-- **38 React UI pages** — every page wired to a live backend, zero mocked data
+- **16 application services** across **22 containers**, deployed on a 2-AZ ASG of `m6g.medium` Graviton EC2 behind an ALB
+- **49 React UI pages** — every page wired to a live backend, zero mocked data. Most dashboards populate from real traffic the moment you run the Live Demo. Panels that need an operator action first (API Keys, Webhooks, SSO, SIEM, Approval Inbox, Incidents until the first deny) show an honest "lights up when…" empty state — never a blank grid
 - **Voice Agent in the navbar** — Deepgram → Groq → Cartesia, hybrid RAG over the GitBook
 - **3 end-to-end demo packs** (db_copilot, devops_agent, support_agent) — populate the UI in ~46 s
 - **Cryptographically verifiable audit chain** — ed25519 per-row + 16-shard HMAC + daily Merkle root
 - **Offline chain verifier** — `acp verify-chain` validates without trusting the running system
+- **Offline evidence-bundle verifier** — [`aegis-verify`](https://pypi.org/project/aegis-aevf/) on PyPI (standalone CLI under [`tools/aegis_verify/`](./tools/aegis_verify/)) re-checks per-row hashes + Merkle root signatures + V1–V6 tamper detectors against an EU AI Act / SOC 2 / NIST AI RMF / DPDP evidence bundle on the auditor's own laptop — no Aegis account, no API key, no network call
 - **Per-service mesh JWT auth** — no single shared secret across services
 - **Durable billing outbox** — atomic `audit + pending_usage_event` write + 60s drain worker
 - **Forensics replay** — timeline, blast-radius, cross-source replay, signed PDF export
-- **PDF compliance export** — EU AI Act / NIST AI RMF / SOC 2 evidence bundles
-- **SIEM integration** — Splunk, Elastic, Sentinel, Chronicle
+- **PDF + JSON + AEVF compliance export** — EU AI Act / NIST AI RMF / SOC 2 / **India DPDP Act 2023** / tool-ledger evidence bundles, each signed with the day's transparency root, each carrying an AEVF back-reference
+- **GRC evidence export** — Vanta / Drata / Secureframe / Hyperproof-ready rows (CSV or JSON) via `GET /compliance/export/grc`
+- **Approval Inbox** — operator surface for autonomy ESCALATE decisions; actor is the gateway-injected `X-ACP-Actor` (JWT `sub`), not the browser
+- **Attack Evaluation Suite** (Sprint 5) — 560-case OWASP corpus + 3 evaluators + deterministic export bundle on the `/evaluation` page
+- **Shadow Mode** (Sprint 6) — `/shadow-mode` page; run a draft policy alongside the live one + drift alerts before promotion
+- **Policy Replay** (Sprint 7) — `/policy-replay` page; replay historical traffic against a draft policy with side-by-side decisions
+- **MCP server + VS Code extension** (Sprint 8) — 4 governance tools exposed over MCP, plus a VS Code extension MVP for in-IDE policy lookup
+- **OTel HTTP exporter** (Sprint 8) — env-driven; ship spans into CloudWatch, Datadog, Grafana Cloud, etc.
+- **SIEM integration** — Splunk HEC, Datadog Logs API, Elastic Bulk Index, Microsoft Sentinel HTTP Data Collector, Google Chronicle UDM Ingest (credentials via AWS SSM Parameter Store at `/aegis-siem/*`)
 - **SDK adapters** — LangChain, Anthropic, OpenAI, native Python
 - **Visual Policy Builder** — GUI → Rego with live traffic simulation
 - **SSO / OIDC** — Google, Microsoft (Azure AD), Okta OAuth2
@@ -184,7 +285,7 @@ The voice agent's `Modelfile` was rewritten to sound like a peer engineer, not a
 - **Auto-remediation playbooks** — pre-built response chains for common incidents
 - **SSE live feed** — per-tenant + per-agent Pub/Sub channels, sub-second propagation
 - Python 3.11, FastAPI 0.115, PostgreSQL 15, Redis 7, OPA/Rego, React 18, Vite 5, Tailwind, LiveKit Agents 1.5
-- End-to-end **p95 ≈ 70 ms** measured on the live deployment (`/system/health`)
+- End-to-end **p95 ≈ 34 ms** on the prod-ha deployment (Multi-AZ ASG, 2× `m6g.medium`), measured via `scripts/qa/test_prodha.py`; gateway-internal harness in `scripts/bench/gateway_p95.py`
 - Full stack runs locally with **one `docker compose up`**
 
 </td>
@@ -196,13 +297,58 @@ The voice agent's `Modelfile` was rewritten to sound like a peer engineer, not a
 - Not an LLM inference provider
 - Not a general-purpose APM
 - Not a wrapper around someone else's policy engine
-- Not multi-region or HA (single EC2 today)
+- Not multi-region (today the prod-ha deployment is Multi-AZ within `ap-south-1` only)
 
 It sits between your agent code and the world. **One product, not a platform.**
 
 </td>
 </tr>
 </table>
+
+<br/>
+
+---
+
+## 📜 AEVF — Open Verification Standard
+
+> **"If the vendor that produced the evidence disappears tomorrow, would your auditor still be able to verify it?"** — that question, this answer.
+
+The bundle format and verification algorithm Aegis emits are not a proprietary detail. They're published as a **byte-precise open specification** under [`docs/AEVF/`](./docs/AEVF/) — version `aevf/0.1.0`, Apache-2.0 licensed.
+
+### What an auditor does
+
+```bash
+# Auditor receives bundle.json from the customer. No Aegis account required.
+$ pip install aegis-aevf
+$ aegis-verify --bundle bundle.json
+
+  [PASS] V1_bundle_format_recognized
+  [PASS] V2_event_hash_recompute        — 1,402 rows pass
+  [PASS] V3_prev_hash_chain_per_shard   — 16 shards, 0 breaks
+  [PASS] V4_merkle_root_signatures      — 30 roots verified
+  [PASS] V5_prev_root_hash_chain        — chain intact
+  [PASS] V6_retention_metadata_consistent
+
+*** PASS *** every signature, hash chain, and Merkle root verifies.
+```
+
+If a single row's `event_hash` was altered, V2 names the broken row by id. If a row was deleted from the middle of a shard, V3 names the gap. If a daily Merkle root was retroactively rewritten, V5 names the day.
+
+### What's in `docs/AEVF/`
+
+| Page | Purpose |
+|---|---|
+| [`README.md`](./docs/AEVF/README.md) | The friendly entry page for auditors |
+| [`spec.md`](./docs/AEVF/spec.md) | The byte-precise specification — implementable from the document alone |
+| [`auditor-checklist.md`](./docs/AEVF/auditor-checklist.md) | 8-section reviewable checklist (independence → key custody → sampling → retention → SIEM reconciliation → sign-off) |
+| [`reference-audit-report.md`](./docs/AEVF/reference-audit-report.md) | Engagement template with pre-drafted conclusions |
+| [`reference-bundle-2026-06.json`](./docs/AEVF/reference-bundle-2026-06.json) | Deterministic reference bundle — `sha256: 8a6f09f65c374edf44c811dba8f146c8d79dab9ed74e3c49920be759951f20fc` |
+
+### What ties it back to the platform
+
+Every channel evidence exits Aegis through — SIEM forwarders (Splunk / Datadog / Elastic / Sentinel / Chronicle), GRC exports (Vanta / Drata / Secureframe / Hyperproof), per-row `/audit/logs/{id}/receipt` — carries an **AEVF back-reference**: `aevf_bundle_url`, `aevf_event_hash`, `aevf_spec_version`. The auditor pivots from a Splunk row or a Vanta control to the verifiable bundle and runs the offline verifier — no calls back to Aegis.
+
+The reference implementation lives in [`tools/aegis_verify/`](./tools/aegis_verify/) and depends only on the Python standard library plus `cryptography`. Fork it, write your own verifier, ship a competing implementation — that's the design.
 
 <br/>
 
@@ -239,9 +385,9 @@ The full per-stage walkthrough is at **[docs/architecture/10-stage-pipeline.md](
 | **0 — Kill switch** | `acp:kill_switch:{tenant_id}` Redis flag | Tenant-wide halt; propagates in < 5 s; fail-closed |
 | **1 — Auth** | JWT (HS256) + JTI revocation + 1 ms replay window | Stolen tokens, replayed requests, missing tenant context |
 | **2 — Rate limit** | Per-tenant token bucket + per-agent USD cap | Runaway loops, agents abusing other agents' quotas |
-| **3 — Inference proxy** | 17-pattern injection classifier + SQL injection regex | Prompt injection through user-controlled tool outputs, stacked SQL, RCE patterns |
+| **3 — Inference proxy** | 17-pattern injection classifier (NFKC + URL-decode + comment-strip + homoglyph-fold normalization; corpus recall 100%, FP 0% on `tests/test_injection_corpus.py`) + SQL injection regex on normalized payload | Prompt injection through user-controlled tool outputs, stacked SQL with comment/encoding obfuscation, RCE patterns |
 | **4 — Policy** | OPA / Rego policy bundle | Static rules: deny dangerous tools, allowed-domain checks |
-| **5 — Behavior** | Isolation Forest baseline per agent | Behavioural drift, anomalous tool sequences, blast-radius patterns |
+| **5 — Behavior** | Per-agent heuristics: tool-sequence n-grams, request velocity, cost anomaly, learning-engine drift | Anomalous tool sequences, runaway request rates, cross-agent cost outliers |
 | **6 — Decision** | Signal combiner with per-tenant weight tuning | The actual allow / monitor / throttle / escalate / kill verdict |
 | **7 — Autonomy** | Per-agent contracts (e.g. `k8s.delete.*` requires approval) | Destructive operations that should never be unilateral |
 | **8 — Execution** | The actual tool runs (or doesn't) | — |
@@ -261,14 +407,16 @@ The full per-stage walkthrough is at **[docs/architecture/10-stage-pipeline.md](
                             │ HTTPS
                             ▼
                 ┌────────────────────────────────┐
-                │  ALB ─ acp-dev-alb-1541605899   │
-                │  → dev.aegisagent.in             │
+                │  ALB ─ acp-prodha-alb           │
+                │  → ha.aegisagent.in + 4 subdoms │
+                │  WAFv2: Common + KnownBadInputs │
+                │       + SQLi + per-IP rate-lim  │
                 └───────────┬────────────────────┘
-                            │
+                            │ private subnets, both AZs
                             ▼
    ┌──────────────────────────────────────────────────────┐
-   │ EC2  i-0f720c100f904291a   m6g.medium  ap-south-1a   │
-   │ 22 containers via docker compose                     │
+   │ ASG  1–2× m6g.medium  ap-south-1a + ap-south-1b      │
+   │ Each instance: 22 containers via docker compose      │
    │                                                      │
    │   acp_ui ─ nginx + React SPA + Voice Agent button    │
    │     │                                                │
@@ -279,10 +427,12 @@ The full per-stage walkthrough is at **[docs/architecture/10-stage-pipeline.md](
    │     ├──► behavior · audit · usage · autonomy         │
    │     ├──► identity_graph · flight_recorder · forensics│
    │     ├──► api (incidents / webhooks / SIEM / reports) │
-   │     └──► insight (HTTP, audit aggregates)            │
+   │     ├──► insight (HTTP, audit aggregates)            │
+   │     ├──► learning (cross-agent behavior intel)       │
+   │     └──► mcp_server (stdio, 4 governance tools)      │
    │                                                      │
-   │   pgbouncer ─► acp-postgres-dev (RDS Single-AZ)      │
-   │   acp_redis ◄── ElastiCache acp-redis-dev            │
+   │   pgbouncer ─► acp-prodha-postgres (RDS Multi-AZ)    │
+   │   acp_redis ◄── ElastiCache prodha (primary+replica) │
    │   acp_opa + bundle_server                            │
    │   acp_{prometheus,grafana,jaeger,alertmanager}       │
    └──────────────────────────────────────────────────────┘
@@ -298,7 +448,7 @@ The full per-stage walkthrough is at **[docs/architecture/10-stage-pipeline.md](
 
 For the deep version with every Mermaid diagram, code reference, and table — **[docs/architecture/system-overview.md](./docs/architecture/system-overview.md)**.
 
-### Service inventory (13 application services)
+### Service inventory (16 application services)
 
 | Service | Port (internal) | Database | Owns |
 |---|---|---|---|
@@ -308,7 +458,7 @@ For the deep version with every Mermaid diagram, code reference, and table — *
 | **policy** | `:8000` | OPA-local | OPA bundle host, Rego policy CRUD and simulation |
 | **decision** | `:8000` | Redis only | 5-signal risk synthesis, kill-switch, per-tenant signal weights |
 | **behavior** | `:8000` | `acp_behavior` | Behavioral firewall, per-agent baselines, degraded-mode policy |
-| **audit** | `:8000` | `acp_audit` | Signed audit chain, transparency roots, analyst notes, aggregations |
+| **audit** | `:8000` | `acp_audit` | Signed audit chain, transparency roots, analyst notes, aggregations, evaluation runner, shadow eval, rego compiler |
 | **usage** | `:8000` | `acp_usage` | Per-tenant usage records, billing outbox consumer |
 | **api** | `:8000` | `acp_api` | Incidents, API keys, webhooks, SIEM, scheduled reports |
 | **identity_graph** | `:8000` | `acp_identity_graph` | Typed graph nodes/edges, trust score, drift, compromise sim |
@@ -316,8 +466,10 @@ For the deep version with every Mermaid diagram, code reference, and table — *
 | **autonomy** | `:8000` | `acp_autonomy` | Multi-agent contracts, playbooks, human override events |
 | **forensics** | `:8000` | reads `acp_audit` | Investigation listing, replay, blast-radius, PDF export |
 | **insight** | `:8000` | reads `acp_audit` | Audit aggregations exposed to UI dashboards |
+| **learning** | `:8000` | reads `acp_behavior` | Cross-agent behavior intelligence + drift detector |
+| **mcp_server** | stdio | none | MCP protocol surface: 4 governance tools (verify-chain, list-decisions, run-evaluation, generate-report) for editor + agent integrations (Sprint 8) |
 
-`gateway`, `forensics`, and `insight` don't own their own databases — they read from sibling services under read-only DSNs.
+`gateway`, `forensics`, `insight`, `learning`, and `mcp_server` don't own their own databases — they read from sibling services under read-only DSNs or speak stdio.
 
 <br/>
 
@@ -325,7 +477,7 @@ For the deep version with every Mermaid diagram, code reference, and table — *
 
 ## 🎙️ Voice Agent — in the navbar
 
-Click the **Voice Agent** button (top-right of every page on `dev.aegisagent.in`), allow your microphone, and you're talking to the Aegis Voice Guide. It's a docs-grounded cybersecurity advisor — answers questions about the kill switch, the audit chain, the deploy flow, the demo packs, anything in the GitBook.
+Click the **Voice Agent** button (top-right of every page on `ha.aegisagent.in`), allow your microphone, and you're talking to the Aegis Voice Guide. It's a docs-grounded cybersecurity advisor — answers questions about the kill switch, the audit chain, the deploy flow, the demo packs, anything in the GitBook.
 
 **Live state:**
 
@@ -355,9 +507,9 @@ Click the **Voice Agent** button (top-right of every page on `dev.aegisagent.in`
 
 ---
 
-## 🚦 The 10-stage request pipeline
+## 🚦 The 11-stage request pipeline
 
-For a single `POST /execute`, the gateway executes ten stages plus a final audit emit. Each stage has its own latency histogram, its own deny counter, its own Grafana panel.
+For a single `POST /execute`, the gateway executes eleven stages (numbered 0 through 10), implemented as one ordered `SecurityMiddleware` in `services/gateway/middleware.py`. Each stage has its own latency histogram, its own deny counter, its own Grafana panel.
 
 ```mermaid
 flowchart LR
@@ -383,18 +535,20 @@ Walked through on a real `DROP TABLE` attempt at **[docs/architecture/flow-of-a-
 
 ## 🔐 Cryptographic trust chain
 
-Aegis's claim isn't "we logged it." It's "we logged it AND any tampering is mathematically detectable."
+Aegis's claim isn't "we logged it." It's "we logged it AND any tampering is mathematically detectable — under an open standard the auditor can verify on their own laptop."
 
 | Layer | Mechanism | Verifiable by |
 |---|---|---|
-| **Per-row signature** | ed25519 signs `(event_hash, prev_hash, content_hash)` for every audit row | `acp verify-chain` (offline CLI) |
-| **HMAC chain across 16 shards** | Each row's `prev_hash` links to the previous row in its shard — write contention bounded by sharding | Chain verifier walks every shard independently |
-| **Daily Merkle root** | All rows for a UTC day → Merkle tree → root sealed at midnight, signed with the day's key, chained to the previous day's root | `acp verify-root` validates a root against archived signature |
-| **Per-receipt inclusion proof** | Every receipt carries the Merkle path from its row to the day's root | Customer can prove inclusion using only the row's receipt + the archived root |
+| **Per-row signature** | ed25519 signs `(event_hash, prev_hash, content_hash)` for every audit row | `acp verify-chain` (offline) · AEVF **V2** check in `aegis-verify` |
+| **Per-shard chain across 16 shards** | Each row's `prev_hash` links to the previous row in its shard — write contention bounded by sharding | Chain verifier walks every shard independently · AEVF **V3** check |
+| **Daily Merkle root** | All rows for a UTC day → Merkle tree → root sealed, signed with the day's key | `acp verify-root` · AEVF **V4** check |
+| **Cross-day root chain** | Each daily root carries `prev_root_hash` so a customer's archived root can detect retroactive day rewrites | AEVF **V5** check |
+| **Per-receipt inclusion proof** | Every receipt carries the Merkle path from its row to the day's root | Customer proves inclusion using only the row's receipt + the archived root |
+| **Retention metadata** | Bundle carries the retention policy and window depth (drives DPDP §8 readiness) | AEVF **V6** check |
 
-Any tampering — change one row, delete a shard, swap a signing key — breaks one of these layers and the chain verifier flags it.
+Any tampering — change one row, delete a shard, swap a signing key, retroactively rewrite a day — breaks one of these layers and `aegis-verify` flags it.
 
-Detailed crypto at **[docs/security/crypto-audit-chain.md](./docs/security/crypto-audit-chain.md)**.
+The verification algorithm is the open **[AEVF spec, version `aevf/0.1.0`](./docs/AEVF/spec.md)**. Detailed internal crypto at **[docs/security/crypto-audit-chain.md](./docs/security/crypto-audit-chain.md)**.
 
 <br/>
 
@@ -402,20 +556,50 @@ Detailed crypto at **[docs/security/crypto-audit-chain.md](./docs/security/crypt
 
 ## 📦 SDK integration
 
-Two integration styles — direct HTTP, or use the SDK.
+Three install paths — pick the one that matches your stack.
 
-### Direct (any language)
+### Option 1 — Drop-in framework wrappers (PyPI)
+
+If you already have an Anthropic / OpenAI / LangChain agent, the three-line install pattern routes every tool call through Aegis before execution:
+
+```bash
+pip install aegis-anthropic     # or aegis-openai / aegis-langchain
+```
+
+```python
+from aegis_anthropic import AegisAnthropic
+
+client = AegisAnthropic(
+    api_key="sk-ant-...",
+    aegis_key="acp_...",
+    aegis_url="https://ha.aegisagent.in",
+    tenant_id="00000000-0000-0000-0000-000000000001",
+    agent_id="<agent-uuid>",
+)
+
+# Same call shape as the underlying SDK — every tool_use block is pre-checked.
+response = client.messages.create(
+    model="claude-opus-4-7",
+    max_tokens=1024,
+    tools=[{"name": "shell", "input_schema": {...}}],
+    messages=[{"role": "user", "content": "Clean up /var/log"}],
+)
+```
+
+All three packages **fail closed by default** — if the Aegis gateway is unreachable, the tool call is denied. Full pattern + envs at **[docs/integrations/sdk-wrappers.md](./docs/integrations/sdk-wrappers.md)**.
+
+### Option 2 — Direct HTTP (any language)
 
 ```bash
 # 1. Mint a token
-TOKEN=$(curl -sS -X POST https://dev.aegisagent.in/auth/token \
+TOKEN=$(curl -sS -X POST https://ha.aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"<your-admin-email>","password":"<from-onboarding>"}' \
   | jq -r '.data.access_token')
 
 # 2. Execute a tool
-curl -sS -X POST https://dev.aegisagent.in/execute \
+curl -sS -X POST https://ha.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "X-Agent-ID: <agent-uuid>" \
@@ -423,20 +607,19 @@ curl -sS -X POST https://dev.aegisagent.in/execute \
   -d '{"tool_name":"db.query","payload":{"query":"SELECT 1"}}'
 ```
 
-Response carries the full decision envelope: `action`, `risk_score`, `findings`, the upstream tool result, and a `receipt_url`.
+Response carries the full decision envelope: `action`, `risk_score`, `findings`, the upstream tool result, and a `receipt_url`. Full reference at **[docs/api/reference.md](./docs/api/reference.md)**.
 
-### Python SDK
+### Option 3 — Native Python SDK
 
 ```python
 from acp_client import AegisClient
 
 client = AegisClient(
-    base_url="https://dev.aegisagent.in",
+    base_url="https://ha.aegisagent.in",
     tenant_id="00000000-0000-0000-0000-000000000001",
     token=os.environ["ACP_TOKEN"],
 )
 
-# /execute returns a Decision object; receipt is fetched lazily
 decision = client.execute(agent_id=AGENT_ID, tool="db.query", payload={"query": "SELECT 1"})
 print(decision.action, decision.risk_score, decision.findings)
 
@@ -444,7 +627,25 @@ print(decision.action, decision.risk_score, decision.findings)
 client.verify_chain()  # raises if any row's signature or prev_hash is wrong
 ```
 
-LangChain and Anthropic adapters in `sdk/integrations/` — full reference at **[docs/api/reference.md](./docs/api/reference.md)**.
+<br/>
+
+---
+
+## 📤 Evidence export
+
+Whatever the buyer's existing observability / SIEM / GRC stack, Aegis is a good citizen of it — we never replace the console they already pay for. As of 2026-06-14, **every record carries an AEVF back-reference** so an auditor can pivot from any of these surfaces to the verifiable bundle and run `aegis-verify` offline.
+
+| Channel | What ships | Where |
+|---|---|---|
+| **SIEM forwarders** | Splunk HEC, Datadog Logs API, Elastic Bulk Index, Microsoft Sentinel HTTP Data Collector, Google Chronicle UDM Ingest | `services/audit/siem.py` — credentials via AWS SSM Parameter Store at `/aegis-siem/*` |
+| **OTel HTTP exporter** | Per-decision spans (`aegis.decision` + 11 stage children, GenAI semantic conventions) | `sdk/common/otel_exporter.py` — env-driven, ships to Datadog / Grafana Cloud / Honeycomb / CloudWatch via ADOT |
+| **GRC evidence export** | One row per `(audit_event, control_id)` pair across SOC 2 + EU AI Act + NIST AI RMF + DPDP — Vanta / Drata / Secureframe / Hyperproof-ready CSV or JSON | `services/audit/grc_export.py` — `GET /compliance/export/grc?format=csv` |
+| **Verifiable AEVF bundles** | Per-framework signed bundles (SOC 2 / EU AI Act / NIST AI RMF / DPDP) — auditor runs `aegis-verify` offline | `GET /compliance/export/{framework}?format=json` |
+| **MCP server** | 4 governance tools (`aegis.evaluate_action`, `aegis.fetch_receipt`, `aegis.verify_chain`, `aegis.query_blast_radius`) over Model Context Protocol | `services/mcp_server/` — wire into Claude Desktop, Cursor, the VS Code extension |
+| **VS Code extension** | Read-only sidebar showing the last N `/execute` decisions + click-through to signed receipt webview | `vscode-extension/` |
+| **Per-row signed receipts** | Canonical receipt JSON + ed25519 signature + inclusion proof against the day's Merkle root | `GET /audit/logs/{id}/receipt` |
+
+Single canonical inventory at **[docs/integrations/evidence-export.md](./docs/integrations/evidence-export.md)**.
 
 <br/>
 
@@ -452,26 +653,32 @@ LangChain and Anthropic adapters in `sdk/integrations/` — full reference at **
 
 ## ☁️ AWS deployment
 
-The live deployment is one EC2, one RDS, one ElastiCache, three S3 buckets. Terraform-managed under `infra/terraform/environments/dev/`. Deploys via tarball → S3 → SSM, no GitHub Actions on the EC2.
+The live deployment is a Multi-AZ HA stack: 2-instance ASG behind an ALB, Multi-AZ RDS, Redis replication group, WAFv2, KMS-rooted signing key in SSM SecureString. Terraform-managed under `infra/terraform/environments/prod-ha/`. Deploys via tarball → S3 → SSM, no GitHub Actions on the EC2.
 
 | Resource | Value | Cost (approx /mo) |
 |---|---|---|
-| EC2 | `i-0f720c100f904291a` · `m6g.medium` (1 vCPU / 4 GB Graviton) · 50 GB gp3 | ~$28 always-on / ~$11 stop-overnight |
-| RDS | `acp-postgres-dev` · `db.t4g.micro` · Single-AZ · 20 GB gp3 | ~$15 |
-| ElastiCache | `acp-redis-dev` · single `cache.t3.micro` | ~$9 |
-| ALB | `acp-dev-alb-1541605899` · HTTPS:443 + HTTP:80→HTTPS | ~$18 |
-| S3 | `acp-dev-backups-628478` (versioned, 30-day) + statuspage + ALB logs | ~$3 |
-| Secrets Manager | 5 secrets under `acp-dev/*` | ~$2 |
-| **Aegis core total** | | **~$70/mo** always-on |
-| Voice Agent EC2 | `t3.medium` (separate Terraform) | ~$22–45/mo (stop-between-demos / always-on) |
+| ALB | `acp-prodha-alb` · HTTPS:443 + HTTP:80→HTTPS, ACM cert covers `aegisagent.in` + 5 subdomains + `*.aegisagent.in` | ~$37 (ALB + WAFv2 + per-IP rate-limit) |
+| ASG | 1–2× `m6g.medium` (1 vCPU / 4 GB Graviton) · 50 GB gp3 across `ap-south-1a/1b` | ~$25–50 |
+| RDS | `acp-prodha-postgres` · `db.t3.small` · **Multi-AZ** · 30 GB gp3 | ~$70 |
+| ElastiCache Redis | `acp-prodha-redis` · 2× `cache.t3.micro` (primary + replica, AZ-failover) | ~$22 |
+| NAT gateway | 1× shared + EIP `52.66.100.212` (pin in vendor allowlists) | ~$32 |
+| WAF Web ACL | `acp-prodha-web-acl` — Common + KnownBadInputs + SQLi + per-IP rate-limit | (included above) |
+| Signing key | SSM SecureString `/acp-prodha/receipt-signing-key` (ed25519) | (included below) |
+| Secrets | 7× `acp-prodha/*` in Secrets Manager | ~$3 |
+| S3 | `acp-backups-prodha-628478946931`, `acp-alb-logs-prodha-628478946931` | ~$5 |
+| KMS + Route 53 | | ~$5 |
+| **Aegis core total** | | **~$195/mo** always-on |
+| Voice Agent EC2 | `t3.medium` (separate Terraform, `i-059ed91510dee24e0`) | ~$22–45/mo (stop-between-demos / always-on) |
+
+A `$300/mo` budget alarm fires at 80% (`$240`) to the admin email.
 
 **Sizing notes:**
 
-- `m6g.medium` was chosen because `t4g.small` (2 GB) OOMed during the initial healthcheck race and `t4g.medium`/`large` returned `InsufficientInstanceCapacity` in `ap-south-1a` on the resize attempt. `m6g.medium` was immediately available.
-- RDS is Single-AZ for cost; production-grade would step to Multi-AZ.
-- No NAT — the EC2 is in a public subnet, IGW egress.
+- `m6g.medium` was chosen because `t4g.small` (2 GB) OOMed during the initial healthcheck race and `t4g.medium`/`large` returned `InsufficientInstanceCapacity` in `ap-south-1a` on the resize attempt. `m6g.medium` was immediately available across both AZs.
+- RDS is now Multi-AZ — survives an AZ-level failure with an automatic standby promotion.
+- ALB sits in public subnets; ASG instances in private subnets routed through the shared NAT.
 
-**11 non-obvious deploy bugs** the 2026-06-01 full rebuild surfaced — ALB deletion-protection traps, S3 versioned-bucket destroy, two-phase RDS password apply, macOS AppleDouble null bytes in tar, pgbouncer prod-hostname-in-bundle, `.local` TLD validation rejection, GRAFANA_ADMIN_PASSWORD compose validation gate, EC2 OOM on t4g.small — all catalogued at **[docs/operations/deployment.md](./docs/operations/deployment.md#non-obvious-gotchas-catalogued-during-the-2026-06-01-dev-rebuild)**.
+**14 non-obvious deploy bugs** the 2026-06-13 prod-ha rebuild surfaced (in addition to the 11 from 2026-06-01) — ALB deletion-protection traps, S3 versioned-bucket destroy, two-phase RDS password apply, macOS AppleDouble null bytes in tar, pgbouncer prod-hostname-in-bundle, `.local` TLD validation rejection, IMDSv2 hop-limit (containers add 1 hop → boto3 NoCredentialsError on the signing-key fetch), audit alembic partition migration gate, pgbouncer `statement_timeout` startup-parameter rejection, `psql :var` substitution inside PL/pgSQL — full catalog at **[DEPLOY_REPORT_2026_06_13.md](./DEPLOY_REPORT_2026_06_13.md)** and **[docs/operations/deployment.md](./docs/operations/deployment.md)**.
 
 <br/>
 
@@ -481,7 +688,7 @@ The live deployment is one EC2, one RDS, one ElastiCache, three S3 buckets. Terr
 
 ### Option A — Try the live system
 
-Open **<https://dev.aegisagent.in>** and sign in. The Login page exposes a **"Try Live Demo"** button that signs you in as the read-only `VIEWER` demo account — interviewers can click straight through. Demo passwords live in the onboarding email and in `voice-agent/agent/.env.local` for self-hosted dev; they are deliberately not in this README.
+Open **<https://ha.aegisagent.in>** and sign in. The Login page exposes a **"Try Live Demo"** button that signs you in as the read-only `VIEWER` demo account — interviewers can click straight through. Demo passwords live in the onboarding email and in `voice-agent/agent/.env.local` for self-hosted dev; they are deliberately not in this README.
 
 The Voice Agent button is top-right of the navbar on every page.
 
@@ -572,7 +779,7 @@ acp/
 │   ├── README.md                Entry index
 │   ├── SUMMARY.md               GitBook nav
 │   ├── introduction/            What is, why, quickstart, 60s-tour, demo packs
-│   ├── architecture/            System overview, 10-stage pipeline, data model, deployment topology, UI primitives, flow of a decision
+│   ├── architecture/            System overview, 11-stage pipeline, data model, deployment topology, UI primitives, flow of a decision
 │   ├── services/                One page per backend service
 │   ├── ui/                      UI map + per-page docs
 │   ├── voice-guide/             ⭐ NEW — overview, UI integration, RAG+LLM, deployment
@@ -580,27 +787,29 @@ acp/
 │   ├── operations/              Deployment, backup-restore, key rotation, soak, observability + 3 runbooks
 │   └── api/                     Reference + auth + error codes + examples
 │
-├── services/                    13 FastAPI microservices
+├── services/                    16 FastAPI microservices
 │   ├── gateway/                 11-stage middleware + 22 sub-routers (incl. routers/voice.py)
 │   ├── identity/                JWT, SSO, agent credentials
 │   ├── registry/                Agents and tool permissions
-│   ├── policy/                  OPA bundle host
+│   ├── policy/                  OPA bundle host + Rego CRUD
 │   ├── decision/                Signal combiner + kill switch
-│   ├── behavior/                Behavioral firewall + Isolation Forest baselines
-│   ├── audit/                   Signed chain + transparency roots
+│   ├── behavior/                Behavioral firewall (sequence + velocity + cost heuristics)
+│   ├── audit/                   Signed chain + transparency roots + evaluation + shadow + Rego compiler
 │   ├── usage/                   Outbox consumer + billing routes
 │   ├── api/                     Incidents, API keys, webhooks, SIEM
 │   ├── identity_graph/          Typed graph + blast-radius
 │   ├── flight_recorder/         Per-execution timelines
-│   ├── autonomy/                Multi-agent contracts + playbooks
+│   ├── autonomy/                Multi-agent contracts + playbooks + human override events
 │   ├── forensics/               Investigation + replay + PDF export
-│   └── insight/                 Audit aggregations
+│   ├── insight/                 Audit aggregations exposed to dashboards
+│   ├── learning/                Cross-agent behavior intelligence + drift detector
+│   └── mcp_server/              MCP stdio surface — 4 governance tools (Sprint 8)
 │
 ├── ui/                          React + Vite + Tailwind UI
-│   ├── src/components/VoiceAgent/   ⭐ NEW — Button, Panel, AnimatedOrb
+│   ├── src/components/VoiceAgent/   Button, Panel, AnimatedOrb
 │   ├── src/components/Common/       Button, Modal, ConfirmDialog, ConnectorPrimitives, …
 │   ├── src/components/Layout/       Sidebar, Topbar (with Voice Agent button), AgentScopePicker
-│   ├── src/pages/                   38 pages, all wired to live APIs
+│   ├── src/pages/                   49 pages, all wired to live APIs
 │   └── tests/                       Playwright e2e
 │
 ├── voice-agent/                 ⭐ NEW — sibling project, separate venv + Terraform
@@ -623,16 +832,23 @@ acp/
 │
 ├── infra/
 │   ├── docker-compose.yml       Base + docker-compose.aws.yml override
-│   ├── terraform/               environments/{dev} + modules/* (network, alb, rds, elasticache, secrets, …)
+│   ├── terraform/               environments/{dev, prod-ha} + modules/* (network, alb, rds, elasticache_ha, asg, waf, secrets, …)
 │   ├── grafana-dashboards/      platform-slo, trust-layers, tenant-activity, queues
 │   ├── prometheus-rules.yml     Alertmanager routes
 │   ├── helm/                    Self-host Helm chart
 │   ├── statuspage/              Public status JSON publisher
 │   └── cloudwatch/              CloudWatch agent config
 │
+├── tools/                       Standalone customer-facing CLIs
+│   └── aegis_verify/            ⭐ Offline evidence-bundle verifier (V1–V6 tamper checks)
+│
+├── vscode-extension/            ⭐ VS Code extension MVP — in-IDE policy lookup + decision peek (Sprint 8)
+│
 ├── scripts/
-│   ├── ops/                     backup, restore_drill, export_tenant, redact_tenant_pii, reconcile, rollback, smoke_test
+│   ├── ops/                     backup, restore_drill, export_tenant, redact_tenant_pii, reconcile, rollback, smoke_test, dr_evidence, generate_sbom
 │   ├── maintenance/             backfill_audit_chain, rotate_transparency_key, prune_audit_outbox
+│   ├── qa/                      test_prodha (23-endpoint live harness), test_user_data_groq_guard
+│   ├── bench/                   gateway_p95 (internal latency)
 │   └── utils/                   seed_admin, dev-only helpers
 │
 ├── tests/                       Unit + integration suite (Playwright is under ui/tests/)
@@ -675,7 +891,7 @@ You're being asked "what stops an AI agent going rogue?" Aegis is the runtime co
 
 ### 🎯 Reviewers evaluating the project
 
-Skim **[docs/README.md](./docs/README.md)** for the 1-hour reading order. Click the **Voice Agent** button on `dev.aegisagent.in` and ask it about the kill switch — the answer comes from this exact docs tree via hybrid RAG. The 5-minute video link at the top of this README walks the same scenarios live.
+Skim **[docs/README.md](./docs/README.md)** for the 1-hour reading order. Click the **Voice Agent** button on `ha.aegisagent.in` and ask it about the kill switch — the answer comes from this exact docs tree via hybrid RAG. The 5-minute video link at the top of this README walks the same scenarios live.
 
 <br/>
 
@@ -700,7 +916,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the long version.
 ## 📬 Get in touch
 
 - **GitHub Issues** — bug reports, feature requests
-- **Live demo** — <https://dev.aegisagent.in> (sign in, click the Voice Agent button)
+- **Live demo** — <https://ha.aegisagent.in> (sign in, click the Voice Agent button)
 - **Engineering write-up** — [Hashnode: I built a runtime firewall for AI agents](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
 - **5-minute video** — [Google Drive demo link](https://drive.google.com/drive/folders/1cAnCFmF6SEqaqTbiijuj0HyGwXmy1lhZ?usp=sharing)
 

@@ -52,6 +52,13 @@ Yes. The KPI tiles and the incident list both take an optional `agent_id` parame
 | SOC feed empty | `No security events in the selected window` | Extend the time range; the public demo has long quiet periods between traffic bursts. |
 | Cross-agent correlation empty | `No cross-agent correlations in the current window.` | Expected for low-traffic tenants. |
 | Action history empty on a fresh incident | Action log empty | Click "Record action" to log a triage step. |
+| No incidents in fresh tenant (R4, 2026-06-13) | `This page lights up the moment a real deny lands. Run the Live Demo or one of the scripted scenarios to seed one.` | Click through to `/live-demo` (Primary nav, `G X`). The page provisions a critical-risk agent, runs a Groq-planned task, and the first time policy fires a deny it auto-opens an incident here. **Verified live on prod-ha 2026-06-14**: 3 R5 scenarios produced 4 denies → 6 deduplicated incidents in `/incidents` within ~6 s of the demo runs. The R5 scenario picker — `fintech_data_egress`, `devops_destruction`, `support_pii_exfil` — each emits at least one high-severity deny per run. |
+
+## Auto-population pipeline (R4, fixed 2026-06-14)
+
+Every gateway deny/escalate/kill publishes one event to the `acp:incidents:queue` Redis stream (gateway middleware `services/gateway/middleware.py:815-840`). The api service runs a durable consumer group (`api-incident-worker`) that reads from the stream, dedups by `sha256(tenant + agent + tool + trigger)` for 5 minutes, and writes signed Incident rows. If you trigger 4 denies on the same tool within the dedup window, you'll see 1 incident with violation-count bumped (see `services/api/main.py::_incident_consumer`).
+
+**The `Trigger` field accepts both legacy short forms and the gateway's verbose forms.** The gateway publishes `trigger="policy_denied" | "escalation_required" | "agent_killed"`; the legacy schema also recognises `policy_deny | escalate | kill`. Both sets land as valid incidents (`services/api/schemas/incident.py:11`). A schema mismatch here was the root cause of the 2026-06-14 "incidents empty after demos" bug — pre-fix, every event failed Pydantic validation and stuck in the queue's pending list silently.
 
 ## Edge cases & known gotchas
 
@@ -60,6 +67,7 @@ Yes. The KPI tiles and the incident list both take an optional `agent_id` parame
 - **PDF export 504**: the renderer is per-incident; very large incidents (lots of actions, many linked audit rows) can exceed the deadline. Retry once; if it persists, the PDF render queue is backed up and the audit service health page (Settings → System Health) will reflect it.
 - **SOC feed and Incidents list disagree**: the SOC feed shows all recent high-risk events; the Incidents list shows only events that an operator (or auto-response rule) escalated into an incident. The disagreement is expected.
 - **`selectedAgentId` URL deep link**: the page does not currently parse `?agent_id=...` from the URL; only the sidebar picker drives scoping. Direct-linked agent context is on the roadmap.
+- **Same prompt run twice in 5 minutes appears as 1 incident**: that's the dedup window. Check the incident's `violation_count` for the actual hit count; it bumps on every duplicate suppressed.
 
 ## Related docs
 
