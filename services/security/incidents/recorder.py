@@ -255,6 +255,24 @@ async def record_step(
                 await redis.hsetnx(meta_k, "blocked_at_step", str(new_len))
                 if policy_id:
                     await redis.hsetnx(meta_k, "blocking_policy_id", policy_id)
+            # Sprint 6 — fire auto-remediation on quarantine transition.
+            # Detection without remediation is half a product (TD-4): a
+            # quarantined agent that still holds a valid API key can keep
+            # going on the next call. The executor revokes the key, kills
+            # active tokens, and (if configured) pages on-call. Async
+            # fire-and-forget — any failure inside the executor is
+            # swallowed and never propagates into the caller's path.
+            if new_status == "quarantined":
+                try:
+                    from services.security.remediation import executor as _rem_exec
+                    asyncio.create_task(_rem_exec.execute(
+                        redis,
+                        incident_id=inc_id,
+                        tenant_id=tenant_id,
+                        agent_id=agent_id,
+                    ))
+                except Exception:
+                    pass
 
         # Maintain the participating_agents list.
         agents_raw = await redis.hget(meta_k, "participating_agents")

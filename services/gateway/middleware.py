@@ -98,6 +98,8 @@ _MANAGEMENT_PATH_PREFIXES = (
     # Sprint 5 — Identity & Access Graph + Blast Radius read API.
     # Analytics surface; no tool execution semantics.
     "/iag",
+    # Sprint 6 — Auto-Remediation read + control API. Operator surface.
+    "/remediation",
     "/metrics",
     "/risk",
     "/stream",
