@@ -29,7 +29,8 @@ from typing import Any
 
 import httpx
 
-__all__ = ["AegisOpenAI", "AegisClient"]
+__version__ = "1.0.1"
+__all__ = ["AegisOpenAI", "AegisClient", "__version__"]
 
 
 class AegisClient:
@@ -60,21 +61,68 @@ class AegisClient:
                     f"{self._url}/execute",
                     headers=self._headers,
                     json={
+                        # Canonical field names — `tool_name`/`parameters`
+                        # are accepted as a fallback but the audit row gets
+                        # logged with tool="unknown". Use the right names.
                         "agent_id": self._agent_id,
-                        "tool_name": tool_name,
-                        "parameters": parameters,
-                        "context": {},
+                        "tool":      tool_name,
+                        "arguments": parameters,
                     },
                 )
             if resp.status_code in (200, 403):
-                body = resp.json()
-                return body.get("data", body)
-            return {"action": "allow", "risk": 0.0}
+                # Sprint B follow-up 2026-06-14 — WAFv2 returns text/html on
+                # sensitive-path blocks; resp.json() would raise. Synthesise
+                # waf_blocked so the buyer sees a real reason, not a parse
+                # error.
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if "html" in ctype or "json" not in ctype:
+                    if resp.status_code == 403:
+                        return {"action": "deny", "risk": 1.0,
+                                "findings": ["waf_blocked"]}
+                try:
+                    return self._normalize(resp.json())
+                except Exception:
+                    if resp.status_code == 403:
+                        return {"action": "deny", "risk": 1.0,
+                                "findings": ["waf_blocked"]}
+                    raise
+            # Fail CLOSED on transport / server errors. Letting unchecked
+            # tool calls through because Aegis was unreachable defeats the
+            # purpose of installing this package.
+            return {
+                "action":   "deny",
+                "risk":     1.0,
+                "findings": [f"aegis_http_{resp.status_code}"],
+            }
         except Exception as exc:
-            return {"action": "allow", "risk": 0.0, "findings": [f"aegis_error:{type(exc).__name__}"]}
+            return {
+                "action":   "deny",
+                "risk":     1.0,
+                "findings": [f"aegis_error:{type(exc).__name__}"],
+            }
+
+    @staticmethod
+    def _normalize(body: dict[str, Any]) -> dict[str, Any]:
+        """Map every /execute response onto {action, risk, findings}.
+
+        Plain 200 success → unwrap data envelope. 403 with
+        `approval_required` → escalate. 403 with any other error and no
+        action field → deny + carry the error string. Anything else with
+        success=false → fail-closed deny.
+        """
+        data = body.get("data") if isinstance(body, dict) else None
+        if data is None and isinstance(body, dict) and body.get("action"):
+            data = body
+        if isinstance(data, dict) and data.get("action"):
+            return data
+        err = (body.get("error") if isinstance(body, dict) else None) or "denied"
+        action = "escalate" if "approval_required" in str(err).lower() else "deny"
+        return {"action": action, "risk": 1.0, "findings": [str(err)[:120]]}
 
     def is_blocked(self, decision: dict[str, Any]) -> bool:
-        return decision.get("action", "allow") in ("deny", "block", "policy_deny", "reject")
+        return decision.get("action", "deny") in (
+            "deny", "block", "policy_deny", "reject", "escalate",
+        )
 
 
 class _GovernedCompletions:

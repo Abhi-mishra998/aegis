@@ -6,9 +6,9 @@ _here = Path(__file__).parent
 _readme = (_here / "README.md").read_text() if (_here / "README.md").exists() else ""
 
 setup(
-    name="aegis-anthropic",
-    version="1.0.1",
-    description="Anthropic tool_use governance middleware for Aegis ACP",
+    name="aegis-bedrock",
+    version="1.0.0",
+    description="AWS Bedrock Agents governance middleware for Aegis ACP",
     long_description=_readme,
     long_description_content_type="text/markdown",
     author="Aegis ACP",
@@ -16,15 +16,15 @@ setup(
     url="https://github.com/Abhi-mishra998/aegis",
     project_urls={
         "Homepage":      "https://github.com/Abhi-mishra998/aegis",
-        "Documentation": "https://github.com/Abhi-mishra998/aegis/blob/main/integrations/aegis-anthropic/README.md",
+        "Documentation": "https://github.com/Abhi-mishra998/aegis/blob/main/integrations/aegis-bedrock/README.md",
         "Repository":    "https://github.com/Abhi-mishra998/aegis",
         "Bug Tracker":   "https://github.com/Abhi-mishra998/aegis/issues",
     },
     python_requires=">=3.10",
     packages=find_packages(),
     install_requires=["httpx>=0.25"],
-    extras_require={"anthropic": ["anthropic>=0.25"]},
-    keywords=["ai", "governance", "anthropic", "claude", "security", "aegis", "guardrails", "tool-use"],
+    extras_require={"bedrock": ["boto3>=1.34"]},
+    keywords=["ai", "governance", "bedrock", "aws", "security", "aegis", "guardrails", "tool-use"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
