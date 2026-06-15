@@ -25,10 +25,10 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 128M
+          memory: 64M            # measured RSS=5M
         reservations:
           cpus: "0.10"
-          memory: 32M
+          memory: 16M
 
   # ── Gateway ────────────────────────────────────────────────────────────────
   gateway:
@@ -36,17 +36,36 @@ services:
     environment:
       - ENVIRONMENT=production
       - LOG_LEVEL=WARNING
+      # R1 — explicit Python memory tuning to stop the gateway OOM cascade.
+      # MALLOC_ARENA_MAX=2 caps glibc's per-thread arenas (saves 100–200 MB
+      # on a 2-worker uvicorn). PYTHONMALLOC=malloc uses the system
+      # allocator instead of pymalloc — slightly slower allocs, but
+      # predictable peak RSS. Without these the workers slowly grow until
+      # the OS OOM-killer fires under any concurrent demo load.
+      - MALLOC_ARENA_MAX=2
+      - PYTHONMALLOC=malloc
     restart: always
     deploy:
       resources:
         limits:
           cpus: "1.00"
-          memory: 768M
+          # R1 — 768 MB ÷ 2 uvicorn workers = ~384 MB/worker; under any
+          # concurrent /execute the workers paged into OOM. Lifting to
+          # 1024 MB gives ~512 MB/worker which is comfortable for the
+          # FastAPI + httpx + redis + pydantic + structlog footprint.
+          memory: 1024M
         reservations:
           cpus: "0.25"
-          memory: 192M
+          memory: 256M
 
   # ── All services: depends_on cleared (no local redis/postgres in prod) ─────
+  # R1 — Sprint memory tuning. Total committed memory across the 18
+  # containers was 5.9 GB on a 4 GB m6g.medium (44% over-committed).
+  # That worked when no service was under load, but the moment two
+  # workers needed a few hundred MB each the OS OOM-killer fired
+  # randomly — the gateway took the brunt because it was busiest.
+  # New allocation prioritizes the demo hot path (gateway / audit /
+  # policy / decision / opa) and trims low-traffic services.
   identity:
     depends_on: []
     restart: always
@@ -54,10 +73,10 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512M
+          memory: 320M           # 512 → 320; identity is bursty but small RSS
         reservations:
           cpus: "0.25"
-          memory: 128M
+          memory: 96M
 
   registry:
     depends_on: []
@@ -66,10 +85,10 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 384M
+          memory: 336M           # measured RSS=252M, +30% headroom
         reservations:
           cpus: "0.10"
-          memory: 96M
+          memory: 80M
 
   policy:
     depends_on: []
@@ -78,7 +97,8 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 384M
+          memory: 320M           # 384 → 320; OPA bundle layer is the heavy
+                                 # thing here, and that's a separate container
         reservations:
           cpus: "0.10"
           memory: 96M
@@ -90,7 +110,14 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          # 192M was sized off idle RSS=102M, but Sprint 5/6 added the
+          # evaluation runner + shadow worker + online_eval_worker into
+          # the same process, AND the compliance-bundle builder
+          # serializes the full daily audit-chain to JSON. Under that
+          # combined load RSS crossed 192M and the container OOM-cycled
+          # 543 times in 24h. Measured peak ~290M during compliance
+          # bundle build; 320M gives ~10% headroom.
+          memory: 320M
         reservations:
           cpus: "0.10"
           memory: 64M
@@ -102,7 +129,12 @@ services:
       resources:
         limits:
           cpus: "0.75"
-          memory: 512M
+          # 2026-06-15 — 480M was sized off RSS=363M but live steady-state
+          # hit 88.98% (427MiB/480MiB) under normal traffic. Sprint 5/6
+          # rule-cache + session-intel state pushed working set higher
+          # than the original measurement. Bumped to 576M (~30% headroom
+          # over observed 427MiB peak).
+          memory: 576M
         reservations:
           cpus: "0.20"
           memory: 128M
@@ -114,10 +146,10 @@ services:
       resources:
         limits:
           cpus: "0.75"
-          memory: 512M
+          memory: 416M           # measured RSS=316M, +30% headroom
         reservations:
           cpus: "0.20"
-          memory: 128M
+          memory: 96M
 
   usage:
     depends_on: []
@@ -126,10 +158,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: 160M           # 256 → 160 (idle billing path most of the time)
         reservations:
           cpus: "0.05"
-          memory: 64M
+          memory: 48M
 
   api:
     depends_on: []
@@ -138,10 +170,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: 192M           # 256 → 192
         reservations:
           cpus: "0.05"
-          memory: 64M
+          memory: 48M
 
   insight:
     depends_on: []
@@ -150,10 +182,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: 128M           # measured RSS=68M, +88% headroom
         reservations:
           cpus: "0.05"
-          memory: 64M
+          memory: 32M
 
   insight_worker:
     depends_on: []
@@ -162,10 +194,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: 96M            # measured RSS=62M
         reservations:
           cpus: "0.05"
-          memory: 64M
+          memory: 32M
 
   forensics:
     depends_on: []
@@ -174,10 +206,10 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 384M
+          memory: 320M           # measured RSS=242M, +30% headroom
         reservations:
           cpus: "0.10"
-          memory: 96M
+          memory: 64M
 
   identity_graph:
     depends_on: []
@@ -186,10 +218,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: 160M           # 256 → 160 (read-mostly graph cache)
         reservations:
           cpus: "0.05"
-          memory: 64M
+          memory: 48M
 
   flight_recorder:
     depends_on: []
@@ -198,10 +230,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 192M
+          memory: 128M           # 192 → 128 (idle event sink)
         reservations:
           cpus: "0.05"
-          memory: 48M
+          memory: 32M
 
   autonomy:
     depends_on: []
@@ -210,10 +242,10 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 192M
+          memory: 128M           # 192 → 128 (autonomy on hot path but tiny RSS)
         reservations:
           cpus: "0.05"
-          memory: 48M
+          memory: 32M
 
   # groq_worker removed in sprint-3.3 (2026-05-29); insight_worker is the
   # canonical consumer of acp:groq_queue.
@@ -225,10 +257,10 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          memory: 96M            # measured RSS=40M
         reservations:
           cpus: "0.10"
-          memory: 64M
+          memory: 32M
 
   bundle-server:
     depends_on: []
@@ -237,10 +269,10 @@ services:
       resources:
         limits:
           cpus: "0.10"
-          memory: 128M
+          memory: 64M            # 128 → 64 (it's `python -m http.server`)
         reservations:
           cpus: "0.02"
-          memory: 32M
+          memory: 16M
 
   ui:
     depends_on: []
@@ -249,7 +281,7 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 128M
+          memory: 64M            # measured RSS=3M (it's nginx serving static)
         reservations:
           cpus: "0.05"
-          memory: 32M
+          memory: 16M

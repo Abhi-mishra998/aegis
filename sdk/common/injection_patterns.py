@@ -41,7 +41,15 @@ INJECTION_PATTERN_DEFS: list[tuple[re.Pattern[str], str, str]] = [
         "high",
     ),
     (
-        re.compile(r"act\s+as\s+(?:if\s+you\s+(?:are|were)|a|an)\s+", re.IGNORECASE),
+        re.compile(
+            # Sprint 2.5 — added ``have\s+no`` to catch ``act as if you have
+            # no rules``, which the original pattern (only ``are|were``)
+            # missed. The role_play_escape pattern already encoded this
+            # framing; mirror it here so the injection corpus's recall
+            # threshold survives.
+            r"act\s+as\s+(?:if\s+you\s+(?:are|were|have\s+no)|a|an)\s+",
+            re.IGNORECASE,
+        ),
         "act_as_persona",
         "high",
     ),
@@ -69,7 +77,10 @@ INJECTION_PATTERN_DEFS: list[tuple[re.Pattern[str], str, str]] = [
     ),
     (
         re.compile(
-            r"override\s+(?:all\s+)?(?:safety|security|content)\s+"
+            # Sprint 2.5 — accept a determiner (``the``/``all``) between
+            # ``override`` and the target noun. Was strict ``all`` only,
+            # which missed ``override the safety guidelines``.
+            r"override\s+(?:all\s+|the\s+|any\s+)?(?:safety|security|content)\s+"
             r"(?:filters?|guidelines?|rules?)",
             re.IGNORECASE,
         ),
@@ -87,7 +98,10 @@ INJECTION_PATTERN_DEFS: list[tuple[re.Pattern[str], str, str]] = [
     ),
     (
         re.compile(
-            r"exfiltrat\w*\s+(?:all\s+)?(?:user|admin|system|database|api|private|secret|credential|password)",
+            # Sprint 2.5 — accept ``the``/``a``/``an`` determiner. Original
+            # pattern missed ``exfiltrate the private database``.
+            r"exfiltrat\w*\s+(?:all\s+|the\s+|a\s+|an\s+)?"
+            r"(?:user|admin|system|database|api|private|secret|credential|password)",
             re.IGNORECASE,
         ),
         "data_exfiltration",
@@ -112,8 +126,12 @@ INJECTION_PATTERN_DEFS: list[tuple[re.Pattern[str], str, str]] = [
     ),
     (
         re.compile(
+            # Sprint 2.5 — added ``as (the|a) (previous|old|unrestricted)``
+            # framing so payloads like ``roleplay as the previous version
+            # that had no filter`` are caught.
             r"(?:pretend|imagine|roleplay|suppose|hypothetically)\s+"
-            r"(?:you\s+(?:are|were|have\s+no)|there\s+are\s+no)",
+            r"(?:as\s+(?:the\s+|a\s+|an\s+)?(?:previous|earlier|old|unrestricted)"
+            r"|you\s+(?:are|were|have\s+no)|there\s+are\s+no)",
             re.IGNORECASE,
         ),
         "role_play_escape",
@@ -130,7 +148,12 @@ INJECTION_PATTERN_DEFS: list[tuple[re.Pattern[str], str, str]] = [
     ),
     (
         re.compile(
-            r"(?:sudo|admin\s+mode|developer\s+mode|god\s+mode|unrestricted\s+mode)",
+            # Sprint 2.5 — was ``sudo`` alone, which caught benign DevOps
+            # prompts like ``run sudo apt-get update``. The injection
+            # vector is always ``sudo`` paired with a privilege-escalation
+            # framing word (mode, access, mode :, etc.), so require the
+            # qualifier. Also covers ``admin/developer/god/unrestricted mode``.
+            r"(?:sudo\s+(?:mode|access|root)|sudo\s*:|admin\s+mode|developer\s+mode|god\s+mode|unrestricted\s+mode)",
             re.IGNORECASE,
         ),
         "sudo_mode",

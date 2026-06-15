@@ -286,6 +286,11 @@ services:
       - "127.0.0.1:8003:8000"
     volumes:
       - ../services/policy:/app/services/policy
+      # Sprint 1 2026-06-15 — single source of truth for security signals;
+      # the policy fast path's evaluate_full doesn't import it directly,
+      # but risk_pipeline.py (imported in-process) does, and any future
+      # security-related code in services/policy will too.
+      - ../services/security:/app/services/security
       - ../sdk:/app/sdk
     environment:
       - OPA_URL=http://opa:8181
@@ -324,6 +329,18 @@ services:
       # ed25519 signing key for cryptographic execution receipts.
       # Generated on first boot if absent; persisted on the audit_keys volume.
       - RECEIPT_SIGNING_KEY_PATH=/data/keys/receipt-signing.pem
+      # The audit outbox worker POSTs pending_usage_events to the usage
+      # service. Without this env var settings.USAGE_SERVICE_URL falls
+      # back to the dev default http://localhost:8006 — inside the audit
+      # container that's unreachable, every outbox attempt hits ConnectError,
+      # and the retry counter grows unbounded (saw ~157k retries / 19 min
+      # on prod-ha 2026-06-13). Same shape as the sprint-8 BEHAVIOR_SERVICE_URL
+      # fix on the gateway.
+      - USAGE_SERVICE_URL=http://usage:8000
+      # shadow_router.py POSTs promoted policies to /policy/upload. Without
+      # this the default http://localhost:8003 is used and the promote
+      # action hangs.
+      - POLICY_SERVICE_URL=http://policy:8000
     command: >
       sh -c "cd /app/services/audit && alembic upgrade head &&
              cd /app && uvicorn services.audit.main:app --host 0.0.0.0 --port 8000"
@@ -433,7 +450,18 @@ services:
       - REDIS_CLUSTER_ENABLED=false
       # P0-2 FIX: no weak fallback — JWT_SECRET_KEY MUST be set and must match identity service
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
-    command: uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000 --workers 4
+      # shadow_eval_hook.py is the ONLY DB consumer in the gateway and it
+      # reads shadow_policies / writes shadow_decisions, both of which live
+      # in acp_audit. Without this override the engine inherits the host
+      # .env DATABASE_URL (which points at the legacy `acp` database) and
+      # every shadow lookup blows up with `relation "shadow_policies" does
+      # not exist`. Pin to acp_audit so the shadow feature actually works.
+      - DATABASE_URL=postgresql+asyncpg://audit_user:${AUDIT_DB_PASSWORD:-audit_prod_pwd}@pgbouncer:6432/acp_audit
+    # 2 workers, not 4: prod-ha gateway memory limit is 768M (see
+    # docker-compose.aws.yml), so 4 workers got ~192M each and OOM-killed
+    # under real load. 2 workers × ~384M each is comfortable for FastAPI
+    # and still gives ~50 RPS headroom for the 20-user infra.
+    command: uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000 --workers 2
     volumes:
       - ../services:/app/services:ro
       - ../sdk:/app/sdk:ro
@@ -471,6 +499,8 @@ services:
       - "127.0.0.1:8010:8000"
     volumes:
       - ../services/decision:/app/services/decision
+      # Sprint 1 — registry import safety; see policy block above.
+      - ../services/security:/app/services/security
       - ../sdk:/app/sdk
     environment:
       # Reads AuditLog for /decision/history; CostEngine uses Redis only

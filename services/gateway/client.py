@@ -104,8 +104,15 @@ class PolicyCache:
 # AGENT METADATA CACHE
 # ---------------------------------------------------------------------------
 
-_AGENT_CACHE_TTL: int = 300  # 5 minutes
+# 2026-06-15: dropped from 300 → 30 to bound the post-permission-grant
+# race window. Buyer-visible bug: first /execute after POST /permissions
+# saw "tool not in agent's allow-list" because this cache served stale
+# metadata for up to 5 minutes. 30s + the perm_dirty tombstone below
+# closes the window to a few seconds (registry invalidates instantly;
+# the TTL is just the catch-all in case the invalidate publish failed).
+_AGENT_CACHE_TTL: int = 30
 _AGENT_CACHE_PREFIX: str = "acp:agent:meta:"
+_AGENT_DIRTY_PREFIX: str = "acp:agent:perms_dirty:"  # write-through tombstone
 
 
 class AgentMetadataCache:
@@ -113,7 +120,10 @@ class AgentMetadataCache:
     Redis-backed cache for agent metadata from Registry.
     Reduces Registry DB calls per request.
     key = acp:agent:meta:{agent_id}
-    TTL = 300 seconds
+    TTL = 30 seconds
+    Tombstone: when registry.add_permission lands it SETEXs the dirty key
+    for 15s; .get() honours the tombstone and returns None to force a
+    refetch from Registry (which always reads fresh DB).
     """
 
     def __init__(self, redis: Redis) -> None:
@@ -122,7 +132,20 @@ class AgentMetadataCache:
     def _key(self, agent_id: uuid.UUID) -> str:
         return f"{_AGENT_CACHE_PREFIX}{agent_id}"
 
+    def _dirty_key(self, agent_id: uuid.UUID) -> str:
+        return f"{_AGENT_DIRTY_PREFIX}{agent_id}"
+
     async def get(self, agent_id: uuid.UUID) -> dict[str, Any] | None:
+        # 2026-06-15 — write-through tombstone check.
+        # Registry sets acp:agent:perms_dirty:{agent_id} on each permission
+        # change with TTL=15s. While the tombstone exists this cache lies
+        # dormant and every fetch hits Registry directly. After it expires
+        # the cache resumes.
+        try:
+            if await self._redis.get(self._dirty_key(agent_id)) is not None:
+                return None
+        except Exception:
+            pass
         raw = await self._redis.get(self._key(agent_id))
         if raw is None:
             return None
@@ -132,7 +155,11 @@ class AgentMetadataCache:
             return None
 
     async def set(self, agent_id: uuid.UUID, metadata: dict[str, Any]) -> None:
+        # Skip caching while the dirty tombstone is live — caching now
+        # would just bake in whatever stale snapshot the writer saw.
         try:
+            if await self._redis.get(self._dirty_key(agent_id)) is not None:
+                return
             await self._redis.setex(
                 self._key(agent_id),
                 _AGENT_CACHE_TTL,

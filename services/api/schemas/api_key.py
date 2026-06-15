@@ -9,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class APIKeyBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     expires_at: datetime | None = None
+    # Sprint 1.5 — optional per-agent scope. When set, the gateway requires
+    # the inbound X-Agent-ID header to match this value (so a leaked
+    # per-agent key can never be used to impersonate a different agent).
+    agent_id: uuid.UUID | None = None
 
 
 class APIKeyCreate(APIKeyBase):

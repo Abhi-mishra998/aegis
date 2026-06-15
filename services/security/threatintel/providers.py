@@ -44,21 +44,15 @@ from .ioc import (
 
 
 # ---------------------------------------------------------------------------
-# Curated defaults — these are what canonical.py used to import as
-# hardcoded constants. Keeping them addressable here means an operator
-# can disable an individual default via DELETE /threat-intel/iocs/{id}
-# rather than waiting for a release.
+# Curated defaults — re-exported from the shared Sprint 8 pattern catalog
+# so the cache-side providers and the canonical fast-path agree on what
+# ships in the Aegis binary. An operator can disable an individual entry
+# via DELETE /threat-intel/iocs/{id} once it's been seeded into Redis;
+# this exports the *floor* the cache starts from.
 # ---------------------------------------------------------------------------
-DEFAULT_EXFIL_HOSTS: tuple[str, ...] = (
-    "transfer.sh", "pastebin.com", "gist.github.com",
-    "filebin.net", "anonfiles.com", "0x0.st",
-    "ngrok.io", "trycloudflare.com",
-    "discord.com/api/webhooks", "webhook.site",
-)
-
-DEFAULT_OFFSHORE_TOKENS: tuple[str, ...] = (
-    "offshore", "beneficiary-offshore", "cayman",
-    "bvi", "british_virgin_islands", "panama_papers",
+from services.policy.pattern_catalog import (
+    EXFIL_HOSTS as DEFAULT_EXFIL_HOSTS,
+    OFFSHORE_TOKENS as DEFAULT_OFFSHORE_TOKENS,
 )
 
 

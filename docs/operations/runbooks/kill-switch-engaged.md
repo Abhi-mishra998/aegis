@@ -43,7 +43,7 @@ The status badge turns red within 5 seconds.
 ### Via API
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS -X POST https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "Content-Type: application/json" \
@@ -58,12 +58,12 @@ If you see HTTP 422 "Validation failed", you are running a pre-2026-06-01 decisi
 
 ```bash
 # Status should be engaged within 5 seconds
-curl -sS https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" | jq
 
 # Verify a test execute is denied
-curl -sS -X POST https://dev.aegisagent.in/execute \
+curl -sS -X POST https://ha.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "Content-Type: application/json" \
@@ -107,7 +107,7 @@ Before disengaging:
 ### Via API
 
 ```bash
-curl -sS -X DELETE https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS -X DELETE https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID"
 ```
@@ -118,12 +118,12 @@ The DELETE route takes no body. The audit row records the disengage event with t
 
 ```bash
 # Status should be disengaged
-curl -sS https://dev.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" | jq '.data.status'  # should be "disengaged"
 
 # A test execute should now succeed
-curl -sS -X POST https://dev.aegisagent.in/execute \
+curl -sS -X POST https://ha.aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "X-Agent-ID: $AGENT_ID" \

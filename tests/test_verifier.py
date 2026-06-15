@@ -64,16 +64,33 @@ def _sign_receipt_payload(receipt: dict[str, Any], priv_pem: str, pub_pem: str) 
     }
 
 
-def _make_receipt(execution_id: str = "exec-001") -> dict[str, Any]:
-    """Return a minimal receipt dict with all required fields."""
+def _make_receipt(execution_id: str = "exec-001", prev_hash: str | None = None) -> dict[str, Any]:
+    """Return a minimal receipt dict with all required fields.
+
+    Sprint 1.1 — ``event_hash`` is now derived from the canonical business
+    fields via :func:`compute_event_hash` so the receipt walks correctly
+    through the new shard-chain verifier. Pass ``prev_hash`` to chain
+    consecutive receipts in the same shard; defaults to ``GENESIS_HASH``.
+    """
+    from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash
+    prev = prev_hash if prev_hash is not None else GENESIS_HASH
+    eh = compute_event_hash(
+        prev_hash=prev,
+        tenant_id="tenant-test",
+        agent_id="agent-test",
+        action="execute_tool",
+        tool="search_web",
+        decision="allow",
+        request_id=f"req-{execution_id}",
+    )
     return {
         "action": "execute_tool",
         "agent_id": "agent-test",
         "chain_shard": 0,
         "decision": "allow",
-        "event_hash": "abc123",
+        "event_hash": eh,
         "execution_id": execution_id,
-        "prev_hash": "0" * 64,
+        "prev_hash": prev,
         "reason": "policy_allow",
         "request_id": f"req-{execution_id}",
         "tenant_id": "tenant-test",
@@ -548,6 +565,7 @@ def test_export_verification_ok_property() -> None:
         total_inclusions=2,
         valid_inclusions=2,
         chain_ok=True,
+        shard_chains_ok=True,   # Sprint 1.1 — required for .ok
     )
     assert ev.ok is True
 
@@ -617,14 +635,16 @@ def test_verifier_export_end_to_end() -> None:
         # Write active public key
         (export_dir / "keys" / "active.pem").write_text(pub_pem)
 
-        # Generate N signed receipt payloads
+        # Generate N signed receipt payloads chained correctly per shard.
         payloads: list[dict[str, Any]] = []
+        prev_hash: str | None = None
         for i in range(N):
-            receipt = _make_receipt(f"exec-e2e-{i:03d}")
+            receipt = _make_receipt(f"exec-e2e-{i:03d}", prev_hash=prev_hash)
             receipt["timestamp"] = f"2026-05-24T12:0{i}:00Z"
             payload = _sign_receipt_payload(receipt, priv_pem, pub_pem)
             payloads.append(payload)
             _write_json(export_dir / "receipts" / f"exec-e2e-{i:03d}.json", payload)
+            prev_hash = receipt["event_hash"]
 
         # Build the Merkle tree for all leaves
         leaves = [leaf_hash(p) for p in payloads]
@@ -692,15 +712,20 @@ def test_verifier_export_end_to_end_multi_day_chain() -> None:
         prev_hash = "0" * 64
         all_payloads: dict[str, list[dict[str, Any]]] = {}
 
+        # Sprint 1.1 — chain event_hash across the entire shard (all days),
+        # since chain_shard=0 spans the whole export and the shard-chain
+        # walker checks prev_hash linkage across day boundaries.
+        chain_prev: str | None = None
         for day in days:
             day_payloads: list[dict[str, Any]] = []
             for j in range(receipts_per_day):
                 exec_id = f"exec-{day}-{j}"
-                receipt = _make_receipt(exec_id)
+                receipt = _make_receipt(exec_id, prev_hash=chain_prev)
                 receipt["timestamp"] = f"{day}T12:0{j}:00Z"
                 payload = _sign_receipt_payload(receipt, priv_pem, pub_pem)
                 day_payloads.append(payload)
                 _write_json(export_dir / "receipts" / f"{exec_id}.json", payload)
+                chain_prev = receipt["event_hash"]
             all_payloads[day] = day_payloads
 
             day_leaves = [leaf_hash(p) for p in day_payloads]

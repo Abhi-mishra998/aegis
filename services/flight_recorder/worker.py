@@ -76,6 +76,7 @@ async def _get_or_create_timeline(
         tenant_id=tenant_id, org_id=tenant_id,
         request_id=request_id, agent_id=agent_uuid,
         tool=ev.get("tool"),
+        session_id=(ev.get("session_id") or None),  # Sprint 3.5
         metadata_json=ev.get("metadata") or {},
         status="in_progress",
     )
@@ -117,6 +118,12 @@ async def _apply_event(db, ev: dict[str, Any]) -> None:
                 dirty = True
             except (ValueError, TypeError):
                 pass
+        # Sprint 3.5 — backfill session_id when timeline_start lands after
+        # a step event has already created the row.
+        ev_session = ev.get("session_id")
+        if ev_session and not timeline.session_id:
+            timeline.session_id = ev_session
+            dirty = True
         ev_meta = ev.get("metadata") or {}
         if ev_meta and not (timeline.metadata_json or {}):
             timeline.metadata_json = ev_meta

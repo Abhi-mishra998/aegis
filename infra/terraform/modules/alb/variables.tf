@@ -48,6 +48,18 @@ variable "access_logs_bucket" {
   default     = ""
 }
 
+# Sprint 9 — deploy-bug-fix #1.
+#
+# The original module hardcoded `enable_deletion_protection = true`, which
+# meant `terraform destroy` hung on the non-prod environments. Defaulting
+# to true preserves the prod-safe behaviour; dev (and other ephemeral
+# environments) set this to false so destroy/apply cycles work cleanly.
+variable "enable_deletion_protection" {
+  description = "ALB delete-protection. KEEP TRUE in prod; set false for ephemeral envs that get destroyed often."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

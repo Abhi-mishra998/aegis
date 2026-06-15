@@ -62,8 +62,7 @@ Yes. Selecting an agent narrows the summary and invoice list to that agent.
 
 ## Related docs
 
-- [Billing flow](../../services/billing.md)
-- [Usage service](../../services/usage.md)
+- [Usage service](../../services/usage.md) (billing is the cross-service flow described there)
 - [Quota Management UI](quota-management.md)
 
 ## Screenshot

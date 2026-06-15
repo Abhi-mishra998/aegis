@@ -18,9 +18,10 @@ and the canonical finding vocabulary.
 
 The same data drives three UI views (Graph / Timeline / JSON) and the
 Trace Overview KPI strip. The architecture is the focus of this page —
-the operator runbook lives at
-[`docs/ui/operations/decision-explorer.md`](../ui/operations/decision-explorer.md)
-when that ships in the next polish pass.
+the operator-side runbook for the UI page hasn't been written yet; this
+page covers the architecture. The page lives in the UI at
+`/decision-explorer` and is implemented in
+`ui/src/pages/DecisionExplorer.jsx`.
 
 ## The data model
 

@@ -125,11 +125,35 @@ class ACPSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────
     # 📡 SIEM Integration (optional — leave SIEM_TARGET="" to disable)
     # ─────────────────────────────────────────────────────────────
-    SIEM_TARGET: str = Field(default="", description="SIEM target: '' | 'splunk' | 'datadog'")
+    # Sprint 2b extends targets from {splunk, datadog} to also include
+    # elastic, sentinel, chronicle. Credentials can come from env (legacy)
+    # or AWS SSM Parameter Store at /aegis-siem/<target>/* — matching the
+    # existing /aegis-voice-guide/* convention.
+    SIEM_TARGET: str = Field(default="", description="SIEM target: '' | 'splunk' | 'datadog' | 'elastic' | 'sentinel' | 'chronicle'")
+    SIEM_CRED_SOURCE: str = Field(default="env", description="SIEM credential source: 'env' (default) | 'ssm'")
+    SIEM_SSM_PREFIX: str = Field(default="/aegis-siem", description="SSM Parameter Store prefix when SIEM_CRED_SOURCE=ssm")
+
     SPLUNK_HEC_URL: str = Field(default="", description="Splunk HEC URL (e.g. https://splunk.example.com:8088/services/collector)")
     SPLUNK_HEC_TOKEN: str = Field(default="", description="Splunk HEC token")
     DATADOG_LOGS_URL: str = Field(default="https://http-intake.logs.datadoghq.com/api/v2/logs", description="Datadog Logs API URL")
     DATADOG_API_KEY: str = Field(default="", description="Datadog API key")
+
+    # Elastic Cloud (Bulk Index API). CLOUD_ID derives the cluster URL.
+    # API_KEY is the base64-encoded ``id:key`` pair from Kibana.
+    ELASTIC_CLOUD_ID: str = Field(default="", description="Elastic Cloud ID (from Elastic Cloud deployment page)")
+    ELASTIC_API_KEY: str = Field(default="", description="Elastic API key (base64-encoded id:key pair)")
+    ELASTIC_INDEX: str = Field(default="aegis-audit", description="Elastic index for audit events")
+
+    # Microsoft Sentinel (Log Analytics HTTP Data Collector API).
+    SENTINEL_WORKSPACE_ID: str = Field(default="", description="Azure Log Analytics workspace id (UUID)")
+    SENTINEL_SHARED_KEY: str = Field(default="", description="Azure Log Analytics shared key (base64)")
+    SENTINEL_LOG_TYPE: str = Field(default="AegisAudit", description="Sentinel Log-Type header (custom-log table name)")
+
+    # Google Chronicle (UDM Ingest API). Service-account JSON is the
+    # downloaded key-file content. Region selects the endpoint host.
+    CHRONICLE_CUSTOMER_ID: str = Field(default="", description="Chronicle customer UUID")
+    CHRONICLE_SERVICE_ACCOUNT_JSON: str = Field(default="", description="Chronicle service-account key JSON (full key file content)")
+    CHRONICLE_REGION: str = Field(default="us", description="Chronicle region: us | europe | asia-southeast1")
 
     # ─────────────────────────────────────────────────────────────
     # 🌐 CORS

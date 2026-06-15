@@ -408,6 +408,11 @@ setup_app(app, "usage")
 # All telemetry routes must live under /usage for Gateway consistency
 app.include_router(usage_router)
 
+# Sprint 4.4 — Agent FinOps burn-down (prefix="/usage/fleet")
+from services.usage.router.fleet import fleet_router as usage_fleet_router  # noqa: E402
+
+app.include_router(usage_fleet_router)
+
 # billing_router has prefix="/billing"; mount directly to match Gateway calls
 app.include_router(billing_router)
 

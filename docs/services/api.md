@@ -39,9 +39,29 @@ The service has a synchronous API surface and an embedded worker for auto-respon
 
 ### Incident open
 
-1. Audit detects a chain violation or a threshold breach → POSTs `/incidents` to the api service.
-2. Handler inserts into `incidents` with `status="open"`.
-3. Webhook fanout: posts to Slack and (if configured) PagerDuty.
+There are two paths into the `incidents` table:
+
+**Path A — gateway-driven (the live default as of 2026-06-14):**
+
+1. Gateway middleware decides `decision.action ∈ {DENY, KILL, ESCALATE}` for a `/execute` call.
+2. `services/gateway/middleware.py:815-840` publishes one event to `acp:incidents:queue` (Redis stream, `XADD` with `maxlen ≈ 10_000 approximate`). Severity maps off the decision: `KILL → CRITICAL`, `DENY → HIGH`, `ESCALATE → MEDIUM`. Trigger string maps to `agent_killed | escalation_required | policy_denied`.
+3. Inside `acp_api`, a long-running `asyncio.create_task(_incident_consumer(...))` (started in `services/api/main.py::lifespan`) reads from the stream as the `api-incident-worker` consumer group with at-least-once delivery, replays the pending list on startup (crash recovery), and dedups by `sha256(tenant + agent + tool + trigger)` for 5 minutes.
+4. `IncidentRepository.create(payload, dedup_key=...)` inserts the row (`status="open"`, `severity` from step 2, `violation_count=1`). On a dedup hit within the window, the consumer instead bumps `violation_count` on the open incident.
+5. Webhook fanout: posts to Slack and (if configured) PagerDuty.
+
+**Path B — operator-driven or audit-driven (used by the admin console and SOC integrations):**
+
+1. ADMIN/SECURITY posts directly to `POST /incidents` (or the audit service does so during a chain-violation check).
+2. Handler runs the same `IncidentRepository.create` path; webhook fanout follows.
+
+> **Trigger Literal — both short and verbose forms accepted.** `services/api/schemas/incident.py:11` declares:
+> ```
+> Trigger = Literal["policy_deny", "policy_denied",
+>                   "kill",        "agent_killed",
+>                   "escalate",    "escalation_required",
+>                   "risk_threshold", "anomaly", "manual"]
+> ```
+> The gateway emits the verbose forms (`policy_denied / escalation_required / agent_killed`); legacy direct POSTs may use the short forms (`policy_deny / escalate / kill`). Both are valid and land as `Trigger` field values verbatim on the incident row. Mismatches here would silently drop events into the stream's pending list — the broader/inclusive Literal is intentional.
 
 ### Auto-response rule trigger
 
@@ -201,7 +221,7 @@ Selected endpoints:
 ### Create an API key
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/api-keys \
+curl -sS -X POST https://ha.aegisagent.in/api-keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -212,7 +232,7 @@ curl -sS -X POST https://dev.aegisagent.in/api-keys \
 ### Create an AR rule that quarantines on prompt-injection finding
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/auto-response/rules \
+curl -sS -X POST https://ha.aegisagent.in/auto-response/rules \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -228,7 +248,7 @@ curl -sS -X POST https://dev.aegisagent.in/auto-response/rules \
 ### Push a test event to Splunk
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/siem/test/splunk \
+curl -sS -X POST https://ha.aegisagent.in/siem/test/splunk \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001"
 ```

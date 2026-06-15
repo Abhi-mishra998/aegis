@@ -23,68 +23,8 @@ from services.security.remediation.actions import (
 from services.security.remediation.policy import RemediationPolicy
 
 
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.kv: dict[str, str] = {}
-        self.lists: dict[str, list[str]] = {}
-        self.sets: dict[str, set[str]] = {}
-        self.hashes: dict[str, dict[str, str]] = {}
-        self.streams: dict[str, list[dict[str, str]]] = {}
-        self.publishes: list[tuple[str, str]] = []
-
-    async def rpush(self, k, *vals):
-        lst = self.lists.setdefault(k, [])
-        for v in vals:
-            lst.append(v if isinstance(v, str) else str(v))
-        return len(lst)
-
-    async def lrange(self, k, start, end):
-        lst = self.lists.get(k, [])
-        if end == -1:
-            return [x.encode() for x in lst]
-        return [x.encode() for x in lst[start: end + 1]]
-
-    async def expire(self, k, ex):
-        return True
-
-    async def sadd(self, k, *vals):
-        s = self.sets.setdefault(k, set())
-        before = len(s)
-        s.update(str(v) for v in vals)
-        return len(s) - before
-
-    async def srem(self, k, *vals):
-        s = self.sets.get(k, set())
-        before = len(s)
-        for v in vals:
-            s.discard(str(v))
-        return before - len(s)
-
-    async def sismember(self, k, v):
-        return str(v) in self.sets.get(k, set())
-
-    async def hgetall(self, k):
-        h = self.hashes.get(k, {})
-        return {kk.encode(): vv.encode() for kk, vv in h.items()}
-
-    async def hset(self, k, field=None, value=None, mapping=None, **kw):
-        h = self.hashes.setdefault(k, {})
-        if field is not None:
-            h[field] = str(value) if value is not None else ""
-        if mapping:
-            for kk, vv in mapping.items():
-                h[kk] = str(vv) if vv is not None else ""
-        for kk, vv in kw.items():
-            h[kk] = str(vv) if vv is not None else ""
-        return 1
-
-    async def publish(self, channel, payload):
-        self.publishes.append((channel, payload))
-        return 1
-
-    async def xadd(self, stream, fields):
-        self.streams.setdefault(stream, []).append(dict(fields))
-        return f"{len(self.streams[stream])}-0"
+# Phase-2 cleanup 2026-06-15 — fake moved to tests/security/_fakes.py.
+from tests.security._fakes import FakeRedis as _FakeRedis
 
 
 @pytest.mark.asyncio

@@ -107,6 +107,20 @@ To find a trace by request_id:
 
 Useful for "why did this one request take 800 ms" debugging.
 
+### OTel exporter to your own backend (Sprint 8)
+
+In addition to the on-host Jaeger UI, the gateway can ship the same `aegis.decision` traces to any OTLP-compatible backend (Datadog, Grafana Cloud / Tempo, Honeycomb, Amazon CloudWatch GenAI Observability via ADOT, etc.). Source: `sdk/common/otel_exporter.py`. The exporter is environment-driven and a no-op when the enabled flag is unset:
+
+```bash
+export AEGIS_OTEL_EXPORTER_ENABLED=true
+export AEGIS_OTEL_EXPORTER_PROTOCOL=http/protobuf
+export AEGIS_OTEL_EXPORTER_ENDPOINT=<vendor-specific>
+export AEGIS_OTEL_EXPORTER_HEADERS=<vendor-specific>
+export AEGIS_OTEL_SERVICE_NAME=aegis-gateway
+```
+
+Full backend recipes (Datadog US1, Grafana Cloud Tempo, ADOT collector for CloudWatch, Honeycomb / generic OTLP) live in [Evidence Export Adapters](../integrations/evidence-export.md#2--opentelemetry-decision-exporter-sdkcommonotel_exporterpy).
+
 ## The `/metrics` endpoint
 
 Every service exposes Prometheus metrics at `/metrics`. The format is the standard Prometheus exposition format. Scrape interval is 15 seconds.
@@ -163,13 +177,15 @@ A few things to verify periodically:
 ## What this stack does NOT include
 
 - **APM-style request tracking across user sessions.** Aegis traces individual requests, not user journeys. Customer-side analytics would be a separate concern.
-- **Log aggregation.** Container stdout is captured by the local Docker logging driver. For centralized logging, configure a SIEM forwarder via Settings → SIEM.
+- **Log aggregation.** Container stdout is captured by the local Docker logging driver. For centralized logging, configure a SIEM forwarder via Settings → SIEM. As of 2026-06-14, every SIEM event also carries `aevf_bundle_url` / `aevf_event_hash` / `aevf_spec_version` so the auditor can pivot from a SIEM row to the verifiable bundle — see [SIEM Forwarders](siem-forwarders.md#aevf-back-reference-fields-a6-2026-06-14).
 - **Anomaly detection on metrics.** Alert rules are static thresholds. ML-based anomaly detection is roadmap.
 - **Customer-facing dashboards.** The Grafana dashboards are operator-only. Customer-facing dashboards live in the Aegis UI (Observability, Risk Engine, Billing).
 
 ## Next
 
-- [Deployment Topology](../architecture/deployment-topology.md) — where the observability containers run
+- [Deployment Topology](../architecture/deployment-topology.md) — where the observability containers run on each of the two ASG hosts
+- [Evidence Export Adapters](../integrations/evidence-export.md) — every channel audit evidence exits through (SIEM, OTel, MCP, VS Code, GRC)
 - [Gateway service](../services/gateway.md) — most-instrumented service
 - [Audit service](../services/audit.md) — owns the chain-integrity metrics
+- [SIEM Forwarders](siem-forwarders.md) — Splunk / Datadog / Elastic / Sentinel / Chronicle with AEVF back-reference
 - [Audit Chain Violation runbook](runbooks/audit-chain-violation.md) — the alert that matters most

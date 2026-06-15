@@ -42,7 +42,7 @@ Two processes: a worker (`insight_worker`) that drains the Redis stream and an H
 ### Enrich (worker)
 
 1. Worker process XREADGROUP-s from `acp:groq_events`.
-2. For each event, builds a prompt from a template at `services/insight/prompt_templates.py`.
+2. For each event, builds a prompt from a template at `services/insight/main.py`.
 3. Calls Groq with the small model (configured by `GROQ_MODEL_FAST`, e.g. `llama-3.1-8b-instant`).
 4. Stores the response as `acp:groq:insight:{event_id}` with a 24-hour TTL.
 5. Appends to a ZSET `acp:groq:insights:timeline` scored by timestamp, for recent-first listing.
@@ -130,7 +130,7 @@ The Groq API key is provided via env; the doc does not state the secret value. R
 ### Recent insights
 
 ```bash
-curl -sS "https://dev.aegisagent.in/insights/recent?limit=10" \
+curl -sS "https://ha.aegisagent.in/insights/recent?limit=10" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | { event_id, agent, finding, summary }'
@@ -139,7 +139,7 @@ curl -sS "https://dev.aegisagent.in/insights/recent?limit=10" \
 ### One insight by event id
 
 ```bash
-curl -sS https://dev.aegisagent.in/insights/$EVENT_ID \
+curl -sS https://ha.aegisagent.in/insights/$EVENT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.summary'
@@ -167,7 +167,11 @@ curl -sS https://dev.aegisagent.in/insights/$EVENT_ID \
 
 ## Next
 
-- [Groq Worker](groq-worker.md) — an alternative deployment target with the same Redis contract
-- [Intelligence](intelligence.md) — cross-agent correlation that uses insight outputs
+- [Learning](learning.md) — cross-agent behavior intelligence + drift detector that consumes the same data
 - [Decision](decision.md) — the upstream emitter
 - [Audit](audit.md) — the durable record this layer explains
+
+The `acp:groq_events` Redis Stream is written by the gateway middleware
+(`services/gateway/middleware.py::_emit_groq_event`). The historical
+standalone `groq_worker` container was removed in 2026-05-29;
+`insight_worker` is the surviving consumer.

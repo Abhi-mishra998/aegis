@@ -80,7 +80,7 @@ The new cap takes effect immediately for the next request.
 For a permanent raise, set the value via the API:
 
 ```bash
-curl -sS -X PATCH https://dev.aegisagent.in/agents/$AGENT_ID \
+curl -sS -X PATCH https://ha.aegisagent.in/agents/$AGENT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" \
   -H "Content-Type: application/json" \

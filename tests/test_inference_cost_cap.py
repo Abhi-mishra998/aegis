@@ -190,13 +190,125 @@ async def test_usage_snapshot_read_only(fake_redis):
     lim = InferenceCostLimiter(fake_redis)
     # Seed counters as if some prior calls had run.
     now = datetime.now(tz=UTC)
-    fake_redis.kv[InferenceCostLimiter._counter_key("tenant", "t1", now)] = "250"  # $2.50
-    fake_redis.kv[InferenceCostLimiter._counter_key("agent", "a1", now)] = "75"    # $0.75
+    fake_redis.kv[lim._counter_key("tenant", "t1", now)] = "250"  # $2.50
+    fake_redis.kv[lim._counter_key("agent", "a1", now)] = "75"    # $0.75
     snap = await lim.usage_snapshot(tenant_id="t1", agent_id="a1")
     assert snap["tenant_usd_used"] == pytest.approx(2.50)
     assert snap["agent_usd_used"] == pytest.approx(0.75)
     # Counters must NOT change after a read-only snapshot.
-    assert fake_redis.kv[InferenceCostLimiter._counter_key("tenant", "t1", now)] == "250"
+    assert fake_redis.kv[lim._counter_key("tenant", "t1", now)] == "250"
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 2.2 — period selection + monthly-aligned warning (audit C21)         #
+# --------------------------------------------------------------------------- #
+
+
+def test_default_period_is_monthly(monkeypatch):
+    """README documents a once-per-period warning; cloud LLM providers bill
+    monthly, so the production default is the monthly bucket. Operators can
+    drop to daily on cost-constrained dev rigs by setting INFERENCE_COST_PERIOD."""
+    monkeypatch.delenv("INFERENCE_COST_PERIOD", raising=False)
+    lim = InferenceCostLimiter(fake_redis_stub := _FakeRedis())
+    assert lim.period == "monthly"
+
+
+def test_env_var_overrides_to_daily(monkeypatch):
+    monkeypatch.setenv("INFERENCE_COST_PERIOD", "daily")
+    lim = InferenceCostLimiter(_FakeRedis())
+    assert lim.period == "daily"
+
+
+def test_constructor_argument_overrides_env(monkeypatch):
+    monkeypatch.setenv("INFERENCE_COST_PERIOD", "monthly")
+    lim = InferenceCostLimiter(_FakeRedis(), period="daily")
+    assert lim.period == "daily"
+
+
+def test_monthly_keys_share_the_same_bucket_within_a_month():
+    """The headline C21 fix: the warn key dedupe must rotate at most once per
+    cap window — not 30× a month."""
+    lim = InferenceCostLimiter(_FakeRedis(), period="monthly")
+    early = datetime(2026, 6, 1, 0, 0, 1, tzinfo=UTC)
+    mid = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+    late = datetime(2026, 6, 30, 23, 59, 59, tzinfo=UTC)
+    for stamp in (early, mid, late):
+        assert lim._counter_key("tenant", "t1", stamp) == "acp:inference_cost:tenant:t1:2026-06"
+        assert lim._warn_key("tenant", "t1", stamp) == "acp:inference_cost_warn:tenant:t1:2026-06"
+
+
+def test_monthly_keys_rotate_at_month_boundary():
+    lim = InferenceCostLimiter(_FakeRedis(), period="monthly")
+    last_of_june = datetime(2026, 6, 30, 23, 59, 59, tzinfo=UTC)
+    first_of_july = datetime(2026, 7, 1, 0, 0, 1, tzinfo=UTC)
+    assert lim._counter_key("tenant", "t1", last_of_june) != lim._counter_key("tenant", "t1", first_of_july)
+    assert lim._warn_key("tenant", "t1", last_of_june) != lim._warn_key("tenant", "t1", first_of_july)
+
+
+def test_daily_keys_rotate_at_midnight():
+    lim = InferenceCostLimiter(_FakeRedis(), period="daily")
+    d1 = datetime(2026, 6, 13, 23, 59, 59, tzinfo=UTC)
+    d2 = datetime(2026, 6, 14, 0, 0, 1, tzinfo=UTC)
+    assert lim._counter_key("tenant", "t1", d1) == "acp:inference_cost:tenant:t1:2026-06-13"
+    assert lim._counter_key("tenant", "t1", d2) == "acp:inference_cost:tenant:t1:2026-06-14"
+
+
+def test_counter_and_warn_keys_always_share_period():
+    """If a future refactor split the period between counter and warn, the
+    bug the audit flagged returns — the warning would fire multiple times
+    per cap window. This test pins them together."""
+    for period in ("monthly", "daily"):
+        lim = InferenceCostLimiter(_FakeRedis(), period=period)
+        now = datetime(2026, 6, 13, 12, tzinfo=UTC)
+        counter = lim._counter_key("tenant", "t1", now)
+        warn = lim._warn_key("tenant", "t1", now)
+        # Same trailing bucket — different prefix.
+        assert counter.rsplit(":", 1)[1] == warn.rsplit(":", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_monthly_warning_fires_once_per_period(fake_redis):
+    """End-to-end: two calls in the same UTC month → ONE warning event.
+    Pre-Sprint-2.2 the daily key would have emitted 30+ alerts."""
+    lim = InferenceCostLimiter(fake_redis, period="monthly")
+
+    # First call lands at 80% of the cap → warning fires.
+    dec1 = await lim.check(
+        tenant_id="t1", agent_id=None,
+        estimated_usd=8.0,         # 800 cents
+        tenant_cap_usd=10.0,       # cap = 1000 cents → 80%
+        agent_cap_usd=0.0,
+    )
+    assert dec1.allowed is True
+    assert dec1.warned is True
+
+    # Second call same month → cap is 9.5/10, still under 100%, but the
+    # warning must NOT re-fire (one-shot per period).
+    dec2 = await lim.check(
+        tenant_id="t1", agent_id=None,
+        estimated_usd=1.5,         # cumulative 950 cents = 95%
+        tenant_cap_usd=10.0,
+        agent_cap_usd=0.0,
+    )
+    assert dec2.allowed is True
+    assert dec2.warned is False
+
+    events = fake_redis.streams.get(InferenceCostLimiter.BILLING_ALERTS_STREAM, [])
+    assert len(events) == 1, f"expected 1 alert per period, got {len(events)}"
+
+
+@pytest.mark.asyncio
+async def test_reset_at_uses_next_month_for_monthly_period(fake_redis):
+    lim = InferenceCostLimiter(fake_redis, period="monthly")
+    dec = await lim.check(
+        tenant_id="t1", agent_id=None,
+        estimated_usd=1.0, tenant_cap_usd=100.0, agent_cap_usd=0.0,
+    )
+    # reset_at must be a UTC month-start, not a midnight on the same month.
+    assert dec.reset_at is not None
+    parsed = datetime.fromisoformat(dec.reset_at)
+    assert parsed.day == 1
+    assert parsed.hour == 0 and parsed.minute == 0
 
 
 # --------------------------------------------------------------------------- #

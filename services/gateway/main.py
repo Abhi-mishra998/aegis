@@ -307,6 +307,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Previously /status had no concept of when the process booted, so any
     # external monitoring trying to render an SLI window saw a null gauge.
     _app.state.start_time = time.time()
+    # Sprint 8 — Install the OTLP exporter (env-driven) before any traffic
+    # lands so the first request's decision span goes to the buyer's
+    # observability backend. No-op when AEGIS_OTEL_EXPORTER_ENABLED is unset.
+    from sdk.common.otel_exporter import setup_exporter as _setup_otel_exporter
+    _setup_otel_exporter(service_name="aegis-gateway")
     service_client.set_redis(redis)
     init_token_validator(redis)
     # Tuned timeout: 5s connect, 10s read, 5s write
@@ -332,6 +337,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     billing_worker.cancel()
     queue_age_worker.cancel()
     revocation_listener.cancel()
+    # Sprint 8 — Drain in-flight OTLP batches before the process exits so
+    # the buyer's tail-end traces aren't lost on graceful shutdown.
+    try:
+        from sdk.common.otel_exporter import shutdown_exporter as _shutdown_otel_exporter
+        _shutdown_otel_exporter()
+    except Exception:
+        pass
     await _app.state.client.aclose()
     await redis.aclose()
     await service_client.close()
@@ -497,6 +509,7 @@ from services.gateway.routers.compliance import (
     router as _compliance_router,  # noqa: E402
 )
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
+from services.gateway.routers.demo import router as _demo_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
 from services.gateway.routers.forensics import router as _forensics_router  # noqa: E402
 from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
@@ -552,6 +565,7 @@ app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_tenant_router)
 app.include_router(_voice_router)
+app.include_router(_demo_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),

@@ -97,11 +97,65 @@ class _AuthMixin:
                     tenant_id_str = str(key_data["tenant_id"])
                     tenant_id = uuid.UUID(tenant_id_str)
 
+                    # Sprint 1.5 — when the API key is bound to a specific
+                    # agent (key_data["agent_id"] is set), the inbound
+                    # X-Agent-ID header MUST match. Without this check, an
+                    # attacker holding a per-agent key could call /execute
+                    # while claiming to be any other agent in the tenant — an
+                    # API-key analog of the multi-tenancy header-trust
+                    # vulnerability (S5 in the audit). Tenant-scoped keys
+                    # (agent_id NULL) preserve the legacy informational
+                    # X-Agent-ID behavior for back-compat.
+                    bound_agent_raw = key_data.get("agent_id")
                     x_agent_hdr = request.headers.get("X-Agent-ID", "")
-                    try:
-                        agent_id = uuid.UUID(x_agent_hdr) if x_agent_hdr else uuid.UUID(int=0)
-                    except ValueError:
-                        agent_id = uuid.UUID(int=0)
+
+                    if bound_agent_raw:
+                        try:
+                            bound_agent = uuid.UUID(str(bound_agent_raw))
+                        except ValueError as exc:
+                            logger.error(
+                                "api_key_corrupt_agent_binding",
+                                key_prefix=key_data.get("key_prefix", "?"),
+                                error=str(exc),
+                            )
+                            raise HTTPException(
+                                status_code=500,
+                                detail="API key has corrupt agent binding",
+                            )
+                        if not x_agent_hdr:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    "X-Agent-ID header is required for "
+                                    "per-agent API keys"
+                                ),
+                            )
+                        try:
+                            header_agent = uuid.UUID(x_agent_hdr)
+                        except ValueError:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="X-Agent-ID must be a valid UUID",
+                            )
+                        if header_agent != bound_agent:
+                            logger.critical(
+                                "api_key_agent_binding_violation",
+                                key_prefix=key_data.get("key_prefix", "?"),
+                                bound_agent=str(bound_agent),
+                                header_agent=str(header_agent),
+                            )
+                            raise HTTPException(
+                                status_code=403,
+                                detail="X-Agent-ID does not match the API key's bound agent",
+                            )
+                        agent_id = bound_agent
+                    else:
+                        try:
+                            agent_id = (
+                                uuid.UUID(x_agent_hdr) if x_agent_hdr else uuid.UUID(int=0)
+                            )
+                        except ValueError:
+                            agent_id = uuid.UUID(int=0)
                     agent_id_str = str(agent_id)
 
                     request.state.permissions = ["execute_agent", "view_risk"]
@@ -194,9 +248,18 @@ class _AuthMixin:
                         except HTTPException:
                             raise  # propagate real replay rejections
                         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
-                            # Redis unavailable → skip replay check; genuine replays are still
-                            # caught by JTI revocation above. False-blocking valid traffic is worse.
-                            logger.warning("replay_check_skipped_redis_unavailable", jti=jti, error=str(_re))
+                            # Sprint 1.5 — fail closed. The audit (S4) flagged
+                            # the previous "log + allow" behavior as the wrong
+                            # trade-off for a security gate: a replay attack
+                            # arriving during a Redis outage would pass through
+                            # untouched. The aligned policy with the revocation
+                            # check above is to return 503 and let the caller
+                            # retry once Redis recovers.
+                            logger.error("replay_check_redis_unavailable_fail_closed", jti=jti, error=str(_re))
+                            raise HTTPException(
+                                status_code=503,
+                                detail="Security infrastructure timeout: replay check unavailable",
+                            )
 
                     agent_id_str = auth_data.get("agent_id", "")
                     request.state.actor = auth_data.get("sub", "unknown")

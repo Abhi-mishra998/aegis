@@ -207,3 +207,17 @@ async def usage_anomalies(request: Request) -> Any:
         headers=internal_headers(request),
     )
     return passthrough(resp)
+
+
+# ── Sprint 4.4 — Agent FinOps burn-down ──────────────────────────────────
+
+
+@router.get("/usage/fleet/burn-down", tags=["usage"])
+async def usage_burn_down(request: Request) -> Any:
+    """Proxy → ``GET /usage/fleet/burn-down`` (per-tenant / per-agent cap status)."""
+    resp = await request.app.state.client.get(
+        f"{_usage_base()}/usage/fleet/burn-down",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)

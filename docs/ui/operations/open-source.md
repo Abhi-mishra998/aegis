@@ -11,7 +11,7 @@ It is the one operational page that is allowed to use the friendlier marketing t
 - **Sidebar group**: Operations dropdown.
 - **Path**: `/open-source` (and `/pricing` retained as an alias for back-compat with older links).
 - **Keyboard hint**: none.
-- **Minimum role**: none. The page is reachable without authentication. The UI shell still requires login to render the sidebar, but the underlying SPA route allows public access. From a browser pointed directly at `https://dev.aegisagent.in/open-source`, the page loads without a token because the gateway's `/auth/*` flow is not required to render a static React page.
+- **Minimum role**: none. The page is reachable without authentication. The UI shell still requires login to render the sidebar, but the underlying SPA route allows public access. From a browser pointed directly at `https://ha.aegisagent.in/open-source`, the page loads without a token because the gateway's `/auth/*` flow is not required to render a static React page.
 
 ## What you see
 

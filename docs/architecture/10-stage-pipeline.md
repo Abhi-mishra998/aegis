@@ -4,7 +4,7 @@
 
 The pipeline is documented in source at the top of `services/gateway/middleware.py`. The canonical list of stages — including the stage-numbering that Aegis itself uses in logs, metrics, and audit rows — is reproduced and explained below.
 
-> A naming note: the page title says "Pipeline" rather than "10-Stage" because there are eleven stages numbered 0 through 10. The earlier shorthand "10-stage pipeline" referred to the post-auth stages and persists in some marketing copy. The middleware source is the source of truth.
+> Canonical name: **11-stage pipeline (stages 0–10)**. The repo no longer ships the older "10-stage" shorthand — both the README and this page have been reconciled to one count. The middleware source remains the source of truth.
 
 ## The eleven stages
 
@@ -32,7 +32,7 @@ The first thing the middleware does is `await redis.get(f"acp:kill_switch:{tenan
 { "success": false, "error": "kill_switch_engaged", "data": { "engaged_at": "...", "engaged_by": "..." } }
 ```
 
-The audit row is still written. Other stages are skipped. Engaging the switch on a tenant takes `POST /decision/kill-switch/{tenant_id}` with `ADMIN` or `SECURITY` role; the propagation lag from API call to every gateway worker observing the new state is bounded by the worker's Redis poll period and is under five seconds in production. See [Kill Switch](../security/kill-switch.md) for the runbook.
+The audit row is still written. Other stages are skipped. Engaging the switch on a tenant takes `POST /decision/kill-switch/{tenant_id}` with `ADMIN` or `SECURITY` role; the propagation lag from API call to every gateway worker observing the new state is bounded by the worker's Redis poll period and is under five seconds on the reference deployment. See [Kill Switch](../security/kill-switch.md) for the runbook.
 
 ## Stage 1 — Auth
 

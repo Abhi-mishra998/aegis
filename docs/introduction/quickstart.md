@@ -1,6 +1,14 @@
 # Quickstart
 
-**From zero to a signed audit row in under ten curl commands.** This page targets the live development deployment at `https://dev.aegisagent.in`. For a local install, swap the host for `http://localhost:8000` and follow the same steps. (As of 2026-06-01 the historical production environment at `aegisagent.in` was decommissioned — `dev.aegisagent.in` is the only live deployment and is sized for ten concurrent reviewers.)
+**From zero to a signed audit row in under ten curl commands** — and from there to an offline auditor-verifiable evidence package in five more. This page targets the live prod-ha deployment at `https://ha.aegisagent.in`. For a local install, swap the host for `http://localhost:8000` (or run `infra/minimal/docker-compose.minimal.yml` — see [Deployment](../operations/deployment.md) for the 3-container self-host shape).
+
+## Three install paths
+
+| You want to … | Use this |
+|---|---|
+| Wrap an existing Anthropic / OpenAI / LangChain agent in three lines of code | `pip install aegis-anthropic` (or `aegis-openai` / `aegis-langchain`) — see [SDK Wrappers](../integrations/sdk-wrappers.md) |
+| Verify an evidence bundle as an auditor, offline | `pip install aegis-aevf`, then `aegis-verify --bundle bundle.json` — see [AEVF Overview](../AEVF/README.md) |
+| Drive the full HTTP API from a custom integration | Follow the curl steps below, then [API Reference](../api/reference.md) |
 
 ## Prerequisites
 
@@ -9,7 +17,7 @@
 
 ## Credentials (demo deployment only)
 
-For the public live demo at `https://dev.aegisagent.in`, two accounts are pre-seeded:
+For the public live demo at `https://ha.aegisagent.in`, two accounts are pre-seeded:
 
 | Account | Role | Use case |
 |---|---|---|
@@ -23,7 +31,7 @@ The tenant ID for the demo deployment is the canonical default UUID `00000000-00
 ## 1. Get a token
 
 ```bash
-HOST=https://dev.aegisagent.in
+HOST=https://ha.aegisagent.in
 TENANT=00000000-0000-0000-0000-000000000001
 
 TOKEN=$(curl -sS -X POST "$HOST/auth/token" \
@@ -106,7 +114,7 @@ curl -sS -X POST "$HOST/execute" \
 
 Expected response: HTTP `403`, body shape `{"success": false, "error": "policy_denied", "data": {"action": "deny", "rule_id": "...", "findings": [...]}}`. The policy stage flagged the destructive SQL pattern, the decision engine combined the five risk signals, the audit row was written, and the receipt URL is included in the response. Execution did not happen.
 
-To see all four shipped attack scenarios in one place, open `https://dev.aegisagent.in/playground` and click any of the **Attack Scenario** cards.
+To see all four shipped attack scenarios in one place, open `https://ha.aegisagent.in/playground` and click any of the **Attack Scenario** cards.
 
 ## 6. Fetch and verify the audit row
 

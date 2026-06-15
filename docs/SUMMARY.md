@@ -15,7 +15,6 @@
 * [What is Aegis?](introduction/what-is-aegis.md)
 * [Why Runtime Governance](introduction/why-runtime-governance.md)
 * [Quickstart](introduction/quickstart.md)
-* [60-Second Tour](introduction/60-second-tour.md)
 * [Demo Packs](introduction/demo-packs.md)
 
 ## Architecture
@@ -27,7 +26,6 @@
 * [Data Model](architecture/data-model.md)
 * [Multi-Tenancy](architecture/multi-tenancy.md)
 * [Deployment Topology](architecture/deployment-topology.md)
-* [UI Primitives](architecture/ui-primitives.md)
 
 ## Services
 
@@ -45,13 +43,10 @@
   * [Autonomy](services/autonomy.md)
   * [Flight Recorder](services/flight-recorder.md)
   * [Forensics](services/forensics.md)
-* Operations and intelligence
-  * [Billing](services/billing.md)
-  * [Usage](services/usage.md)
+* Aggregation
   * [Insight](services/insight.md)
-  * [Intelligence](services/intelligence.md)
   * [Learning](services/learning.md)
-  * [Groq Worker](services/groq-worker.md)
+  * [Usage](services/usage.md)
   * [API](services/api.md)
 
 ## UI
@@ -74,7 +69,6 @@
   * [Playbooks](ui/operations/playbooks.md)
   * [Auto Response](ui/operations/auto-response.md)
   * [Compliance](ui/operations/compliance.md)
-  * [Open Source](ui/operations/open-source.md)
   * [Attack Sim](ui/operations/attack-sim.md)
   * [Kill Switch](ui/operations/kill-switch.md)
 * Settings sub-pages
@@ -88,7 +82,6 @@
   * [RBAC Manager](ui/settings/rbac.md)
   * [User Management](ui/settings/user-management.md)
   * [Security Dashboard](ui/settings/security-dashboard.md)
-  * [Billing](ui/settings/billing.md)
   * [Quota Management](ui/settings/quota-management.md)
   * [SSO Settings](ui/settings/sso-settings.md)
   * [Webhook Settings](ui/settings/webhook-settings.md)
@@ -119,6 +112,8 @@
 * [OPA Policies](security/opa-policies.md)
 * [Threat Scenarios](security/threat-scenarios.md)
 * [Secret Management](security/secret-management.md)
+* [SOC 2 Tracker](security/soc2_tracker.md)
+* [Vendor Security One-Pager](security/vendor-security-onepager.md)
 
 ## Operations
 
@@ -130,9 +125,11 @@
 * [Tenant Data Requests](operations/tenant-data-requests.md)
 * [Observability](operations/observability.md)
 * Runbooks
-  * [Audit Chain Violation](operations/runbooks/audit-chain-violation.md)
-  * [Kill Switch Engaged](operations/runbooks/kill-switch-engaged.md)
-  * [Rate Limit Spike](operations/runbooks/rate-limit-spike.md)
+  * [Audit Chain Violation](runbooks/audit_chain_violation.md)
+  * [Key Rotation](runbooks/key_rotation.md)
+  * [Restore Drill](runbooks/restore_drill.md)
+  * [Tenant Data Request](runbooks/tenant_data_request.md)
+  * [Disaster Recovery](runbooks/dr.md)
 
 ## API
 
@@ -140,7 +137,3 @@
 * [Authentication](api/authentication.md)
 * [Error Codes](api/error-codes.md)
 * [Examples](api/examples.md)
-
----
-
-* [Contact](contact.md)

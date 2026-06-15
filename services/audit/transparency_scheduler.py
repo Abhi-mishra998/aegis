@@ -50,10 +50,14 @@ SCHEDULER_LAST_SUCCESS = Gauge(
     "Unix timestamp of the most recent successful scheduler pass.",
 )
 
-# How often the loop runs. Tunable so a demo box can refresh today's running
-# root every few minutes while production still defaults to an hourly cadence.
+# How often the loop runs. Sprint 1.2 (live-tail anchoring) drops the default
+# from 3600s to 30s so today's running root is refreshed continuously and any
+# audit row whose timestamp is past the most recent ``window_end`` becomes
+# detectably unanchored within seconds — closing the audit's C9 finding of a
+# 24-hour truncation window. Operators on cost-constrained deployments can
+# raise the cadence via ``TRANSPARENCY_SCHEDULER_INTERVAL``.
 SCHEDULER_INTERVAL_SECONDS = int(
-    os.environ.get("TRANSPARENCY_SCHEDULER_INTERVAL", str(60 * 60))
+    os.environ.get("TRANSPARENCY_SCHEDULER_INTERVAL", "30")
 )
 # How far back to look when backfilling missing days.
 BACKFILL_WINDOW_DAYS = int(os.environ.get("TRANSPARENCY_BACKFILL_DAYS", "7"))
@@ -112,14 +116,15 @@ async def _missing_pairs(db: AsyncSession, window_days: int) -> list[tuple[str, 
     #    events landed today. This is what guarantees the chain has no
     #    silent gaps on quiet days (a customer auditing a 7-day window
     #    should see 7 sequential roots, not 4-with-2-holes).
-    historical_tenants = {
-        row.tenant_id
-        for row in (
-            await db.execute(
-                select(distinct(TransparencyRoot.tenant_id))
-            )
-        ).all()
-    }
+    # Sprint B follow-up 2026-06-14: select(distinct(col)) returns scalars,
+    # not Row objects, so `row.tenant_id` raised AttributeError every pass.
+    # The seal loop survived via outer except but never filled empty-epoch
+    # gaps. .scalars().all() unwraps each row into a bare UUID.
+    historical_tenants = set(
+        (
+            await db.execute(select(distinct(TransparencyRoot.tenant_id)))
+        ).scalars().all()
+    )
     for tenant_id in historical_tenants:
         if (tenant_id, today) not in seen:
             out.append((tenant_id, today))
@@ -158,11 +163,21 @@ async def _commit_one(db: AsyncSession, tenant_id, day: date) -> None:
         leaf_range_end_id = rows[-1].id
 
     signer = get_root_signer()
+    # Sprint 1.2: pin the moment this root commits to. For today's running
+    # root this advances on every pass; for past days it is the end of the
+    # UTC day (idempotent — re-running the scheduler for yesterday will yield
+    # the same window_end).
+    today = datetime.now(UTC).date()
+    if day < today:
+        window_end = datetime(day.year, day.month, day.day, 23, 59, 59, 999_999, tzinfo=UTC)
+    else:
+        window_end = datetime.now(UTC)
     signed = _sign_root(
         tenant_id, day, root, len(leaves),
         prev_root_hash=prev_hash,
         leaf_range_start_id=leaf_range_start_id,
         leaf_range_end_id=leaf_range_end_id,
+        window_end=window_end,
     )
     await _persist_root(
         db,
@@ -186,6 +201,30 @@ async def _commit_one(db: AsyncSession, tenant_id, day: date) -> None:
         signing_key_fingerprint=signer._fingerprint,  # noqa: SLF001
         empty_epoch=len(leaves) == 0,
     )
+
+    # SPRINT B — mirror the sealed root to the public S3 ledger so an
+    # external witness can verify it offline without Aegis credentials.
+    # This is what makes the audit chain non-self-referential. Always
+    # fire-and-forget — never break the seal path if S3 is down.
+    try:
+        from services.audit.public_transparency import (
+            is_enabled as _pub_enabled,
+            publish_root as _pub_root,
+            publish_signing_key as _pub_key,
+        )
+        if _pub_enabled():
+            _pub_key(signer._fingerprint, signer.public_key_pem())  # noqa: SLF001
+            _pub_root(
+                tenant_id=str(tenant_id),
+                root_date=day,
+                root_hash=root,
+                leaf_count=len(leaves),
+                signed_payload=signed,
+                prev_root_hash=prev_hash,
+                signing_kid=signer._fingerprint,  # noqa: SLF001
+            )
+    except Exception as _pubx:
+        log.warning("public_root_mirror_failed", error=str(_pubx))
 
 
 async def _one_pass(session_factory) -> int:

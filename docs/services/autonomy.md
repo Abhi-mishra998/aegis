@@ -56,7 +56,7 @@ The service has two faces: a synchronous API consulted at stage 7 of the gateway
 
 ### Auto-trigger
 
-A subset of audit-row patterns are wired to auto-trigger specific playbooks. `services/autonomy/auto_trigger.py` watches the audit Redis stream and matches rules from `services/autonomy/auto_trigger_rules.yaml`. A match starts the playbook with `triggered_by="auto"`.
+A subset of audit-row patterns are wired to auto-trigger specific playbooks. `services/autonomy/incident_watcher.py` watches the audit Redis stream and matches rules from `services/autonomy/auto_trigger_rules.yaml`. A match starts the playbook with `triggered_by="auto"`.
 
 ## Dependencies
 
@@ -167,7 +167,7 @@ Note: `/playbooks/autotrigger-stats` is declared before `/playbooks/{playbook_id
 ### List built-in playbook templates
 
 ```bash
-curl -sS https://dev.aegisagent.in/playbooks/templates \
+curl -sS https://ha.aegisagent.in/playbooks/templates \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -175,7 +175,7 @@ curl -sS https://dev.aegisagent.in/playbooks/templates \
 ### Create a contract that limits delegation to depth 2
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/autonomy/contracts \
+curl -sS -X POST https://ha.aegisagent.in/autonomy/contracts \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -191,7 +191,7 @@ curl -sS -X POST https://dev.aegisagent.in/autonomy/contracts \
 ### Trigger an incident-response playbook manually
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/playbooks/$PLAYBOOK_ID/trigger \
+curl -sS -X POST https://ha.aegisagent.in/playbooks/$PLAYBOOK_ID/trigger \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

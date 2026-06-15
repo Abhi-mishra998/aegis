@@ -121,10 +121,16 @@ async def emit_flight_event(redis: Any, ev: dict[str, Any]) -> None:
 async def emit_timeline_start(
     redis: Any, *, tenant_id: str, request_id: str,
     agent_id: str | None, tool: str | None, metadata: dict | None = None,
+    session_id: str | None = None,
 ) -> None:
+    """Sprint 3.5 — ``session_id`` is propagated from the gateway's
+    ``X-Session-ID`` request header so the Session Explorer can group
+    consecutive ``/execute`` calls into one conversation. Pre-Sprint-3
+    callers omit the kwarg and timelines land with ``session_id=NULL``."""
     await emit_flight_event(redis, {
         "kind": "timeline_start", "tenant_id": tenant_id, "request_id": request_id,
         "agent_id": agent_id, "tool": tool, "metadata": metadata or {},
+        "session_id": session_id,
     })
     # Producer-side SLI: every open MUST be paired with a close. The delta is
     # the operator's primary signal for leaked timelines.

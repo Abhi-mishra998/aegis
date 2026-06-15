@@ -205,7 +205,12 @@ def _compute_inference_signals(req: OrchestrationRequest) -> tuple[list[str], fl
             inference_risk = max(inference_risk, 0.75)
             logger.warning("sensitive_path_detected", path=file_path, tool=req.tool)
 
-    # SQL governance — covers query, db.query, db.execute, and any db.* tool
+    # SQL governance — covers query, db.query, db.execute, and any db.* tool.
+    # Sprint 2.4 (closes audit C5): substring checks now run against the
+    # normalized form (NFKC + URL-decode + comment-strip + whitespace-collapse
+    # + homoglyph-fold + lowercase) so `DROP/**/TABLE`, `DROP%20TABLE`,
+    # `DROP\nTABLE`, and Unicode homoglyph variants no longer slip past.
+    # The original payload is still recorded in metadata for the audit trail.
     if is_sql_tool:
         sql_query = ""
         if req.metadata:
@@ -214,24 +219,25 @@ def _compute_inference_signals(req: OrchestrationRequest) -> tuple[list[str], fl
                 or req.metadata.get("query") or ""
             )
         if sql_query:
-            sql_lower = sql_query.strip().lower()
-            if any(p in sql_lower for p in _DDL_HARD):
+            from sdk.common.sql_normalize import normalize_for_detection  # noqa: PLC0415
+            sql_norm = normalize_for_detection(sql_query)
+            if any(p in sql_norm for p in _DDL_HARD):
                 inference_flags.append("SQL_DDL_DESTRUCTION")
                 inference_risk = max(inference_risk, 0.95)
                 logger.warning("sql_ddl_detected", tool=req.tool)
-            elif (("delete from" in sql_lower or "update " in sql_lower)
-                  and "where" not in sql_lower):
+            elif (("delete from" in sql_norm or "update " in sql_norm)
+                  and "where" not in sql_norm):
                 inference_flags.append("SQL_UNGUARDED_MUTATION")
                 inference_risk = max(inference_risk, 0.85)
                 logger.warning("sql_unguarded_mutation", tool=req.tool)
             if ("SQL_DDL_DESTRUCTION" not in inference_flags
                     and "SQL_UNGUARDED_MUTATION" not in inference_flags
-                    and any(p in sql_lower for p in _INJECT)):
+                    and any(p in sql_norm for p in _INJECT)):
                 inference_flags.append("SQL_INJECTION_PATTERN")
                 inference_risk = max(inference_risk, 0.80)
                 logger.warning("sql_injection_pattern_detected", tool=req.tool)
-            _has_select_star = "select *" in sql_lower or "select\t*" in sql_lower
-            _has_pii = any(col in sql_lower for col in _PII_COLS)
+            _has_select_star = "select *" in sql_norm
+            _has_pii = any(col in sql_norm for col in _PII_COLS)
             if (not any(f in inference_flags for f in (
                     "SQL_DDL_DESTRUCTION", "SQL_UNGUARDED_MUTATION", "SQL_INJECTION_PATTERN"))
                     and (_has_pii or _has_select_star)):
@@ -309,6 +315,7 @@ async def _fan_out_policy_and_behavior(
     req: OrchestrationRequest,
     client: httpx.AsyncClient,
     headers: dict[str, str],
+    agent_meta: dict | None = None,
 ) -> tuple[httpx.Response | BaseException | None,
            httpx.Response | BaseException | None,
            int, bool]:
@@ -322,7 +329,22 @@ async def _fan_out_policy_and_behavior(
     Behavior is timed even when policy is healthy so the audit/metrics path
     can record service_status + latency on every consult — the source of
     truth for the "we consulted behavior on every call" product claim.
+
+    Sprint B follow-up 2026-06-14: forward ``agent_meta`` as ``agent_claims``
+    so the policy /evaluate fast-path (local_eval + local_action_semantics)
+    activates. Before this, the fast path was dead code on every SDK call —
+    the policy router always fell to the slow OPA HTTP hop, costing a p99
+    round trip + meaning the Python port of action_semantics_deny.rego was
+    never reached.
     """
+    # R0 — forward the gateway's metadata (arguments.command, .query,
+    # .path, .url, .raw_norm) so OPA can key destructive denials off the
+    # action's CONTENT, not just the tool name. Previously this dict was
+    # built fresh with only client_ip — the gateway's tool_metadata block
+    # (including the normalized command/query) was being thrown away here,
+    # so the action-semantics rego rule never saw what to deny on.
+    _gw_metadata: dict = dict(req.metadata or {})
+    _gw_metadata["client_ip"] = req.client_ip
     opa_payload = {
         "tenant_id": str(req.tenant_id),
         "agent_id": str(req.agent_id),
@@ -330,8 +352,15 @@ async def _fan_out_policy_and_behavior(
         "risk_score": req.inference_risk,
         "behavior_history": [],
         "request_id": req.request_id,
-        "metadata": {"client_ip": req.client_ip},
+        "metadata": _gw_metadata,
     }
+    if agent_meta:
+        opa_payload["agent_claims"] = {
+            "agent_status": agent_meta.get("status",
+                                          agent_meta.get("agent_status", "active")),
+            "risk_level":   agent_meta.get("risk_level", "low"),
+            "permissions":  agent_meta.get("permissions", []),
+        }
     behavior_payload = {
         "tenant_id": str(req.tenant_id),
         "agent_id":  str(req.agent_id),
@@ -451,7 +480,7 @@ async def evaluate_decision(
 
     # 2. Fan-out: Policy (OPA) + Behavior in parallel.
     policy_res, behavior_res, behavior_latency_ms, fanout_timed_out = (
-        await _fan_out_policy_and_behavior(req, client, headers)
+        await _fan_out_policy_and_behavior(req, client, headers, agent_meta=agent_meta)
     )
 
     # Cost risk calculation moved to Behavior service or calculated here if needed.
@@ -569,13 +598,38 @@ async def evaluate_decision(
     inference_flags, inference_risk = _compute_inference_signals(req)
 
     # 5. Assemble DecisionContext and evaluate
+    # The policy router stamps `__escalate` onto the reason for rules that
+    # should escalate to operator approval. ANYTHING ELSE policy-denied is
+    # a hard deny — we want the gateway to call `_deny()` not `_escalate()`.
+    _policy_reason = policy_data.get("reason") or ""
+    _hard_deny = (
+        not bool(policy_data.get("allowed", False))
+        and bool(_policy_reason)
+        and "__escalate" not in _policy_reason
+        and _policy_reason not in (
+            "no_match", "no allow permission found for tool",
+            "permission granted",
+        )
+    )
+    # ARCH-4 2026-06-15 — pull the explainability bag straight off the policy
+    # response. Strip the __escalate suffix from policy_id so SOC tooling
+    # gets clean identifiers like "FIN-WIRE-002" not "FIN-WIRE-002__escalate".
+    _policy_tier        = policy_data.get("tier") or "allow"
+    _policy_findings    = list(policy_data.get("findings") or [])
+    _policy_policy_id   = str(policy_data.get("policy_id") or "").replace("__escalate", "")
+    _policy_risk_score  = int(policy_data.get("risk_score") or 0)
+    _policy_explanation = str(policy_data.get("explanation") or "")
+    # FUP-4 2026-06-15 — engine slices (SEC + GOV).
+    _policy_security    = policy_data.get("security") or {}
+    _policy_governance  = policy_data.get("governance") or {}
     ctx = DecisionContext(
         tenant_id=req.tenant_id,
         agent_id=req.agent_id,
         tool=req.tool,
         request_id=req.request_id,
         policy_allowed=bool(policy_data.get("allowed", False)),
-        policy_reason=policy_data.get("reason"),
+        policy_reason=_policy_reason or None,
+        policy_hard_deny=_hard_deny,
         policy_risk_adjustment=float(policy_data.get("risk_adjustment", 0.0)),
         inference_risk=inference_risk,
         inference_flags=inference_flags,
@@ -588,6 +642,34 @@ async def evaluate_decision(
     )
 
     decision = decision_engine.evaluate(ctx)
+
+    # ARCH-4 2026-06-15 — merge the policy explainability bag into the
+    # decision so the gateway response carries findings / policy_id / risk_score
+    # / explanation back to the caller (SOC console, SDK, dashboards).
+    _merged_findings = list(decision.findings or [])
+    for f in _policy_findings:
+        if f and f not in _merged_findings:
+            _merged_findings.append(f)
+    _merged_metadata = dict(decision.metadata or {})
+    if _policy_policy_id:
+        _merged_metadata["policy_id"] = _policy_policy_id
+    if _policy_explanation:
+        _merged_metadata["explanation"] = _policy_explanation
+    if _policy_risk_score:
+        _merged_metadata["policy_risk_score"] = _policy_risk_score
+    if _policy_tier:
+        _merged_metadata["policy_tier"] = _policy_tier
+    if _policy_reason:
+        _merged_metadata["policy_reason"] = _policy_reason.replace("__escalate", "")
+    if _policy_security:
+        _merged_metadata["security"] = _policy_security
+    if _policy_governance:
+        _merged_metadata["governance"] = _policy_governance
+    decision = decision.model_copy(update={
+        "findings":  _merged_findings,
+        "reasons":   list(_merged_findings),
+        "metadata":  _merged_metadata,
+    })
 
     # Surface degraded-mode findings in the response so callers + auditors
     # can see, on every fall-through allow, that the behavior firewall did

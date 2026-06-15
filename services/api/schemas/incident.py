@@ -8,7 +8,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
 Status   = Literal["OPEN", "INVESTIGATING", "MITIGATED", "ESCALATED", "RESOLVED"]
-Trigger  = Literal["policy_deny", "kill", "escalate", "risk_threshold", "anomaly", "manual"]
+# Accept both the legacy short forms and the gateway's verbose forms (see
+# services/gateway/middleware.py:826-829). The gateway publishes
+# `policy_denied` / `escalation_required` / `agent_killed`; older code path
+# also emits `policy_deny` / `escalate` / `kill`. Keep both to avoid a
+# schema mismatch that drops incident creation silently.
+Trigger  = Literal[
+    "policy_deny", "policy_denied",
+    "kill", "agent_killed",
+    "escalate", "escalation_required",
+    "risk_threshold", "anomaly", "manual",
+]
 
 
 class IncidentAction(BaseModel):

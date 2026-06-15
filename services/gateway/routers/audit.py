@@ -470,3 +470,314 @@ async def audit_escalation_rate_trend_proxy(request: Request) -> Any:
         headers=internal_headers(request),
     )
     return passthrough(resp)
+
+
+# ── Sprint 4 — Fleet dashboard surface ───────────────────────────────────
+
+
+@router.get("/audit/fleet/kpis", tags=["audit"])
+async def fleet_kpis(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/fleet/kpis",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/fleet/timeseries", tags=["audit"])
+async def fleet_timeseries(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/fleet/timeseries",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/fleet/agent-health", tags=["audit"])
+async def fleet_agent_health(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/fleet/agent-health",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/fleet/recent-events", tags=["audit"])
+async def fleet_recent_events(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/fleet/recent-events",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+# ── Sprint 5 — Attack Evaluation Suite (datasets / evaluators / jobs) ────
+
+@router.post("/audit/evaluation/datasets", tags=["evaluation"])
+async def eval_create_dataset(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/evaluation/datasets",
+        json=body,
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/datasets", tags=["evaluation"])
+async def eval_list_datasets(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/datasets",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/datasets/{dataset_id}", tags=["evaluation"])
+async def eval_get_dataset(dataset_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/datasets/{dataset_id}",
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/evaluation/datasets/{dataset_id}/cases", tags=["evaluation"])
+async def eval_add_case(dataset_id: str, request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/evaluation/datasets/{dataset_id}/cases",
+        json=body,
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/datasets/{dataset_id}/cases", tags=["evaluation"])
+async def eval_list_cases(dataset_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/datasets/{dataset_id}/cases",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/evaluation/evaluators", tags=["evaluation"])
+async def eval_create_evaluator(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/evaluation/evaluators",
+        json=body,
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/evaluators", tags=["evaluation"])
+async def eval_list_evaluators(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/evaluators",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/evaluation/jobs", tags=["evaluation"])
+async def eval_enqueue_job(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/evaluation/jobs",
+        json=body,
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/jobs", tags=["evaluation"])
+async def eval_list_jobs(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/jobs",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/jobs/{job_id}", tags=["evaluation"])
+async def eval_get_job(job_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/jobs/{job_id}",
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/jobs/{job_id}/results", tags=["evaluation"])
+async def eval_list_results(job_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/jobs/{job_id}/results",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/efficacy/overview", tags=["evaluation"])
+async def eval_efficacy_overview(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/efficacy/overview",
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/evaluation/efficacy/trend", tags=["evaluation"])
+async def eval_efficacy_trend(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/evaluation/efficacy/trend",
+        params=dict(request.query_params),
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+# ── Sprint 6 — Shadow-mode policies + online evaluation ─────────────────
+
+@router.post("/audit/shadow/policies", tags=["shadow"])
+async def shadow_create_policy(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/shadow/policies", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/shadow/policies", tags=["shadow"])
+async def shadow_list_policies(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/shadow/policies",
+        params=dict(request.query_params), headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/shadow/policies/{policy_id}", tags=["shadow"])
+async def shadow_get_policy(policy_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/shadow/policies/{policy_id}", headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.patch("/audit/shadow/policies/{policy_id}", tags=["shadow"])
+async def shadow_edit_policy(policy_id: str, request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.patch(
+        f"{_base()}/shadow/policies/{policy_id}", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.delete("/audit/shadow/policies/{policy_id}", tags=["shadow"])
+async def shadow_archive_policy(policy_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.delete(
+        f"{_base()}/shadow/policies/{policy_id}", headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/shadow/policies/{policy_id}/promote", tags=["shadow"])
+async def shadow_promote_policy(policy_id: str, request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/shadow/policies/{policy_id}/promote", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/shadow/policies/{policy_id}/rollback", tags=["shadow"])
+async def shadow_rollback_policy(policy_id: str, request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/shadow/policies/{policy_id}/rollback", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/shadow/policies/{policy_id}/versions", tags=["shadow"])
+async def shadow_list_versions(policy_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/shadow/policies/{policy_id}/versions", headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/shadow/policies/{policy_id}/would-have-denied", tags=["shadow"])
+async def shadow_would_have_denied(policy_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/shadow/policies/{policy_id}/would-have-denied",
+        params=dict(request.query_params), headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/shadow/policies/{policy_id}/decisions", tags=["shadow"])
+async def shadow_list_decisions(policy_id: str, request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/shadow/policies/{policy_id}/decisions",
+        params=dict(request.query_params), headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.get("/audit/shadow/online-eval", tags=["shadow"])
+async def shadow_online_eval_get(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/shadow/online-eval", headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.put("/audit/shadow/online-eval", tags=["shadow"])
+async def shadow_online_eval_put(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.put(
+        f"{_base()}/shadow/online-eval", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+# ── Sprint 7 — Policy Playground (validate / replay / publish) ──────────
+
+@router.post("/audit/playground/validate", tags=["playground"])
+async def playground_validate(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/playground/validate", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/playground/replay", tags=["playground"])
+async def playground_replay(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/playground/replay", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+@router.post("/audit/playground/publish", tags=["playground"])
+async def playground_publish(request: Request) -> Any:
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/playground/publish", json=body, headers=internal_headers(request),
+    )
+    return passthrough(resp)

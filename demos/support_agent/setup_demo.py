@@ -34,10 +34,10 @@ if _env_file.exists():
                 _k, _v = _line.split("=", 1)
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-GATEWAY       = os.getenv("ACP_GATEWAY_URL",  "http://localhost:8000")
-IDENTITY_URL  = os.getenv("ACP_IDENTITY_URL", "http://localhost:8002")
-GRAPH_URL     = os.getenv("ACP_GRAPH_URL",    "http://localhost:8013")
-AUTONOMY_URL  = os.getenv("ACP_AUTONOMY_URL", "http://localhost:8015")
+GATEWAY       = os.getenv("ACP_GATEWAY_URL",  "https://ha.aegisagent.in")
+IDENTITY_URL  = os.getenv("ACP_IDENTITY_URL", "https://ha.aegisagent.in")
+GRAPH_URL     = os.getenv("ACP_GRAPH_URL",    "https://ha.aegisagent.in")
+AUTONOMY_URL  = os.getenv("ACP_AUTONOMY_URL", "https://ha.aegisagent.in")
 INTERNAL_SECRET = os.getenv("INTERNAL_SECRET") or ""
 if not INTERNAL_SECRET:
     raise SystemExit("ERROR: INTERNAL_SECRET not set. Add it to .env or export it.")

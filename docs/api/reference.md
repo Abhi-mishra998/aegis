@@ -1,18 +1,18 @@
 # API Reference
 
-*Every endpoint Aegis exposes. Generated from the live OpenAPI spec at `https://dev.aegisagent.in/openapi.json`. 201 operations across 35 tags.*
+*Every endpoint Aegis exposes. Generated from the live OpenAPI spec at `https://ha.aegisagent.in/openapi.json`. 201 operations across 35 tags.*
 
 ## How to use this page
 
-Aegis is a single FastAPI app at `https://dev.aegisagent.in` (or `http://localhost:8000` for a local install). The OpenAPI spec is live at `/openapi.json` — this page is its human-friendly index.
+Aegis is a single FastAPI app at `https://ha.aegisagent.in` (or `http://localhost:8000` for a local install). The OpenAPI spec is live at `/openapi.json` — this page is its human-friendly index.
 
 For the full machine-readable spec including request/response schemas:
 
 ```bash
-curl -sS https://dev.aegisagent.in/openapi.json | jq
+curl -sS https://ha.aegisagent.in/openapi.json | jq
 ```
 
-For an interactive explorer, the Swagger UI is at `https://dev.aegisagent.in/docs` and Redoc at `https://dev.aegisagent.in/redoc`.
+For an interactive explorer, the Swagger UI is at `https://ha.aegisagent.in/docs` and Redoc at `https://ha.aegisagent.in/redoc`.
 
 ## Common request shape
 
@@ -113,14 +113,21 @@ User and agent authentication, SSO orchestration, tenant lookup.
 | POST | `/execute` | The main event — runs the 11-stage pipeline |
 | POST | `/execute/{tool_name}` | Sugar variant with tool name in the path |
 
+### `demo` (1 op)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/demo/groq-agent` | Run one end-to-end Groq-as-agent demo. Body: `{"prompt": "...", "session_id": "...", "scenario": "..."}` (session_id + scenario optional). Per-scenario agents auto-provision at the scenario's risk_level (R5 — fintech_data_egress=medium / devops_destruction=low / support_pii_exfil=medium). The route calls Groq server-side with the scenario-specific persona, then loops each suggested tool call through `/execute`. The UI's `/live-demo` page animates the trace client-side. See [Live Demo](../ui/primary/live-demo.md). |
+| GET | `/demo/scenarios` | **Added 2026-06-13 (R5).** Returns the three live-demo scenarios with their labels, risk levels, agent names, and suggested prompts. Used by the UI scenario picker; a buyer can curl this to inspect the exact prompts the platform holds up against. |
+
 ### `audit` (33 ops)
 
 The largest tag. Includes the audit log primary endpoints plus 24 aggregator endpoints for the dashboards.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/audit/logs` | Paginated audit rows |
-| POST | `/audit/logs/search` | Filtered search |
+| GET | `/audit/logs` | Paginated audit rows. Accepts query filters `agent_id`, `action`, `decision`, `tool`, `start_date`, `end_date`, `limit`, `offset`. The UI's search panel migrated from POST `/audit/logs/search` to this GET on 2026-06-13 — the POST form was blocked by AWS WAFv2's SQLi managed rule whenever the body contained `"limit":N`. |
+| POST | `/audit/logs/search` | Filtered search (still works for SDK callers that bypass the WAF, e.g. internal calls). Same filter set as the GET variant plus `metadata_filter`. |
 | GET | `/audit/logs/summary` | KPI tiles |
 | GET | `/audit/logs/verify` | Chain verification |
 | GET | `/audit/logs/{audit_id}/explain` | Decision explanation |
@@ -189,16 +196,31 @@ The largest tag. Includes the audit log primary endpoints plus 24 aggregator end
 | POST | `/billing/events` | Internal-only emission path |
 | GET | `/usage/dashboard`, `/usage/anomalies`, `/usage/summary`, `/usage/by-agent` | Dashboard payloads |
 
-### `compliance` (6 ops)
+### `compliance` (7 ops)
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/compliance/eu-ai-act` | EU AI Act report |
+| GET | `/compliance/eu-ai-act` | EU AI Act report (requires `period_start`, `period_end` query params) |
 | GET | `/compliance/nist-ai-rmf` | NIST AI RMF report |
 | GET | `/compliance/soc2` | SOC 2 report |
+| GET | `/compliance/dpdp` | **Added 2026-06-14 (A5).** India DPDP Act, 2023 + DPDP Rules (Nov 2025) evidence bundle. Sections covered: §8(5)–8(9), §11, Rules Schedule II. Includes a `retention_claim` block honestly flagging whether `AUDIT_RETENTION_DAYS` meets the ≥365-day Rules minimum. |
 | GET | `/compliance/tool-ledger` | Per-tool usage ledger |
-| POST | `/compliance/board-report` | Executive summary |
-| POST | `/compliance/export` | PDF export |
+| GET | `/compliance/export/{bundle_type}` | JSON evidence bundle download. `bundle_type ∈ {eu-ai-act, nist-ai-rmf, soc2, tool-ledger, dpdp, grc}`. Streaming, forwards `Content-Disposition`. For `bundle_type=grc`, also accepts `?format=json\|csv` (Vanta/Drata-style control-evidence export — A6). |
+| GET | `/compliance/export/grc` | **Added 2026-06-14 (A6).** Vanta/Drata-style control-evidence export. Each evidence row carries `aevf_bundle_url`, `aevf_event_hash`, `aevf_spec_version` so the auditor can pivot from the GRC platform to the verifiable AEVF bundle. `?format=json` (default) returns a JSON object envelope; `?format=csv` returns RFC 4180 CSV (14 columns). |
+| GET | `/compliance/verifiable-bundle/{framework}` | Self-contained AEVF bundle. `framework ∈ {eu-ai-act, nist-ai-rmf, soc2}`. Each row's `mappings` block now includes a `dpdp` key (A5). |
+| POST | `/compliance/board-report` | Executive summary (streamed PDF) |
+| POST | `/compliance/export` | PDF/JSON export by framework (legacy path, kept for SDK) |
+
+### AEVF static assets (open standard, no auth)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/aevf/spec.md` | **A2.** Byte-precise AEVF specification (`aevf/0.1.0`). Served as `text/plain; charset=utf-8` with permissive CORS. |
+| GET | `/aevf/README.md` | Friendly AEVF introduction. |
+| GET | `/aevf/auditor-checklist.md` | **A3.** 8-section auditor workpaper, ~25-min completion. Apache 2.0. |
+| GET | `/aevf/reference-audit-report.md` | **A3.** Engagement-ready report template, three pre-drafted conclusions + sign-off page. Apache 2.0. |
+| GET | `/aevf/reference-bundle-2026-06.json` | **A4.** Real, deterministic, signed AEVF bundle. 9 165 bytes. SHA-256 `8a6f09f65c374edf44c811dba8f146c8d79dab9ed74e3c49920be759951f20fc`. `aegis-verify --bundle …` → 6/6 PASS. |
+| GET | `/aevf/` | HTML landing page linking everything above. |
 
 ### `Incidents` (10 ops)
 
@@ -296,10 +318,25 @@ This is the only long-lived endpoint. It bypasses most middleware (auth happens 
 
 The authoritative spec is always at:
 
-- `https://dev.aegisagent.in/openapi.json` — production
+- `https://ha.aegisagent.in/openapi.json` — production
 - `http://localhost:8000/openapi.json` — local install
 
-Spec metadata as of the most recent capture: **201 operations, 35 tags, 104 KB**. The spec is auto-generated by FastAPI from the route declarations; the moment a new route ships, the spec updates.
+Spec metadata as of the most recent capture: **201 operations, 35 tags, 127.6 KB**. The spec is auto-generated by FastAPI from the route declarations; the moment a new route ships, the spec updates.
+
+> **`/openapi.json` is served as `application/json` via an explicit `location =` block in `ui/nginx.conf` (added 2026-06-14).** Before that fix, the URL fell through the SPA's `location /` and returned the React `index.html` as `text/html`. If a buyer's `curl https://ha.aegisagent.in/openapi.json | jq` returns `parse error: Invalid numeric literal at line 1, column 11`, they have a cached UI image without the nginx fix — redeploy the UI per [Deployment](../operations/deployment.md).
+
+## Live-verified endpoints (2026-06-14 prod-ha)
+
+These were live-tested against `https://ha.aegisagent.in` with the documented admin credentials. Each `n/m` is `(observed-200-responses / total-hits)` across `m` requests through the ALB (so they cross both ASG hosts):
+
+- `GET /openapi.json` → 20/20 with `content-type: application/json`, 127,627 B
+- `GET /compliance/dpdp?period_start=…&period_end=…` → 30/30, ~23 KB DPDP bundle (Sections 8(5)-8(9), §11, Rules Schedule II)
+- `GET /compliance/export/grc?format=json|csv&…` → 20/20 each variant, multi-MB body
+- `GET /compliance/verifiable-bundle/{eu-ai-act|nist-ai-rmf|soc2}` → 200 with `format_version: "aegis-evidence-bundle/2026-06"` (DPDP not yet wired here; legacy bundle path is `/compliance/dpdp` above)
+- `GET /demo/scenarios` → 200 with 3 R5 scenarios (`fintech_data_egress`, `devops_destruction`, `support_pii_exfil`)
+- `GET /audit/logs/verify` → `{"valid": true, "is_integrous": true, "processed_count": 2493, "violations": []}`
+- `GET /aevf/spec.md`, `/aevf/reference-bundle-2026-06.json`, `/aevf/auditor-checklist.md` — static, served by the UI nginx, `application/json` or `text/plain` content types
+- `GET /system/health` → 12/12 healthy on 15/15 consecutive hits, p95 ~50 ms
 
 ## Next
 

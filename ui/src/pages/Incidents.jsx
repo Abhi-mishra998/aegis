@@ -663,8 +663,12 @@ export default function Incidents() {
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <CheckCircle2 size={32} className="text-green-500 mb-3" />
-            <p className="text-sm text-neutral-400">No incidents match the current filters</p>
-            <p className="text-xs text-neutral-600 mt-1">Incidents are auto-created from policy denials and agent kills</p>
+            <p className="text-sm text-neutral-400">No incidents in this window.</p>
+            <p className="text-xs text-neutral-600 mt-1 max-w-sm">
+              The Incidents grid lights up when the gateway denies, kills, or
+              escalates a tool call. Trigger one from the <a href="/live-demo" className="underline">Live Demo</a> page —
+              try the <code className="font-mono text-neutral-400">cat /etc/passwd</code> prompt — to populate this view.
+            </p>
           </div>
         ) : (
           <div className="divide-y divide-white/[0.04]">

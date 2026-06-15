@@ -11,24 +11,8 @@ from services.security.remediation.policy import (
 )
 
 
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.hashes: dict[str, dict[str, str]] = {}
-
-    async def hgetall(self, k):
-        h = self.hashes.get(k, {})
-        return {kk.encode(): vv.encode() for kk, vv in h.items()}
-
-    async def hset(self, k, field=None, value=None, mapping=None, **kw):
-        h = self.hashes.setdefault(k, {})
-        if field is not None:
-            h[field] = str(value) if value is not None else ""
-        if mapping:
-            for kk, vv in mapping.items():
-                h[kk] = str(vv) if vv is not None else ""
-        for kk, vv in kw.items():
-            h[kk] = str(vv) if vv is not None else ""
-        return 1
+# Phase-2 cleanup 2026-06-15 — fake moved to tests/security/_fakes.py.
+from tests.security._fakes import FakeRedis as _FakeRedis
 
 
 @pytest.mark.asyncio

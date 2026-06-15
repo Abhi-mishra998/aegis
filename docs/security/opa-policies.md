@@ -2,7 +2,7 @@
 
 *The Rego files shipping with Aegis. What each rule does, where it lives, when it fires, and how customers extend it.*
 
-## The four files
+## The five files
 
 Source: `services/policy/policies/`.
 
@@ -10,7 +10,8 @@ Source: `services/policy/policies/`.
 |---|---|---|
 | `default.rego` | `acp.v1.default` | Defaults and the platform's hard-deny baseline |
 | `agent_policy.rego` | `acp.v1.agent` | Per-agent ALLOW logic with risk-score gating |
-| `k8s_policy.rego` | `acp.v1.k8s` | Kubernetes operation governance |
+| **`action_semantics_deny.rego`** | `acp.v1.agent` | **R0 + v3-deep — action-content denials, risk-tunable PII threshold, K8s prod-namespace awareness, external-domain PII exfil** |
+| `k8s_policy.rego` | `acp.v1.k8s` | Kubernetes operation governance (legacy file; superseded for destruction patterns by `action_semantics_deny.rego`) |
 | `rate_policy.rego` | `acp.v1.rate` | Risk-level and tool-class denials |
 
 All four are bundled by the bundle server (`acp_bundle_server`) and pushed to OPA on a 60-second poll. Customers can add tenant-specific overlays via `POST /policy/upload`; the platform-shipped files cannot be replaced by tenant overlays (they encode the platform's safety baseline).
@@ -158,6 +159,60 @@ These cannot be overridden by tenant overlays.
 Tenant-specific Rego is uploaded via `POST /policy/upload` and is stored in `tenants.custom_policy` (Postgres). At bundle-build time, the bundle server concatenates the platform-shipped rules with the tenant overlay, with the platform rules taking precedence on conflict.
 
 The rule: tenant overlays can ADD denies and can ADD allow conditions. They cannot REMOVE platform-shipped denies. The hard-deny patterns are non-overridable on purpose.
+
+## `action_semantics_deny.rego` — R0 + v3-deep
+
+Source: `services/policy/policies/action_semantics_deny.rego`.
+
+The defining rule of v3 — denial keys off the **content of the action**, not off the agent's `risk_level` or the tool's name. A `medium`-risk agent attempting `DROP TABLE` is denied; a `low`-risk agent attempting `rm -rf` is denied. `risk_level` is a *threshold modifier*, never a binary gate.
+
+### Hard-destructive patterns (fire regardless of risk_level)
+
+| Helper | Triggers on |
+|---|---|
+| `_shell_destruction` | `rm -rf`, `rm -fr`, `dd of=/dev`, `mkfs`, fork bomb, `chmod -R 777 /`, `chown -R`, `shutdown -h`, `reboot`, `halt`, `init 0`, `find … -delete`, `find … -exec rm`, `xargs rm`, `dropdb`, `pg_drop`, `kubectl drain`, `kubectl scale --replicas=0`, `\| sh`, `\| bash`, `\| zsh` (pipe-to-shell drive-by) |
+| `_sql_ddl_destruction` | `DROP TABLE`, `DROP DATABASE`, `DROP SCHEMA`, `TRUNCATE …`, `ALTER TABLE` |
+| `_sql_dml_no_predicate` | `DELETE FROM x` (no `WHERE`), `UPDATE x SET …` (no `WHERE`) |
+| `_system_path_access` | `path` starts with `/etc/shadow`, `/etc/passwd`, `/root/`, `/proc/`, `/sys/`, `/.ssh/`; OR shell command embeds them; OR `path` contains `../` |
+
+### A1 / v3 — namespace-aware K8s destruction
+
+`_k8s_prod_destruction` replaces the prior blanket `kubectl delete` deny. It fires only when a `kubectl delete`, `helm uninstall`, or `helm delete` targets a **prod-shaped namespace**: name (or label) contains any of `prod`, `production`, `stag`/`staging`, `live`, `main`, `master`, `customer`, `billing`, `payments`, `sales`, `accounts`. `kubectl delete ns dev-test` is **allowed**; `kubectl delete ns prod-cache` is **denied**. The middleware extracts `metadata.arguments.k8s_namespace` from the shell command via regex; the rego has a substring fallback so the command_norm itself is also matched.
+
+### A1 / v3 — risk-tunable bulk-PII threshold
+
+`_pii_row_threshold_breached` fires when a SELECT against a customer-shaped table exceeds the agent's tier:
+
+| Risk level | Threshold (rows) |
+|---|---|
+| `low` | 10000 |
+| `medium` | 1000 |
+| `high` | 100 |
+| `critical` | 0 |
+
+The middleware parses `LIMIT N` from the SQL into `metadata.arguments.row_limit` (sentinel `-1` for no `LIMIT` clause = unbounded → exceeds any threshold). `SELECT * FROM customers` (no LIMIT) denies on every risk level; `SELECT * FROM customers LIMIT 100` allows on low/medium but denies on critical.
+
+### A5 / v3 — external-domain PII exfil
+
+`_external_exfil` covers three send paths:
+
+1. **Personal-email destinations**: `@gmail.com`, `@yahoo.com`, `@hotmail.com`, `@outlook.com`, `@proton.me`, `@protonmail.com`, `@icloud.com`, and the demo's `@external-vendor.com` / `@external-monitoring.io` — combined with a customer-roster indicator anywhere in the payload.
+2. **`sendmail` / `mailx` / `swaks` piping a customer file** to any recipient.
+3. **`tool.http_request` to external hosts** (`webhook.site`, `requestbin.com`, `pastebin.com`, `transfer.sh`, `external-vendor.com`, etc.) with a customer-like body.
+
+### Reason strings emitted
+
+| Reason | When |
+|---|---|
+| `destructive_shell_command` | `_shell_destruction` |
+| `destructive_sql_ddl` | `_sql_ddl_destruction` |
+| `destructive_sql_dml_no_predicate` | `_sql_dml_no_predicate` |
+| `system_path_access` | `_system_path_access` |
+| `external_pii_exfil` | `_external_exfil` |
+| `bulk_pii_egress_above_threshold` | `_pii_row_threshold_breached` |
+| `k8s_prod_namespace_destruction` | `_k8s_prod_destruction` |
+
+All reasons surface in `audit_logs.reason` and in the `mappings.dpdp` (and other framework) entries.
 
 ## How OPA reaches the gateway
 

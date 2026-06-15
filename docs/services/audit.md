@@ -74,7 +74,7 @@ Two execution surfaces: an **API service** (FastAPI app on port 8006) and a **wo
 **Python libraries:**
 
 - `fastapi`, `sqlalchemy[asyncio]`, `asyncpg`, `pydantic` — standard.
-- `cryptography` — ed25519 signing and verification (`services/audit/crypto.py`).
+- `cryptography` — ed25519 signing and verification (`services/audit/signer.py`).
 - `boto3` — S3 receipt uploads.
 - `redis.asyncio` — stream consumer and per-tenant cache.
 - `reportlab` — PDF export for SOC 2 / EU AI Act / NIST evidence (`services/audit/pdf_export.py`, `incident_pdf.py`).
@@ -149,7 +149,7 @@ Production deployments partition `audit_logs` by month on `created_at`. The part
 - **Port**: 8006 (API). Workers don't bind ports.
 - **Replicas**: 1 per host (the chain lock makes worker scale-out per tenant moot).
 - **Healthcheck**: `GET /health`.
-- **Env vars**: `DATABASE_URL`, `REDIS_URL`, `INTERNAL_SECRET`, `S3_RECEIPTS_BUCKET`, `ED25519_PRIVATE_KEY_PATH`, `TRANSPARENCY_KEY_PATH`, `AUDIT_OUTBOX_WORKERS` (default 2).
+- **Env vars**: `DATABASE_URL`, `REDIS_URL`, `INTERNAL_SECRET`, `S3_RECEIPTS_BUCKET`, `ED25519_PRIVATE_KEY_PATH`, `TRANSPARENCY_KEY_PATH`, `AUDIT_OUTBOX_WORKERS` (default 2), and (added 2026-06-13) **`USAGE_SERVICE_URL`** + **`POLICY_SERVICE_URL`**. Both must be explicit. Without them `outbox_worker.py` and `shadow_router.py` fall back to the dev defaults `http://localhost:8006` / `http://localhost:8003`, which are unreachable from inside the container. The outbox logged ~140 transient retries / sec for hours before this was caught. The signing-key provider also needs `boto3` (in server extras) and the host instance's IMDSv2 `http_put_response_hop_limit=2` — without those `/receipts/key` returns 500 with `NoCredentialsError`.
 - **Resource footprint**: ~400 MB resident. Worker count scales linearly with sustained throughput.
 
 ## API endpoints
@@ -158,7 +158,7 @@ This service exposes one of the largest route counts in the platform. The top-le
 
 | Tag / Prefix | Routes | Used by |
 |---|---|---|
-| Audit log primary | `/audit/logs`, `/audit/logs/summary`, `/audit/logs/search`, `/audit/logs/verify`, `/audit/logs/{id}/receipt`, `/audit/logs/{id}/explain`, `/audit/logs/{id}/notes` (GET, POST) | Audit Trail UI, SDK |
+| Audit log primary | `/audit/logs` (now accepts `tool`, `start_date`, `end_date` query params alongside `agent_id`, `action`, `decision`, `limit`, `offset` — the UI's search panel migrated from POST `/audit/logs/search` to this GET on 2026-06-13 to dodge the AWS WAFv2 SQLi rule), `/audit/logs/summary`, `/audit/logs/search` (still works for SDK callers), `/audit/logs/verify`, `/audit/logs/{id}/receipt`, `/audit/logs/{id}/explain`, `/audit/logs/{id}/notes` (GET, POST) | Audit Trail UI, SDK |
 | Risk and trend | `/audit/risk/timeline`, `/audit/risk/top-threats`, `/audit/risk-histogram`, `/audit/risk-trend/{agent_id}`, `/audit/risk-percentile-trend` | Risk Engine, Observability |
 | Decision aggregates | `/audit/decision-trend`, `/audit/deny-reasons`, `/audit/escalation-rate-trend`, `/audit/posture-score-trend`, `/audit/top-findings`, `/audit/finding-breakdown` | Observability, Security Dashboard, Policy Analytics |
 | Tool aggregates | `/audit/tool-breakdown`, `/audit/tool-risk`, `/audit/tool-usage/{agent_id}` | Policy Analytics, Agent Profile |
@@ -166,7 +166,9 @@ This service exposes one of the largest route counts in the platform. The top-le
 | Time-grid aggregates | `/audit/hourly-activity`, `/audit/weekly-heatmap`, `/audit/logs/heatmap` | Observability, Admin Console |
 | SOC | `/audit/logs/soc-timeline`, `/audit/high-risk-events` | Incidents, Security Dashboard |
 | Export | `/audit/export` (GET CSV / POST PDF) | Compliance |
+| Compliance (A5/A6) | `/compliance/dpdp` (DPDP §8(5)-8(9), §11, Rules Schedule II), `/compliance/export/{bundle_type}` (dash-form names: `soc2`, `eu-ai-act`, `nist-ai-rmf`, `dpdp`, `grc`, `tool-ledger` — `format=json\|csv` query param applies to `grc` only), `/compliance/export/grc?format=json\|csv` (Vanta/Drata/Secureframe/Hyperproof-ready evidence rows with AEVF back-reference). **Live-verified on prod-ha 2026-06-14**: DPDP 30/30 hits → 200; GRC json+csv 40/40 → 200/206. The verifiable-bundle endpoint `/compliance/verifiable-bundle/{framework}` accepts the 3 frameworks `eu-ai-act`, `nist-ai-rmf`, `soc2` (DPDP wiring on that endpoint is scheduled). | Compliance UI, GRC platforms, auditors |
 | Transparency | `/transparency/roots`, `/transparency/roots/{date}`, `/transparency/inclusion/{id}`, `/transparency/consistency`, `/transparency/keys`, `POST /transparency/verify-root` | Receipt verification, third-party auditors |
+| AEVF static (A6) | `/aevf/spec.md`, `/aevf/README.md`, `/aevf/auditor-checklist.md`, `/aevf/reference-audit-report.md`, `/aevf/reference-bundle-2026-06.json`, `/aevf/` (directory listing) | External auditors, `aegis-verify` users |
 | Ops / internal | `/audit/outbox-depth`, `/audit/billing-gaps`, `/audit/billing-stats` | Internal monitoring |
 | Notes | `/audit/logs/{id}/notes` GET, POST | Analyst Notes panel |
 | Incidents | `/incidents`, `/incidents/{id}`, `/incidents/{id}/actions`, `/incidents/{id}/export`, `/incidents/transitions`, `/incidents/summary` | Incidents UI |
@@ -178,7 +180,7 @@ The gateway proxies most of these as `/audit/*` paths; some live under different
 ### Fetch the last 10 audit rows
 
 ```bash
-curl -sS https://dev.aegisagent.in/audit/logs?limit=10 \
+curl -sS https://ha.aegisagent.in/audit/logs?limit=10 \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq '.data.items'
 ```
@@ -186,7 +188,7 @@ curl -sS https://dev.aegisagent.in/audit/logs?limit=10 \
 ### Verify the chain
 
 ```bash
-curl -sS https://dev.aegisagent.in/audit/logs/verify \
+curl -sS https://ha.aegisagent.in/audit/logs/verify \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq '{ valid, violations, rows_checked }'
 ```
@@ -194,7 +196,7 @@ curl -sS https://dev.aegisagent.in/audit/logs/verify \
 ### Fetch the receipt for one row
 
 ```bash
-curl -sS https://dev.aegisagent.in/audit/logs/$AUDIT_ID/receipt \
+curl -sS https://ha.aegisagent.in/audit/logs/$AUDIT_ID/receipt \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -202,7 +204,7 @@ curl -sS https://dev.aegisagent.in/audit/logs/$AUDIT_ID/receipt \
 ### Add an analyst note
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/audit/logs/$AUDIT_ID/notes \
+curl -sS -X POST https://ha.aegisagent.in/audit/logs/$AUDIT_ID/notes \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -231,9 +233,88 @@ curl -sS -X POST https://dev.aegisagent.in/audit/logs/$AUDIT_ID/notes \
 - **Reconciler is non-negotiable.** `scripts/ops/reconcile.py` runs nightly and emits `acp_reconcile_audit_without_usage` and `acp_reconcile_usage_without_audit` gauges. Either gauge being nonzero is a paging alert.
 - **PDF export size grows with chain length.** Exports for very large windows can be heavy; the API streams the response and caps row count per request.
 
+## A5/A6 — AEVF + DPDP + GRC additions (2026-06-14)
+
+Three new capabilities landed on the audit service in the A5/A6 sprint pair:
+
+### `/compliance/dpdp` — India DPDP Act 2023 bundle
+
+`services/audit/compliance.py::generate_dpdp_bundle()` returns a verifiable
+bundle mapped to **India Digital Personal Data Protection Act, 2023** clauses
++ the DPDP Rules notified 2025-11-13. Each row in `records[]` carries
+`mappings.dpdp` with framework-native control ids — e.g.
+`DPDP_8_5_security_safeguards`, `DPDP_11_data_principal_rights`, plus the
+Rules' Schedule II reasonable-security obligations.
+
+The endpoint additionally returns a `retention_assessment` block with
+`{audit_window_days, dpdp_minimum_required_days, meets_dpdp_minimum}`. DPDP
+prescribes a **minimum of 365 days** retention for the audit chain backing a
+significant data fiduciary. The bundle reports honestly — if `meets_dpdp_minimum`
+is `false`, the auditor sees it; we do not silently pad the number.
+
+### `/compliance/export/grc?format=json|csv` — Vanta/Drata-ready evidence
+
+`services/audit/grc_export.py` produces one evidence row per
+(audit row × control_id) pair across **SOC2 + EU AI Act + NIST AI RMF + DPDP**
+in a single response. Each row carries:
+
+| Column | Notes |
+|---|---|
+| `evidence_id` | Stable `sha256(control_id || event_hash)[:32]` |
+| `evidence_type` | Always `"automated_control_test"` |
+| `control_framework`, `control_id` | The framework + control the row is evidence for |
+| `tenant_id`, `agent_id`, `action`, `tool`, `decision` | Verbatim from audit row |
+| `summary` | One-sentence English explanation the GRC platform shows the auditor |
+| `aevf_bundle_url`, `aevf_event_hash`, `aevf_spec_version` | **AEVF back-reference**: every GRC row points at the verifiable AEVF bundle that holds the same audit event |
+
+JSON variant wraps the rows in an envelope (`format`, `aevf_spec_version`,
+`tenant_id`, `period`, `generated_at`, `evidence[]`); CSV variant is RFC 4180.
+A buyer using Vanta drops the CSV into the evidence inbox; Vanta correlates
+`control_id` and renders "evidence collected on YYYY-MM-DD" with a clickable
+AEVF bundle URL next to it.
+
+### SIEM events now carry AEVF back-reference
+
+`services/audit/siem.py::SIEMEvent.from_audit_log()` was extended (A6) to
+populate three additional fields on every Splunk / Datadog / Elastic /
+Sentinel / Chronicle event:
+
+```jsonc
+{
+  // … existing audit fields …
+  "aevf_bundle_url":   "https://ha.aegisagent.in/compliance/export/eu-ai-act?period_start=…&period_end=…",
+  "aevf_event_hash":   "<sha256 hex>",
+  "aevf_spec_version": "aevf/0.1.0"
+}
+```
+
+The bundle URL is the day-bundle that holds the same row. The auditor follows
+it from a Splunk row, downloads the AEVF bundle, runs `aegis-verify` offline,
+gets PASS — never talks to us. `AEVF_PUBLIC_BASE_URL` env var lets self-host
+customers pin their own host (default `https://ha.aegisagent.in`).
+
+### `/aevf/` static assets (A6)
+
+The audit service mounts `docs/AEVF/` as static so the URLs that ship in SIEM
+events and GRC rows actually resolve. The list:
+
+- `/aevf/spec.md` — the byte-precise verification standard
+- `/aevf/README.md` — entry page for auditors
+- `/aevf/auditor-checklist.md` — 8-section reviewable checklist
+- `/aevf/reference-audit-report.md` — engagement template
+- `/aevf/reference-bundle-2026-06.json` — deterministic sample bundle (~9 KB)
+- `/aevf/` — directory listing
+
+See [AEVF Overview](../AEVF/README.md) for the open standard, and
+[SDK Wrappers](../integrations/sdk-wrappers.md) /
+[Evidence Export Adapters](../integrations/evidence-export.md) for the
+end-to-end evidence path.
+
 ## Next
 
 - [Cryptographic Audit Chain](../security/crypto-audit-chain.md) — the signing math and verification algorithm
+- [AEVF Overview](../AEVF/README.md) — the open standard auditors verify against
+- [Evidence Export Adapters](../integrations/evidence-export.md) — every channel the audit chain exits through
 - [Key Rotation](../operations/key-rotation.md) — how to rotate without invalidating receipts
 - [Audit Chain Violation runbook](../operations/runbooks/audit-chain-violation.md) — what to do when verify fails
 - [Backup & Restore](../operations/backup-restore.md) — recovery posture

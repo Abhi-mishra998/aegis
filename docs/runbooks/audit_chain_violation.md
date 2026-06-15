@@ -52,5 +52,5 @@ If the violation is a code bug (not malicious), roll back the deploy and re-comp
 - Add a regression test covering the specific failure mode
 
 ## See also
-- `services/audit/audit_chain.py`
+- `services/audit/writer.py`
 - `sdk/common/merkle.py`

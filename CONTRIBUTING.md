@@ -89,7 +89,9 @@ created the security findings the past sprints had to fix.
 8. **Every new gateway route under `/admin/*`, `/decision/*`, or
    `/autonomy/*` lives in `services/gateway/routers/<domain>.py`,
    not `main.py`.** Add a new file if there isn't one already; do not
-   grow the god-file. Current size: 3,654 LOC; target: under 1,000.
+   grow the god-file. Current size: ~1,700 LOC in main.py + ~2,400 LOC
+   in middleware.py; target for main.py: under 1,000 by moving inline
+   routes to per-domain router files.
 
 ### Branch naming
 

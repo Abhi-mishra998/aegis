@@ -203,7 +203,7 @@ State on the request after this stage: `request.state.tenant_id`, `request.state
 ### 13. Background: timeline + graph emission
 
 - `services/gateway/trust_emitter.py::emit_timeline_end` writes the per-stage execution timeline to the Flight Recorder. Each stage's start, end, decision, and latency are stored.
-- `emit_graph_event` emits a typed edge `db-copilot-demo -> rds/acp-postgres-dev` of type `writes` with `outcome: deny` and `risk_score: 0.97` into the Identity Graph.
+- `emit_graph_event` emits a typed edge `db-copilot-demo -> rds/acp-prodha-postgres` of type `writes` with `outcome: deny` and `risk_score: 0.97` into the Identity Graph.
 
 ### 14. Audit worker drains the stream
 
@@ -249,7 +249,7 @@ A single HTTP exchange:
 
 ```
 POST /execute HTTP/1.1
-Host: dev.aegisagent.in
+Host: ha.aegisagent.in
 Authorization: Bearer eyJhbGciOi...
 X-Tenant-ID: 00000000-0000-0000-0000-000000000001
 X-Agent-ID: b2836c8d-e6e7-4f2e-a382-d862739bd233

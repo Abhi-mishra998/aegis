@@ -1,0 +1,99 @@
+{
+  "name": "aegis-governance",
+  "displayName": "Aegis — AI Agent Governance",
+  "description": "View runtime decisions, signed receipts, and blast radius for every /execute call your agents make. Read-only view onto your Aegis tenant.",
+  "version": "0.1.0",
+  "publisher": "aegis",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aegis/aegis"
+  },
+  "categories": ["Other"],
+  "keywords": ["ai", "security", "agents", "governance", "mcp", "policy"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onView:aegisDecisions"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Aegis",
+      "properties": {
+        "aegis.gatewayUrl": {
+          "type": "string",
+          "default": "https://dev.aegisagent.in",
+          "description": "Aegis gateway base URL (e.g. https://dev.aegisagent.in)."
+        },
+        "aegis.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "How often to poll the gateway for new decisions."
+        },
+        "aegis.maxDecisions": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "How many recent decisions to show in the Decisions panel."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "aegis.setApiKey",
+        "title": "Aegis: Set API Key",
+        "category": "Aegis"
+      },
+      {
+        "command": "aegis.clearApiKey",
+        "title": "Aegis: Clear API Key",
+        "category": "Aegis"
+      },
+      {
+        "command": "aegis.refresh",
+        "title": "Aegis: Refresh Decisions",
+        "category": "Aegis",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aegis.openDecision",
+        "title": "Aegis: Open Decision",
+        "category": "Aegis"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "aegisDecisions",
+          "name": "Aegis Decisions",
+          "icon": "$(shield)",
+          "contextualTitle": "Aegis Decisions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "aegis.refresh",
+          "when": "view == aegisDecisions",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

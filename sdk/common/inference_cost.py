@@ -34,9 +34,48 @@ Design notes:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
+
+# Sprint 2.2 — period selection for the cost cap window.
+# Cloud LLM providers (Groq, OpenAI, Anthropic, Bedrock) bill on monthly
+# cycles, so the enterprise-aligned default is MONTHLY: the 80% warning
+# fires once per UTC calendar month, the 100% block resets at month
+# rollover. Operators on cost-constrained dev rigs can fall back to daily
+# by setting INFERENCE_COST_PERIOD=daily. Both counter and warn keys
+# always use the SAME period — they cannot drift apart.
+_PeriodLiteral = Literal["daily", "monthly"]
+
+
+def _resolve_period(override: _PeriodLiteral | None = None) -> _PeriodLiteral:
+    if override in ("daily", "monthly"):
+        return override
+    raw = (os.environ.get("INFERENCE_COST_PERIOD") or "monthly").strip().lower()
+    return "daily" if raw == "daily" else "monthly"
+
+
+def _period_bucket(now: datetime, period: _PeriodLiteral) -> str:
+    """Bucket label written into Redis keys."""
+    return now.strftime("%Y-%m") if period == "monthly" else now.strftime("%Y-%m-%d")
+
+
+def _next_period_reset(now: datetime, period: _PeriodLiteral) -> datetime:
+    """When the current bucket rolls over."""
+    if period == "monthly":
+        if now.month == 12:
+            return datetime(now.year + 1, 1, 1, tzinfo=UTC)
+        return datetime(now.year, now.month + 1, 1, tzinfo=UTC)
+    nxt = (now + timedelta(days=1)).date()
+    return datetime(nxt.year, nxt.month, nxt.day, tzinfo=UTC)
+
+
+def _period_ttl_seconds(period: _PeriodLiteral) -> int:
+    """TTL for the first INCRBY so the key clears on rollover."""
+    # 36h covers DST + clock skew for daily; ~35 days covers every month
+    # plus a comfortable margin for the monthly window.
+    return 36 * 3600 if period == "daily" else 35 * 24 * 3600
 
 # Default tier — overridable per call. Conservative numbers; the
 # real cost is paid downstream so this is just the cap accountant.
@@ -70,24 +109,38 @@ class CostDecision:
 
 
 class InferenceCostLimiter:
-    """Two-axis daily USD cap (tenant AND agent).
+    """Two-axis USD cap (tenant AND agent).
 
     Returns a CostDecision; never mutates audit rows (the middleware
     owns that write so the audit_logs entry sits inside the request's
     transaction context).
 
-    Storage:
-      acp:inference_cost:tenant:{tenant_id}:{YYYY-MM-DD}  → cents (int)
-      acp:inference_cost:agent:{agent_id}:{YYYY-MM-DD}    → cents (int)
-      acp:inference_cost_warn:tenant:{tenant_id}:{YYYY-MM-DD}  SETNX flag
-      acp:inference_cost_warn:agent:{agent_id}:{YYYY-MM-DD}    SETNX flag
+    Period selection (Sprint 2.2 — closes audit C21):
+      * Default is MONTHLY (matches how cloud LLM providers bill).
+      * Operators set ``INFERENCE_COST_PERIOD=daily`` to switch.
+      * Counter + warn keys always share the same period — they cannot
+        drift apart, so a ``one-shot 80% warning per period`` is exactly
+        once per cap window regardless of which period is configured.
+
+    Storage (period = {YYYY-MM} for monthly, {YYYY-MM-DD} for daily):
+      acp:inference_cost:tenant:{tenant_id}:{period}  → cents (int)
+      acp:inference_cost:agent:{agent_id}:{period}    → cents (int)
+      acp:inference_cost_warn:tenant:{tenant_id}:{period}  SETNX flag
+      acp:inference_cost_warn:agent:{agent_id}:{period}    SETNX flag
     """
 
     BILLING_ALERTS_STREAM = "acp:billing_alerts"
     BILLING_ALERTS_MAXLEN = 10_000
 
-    def __init__(self, redis: Any) -> None:
+    def __init__(self, redis: Any, *, period: _PeriodLiteral | None = None) -> None:
         self._redis = redis
+        # Resolve once at construction so a mid-request env-var flip can't
+        # split a cap and its warning across two periods.
+        self._period: _PeriodLiteral = _resolve_period(period)
+
+    @property
+    def period(self) -> _PeriodLiteral:
+        return self._period
 
     # ── Token-cost estimator ──────────────────────────────────────────
     @staticmethod
@@ -155,7 +208,7 @@ class InferenceCostLimiter:
             tenant_cap_usd=tenant_cap_usd or 0.0,
             agent_cap_usd=agent_cap_usd or 0.0,
             scope=scope,
-            reset_at=_next_utc_midnight(now).isoformat(),
+            reset_at=_next_period_reset(now, self._period).isoformat(),
         )
 
         # Warning crossing (80%) — fired once per scope/key/day. We do
@@ -206,13 +259,15 @@ class InferenceCostLimiter:
         """Read-only counters — never INCRs. Used by `/tenant/quota` to
         surface inference-cost usage alongside the existing request quota."""
         now = datetime.now(tz=UTC)
+        reset = _next_period_reset(now, self._period).isoformat()
         out: dict[str, Any] = {
             "tenant_usd_used":  await self._read_cents("tenant", tenant_id, now) / 100.0,
-            "tenant_resets_at": _next_utc_midnight(now).isoformat(),
+            "tenant_resets_at": reset,
+            "period":           self._period,
         }
         if agent_id:
             out["agent_usd_used"]  = await self._read_cents("agent", agent_id, now) / 100.0
-            out["agent_resets_at"] = _next_utc_midnight(now).isoformat()
+            out["agent_resets_at"] = reset
         return out
 
     # ── Internals ─────────────────────────────────────────────────────
@@ -223,9 +278,9 @@ class InferenceCostLimiter:
         try:
             used = int(await self._redis.incrby(rkey, delta_cents))
             if used == delta_cents:
-                # First INCR — set the daily TTL so the key clears on
-                # rollover. 36h covers DST + clock skew.
-                await self._redis.expire(rkey, 36 * 3600)
+                # First INCR — set the period TTL so the key clears on
+                # rollover (36h for daily / 35 days for monthly).
+                await self._redis.expire(rkey, _period_ttl_seconds(self._period))
             return used
         except Exception:
             # Fail-open on the counter: under a Redis outage, the
@@ -255,7 +310,7 @@ class InferenceCostLimiter:
             first = await self._redis.setnx(warn_key, "1")
             if not first:
                 return
-            await self._redis.expire(warn_key, 36 * 3600)
+            await self._redis.expire(warn_key, _period_ttl_seconds(self._period))
             await self._redis.xadd(
                 self.BILLING_ALERTS_STREAM,
                 {"data": json.dumps({
@@ -281,13 +336,11 @@ class InferenceCostLimiter:
             # we couldn't tell ops about a near-cap.
             pass
 
-    @staticmethod
-    def _counter_key(scope: str, key: str, now: datetime) -> str:
-        return f"acp:inference_cost:{scope}:{key}:{now.strftime('%Y-%m-%d')}"
+    def _counter_key(self, scope: str, key: str, now: datetime) -> str:
+        return f"acp:inference_cost:{scope}:{key}:{_period_bucket(now, self._period)}"
 
-    @staticmethod
-    def _warn_key(scope: str, key: str, now: datetime) -> str:
-        return f"acp:inference_cost_warn:{scope}:{key}:{now.strftime('%Y-%m-%d')}"
+    def _warn_key(self, scope: str, key: str, now: datetime) -> str:
+        return f"acp:inference_cost_warn:{scope}:{key}:{_period_bucket(now, self._period)}"
 
 
 def _next_utc_midnight(now: datetime) -> datetime:

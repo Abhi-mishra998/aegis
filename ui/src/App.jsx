@@ -49,6 +49,24 @@ import LiveFeed from './pages/LiveFeed';
 import PolicySim from './pages/PolicySim';
 import UserManagement from './pages/UserManagement';
 import Playbooks from './pages/Playbooks';
+// Sprint 3 — Decision Explorer + Session Explorer
+import DecisionExplorer from './pages/DecisionExplorer';
+import SessionExplorer from './pages/SessionExplorer';
+// Sprint 4 — Fleet dashboards + Agent FinOps + Topology
+import Fleet from './pages/Fleet';
+import AgentHealth from './pages/AgentHealth';
+import AgentCost from './pages/AgentCost';
+import AgentTopology from './pages/AgentTopology';
+// Sprint 5 — Attack Evaluation Suite
+import Evaluation from './pages/Evaluation';
+// Sprint 6 — Shadow-mode policies + online evaluation
+import ShadowMode from './pages/ShadowMode';
+// Sprint 7 — Policy Playground
+import PolicyPlayground from './pages/PolicyPlayground';
+// Days 70-90 — Approval Inbox (operator surface for ESCALATE actions)
+import ApprovalInbox from './pages/ApprovalInbox';
+// Client-pitch live demo — Groq agent through the Aegis pipeline
+import LiveDemo from './pages/LiveDemo';
 import Toast from './components/Common/Toast';
 
 // Auth state is based on session metadata (tenant_id + expiry), not the token itself.
@@ -214,6 +232,24 @@ function App() {
 
               {/* Primary nav (5) */}
               <Route path="/flight-recorder" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
+              {/* Sprint 3 — Decision Explorer + Session Explorer */}
+              <Route path="/decision-explorer" element={<ProtectedRoute><DecisionExplorer /></ProtectedRoute>} />
+              <Route path="/session-explorer"  element={<ProtectedRoute><SessionExplorer /></ProtectedRoute>} />
+              {/* Sprint 4 — Fleet dashboards + Agent FinOps + Topology */}
+              <Route path="/fleet"             element={<ProtectedRoute><Fleet /></ProtectedRoute>} />
+              <Route path="/agent-health"      element={<ProtectedRoute><AgentHealth /></ProtectedRoute>} />
+              <Route path="/agent-cost"        element={<ProtectedRoute><AgentCost /></ProtectedRoute>} />
+              <Route path="/agent-topology"    element={<ProtectedRoute><AgentTopology /></ProtectedRoute>} />
+              {/* Sprint 5 — Attack Evaluation Suite */}
+              <Route path="/evaluation"        element={<ProtectedRoute><Evaluation /></ProtectedRoute>} />
+              {/* Sprint 6 — Shadow-mode policies */}
+              <Route path="/shadow-mode"       element={<ProtectedRoute><ShadowMode /></ProtectedRoute>} />
+              {/* Sprint 7 — Policy Playground */}
+              <Route path="/policy-playground" element={<ProtectedRoute><PolicyPlayground /></ProtectedRoute>} />
+              {/* Approval Inbox — operator surface for ESCALATE actions */}
+              <Route path="/approval-inbox"    element={<ProtectedRoute><ApprovalInbox /></ProtectedRoute>} />
+              {/* Live Groq-agent client demo */}
+              <Route path="/live-demo"         element={<ProtectedRoute><LiveDemo /></ProtectedRoute>} />
               <Route path="/policy-builder"  element={<ProtectedRoute><PolicyBuilder /></ProtectedRoute>} />
               <Route path="/audit-logs"      element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
               <Route path="/incidents"       element={<ProtectedRoute><Incidents /></ProtectedRoute>} />

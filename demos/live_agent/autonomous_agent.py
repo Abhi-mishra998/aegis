@@ -45,7 +45,7 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-ACP_URL   = os.environ.get("ACP_GATEWAY_URL", "http://localhost:8000")
+ACP_URL   = os.environ.get("ACP_GATEWAY_URL", "https://ha.aegisagent.in")
 TENANT_ID = os.environ.get("ACP_TENANT_ID",  "00000000-0000-0000-0000-000000000001")
 AGENT_ID  = os.environ.get("ACP_AGENT_ID",   "11111111-1111-1111-1111-111111111111")
 
@@ -307,7 +307,15 @@ def main() -> None:
     client = anthropic.Anthropic(api_key=api_key)
     tasks: list[str] = TASKS[args.tasks]  # type: ignore[assignment]
 
-    dashboard = ACP_URL.replace("http://localhost:8000", "https://aegisagent.in")
+    # When running against the prod-ha ALB, point the watch link at the
+    # public host directly. For laptop / localhost runs the operator sees
+    # the local gateway URL — they almost certainly aren't watching a
+    # remote dashboard in that case.
+    dashboard = (
+        ACP_URL
+        if ACP_URL.startswith("https://")
+        else ACP_URL.replace("http://localhost:8000", "https://ha.aegisagent.in")
+    )
     print(f"\n{'='*60}")
     print("  Aegis Live Autonomous Agent")
     print(f"  Gateway : {ACP_URL}")

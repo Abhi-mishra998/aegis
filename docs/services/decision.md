@@ -160,7 +160,7 @@ Weights sum to 1.0; the handler rejects updates that don't.
 ### Engage the kill switch
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/decision/kill-switch/00000000-0000-0000-0000-000000000001 \
+curl -sS -X POST https://ha.aegisagent.in/decision/kill-switch/00000000-0000-0000-0000-000000000001 \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -172,7 +172,7 @@ The reason is recorded server-side as `manual_admin_lockdown`. The response body
 ### Read the current weights
 
 ```bash
-curl -sS https://dev.aegisagent.in/decision/signal-weights \
+curl -sS https://ha.aegisagent.in/decision/signal-weights \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -180,7 +180,7 @@ curl -sS https://dev.aegisagent.in/decision/signal-weights \
 ### Override weights — emphasize policy more
 
 ```bash
-curl -sS -X PUT https://dev.aegisagent.in/decision/signal-weights \
+curl -sS -X PUT https://ha.aegisagent.in/decision/signal-weights \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \

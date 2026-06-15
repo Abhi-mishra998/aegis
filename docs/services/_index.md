@@ -1,6 +1,6 @@
 # Services Map
 
-*The 18 backend services in `services/`, grouped by role in the request lifecycle.*
+*The 16 backend services in `services/`, plus two cross-cutting documentation pages (Billing — a cross-service flow; Intelligence — an embedded module in `sdk/intelligence/`), grouped by role in the request lifecycle.*
 
 ## Hot path — on the request path of every `/execute`
 
@@ -33,21 +33,23 @@ Behavior and Autonomy are inline at stages 5 and 7; the other four are post-deci
 |---|---|---|---|---|
 | Usage | `services/usage/` | 8007 | `acp_usage` | [Usage](usage.md) |
 | API | `services/api/` | 8010 | `acp_api` | [API](api.md) |
-| Billing | (cross-service flow) | — | spans audit + usage + identity | [Billing](billing.md) |
-| Insight | `services/insight/` | 8014 | Redis only | [Insight](insight.md) |
-| Intelligence | `services/intelligence/` | embedded module | Redis only | [Intelligence](intelligence.md) |
-| Learning | `services/learning/` | embedded module | shares `behavior_profiles` | [Learning](learning.md) |
-| Groq Worker | `services/groq_worker/` | none (worker) | Redis only | [Groq Worker](groq-worker.md) |
+| Insight | `services/insight/` | 8014 | reads `acp_audit` | [Insight](insight.md) |
+| Learning | `services/learning/` | 8016 | reads `acp_behavior` | [Learning](learning.md) |
+| MCP Server | `services/mcp_server/` | stdio | none | — (stdio surface, no HTTP) |
 
-Three workers (`groq_worker`, `insight_worker`, behavior baseline refresh) run alongside but are not addressable on a port.
+Billing is a cross-service flow (`audit` → outbox → `usage` → optional
+Stripe webhook in `api`), not a separate service. Intelligence-style
+cross-agent correlation lives inside the `learning` service.
+
+`insight_worker` runs alongside Insight but is not addressable on a port.
 
 ## Counts at a glance
 
-- **Total services**: 18 (including the cross-service Billing flow and three embedded modules).
-- **Standalone application services**: 12 — what Aegis ships as separate FastAPI apps.
-- **Workers without HTTP port**: 3 — `groq_worker`, `insight_worker`, plus the embedded behavior baseline refresher.
+- **Total backend services**: 16 in `services/` (gateway, identity, registry, policy, decision, behavior, audit, usage, api, forensics, flight_recorder, identity_graph, insight, autonomy, learning, mcp_server).
+- **Plus 2 cross-cutting docs pages**: Billing (a cross-service flow) and Intelligence (an embedded module in `sdk/intelligence/`).
+- **Standalone HTTP FastAPI services**: 15 — every service in `services/` except `mcp_server` (stdio).
 - **Postgres logical databases**: 11 — one per data-owning service plus the `acp` bootstrap database.
-- **Services with no Postgres of their own**: 5 — Gateway, Decision, Policy, Forensics (read-only), Billing (cross-service).
+- **Services with no Postgres of their own**: 5 — Gateway, Decision, Policy, Forensics (read-only), MCP Server (stateless).
 
 ## Reading order
 
@@ -62,7 +64,7 @@ A new engineer should read in this order:
 7. [Behavior](behavior.md) — the firewall.
 8. [Autonomy](autonomy.md) — the multi-agent contracts.
 
-After those eight, the remaining ten are smaller and self-contained — read them as needed.
+After those eight, the remaining ones are smaller and self-contained — read them as needed.
 
 ## Cross-references
 

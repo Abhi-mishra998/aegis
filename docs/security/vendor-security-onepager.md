@@ -34,7 +34,7 @@
 | Penetration test                  | Commissioned for the reference deployment — see § "Pen-test scope" |
 | SBOM                              | CycloneDX 1.5, signed with the ed25519 receipt key — `scripts/ops/generate_sbom.sh` |
 | Vulnerability disclosure          | RFC 9116 — `https://aegisagent.in/.well-known/security.txt` |
-| Public attack benchmark           | OWASP LLM Top-10 corpus (560 cases) — `docs/benchmark.md` |
+| Public attack benchmark           | OWASP LLM Top-10 corpus (560 cases) — `tests/corpus/` + `tests/redteam/` |
 
 ## Signing key custody
 
@@ -92,7 +92,7 @@ Engaged: **Q3 2026** (target).
 | Last successful restore?  | latest `reports/restore_drill/*.json` (or `s3://acp-backups-prodha-.../restore_drills/`) |
 | Vulnerability disclosure? | `https://aegisagent.in/.well-known/security.txt` |
 | SBOM?                     | `reports/sbom/aegis-merged-<sha>.json` + `.sig` |
-| Attack coverage?          | `docs/benchmark.md` — published OWASP LLM Top-10 corpus + benchmark |
+| Attack coverage?          | `tests/corpus/` + `tests/redteam/` — OWASP LLM Top-10 corpus + redteam scenarios |
 
 ---
 

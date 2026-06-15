@@ -1,5 +1,39 @@
 # Demo Packs
 
+*One live demo for prospects + three scripted scenarios for technical evaluators.*
+
+## The first thing to show a prospect — Live Demo (`/live-demo`)
+
+The page operators open in front of a prospect. No setup, no CLI, no
+seed data. Type a task → Groq (`llama-3.3-70b`) plans a sequence of
+tool calls → each call goes through the real Aegis pipeline → the UI
+animates each decision with risk score, finding, and signed receipt.
+The audit chain grows in real time on the right rail.
+
+### Scenario picker (R5, 2026-06-13)
+
+Three scripted scenarios at the top of the page tell three distinct
+stories with one click — each provisions its own demo agent with a
+scripted `risk_level` so the same prompt produces a different
+allow/deny mix per scenario:
+
+| Scenario | Agent | Risk level | Demonstrates |
+|---|---|---|---|
+| `fintech_data_egress` | `aegis-demo-fintech` | `medium` | PCI / PII bulk-export deny. Allowed reads under 1000 rows; denied above it via `action_semantics_deny.rego._pii_row_threshold_breached`. |
+| `devops_destruction` | `aegis-demo-devops` | `low` | K8s production-namespace deny. Allowed on dev/test; denied on `prod`/`staging`/`payments`/`billing` via `_k8s_prod_destruction`. |
+| `support_pii_exfil` | `aegis-demo-support` | `medium` | Support agent PII exfil deny. Allowed internal reads; denied on outbound `email.send`/`http.post`/`webhook.send` to an external domain when payload contains PII via `_external_exfil`. |
+
+If no scenario is selected, the page falls back to the legacy
+`demo-groq-agent-v3` agent at `risk_level=critical` and trips
+`critical_destructive_deny.rego` on any destructive tool substring. Full
+page documentation: [Live Demo](../ui/primary/live-demo.md).
+
+This is what to show on the first 5 minutes of a customer call. The
+scripted packs below are for the technical follow-up where the
+evaluator wants to see specific scenarios reproduced.
+
+## Scripted packs — for technical evaluators
+
 *Three scripted scenarios that drive every UI page from empty to populated. Each pack runs in 10–25 seconds end-to-end and emits real audit chain rows, decision events, flight timelines, and (in some scenarios) incidents.*
 
 The packs live under `demos/` in the repo. They are deliberately not bundled into deploy tarballs — they're operational fixtures, not product code.
@@ -49,8 +83,8 @@ The packs need direct access to the gateway, identity, identity_graph, and auton
 
 ### Pre-requisites
 
-1. The dev environment is up: `curl -fsS https://dev.aegisagent.in/system/health` returns `healthy: 12 / total: 12`.
-2. The repo's `demos/` directory has been uploaded to S3 (it isn't in the production tarball — `aws s3 cp demos.tar.gz s3://acp-dev-backups-628478/demos/`).
+1. The dev environment is up: `curl -fsS https://ha.aegisagent.in/system/health` returns `healthy: 12 / total: 12`.
+2. The repo's `demos/` directory has been uploaded to S3 (it isn't in the production tarball — `aws s3 cp demos.tar.gz s3://acp-backups-prodha-628478/demos/`).
 3. The dev admin credentials work: `admin@acp.local` is accepted by the gateway as of 2026-06-01 (`.local` TLD was rejected before that — see `services/gateway/routers/auth.py`).
 
 ### One-shot runner
@@ -62,12 +96,12 @@ docker run --rm --network infra_default \
   -e ACP_IDENTITY_URL=http://identity:8000 \
   -e ACP_GRAPH_URL=http://identity_graph:8000 \
   -e ACP_AUTONOMY_URL=http://autonomy:8000 \
-  -e INTERNAL_SECRET=<from Secrets Manager: acp-dev/internal_secret> \
+  -e INTERNAL_SECRET=<from Secrets Manager: acp-ha/internal_secret> \
   -e ACP_TENANT_ID=00000000-0000-0000-0000-000000000001 \
   -e ACP_ADMIN_EMAIL=admin@acp.local \
   -e ACP_ADMIN_PASSWORD=<from onboarding> \
-  -e DEMO_PG_DSN=postgresql+asyncpg://postgres:<RDS pwd>@acp-postgres-dev.cz0qqg60keaj.ap-south-1.rds.amazonaws.com:5432/acp_demo \
-  -e DEMO_ADMIN_PG_DSN=postgresql+asyncpg://postgres:<RDS pwd>@acp-postgres-dev.cz0qqg60keaj.ap-south-1.rds.amazonaws.com:5432/postgres \
+  -e DEMO_PG_DSN=postgresql+asyncpg://postgres:<RDS pwd>@acp-prodha-postgres.<id>.ap-south-1.rds.amazonaws.com:5432/acp_demo \
+  -e DEMO_ADMIN_PG_DSN=postgresql+asyncpg://postgres:<RDS pwd>@acp-prodha-postgres.<id>.ap-south-1.rds.amazonaws.com:5432/postgres \
   python:3.11-slim bash -c \
     "pip install -q httpx sqlalchemy asyncpg && python demos/run_all_demos.py"
 ```

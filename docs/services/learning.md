@@ -130,7 +130,7 @@ For observability, the following metrics endpoints surface its state through the
 ### Read an agent's current baseline
 
 ```bash
-curl -sS https://dev.aegisagent.in/behavior/profile/$AGENT_ID \
+curl -sS https://ha.aegisagent.in/behavior/profile/$AGENT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ observation_count, last_refreshed_at, tool_sequence_top: .tool_sequence_signatures | to_entries | sort_by(-.value) | .[:5] }'
@@ -139,7 +139,7 @@ curl -sS https://dev.aegisagent.in/behavior/profile/$AGENT_ID \
 ### Force a refresh after onboarding a new tool
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/behavior/profile/$AGENT_ID/refresh \
+curl -sS -X POST https://ha.aegisagent.in/behavior/profile/$AGENT_ID/refresh \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001"
 ```
@@ -166,6 +166,5 @@ curl -sS -X POST https://dev.aegisagent.in/behavior/profile/$AGENT_ID/refresh \
 ## Next
 
 - [Behavior](behavior.md) — the API that calls this module
-- [Intelligence](intelligence.md) — the cross-tenant complement
 - [Audit](audit.md) — the training data source
 - [Behavioral firewall degraded mode](../security/threat-scenarios.md) — what happens when this is unreachable

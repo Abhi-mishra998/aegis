@@ -9,7 +9,7 @@ resource "aws_lb" "this" {
   subnets         = var.subnet_ids
   security_groups = var.security_group_ids
 
-  enable_deletion_protection = true
+  enable_deletion_protection = var.enable_deletion_protection
   enable_http2               = true
   idle_timeout               = 65
   drop_invalid_header_fields = true

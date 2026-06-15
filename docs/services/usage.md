@@ -152,7 +152,7 @@ Indexes: `usage_records.tenant_id, created_at DESC`, `usage_records.agent_id, cr
 ### Dashboard payload
 
 ```bash
-curl -sS https://dev.aegisagent.in/usage/dashboard \
+curl -sS https://ha.aegisagent.in/usage/dashboard \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '{ today_usd, top_agents: .by_agent[:3], anomaly_count: (.anomalies | length) }'
@@ -161,7 +161,7 @@ curl -sS https://dev.aegisagent.in/usage/dashboard \
 ### Cost attribution over 4 weeks
 
 ```bash
-curl -sS "https://dev.aegisagent.in/billing/cost-attribution?weeks=4" \
+curl -sS "https://ha.aegisagent.in/billing/cost-attribution?weeks=4" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq
@@ -170,7 +170,7 @@ curl -sS "https://dev.aegisagent.in/billing/cost-attribution?weeks=4" \
 ### DLQ inspection
 
 ```bash
-curl -sS https://dev.aegisagent.in/billing/dlq \
+curl -sS https://ha.aegisagent.in/billing/dlq \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   | jq '.data.items[] | { audit_id, error_reason, retry_count, failed_at }'
@@ -198,7 +198,11 @@ curl -sS https://dev.aegisagent.in/billing/dlq \
 
 ## Next
 
-- [Billing](billing.md) — the cross-service flow that uses this ledger
 - [Audit](audit.md) — the source of the outbox
 - [Identity](identity.md) — the tenant cap surface
 - [Billing UI](../ui/settings/billing.md) — the human-facing surface
+
+There is no separate `billing` service. Billing is a cross-service flow:
+`audit` → outbox → `usage` (this service) → optional Stripe webhook in
+`api`. The UI page at `/billing` consumes the usage endpoints documented
+above.

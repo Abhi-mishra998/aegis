@@ -54,7 +54,10 @@ export default function VoiceAgentPanel({ open, onClose }) {
         token: data.token,
         url: data.url,
         room: data.room,
-        sessionMaxSeconds: data.session_max_seconds || 300,
+        // Gateway echoes the agent's AEGIS_SESSION_MAX_SECONDS so the UI
+        // countdown matches the server-side hard cap. Fall back to 1800
+        // (the agent default) if the gateway response omits the field.
+        sessionMaxSeconds: data.session_max_seconds || 1800,
       })
     } catch (e) {
       setError(e.message || String(e))
@@ -143,7 +146,7 @@ export default function VoiceAgentPanel({ open, onClose }) {
 
 /* ── Inner session view (rendered inside LiveKitRoom context) ────────── */
 
-function VoiceSession({ onClose, sessionMaxSeconds = 300 }) {
+function VoiceSession({ onClose, sessionMaxSeconds = 1800 }) {
   const voice = useVoiceAssistant() // { state, agent, agentTranscriptions, ... }
   const { localParticipant } = useLocalParticipant()
   const room = useRoomContext()

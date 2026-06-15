@@ -19,7 +19,7 @@ Usage:
     .venv/bin/python demos/support_agent/scripted_demo.py
 
 Environment overrides:
-    ACP_GATEWAY_URL   (default http://localhost:8000)
+    ACP_GATEWAY_URL   (default https://ha.aegisagent.in)
     ACP_CREDS_FILE    (default demos/support_agent/.demo_creds.json)
     ACP_DRY_RUN       (default 0 — set to 1 for offline mode)
 """
@@ -37,7 +37,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-GATEWAY  = os.getenv("ACP_GATEWAY_URL", "http://localhost:8000")
+GATEWAY  = os.getenv("ACP_GATEWAY_URL", "https://ha.aegisagent.in")
 DRY_RUN  = os.getenv("ACP_DRY_RUN", "0") == "1"
 
 _CREDS_FILE = Path(

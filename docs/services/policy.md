@@ -114,6 +114,16 @@ Policy decisions are recorded in the audit chain, not in a policy-owned table.
 - **Syntax validation.** Bad Rego is rejected at upload time; OPA's parser is called before persistence.
 - **Audit emission.** Every policy upload, every bundle rebuild, every simulation produces an audit row.
 - **Hard-deny patterns are not user-editable.** Patterns under `services/policy/policies/default.rego` (path traversal, k8s prod-namespace deletion, etc.) ship with the platform and are not overridable by tenant Rego.
+- **Critical-risk destructive-tool deny** (added 2026-06-13, `services/policy/policies/action_semantics_deny.rego`, package `acp.v1.agent`). When `input.agent.risk_level == "critical"` AND the tool name contains one of `{shell, sudo, rm, drop, delete, truncate, exec, sql}`, returns `allow=false`, `reason="Critical-risk agent attempted destructive tool"`, `risk_adjustment=0.85`. This rule is what the Live Demo page (`/live-demo`) relies on to produce its mixed allow/deny trace. The substring set is intentionally aligned with `rate_policy.rego`'s `destructive_tools` set so the two policies tell the same story. Update either and they drift; keep them in sync.
+- **Action-content semantic deny** (added 2026-06-14 in the A1/v3-deep sprint, `services/policy/policies/action_semantics_deny.rego`, package `acp.v1.agent`). This is the rule file that turned generalisation from "100% on four scripted demos" into honest coverage. It denies on the *meaning* of the action, not on a substring match:
+    - `_shell_destruction` — `rm -rf /`, `mkfs`, `dd if=… of=/dev/...`, fork bombs, in any quoting style
+    - `_sql_ddl_destruction` — `DROP TABLE`, `TRUNCATE`, `DELETE FROM ... WHERE 1=1`, predicate-less `DELETE`/`UPDATE`
+    - `_system_path_access` — `/etc/passwd`, `/etc/shadow`, `~/.ssh/id_*`, AWS credentials files
+    - `_k8s_prod_destruction` (v3-deep) — `kubectl delete ns <prod-marker>` / `helm uninstall` aimed at any namespace name that contains a substring from the production markers list `{prod, production, customer, payments, billing, staging, live, mainnet}`. Dev/test namespaces are explicitly allowed so the rule does not over-deny.
+    - `_pii_row_threshold_breached` (v3-deep) — bulk-PII export with a **risk-tunable** row threshold: `critical=0`, `high=100`, `medium=1000`, `low=10000`. Threshold is selected from `input.agent.risk_level`, falling back to `medium` if absent. SQL `LIMIT` is extracted by gateway middleware (`services/gateway/middleware.py`) before the request reaches OPA.
+    - `_external_exfil` (v3-deep, A5) — `email.send` / `http.post` / `webhook.send` to any external domain (anything outside the tenant's allowlist) when the payload contains PII markers. The gateway extracts `k8s_namespace`, `row_limit`, and recipient domain ahead of OPA so the Rego stays declarative.
+
+  The full reason-string table — `policy:semantic:shell_destruction`, `policy:semantic:k8s_prod_destruction`, `policy:semantic:pii_bulk_export_<level>`, etc. — is enumerated in [OPA Policies](../security/opa-policies.md#action_semantics_denyrego--r0--v3-deep). Like the other hard-deny patterns, this file is shipping-pinned and not overridable by tenant overlay.
 
 ## Metrics
 
@@ -155,7 +165,7 @@ The gateway proxies `/policy/simulate`, `/policy/test`, `/policy/upload` for the
 ### Simulate a draft rule over the last 24 hours
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/policy/simulate \
+curl -sS -X POST https://ha.aegisagent.in/policy/simulate \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -168,7 +178,7 @@ curl -sS -X POST https://dev.aegisagent.in/policy/simulate \
 ### Run unit tests on the current bundle
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/policy/test \
+curl -sS -X POST https://ha.aegisagent.in/policy/test \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq '.data.results'
 ```
@@ -176,7 +186,7 @@ curl -sS -X POST https://dev.aegisagent.in/policy/test \
 ### Upload a new policy
 
 ```bash
-curl -sS -X POST https://dev.aegisagent.in/policy/upload \
+curl -sS -X POST https://ha.aegisagent.in/policy/upload \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
@@ -189,7 +199,7 @@ curl -sS -X POST https://dev.aegisagent.in/policy/upload \
 ### Health-check OPA
 
 ```bash
-curl -sS https://dev.aegisagent.in/policy/health/opa
+curl -sS https://ha.aegisagent.in/policy/health/opa
 ```
 
 ## Troubleshooting
@@ -219,5 +229,5 @@ curl -sS https://dev.aegisagent.in/policy/health/opa
 - [Gateway](gateway.md) — the caller at stage 4
 - [Decision](decision.md) — what combines policy with other signals
 - [OPA Policies](../security/opa-policies.md) — every Rego file shipping with the platform, walked rule by rule
-- [Threat Scenarios](../security/threat-scenarios.md) — the four shipped attack cases and the rules that block each
+- [Threat Scenarios](../security/threat-scenarios.md) — the shipped attack cases and the Rego rules that block each (including the v3-deep semantic denies)
 - [Policy Builder UI](../ui/primary/policies.md) — the human-facing flow

@@ -21,3 +21,12 @@ output "internet_gateway_id" {
 output "availability_zones" {
   value = var.availability_zones
 }
+
+output "nat_gateway_public_ips" {
+  description = "Per-AZ NAT EIPs — pin in vendor allowlists for egress from private subnets."
+  value       = [for eip in aws_eip.nat : eip.public_ip]
+}
+
+output "private_route_table_ids" {
+  value = aws_route_table.private[*].id
+}

@@ -270,7 +270,18 @@ export const auditService = {
     request(_withAgent(`/audit/logs?limit=${limit}&offset=${offset}`, agentId)),
   getAgentLogs: (agentId, limit = 15) => request(`/audit/logs?agent_id=${agentId}&limit=${limit}`),
   getKillSwitchHistory: (limit = 20) => request(`/audit/logs?action=kill&limit=${limit}`),
-  searchLogs: (params) => request("/audit/logs/search", { method: "POST", body: JSON.stringify(params) }),
+  searchLogs: (params) => {
+    // AWS WAFv2 SQLi managed rule blocks any JSON body with `"limit":<n>` (it
+    // reads `LIMIT N` as SQL injection). We route the same filters through
+    // GET /audit/logs query params so the body never enters body inspection.
+    const qs = new URLSearchParams()
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return
+      qs.append(k, String(v))
+    })
+    const q = qs.toString()
+    return request(`/audit/logs${q ? `?${q}` : ''}`)
+  },
   verifyIntegrity: () => request("/audit/logs/verify"),
   getHeatmap: () => request("/audit/logs/heatmap"),
   explainDecision: (auditId) => request(`/audit/logs/${encodeURIComponent(auditId)}/explain`),
@@ -494,6 +505,147 @@ export const graphService = {
   simulateCompromise:   (body)               => request('/graph/compromise/simulate', { method: 'POST', body: JSON.stringify(body) }),
 };
 
+// Sprint 4 — Fleet dashboard surface.
+//   /audit/fleet/*  — decision-derived KPIs, time-series, agent health, recent
+//   /usage/fleet/*  — per-tenant/per-agent inference-cost burn-down
+//
+// Every method here is tenant-scoped at the backend via the JWT claim; the
+// client just forwards query params.
+// Sprint 7 — Policy Playground.
+//   /audit/playground/validate  — compile rules_json → Rego + OPA parse check
+//   /audit/playground/replay    — replay candidate against historical audit_logs
+//   /audit/playground/publish   — persist as a Sprint-6 ShadowPolicy
+//
+// Per-tenant scoped at the backend via the JWT claim. Named to disambiguate
+// from the pre-existing `playgroundService` for the /execute tester.
+export const policyPlaygroundService = {
+  validate: (rules, policyName = 'aegis_policy') => request('/audit/playground/validate', {
+    method: 'POST',
+    body: JSON.stringify({ rules, policy_name: policyName }),
+  }),
+  replay:   (body) => request('/audit/playground/replay', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  publish:  (body) => request('/audit/playground/publish', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+}
+
+// Sprint 6 — Shadow-mode policies + online evaluation.
+//   /audit/shadow/policies/*          — CRUD + promote/rollback
+//   /audit/shadow/policies/{id}/would-have-denied  — drift report
+//   /audit/shadow/online-eval         — per-tenant drift config
+//
+// Per-tenant scoped at the backend via the JWT claim.
+export const shadowService = {
+  listPolicies:    (params = {}) => {
+    const q = new URLSearchParams()
+    if (params.mode)     q.set('mode', params.mode)
+    if (params.agent_id) q.set('agent_id', params.agent_id)
+    return request(`/audit/shadow/policies${q.toString() ? `?${q.toString()}` : ''}`)
+  },
+  createPolicy:    (body) => request('/audit/shadow/policies', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  getPolicy:       (id) => request(`/audit/shadow/policies/${id}`),
+  editPolicy:      (id, body) => request(`/audit/shadow/policies/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
+  archivePolicy:   (id) => request(`/audit/shadow/policies/${id}`, { method: 'DELETE' }),
+  promotePolicy:   (id, target) => request(`/audit/shadow/policies/${id}/promote`, {
+    method: 'POST', body: JSON.stringify({ target }),
+  }),
+  rollbackPolicy:  (id, version) => request(`/audit/shadow/policies/${id}/rollback`, {
+    method: 'POST', body: JSON.stringify({ target_version: version }),
+  }),
+  listVersions:    (id) => request(`/audit/shadow/policies/${id}/versions`),
+  wouldHaveDenied: (id, windowHours = 24, sampleLimit = 50) => request(
+    `/audit/shadow/policies/${id}/would-have-denied?window_hours=${windowHours}&sample_limit=${sampleLimit}`,
+  ),
+  listDecisions:   (id, params = {}) => {
+    const q = new URLSearchParams()
+    if (params.drift_only) q.set('drift_only', 'true')
+    if (params.limit)      q.set('limit', String(params.limit))
+    return request(`/audit/shadow/policies/${id}/decisions${q.toString() ? `?${q.toString()}` : ''}`)
+  },
+  getOnlineEval:   () => request('/audit/shadow/online-eval'),
+  putOnlineEval:   (body) => request('/audit/shadow/online-eval', {
+    method: 'PUT', body: JSON.stringify(body),
+  }),
+}
+
+// Sprint 5 — Attack Evaluation Suite.
+//   /audit/evaluation/datasets       — labelled corpora (attack + benign)
+//   /audit/evaluation/evaluators     — named scorer configs
+//   /audit/evaluation/jobs           — replay runs against /execute
+//   /audit/evaluation/efficacy/*     — dashboard overview + per-rule trend
+//
+// Per-tenant scoped at the backend via the JWT claim.
+export const evaluationService = {
+  listDatasets:    () => request('/audit/evaluation/datasets'),
+  createDataset:   (body) => request('/audit/evaluation/datasets', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  getDataset:      (id) => request(`/audit/evaluation/datasets/${id}`),
+  listCases:       (id, params = {}) => {
+    const q = new URLSearchParams()
+    if (params.case_kind)      q.set('case_kind', params.case_kind)
+    if (params.owasp_category) q.set('owasp_category', params.owasp_category)
+    if (params.limit)          q.set('limit', String(params.limit))
+    if (params.offset)         q.set('offset', String(params.offset))
+    return request(`/audit/evaluation/datasets/${id}/cases${q.toString() ? `?${q.toString()}` : ''}`)
+  },
+  listEvaluators:  () => request('/audit/evaluation/evaluators'),
+  createEvaluator: (body) => request('/audit/evaluation/evaluators', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  enqueueJob:      (body) => request('/audit/evaluation/jobs', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  listJobs:        (params = {}) => {
+    const q = new URLSearchParams()
+    if (params.status) q.set('status', params.status)
+    if (params.limit)  q.set('limit', String(params.limit))
+    return request(`/audit/evaluation/jobs${q.toString() ? `?${q.toString()}` : ''}`)
+  },
+  getJob:          (id) => request(`/audit/evaluation/jobs/${id}`),
+  listResults:     (id, params = {}) => {
+    const q = new URLSearchParams()
+    if (params.only_failed)    q.set('only_failed', 'true')
+    if (params.owasp_category) q.set('owasp_category', params.owasp_category)
+    if (params.limit)          q.set('limit', String(params.limit))
+    if (params.offset)         q.set('offset', String(params.offset))
+    return request(`/audit/evaluation/jobs/${id}/results${q.toString() ? `?${q.toString()}` : ''}`)
+  },
+  overview:        () => request('/audit/evaluation/efficacy/overview'),
+  trend:           (params = {}) => {
+    const q = new URLSearchParams()
+    if (params.rule_id) q.set('rule_id', params.rule_id)
+    if (params.days)    q.set('days', String(params.days))
+    return request(`/audit/evaluation/efficacy/trend${q.toString() ? `?${q.toString()}` : ''}`)
+  },
+}
+
+export const fleetService = {
+  kpis: (windowMinutes = 60) =>
+    request(`/audit/fleet/kpis?window_minutes=${encodeURIComponent(windowMinutes)}`),
+  timeseries: ({ metric = 'decisions', windowMinutes = 180, bucketMinutes = 5, agentId } = {}) => {
+    const q = new URLSearchParams({
+      metric,
+      window_minutes: String(windowMinutes),
+      bucket_minutes: String(bucketMinutes),
+    })
+    if (agentId) q.set('agent_id', agentId)
+    return request(`/audit/fleet/timeseries?${q.toString()}`)
+  },
+  agentHealth: ({ rankBy = 'deny_rate', windowMinutes = 60, limit = 25 } = {}) =>
+    request(`/audit/fleet/agent-health?rank_by=${encodeURIComponent(rankBy)}&window_minutes=${windowMinutes}&limit=${limit}`),
+  recentEvents: ({ kind = 'denied', limit = 25 } = {}) =>
+    request(`/audit/fleet/recent-events?kind=${encodeURIComponent(kind)}&limit=${limit}`),
+  burnDown: (agentId) =>
+    request(`/usage/fleet/burn-down${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''}`),
+}
+
 export const flightService = {
   listTimelines:        (params = {}) => {
     const q = new URLSearchParams();
@@ -508,6 +660,17 @@ export const flightService = {
   getReplay:            (id)         => request(`/flight/timeline/${id}`),
   getReplayByRequest:   (rid)        => request(`/flight/timeline/by-request/${rid}`),
   getSteps:             (id)         => request(`/flight/timeline/${id}/steps`),
+  // Sprint 3.3 — Decision Explorer
+  getDecisionGraph:     (rid)        => request(`/flight/decision/${rid}/graph`),
+  // Sprint 3.5 — Session Explorer
+  listSessions:         (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.minutes) q.set('minutes', params.minutes);
+    if (params.limit)   q.set('limit',   params.limit);
+    const qs = q.toString();
+    return request(`/flight/sessions${qs ? `?${qs}` : ''}`);
+  },
+  getSession:           (sid)        => request(`/flight/sessions/${encodeURIComponent(sid)}`),
 };
 
 // 2026-05-14: Cryptographic execution receipts (ed25519). Offline-verifiable.
@@ -566,6 +729,9 @@ export const autonomyService = {
     const qs = q.toString();
     return request(`/autonomy/overrides${qs ? `?${qs}` : ''}`);
   },
+  addOverride:          (body)       => request('/autonomy/overrides', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
 };
 
 export const complianceService = {
@@ -574,7 +740,11 @@ export const complianceService = {
   getSoc2:     (params = {}) => request(`/compliance/soc2?${new URLSearchParams(params)}`),
   exportPdf: (framework, startDate, endDate) => {
     const q = new URLSearchParams({ framework, start_date: startDate, end_date: endDate, format: 'pdf' })
-    return blobRequest(`/compliance/export?${q}`)
+    return blobRequest(`/compliance/export?${q}`, { method: 'POST' })
+  },
+  exportJsonBundle: (bundleType, periodStart, periodEnd) => {
+    const q = new URLSearchParams({ period_start: periodStart, period_end: periodEnd })
+    return blobRequest(`/compliance/export/${bundleType}?${q}`)
   },
   boardReport: (data) => blobRequest('/compliance/board-report', {
     method: 'POST',
@@ -676,5 +846,13 @@ export const securityService = {
 export const adminService = {
   listTenants: () => request('/admin/tenants'),
   getTenant: (id) => request(`/admin/tenants/${id}`),
+}
+
+export const demoService = {
+  // Run one end-to-end Groq-agent demo. Returns the full trace.
+  runGroqAgent: (payload) => request('/demo/groq-agent', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
 }
 

@@ -27,6 +27,10 @@ class ExecutionTimeline(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     __tablename__ = "execution_timelines"
 
     request_id:    Mapped[str] = mapped_column(String(64), nullable=False)
+    # Sprint 3.5 — optional session/conversation grouping for the
+    # Session Explorer. NULL on pre-Sprint-3 rows and on requests where
+    # the client doesn't supply ``X-Session-ID``.
+    session_id:    Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_id:      Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     tool:          Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     started_at:    Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -40,6 +44,11 @@ class ExecutionTimeline(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "request_id", name="uq_timelines_tenant_request"),
         Index("ix_timelines_tenant_started", "tenant_id", "started_at"),
+        Index(
+            "ix_timelines_tenant_session",
+            "tenant_id", "session_id", "started_at",
+            postgresql_where="session_id IS NOT NULL",
+        ),
     )
 
 

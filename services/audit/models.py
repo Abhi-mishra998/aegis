@@ -288,6 +288,505 @@ class IncidentComment(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Sprint 5 — Evaluation suite (Datasets, Evaluators, Eval Jobs).
+#
+# These tables back the attack-evaluation workflow: a Dataset groups labelled
+# DatasetCases (attack or benign), an Evaluator is a named scorer config, and
+# an EvalJob replays a dataset through the REAL /execute pipeline and stores
+# per-case EvalJobResult rows. EvaluatorScoreSnapshot rolls up per-evaluator
+# per-day numbers so the dashboard can show a "biggest evaluator score
+# changes" trend without re-aggregating EvalJobResult on every page load.
+# ---------------------------------------------------------------------------
+
+
+class EvalDataset(Base):
+    """A named, versioned corpus of labelled test cases.
+
+    A Dataset is the unit a user (or the nightly cron) picks up and replays
+    through the pipeline. `kind` tells the runner whether to expect denies
+    (attack), allows (benign), or both (mixed) — the evaluators use the same
+    label to compute recall vs FP rate.
+    """
+
+    __tablename__ = "eval_datasets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="mixed"
+    )  # attack | benign | mixed
+    version: Mapped[str] = mapped_column(String(50), nullable=False, server_default="1")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    case_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_eval_datasets_tenant_name", "tenant_id", "name"),
+    )
+
+
+class EvalDatasetCase(Base):
+    """A single labelled case inside a Dataset.
+
+    `base_id` groups all mutations of the same root attack so the per-rule
+    evaluator can see, e.g., that 6 of 8 mutations of the same payload were
+    caught. `expected_outcome` is the ground truth the evaluator compares
+    actual_outcome against.
+    """
+
+    __tablename__ = "eval_dataset_cases"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    dataset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    case_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # attack | benign
+    owasp_category: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    base_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    mutation: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default="none"
+    )  # none | case | whitespace | comment_split | url_encode | base64 | homoglyph | multilingual
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expected_outcome: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # deny | allow
+    expected_findings: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_eval_cases_dataset_kind", "dataset_id", "case_kind"),
+        Index("ix_eval_cases_dataset_owasp", "dataset_id", "owasp_category"),
+    )
+
+
+class Evaluator(Base):
+    """A named scorer configuration.
+
+    `kind` selects which scorer the runner instantiates. `config_json`
+    carries scorer-specific parameters (e.g., owasp_category filter, target
+    rule id, minimum-samples threshold).
+    """
+
+    __tablename__ = "eval_evaluators"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(40), nullable=False
+    )  # detection_rate | fp_rate | per_rule_efficacy
+    config_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(
+        SmallInteger, nullable=False, server_default="1"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_evaluators_tenant_name", "tenant_id", "name"),
+    )
+
+
+class EvalJob(Base):
+    """One run of a Dataset through the pipeline, scored by Evaluators.
+
+    `summary_json` carries the rolled-up scores per evaluator so dashboards
+    can render without scanning eval_job_results.
+    """
+
+    __tablename__ = "eval_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    dataset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    evaluator_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    schedule: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="manual"
+    )  # manual | nightly | shadow
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="queued", index=True
+    )  # queued | running | completed | failed | cancelled
+    cases_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    cases_done: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    summary_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_eval_jobs_tenant_queued", "tenant_id", "queued_at"),
+        Index("ix_eval_jobs_status_queued", "status", "queued_at"),
+    )
+
+
+class EvalJobResult(Base):
+    """One row per (job, case): what the pipeline actually returned.
+
+    `rule_attribution_json` is the per-rule trace harvested from the
+    decision response — e.g., `{"policy_rule_id": "tool_not_allowed",
+    "behavior_heuristic": null, "injection_pattern_id": "p_owasp_lm01_3"}`.
+    The per-rule evaluator slices on this column.
+    """
+
+    __tablename__ = "eval_job_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    eval_job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    owasp_category: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    case_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    expected_outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    actual_outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    passed: Mapped[bool] = mapped_column(SmallInteger, nullable=False)
+    findings: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    rule_attribution_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    latency_ms: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default="0.0"
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_results_job_passed", "eval_job_id", "passed"),
+        Index("ix_results_tenant_created", "tenant_id", "created_at"),
+        # Idempotency: never store the same (job, case) twice.
+        Index("uq_results_job_case", "eval_job_id", "case_id", unique=True),
+    )
+
+
+class EvaluatorScoreSnapshot(Base):
+    """Daily per-evaluator rollup — the dashboard's "biggest score changes"
+    trend reads from this table so the per-rule efficacy sparkline doesn't
+    re-scan eval_job_results.
+    """
+
+    __tablename__ = "eval_evaluator_score_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    evaluator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    rule_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
+    samples: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    eval_job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_snap_evaluator_rule_date",
+            "evaluator_id",
+            "rule_id",
+            "snapshot_date",
+        ),
+        Index(
+            "uq_snap_evaluator_rule_date",
+            "tenant_id",
+            "evaluator_id",
+            "rule_id",
+            "snapshot_date",
+            unique=True,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 — Shadow-mode policies + online evaluation.
+#
+# A ShadowPolicy is a candidate policy in one of four modes:
+#
+#   draft     — under construction; not evaluated against live traffic
+#   shadow    — evaluated on every (or sampled) /execute, records would-have
+#               decisions, NEVER affects real enforcement
+#   enforce   — promoted; conceptually equivalent to deployed OPA bundle
+#   archived  — historical, kept for audit / rollback
+#
+# A ShadowPolicyVersion row is appended on every state change so an
+# operator can rollback to any prior {rules_json, mode} pair.
+#
+# A ShadowDecision row is the per-request "what would this candidate have
+# done?" outcome — produced from the gateway's fire-and-forget shadow
+# evaluator. The hot path NEVER reads from this table.
+# ---------------------------------------------------------------------------
+
+
+class ShadowPolicy(Base):
+    """A candidate policy under shadow evaluation or already enforcing.
+
+    `agent_id IS NULL` means tenant-wide (every agent in the tenant).
+    `rules_json` is a list of PolicyRule dicts using the existing
+    services/policy/schemas.py::PolicyRule shape (conditions + action).
+    The shape is preserved so a promoted ShadowPolicy can be compiled to
+    Rego by the existing /simulate evaluator without translation.
+    """
+
+    __tablename__ = "shadow_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="draft", index=True
+    )  # draft | shadow | enforce | archived
+    rules_json: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sample_rate: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default="1.0"
+    )  # 0.0-1.0; what fraction of /execute the shadow evaluator runs
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    promoted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_shadow_policies_tenant_mode", "tenant_id", "mode"),
+        Index("ix_shadow_policies_tenant_agent", "tenant_id", "agent_id"),
+    )
+
+
+class ShadowPolicyVersion(Base):
+    """Append-only version log — every {mode, rules_json} change writes a row.
+
+    Rollback restores `rules_json` + `mode_after` from a target version row
+    onto the parent ShadowPolicy + bumps its version.
+    """
+
+    __tablename__ = "shadow_policy_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # create | edit | promote | rollback | archive
+    mode_before: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    mode_after: Mapped[str] = mapped_column(String(20), nullable=False)
+    rules_json: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    changed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_shadow_policy_version",
+            "policy_id",
+            "version",
+            unique=True,
+        ),
+    )
+
+
+class ShadowDecision(Base):
+    """Per-/execute would-have-decided record from the shadow evaluator.
+
+    Written async via asyncio.create_task — the request handler never
+    awaits this. `real_action` is what the live pipeline actually
+    returned; `shadow_action` is what the candidate policy would have
+    returned. Drift = (real_action != shadow_action).
+    """
+
+    __tablename__ = "shadow_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    policy_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    request_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    audit_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
+    tool: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    real_action: Mapped[str] = mapped_column(String(20), nullable=False)
+    shadow_action: Mapped[str] = mapped_column(String(20), nullable=False)
+    matched_rule_index: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    matched_rule_description: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eval_latency_ms: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default="0.0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_shadow_decisions_policy_created",
+            "policy_id",
+            "created_at",
+        ),
+        Index(
+            "ix_shadow_decisions_tenant_created",
+            "tenant_id",
+            "created_at",
+        ),
+        # Drift slice — what was wrongly denied by shadow that real allowed.
+        Index(
+            "ix_shadow_decisions_drift",
+            "policy_id",
+            "real_action",
+            "shadow_action",
+        ),
+    )
+
+
+class OnlineEvalSampleConfig(Base):
+    """Per-tenant sampling config for the online evaluator.
+
+    `sample_rate` is the fraction of recent audit_logs the online
+    evaluator scores per polling interval. `fp_threshold` is the
+    benign‑deny rate at which we fire a drift notification (level=warning,
+    category=policy).
+    """
+
+    __tablename__ = "online_eval_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, unique=True, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(
+        SmallInteger, nullable=False, server_default="1"
+    )
+    sample_rate: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default="0.05"
+    )  # 0.0-1.0
+    fp_threshold: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default="0.05"
+    )
+    poll_interval_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="900"
+    )  # 15 minutes default
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 @event.listens_for(AuditLog, "before_insert")
 def enforce_org_id_invariant(mapper, connection, target) -> None:
     """

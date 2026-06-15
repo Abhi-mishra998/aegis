@@ -63,7 +63,12 @@ server = [
     "opentelemetry-sdk",
     "opentelemetry-instrumentation-fastapi",
     "opentelemetry-exporter-otlp",
+    "opentelemetry-exporter-otlp-proto-http",
     "opentelemetry-semantic-conventions",
+    # Sprint 8 — Aegis MCP server exposes governance tools (evaluate /
+    # receipts / verify-chain / blast-radius) to MCP-aware clients
+    # (Claude Desktop, Cursor, VS Code).
+    "mcp>=0.5",
     "alembic",
     "tenacity",
     "bcrypt",
@@ -71,6 +76,10 @@ server = [
     "groq",
     "reportlab>=4.0",
     "livekit-api>=0.8",
+    # Sprint 9 — SSM/KMS signing-key provider (audit service prod-guard
+    # refuses LocalFile when AEGIS_ENV=prod). Required for /receipts/key
+    # public-key endpoint and the receipt signing path.
+    "boto3>=1.34",
 ]
 dev = [
     "pytest",

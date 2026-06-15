@@ -35,3 +35,24 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# Sprint 9 — Opt-in NAT gateways for HA prod.
+#
+# Default is false so the existing dev + prod environments don't pay for
+# NAT they don't use. Set to true in the prod-ha environment so the
+# autoscaled app tier in PRIVATE subnets can reach AWS APIs (KMS, SSM,
+# Secrets Manager) and pull container images.
+variable "enable_nat_gateways" {
+  description = "Provision one NAT gateway per AZ for the private subnets' default route."
+  type        = bool
+  default     = false
+}
+
+# Per-AZ NAT is the audit-friendly default — a single shared NAT is a
+# blast radius for a single AZ failure. Operators who want to pay
+# less for non-prod can flip this off and accept the SPOF.
+variable "one_nat_per_az" {
+  description = "When enable_nat_gateways is true: one NAT per AZ vs a single shared NAT in the first AZ."
+  type        = bool
+  default     = true
+}

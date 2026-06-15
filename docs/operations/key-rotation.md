@@ -25,26 +25,121 @@ The automated script `scripts/maintenance/rotate_transparency_key.py` enforces t
 
 ### Receipt and root signing keys (ed25519)
 
+Sprint 1.3 introduced a `SigningKeyProvider` abstraction. The recommended
+production path is **SSM Parameter Store** with a `SecureString` parameter:
+SSM transparently encrypts under KMS, CloudTrail records every access, and
+rotation is one `ssm:PutParameter` call — no application restart required.
+
+#### Sprint 1.3 — SSM Parameter Store path
+
 ```bash
-# 1. Generate the new key offline (use a hardware key or HSM if available)
+# 1. Generate the new ed25519 keypair offline.
+python3 - <<'PY' > /tmp/new-receipt-key.pem
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+priv = ed25519.Ed25519PrivateKey.generate()
+print(priv.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption(),
+).decode())
+PY
+
+# 2. Promote the current key fingerprint to transparency_historical_keys
+#    BEFORE flipping the SSM parameter — old receipts must remain verifiable.
+.venv/bin/python scripts/maintenance/rotate_transparency_key.py
+
+# 3. Push the new key into SSM (overwrites the existing version).
+aws ssm put-parameter \
+  --region ap-south-1 \
+  --name /aegis-audit/receipt-signing-key \
+  --type SecureString \
+  --value "file:///tmp/new-receipt-key.pem" \
+  --overwrite
+
+# 4. Restart the audit service so the SigningKeyProvider re-reads SSM.
+#    On the prod-ha reference deployment, target both ASG members:
+INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+  --region ap-south-1 \
+  --auto-scaling-group-names acp-prodha-asg \
+  | jq -r '.AutoScalingGroups[0].Instances[].InstanceId' | paste -sd ' ' -)
+
+aws ssm send-command \
+  --region ap-south-1 \
+  --instance-ids $INSTANCE_IDS \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["docker restart acp_audit"]'
+
+# 5. Verify the new key is active and historical receipts still validate.
+curl -sS https://ha.aegisagent.in/transparency/keys \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" | jq
+.venv/bin/acp verify-root --date 2026-05-01
+
+# 6. Wipe the on-disk copy.
+shred -u /tmp/new-receipt-key.pem
+```
+
+The IAM role on the audit container needs `ssm:GetParameter` on the
+parameter ARN and `kms:Decrypt` on the CMK encrypting the SecureString
+(typically `alias/aws/ssm` or a customer-managed CMK).
+
+#### Legacy disk-file path (dev only)
+
+```bash
+# 1. Generate the new key offline
 age-keygen -o /tmp/new-receipt-key.txt
 
 # 2. Promote the current key to historical
 .venv/bin/python scripts/maintenance/rotate_transparency_key.py
 
 # 3. Inject the new key as the deploy's env var (do NOT commit to disk)
-# Update the SSM document parameters:
 export RECEIPT_SIGNING_PRIVATE_KEY="$(cat /tmp/new-receipt-key.txt | base64 -w0)"
 
 # 4. Deploy the audit service with the new env
 # See operations/deployment.md
 
 # 5. Verify the new key is active
-curl -sS https://dev.aegisagent.in/transparency/keys -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" | jq
+curl -sS https://ha.aegisagent.in/transparency/keys -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" | jq
 
 # 6. Verify old receipts still validate
 .venv/bin/acp verify-root --date 2026-05-01
 ```
+
+### Per-service mesh keys (Sprint 1.4)
+
+Each service owns one ES256 (ECDSA P-256) private key for mesh-JWT signing.
+Rotate by generating a new keypair, publishing the new public key to the
+trust registry FIRST (so verifiers accept both), then flipping the signer
+to the new private key, then removing the old public key.
+
+```bash
+# 1. Generate the new keypair offline for one service (e.g. gateway).
+openssl ecparam -name prime256v1 -genkey -noout -out /tmp/gateway-mesh-new.pem
+openssl ec -in /tmp/gateway-mesh-new.pem -pubout -out /tmp/gateway-mesh-new.pub.pem
+
+# 2. Update the trust registry with BOTH the old and new public keys for the
+#    duration of the cutover. Every verifying service needs the update.
+#    (Push to SSM Parameter Store the same way as receipt keys.)
+NEW_PUB_B64=$(base64 -i /tmp/gateway-mesh-new.pub.pem)
+aws ssm put-parameter --region ap-south-1 \
+  --name /aegis-mesh/trusted-keys \
+  --type SecureString \
+  --value "$(jq --arg p \"$NEW_PUB_B64\" '. + {\"gateway-v2\": $p}' /tmp/current-registry.json)" \
+  --overwrite
+
+# 3. Once every verifier has reloaded, push the new private key to the
+#    gateway and switch ACP_MESH_SERVICE_NAME=gateway-v2.
+aws ssm put-parameter --region ap-south-1 \
+  --name /aegis-mesh/gateway-private-key \
+  --type SecureString \
+  --value "$(base64 -i /tmp/gateway-mesh-new.pem)" --overwrite
+
+# 4. After the rotation window closes (mesh JWT TTL is 5 min by default),
+#    remove the old public key from the trust registry.
+```
+
+See [Mesh Authentication](../security/mesh-auth.md) for the full design and
+the migration order from the legacy HS256 / `INTERNAL_SECRET` lane.
 
 ### `INTERNAL_SECRET`
 
@@ -63,7 +158,7 @@ docker compose -f /home/ubuntu/aegis/infra/docker-compose.yml up -d --force-recr
     flight_recorder identity_graph forensics api usage insight groq_worker
 
 # 4. Verify all services healthy
-curl -sS https://dev.aegisagent.in/system/health -H "Authorization: Bearer $TOKEN" \
+curl -sS https://ha.aegisagent.in/system/health -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '.data.services'
 
 # 5. Drop INTERNAL_SECRET_PREVIOUS once all services confirmed healthy
@@ -109,19 +204,19 @@ The log is the SOC 2 audit trail for key management. Auditors review it during c
 
 ```bash
 # Current key + historical keys
-curl -sS https://dev.aegisagent.in/transparency/keys \
+curl -sS https://ha.aegisagent.in/transparency/keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '{ primary: .data.primary_fingerprint, historical: .data.historical_keys | length }'
 
 # Verify a receipt from before the rotation
 RECEIPT_ID=<old audit row id>
-curl -sS "https://dev.aegisagent.in/audit/logs/$RECEIPT_ID/receipt" \
+curl -sS "https://ha.aegisagent.in/audit/logs/$RECEIPT_ID/receipt" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '.data.signature_valid'
 
 # Verify the daily root from before the rotation
 DATE=<yyyy-mm-dd>
-curl -sS "https://dev.aegisagent.in/transparency/roots/$DATE" \
+curl -sS "https://ha.aegisagent.in/transparency/roots/$DATE" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" | jq '.data.signature_valid'
 ```

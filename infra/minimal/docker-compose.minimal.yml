@@ -1,0 +1,115 @@
+# Aegis minimal-mode compose — 3 containers, one entrypoint, one
+# externally-reachable port.
+#
+# The R3 brief: collapse the 22-container prod-ha mesh into something a
+# security team can review in an afternoon and a small ops team can run
+# without an SRE rota. Inside `aegis-core` we still run all 10 inner
+# processes via supervisord — but a CISO inspecting the deployment sees:
+#
+#   3 docker services
+#   1 public port (8000)
+#   1 set of secrets via .env
+#   1 process supervisor inside the only Aegis container
+#
+# Stand it up:
+#
+#   cd infra/minimal
+#   cp .env.example .env       # edit secrets
+#   docker compose -f docker-compose.minimal.yml up -d
+#
+# Tear it down:
+#
+#   docker compose -f docker-compose.minimal.yml down
+#
+# Reset everything (drops the DB volume):
+#
+#   docker compose -f docker-compose.minimal.yml down -v
+
+services:
+  # ── Postgres — the only stateful data store ───────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: aegis-postgres
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       postgres
+    volumes:
+      - aegis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+    restart: unless-stopped
+    # No external port. Only aegis-core reaches Postgres, and only over
+    # the private compose network.
+
+  # ── Redis — kill-switch flag, rate-limit counters, decision cache ─────
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis
+    command: ["redis-server", "--save", "60", "1000", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - aegis_redisdata:/data
+    healthcheck:
+      test:     ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout:  3s
+      retries:  10
+    restart: unless-stopped
+    # Also no external port. Same reason.
+
+  # ── aegis-core — the only Aegis container ─────────────────────────────
+  # Everything the security team is reviewing lives here: 7 Python
+  # services + OPA + pgbouncer + the gateway, supervised by supervisord.
+  aegis-core:
+    image: aegis/core:minimal
+    build:
+      # Build context is the repo root because the Dockerfile copies the
+      # whole `services/` tree + `sdk/` + `pyproject.toml`.
+      context:    ../..
+      dockerfile: infra/minimal/Dockerfile
+    container_name: aegis-core
+    environment:
+      AEGIS_MODE:               minimal
+      AEGIS_ENV:                ${AEGIS_ENV:-self-host}
+      POSTGRES_HOST:            postgres
+      POSTGRES_PORT:            "5432"
+      POSTGRES_USER:            ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD:        ${POSTGRES_PASSWORD}
+      REDIS_URL:                redis://redis:6379/0
+      INTERNAL_SECRET:          ${INTERNAL_SECRET}
+      JWT_SECRET_KEY:           ${JWT_SECRET_KEY}
+      # Default DATABASE_URL — points at acp_identity via pgbouncer. The
+      # shared `sdk.common.config.ACPSettings` requires this at import
+      # time even for services like behavior that don't use Postgres.
+      # Each supervised program overrides it with its own per-service URL.
+      DATABASE_URL:             postgresql+asyncpg://identity_user:${IDENTITY_DB_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/acp_identity
+      IDENTITY_DB_PASSWORD:     ${IDENTITY_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      REGISTRY_DB_PASSWORD:     ${REGISTRY_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      AUDIT_DB_PASSWORD:        ${AUDIT_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      AUTONOMY_DB_PASSWORD:     ${AUTONOMY_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      # Optional — set if you want the live-demo Groq agent.
+      GROQ_API_KEY:             ${GROQ_API_KEY:-}
+      # Optional — set if you want PDF compliance export.
+      AEGIS_PDF_EXPORT_ENABLED: ${AEGIS_PDF_EXPORT_ENABLED:-false}
+    ports:
+      # The ONLY port the outside world ever sees.
+      - "${AEGIS_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:         ["CMD", "curl", "-fsS", "http://localhost:8000/system/health"]
+      interval:     20s
+      timeout:      5s
+      start_period: 60s
+      retries:      5
+    restart: unless-stopped
+
+volumes:
+  aegis_pgdata:
+  aegis_redisdata:

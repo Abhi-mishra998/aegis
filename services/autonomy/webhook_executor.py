@@ -2,6 +2,18 @@
 Real webhook execution — fires Slack, PagerDuty, and generic webhooks.
 Also dispatches enforcement actions (KILL_AGENT, ISOLATE_AGENT, BLOCK_TOOL,
 THROTTLE, REVOKE_KEY) to the registry and api services via internal HTTP.
+
+Sprint 2b (closes audit C17): Slack + PagerDuty credentials can be loaded
+from AWS SSM Parameter Store at boot — ``ALERT_CRED_SOURCE=ssm`` selects
+the SSM path with ``ALERT_SSM_PREFIX`` (default ``/aegis-alerts``).
+Each path stores one SecureString per credential:
+
+    /aegis-alerts/SLACK_WEBHOOK_URL
+    /aegis-alerts/PAGERDUTY_ROUTING_KEY
+
+This matches the existing ``/aegis-voice-guide/*`` + ``/aegis-siem/*``
+conventions in the account so an operator only needs to remember one
+ssm:put-parameter command shape.
 """
 from __future__ import annotations
 
@@ -15,8 +27,46 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-SLACK_WEBHOOK_URL     = os.environ.get("SLACK_WEBHOOK_URL", "")
-PAGERDUTY_ROUTING_KEY = os.environ.get("PAGERDUTY_ROUTING_KEY", "")
+
+def _load_alert_credentials_from_ssm(prefix: str) -> dict[str, str]:
+    """Read every parameter under ``{prefix}/`` and return UPPER_SNAKE-keyed
+    values. Returns an empty dict on any boto3 error so a misconfigured
+    deployment still boots — the env-var fallback below catches it."""
+    try:
+        import boto3  # noqa: PLC0415
+    except ImportError:
+        return {}
+    out: dict[str, str] = {}
+    try:
+        ssm = boto3.client("ssm")
+        paginator = ssm.get_paginator("get_parameters_by_path")
+        for page in paginator.paginate(Path=f"{prefix.rstrip('/')}/", WithDecryption=True):
+            for p in page.get("Parameters", []):
+                key = p["Name"].split("/")[-1].upper()
+                out[key] = p["Value"]
+    except Exception as exc:
+        logger.warning("alert_credentials_ssm_failed", error=str(exc), prefix=prefix)
+        return {}
+    return out
+
+
+def _resolve_alert_credentials() -> dict[str, str]:
+    source = (os.environ.get("ALERT_CRED_SOURCE") or "env").strip().lower()
+    if source == "ssm":
+        prefix = os.environ.get("ALERT_SSM_PREFIX", "/aegis-alerts")
+        out = _load_alert_credentials_from_ssm(prefix)
+        # Treat the Sprint 2b ``PENDING_*`` placeholders as if the parameter
+        # were unset — the operator hasn't filled it in yet.
+        return {k: v for k, v in out.items() if v and not v.startswith("PENDING_")}
+    return {
+        "SLACK_WEBHOOK_URL":     os.environ.get("SLACK_WEBHOOK_URL", ""),
+        "PAGERDUTY_ROUTING_KEY": os.environ.get("PAGERDUTY_ROUTING_KEY", ""),
+    }
+
+
+_alert_creds = _resolve_alert_credentials()
+SLACK_WEBHOOK_URL     = _alert_creds.get("SLACK_WEBHOOK_URL", "")
+PAGERDUTY_ROUTING_KEY = _alert_creds.get("PAGERDUTY_ROUTING_KEY", "")
 WEBHOOK_TIMEOUT       = 10.0
 
 _REGISTRY_URL     = os.environ.get("REGISTRY_SERVICE_URL", "http://registry:8001")

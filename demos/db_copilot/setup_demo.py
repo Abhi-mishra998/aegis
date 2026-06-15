@@ -33,8 +33,8 @@ if _env_file.exists():
                 _k, _v = _line.split("=", 1)
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-GATEWAY = os.getenv("ACP_GATEWAY_URL", "http://localhost:8000")
-IDENTITY_URL = os.getenv("ACP_IDENTITY_URL", "http://localhost:8002")
+GATEWAY = os.getenv("ACP_GATEWAY_URL", "https://ha.aegisagent.in")
+IDENTITY_URL = os.getenv("ACP_IDENTITY_URL", "https://ha.aegisagent.in")
 PG_DSN = os.getenv(
     "ACP_PG_DSN",
     "postgresql://postgres:postgres@localhost:5433/acp_identity",

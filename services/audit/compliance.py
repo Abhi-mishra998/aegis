@@ -832,6 +832,258 @@ async def get_soc2_evidence(
     return APIResponse(data=bundle)
 
 
+# ---------------------------------------------------------------------------
+# A5 — India DPDP Act, 2023 + DPDP Rules (Nov 2025) evidence bundle
+# ---------------------------------------------------------------------------
+
+async def generate_dpdp_bundle(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    period_start: datetime,
+    period_end: datetime,
+) -> dict[str, Any]:
+    """India DPDP Act, 2023 + DPDP Rules (Nov 2025) evidence bundle.
+
+    Sections covered:
+      §8(5) — technical & organisational measures (every tool-call audit row)
+      §8(6) — record of processing activities (denials + escalations)
+      §8(7) — reasonable security safeguards (logging itself)
+      §8(8) — breach detection & response (blocks + escalations)
+      §8(9) — grievance & redressal mechanism (human-override events)
+      §11   — Data Principal rights (PII-block evidence)
+      Rules Schedule II — restriction on unauthorised transfer (external-domain blocks)
+
+    Retention requirement: DPDP Rules Nov 2025 require activity logs to
+    be retained for >=1 year. The bundle surfaces the configured retention
+    so an auditor can verify the producer's claim meets the requirement.
+    """
+    base_q = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= period_start)
+        .where(AuditLog.timestamp <= period_end)
+    )
+
+    # ── §8(5) + §8(7) — every execute_tool row is technical/organisational
+    # safeguard evidence. We tally rather than dump every row.
+    tool_q = base_q.where(AuditLog.action == "execute_tool")
+    tool_rows: list[AuditLog] = list((await db.execute(tool_q)).scalars().all())
+    by_tool, by_decision = _tally(tool_rows)
+
+    safeguards_summary: dict[str, Any] = {
+        "total_signed_records":  len(tool_rows),
+        "by_tool":               dict(by_tool),
+        "by_decision":           dict(by_decision),
+        "explanation": (
+            "Every tool-call decision is recorded in the tamper-evident audit "
+            "chain. The presence of a signed record for each call is DPDP "
+            "§8(5) / §8(7) evidence: the Data Fiduciary has implemented "
+            "the technical safeguard of logging + cryptographic integrity."
+        ),
+    }
+
+    # ── §8(8) — breach detection + response. Counts + samples of denials,
+    # escalations, and kills in the period.
+    breach_q = (
+        base_q
+        .where(AuditLog.decision.in_(["deny", "block", "kill", "escalate"]))
+        .order_by(AuditLog.timestamp.desc())
+        .limit(500)
+    )
+    breach_rows = list((await db.execute(breach_q)).scalars().all())
+    breach_count = len(breach_rows)
+    breach_events = [
+        {
+            "id":         str(r.id),
+            "timestamp":  _to_iso(r.timestamp),
+            "agent_id":   str(r.agent_id),
+            "tool":       r.tool,
+            "decision":   r.decision,
+            "reason":     r.reason,
+            "request_id": r.request_id,
+        }
+        for r in breach_rows[:200]   # cap inline sample
+    ]
+
+    # ── §8(9) — grievance & redressal. Human-override events show the
+    # natural-person review path was exercised.
+    override_q = (
+        base_q
+        .where(AuditLog.action.in_([
+            "human_override", "approval_granted", "approval_denied",
+            "manual_intervention",
+        ]))
+        .order_by(AuditLog.timestamp.desc())
+        .limit(200)
+    )
+    override_rows = list((await db.execute(override_q)).scalars().all())
+
+    # ── §11 — Data Principal PII-related blocks. Match on reason field
+    # to surface the bulk-PII + external-PII-exfil denials specifically.
+    pii_q = (
+        base_q
+        .where(AuditLog.decision.in_(["deny", "block"]))
+        .order_by(AuditLog.timestamp.desc())
+        .limit(200)
+    )
+    pii_rows_all = list((await db.execute(pii_q)).scalars().all())
+    pii_rows = [
+        r for r in pii_rows_all
+        if r.reason and any(
+            marker in r.reason.lower()
+            for marker in ("pii", "egress", "exfil")
+        )
+    ]
+    pii_events = [
+        {
+            "id":         str(r.id),
+            "timestamp":  _to_iso(r.timestamp),
+            "agent_id":   str(r.agent_id),
+            "tool":       r.tool,
+            "reason":     r.reason,
+            "request_id": r.request_id,
+        }
+        for r in pii_rows[:100]
+    ]
+
+    # ── Retention claim — surfaced from env / config so auditor can verify
+    # against the DPDP Rules Nov 2025 ≥1-year requirement.
+    from services.audit.verifiable_bundle import AUDIT_RETENTION_DAYS
+    retention_meets_dpdp = AUDIT_RETENTION_DAYS >= 365
+
+    return {
+        "report_type": "dpdp_bundle",
+        "framework":   "India DPDP Act, 2023 + DPDP Rules (Nov 2025)",
+        "sections_covered": [
+            "Section 8(5) — technical & organisational measures",
+            "Section 8(6) — record of processing activities",
+            "Section 8(7) — reasonable security safeguards",
+            "Section 8(8) — breach detection & response",
+            "Section 8(9) — grievance & redressal mechanism",
+            "Section 11 — Data Principal rights",
+            "Rules Schedule II — restriction on unauthorised transfer",
+        ],
+        "tenant_id":    str(tenant_id),
+        "period":       {"start": period_start.isoformat(), "end": period_end.isoformat()},
+        "generated_at": _now_iso(),
+        # §8(5) / §8(7)
+        "safeguards_summary":     safeguards_summary,
+        # §8(6) / §8(8)
+        "breach_detection_log": {
+            "total_blocked_or_escalated":  breach_count,
+            "events":                       breach_events,
+            "explanation": (
+                "Each event below is a signed audit row recording that the "
+                "platform blocked or escalated a tool call that would have "
+                "constituted unauthorised personal-data processing. These "
+                "rows evidence DPDP §8(6) (record-of-processing) and §8(8) "
+                "(breach detection)."
+            ),
+        },
+        # §8(9)
+        "grievance_redressal_log": {
+            "human_override_count":   len(override_rows),
+            "events": [
+                {
+                    "id":        str(r.id),
+                    "timestamp": _to_iso(r.timestamp),
+                    "action":    r.action,
+                    "decision":  r.decision,
+                    "reason":    r.reason,
+                }
+                for r in override_rows
+            ],
+            "explanation": (
+                "Every escalated decision routes through a natural-person "
+                "review queue. The events below show the §8(9) review "
+                "mechanism was exercised during the period."
+            ),
+        },
+        # §11
+        "data_principal_safeguards": {
+            "pii_block_count": len(pii_rows),
+            "events":          pii_events,
+            "explanation": (
+                "PII-egress denials evidence that the Data Principal's rights "
+                "(§11) are being enforced at the platform layer — bulk PII "
+                "reads and external-domain transfers are blocked at runtime."
+            ),
+        },
+        # Retention
+        "retention_claim": {
+            "configured_retention_days":  AUDIT_RETENTION_DAYS,
+            "dpdp_rules_minimum_days":    365,
+            "meets_dpdp_minimum":         retention_meets_dpdp,
+            "explanation": (
+                "DPDP Rules (Nov 2025) require activity logs to be retained "
+                "for at least one year. The platform's configured retention "
+                "(AUDIT_RETENTION_DAYS env var) is reported here for the "
+                "auditor to verify against the requirement. A value below "
+                "365 means the producer should adjust before claiming DPDP "
+                "Rules conformance."
+            ),
+        },
+    }
+
+
+@compliance_router.get("/dpdp", response_model=APIResponse[dict])
+async def get_dpdp_evidence(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    period_start: datetime = Query(..., description="ISO-8601 period start"),
+    period_end: datetime = Query(..., description="ISO-8601 period end"),
+) -> APIResponse[dict]:
+    """Return India DPDP Act + Rules (Nov 2025) evidence bundle (Sections 8(5)–8(9), 11)."""
+    if period_end <= period_start:
+        raise HTTPException(status_code=400, detail="period_end must be after period_start")
+    bundle = await generate_dpdp_bundle(db, tenant_id, period_start, period_end)
+    return APIResponse(data=bundle)
+
+
+@compliance_router.get("/verifiable-bundle/{framework}")
+async def export_verifiable_bundle(
+    framework: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    period_start: datetime = Query(..., description="ISO-8601 period start"),
+    period_end: datetime = Query(..., description="ISO-8601 period end"),
+) -> FileResponse:
+    """
+    R2 — Download a self-contained, offline-verifiable evidence bundle.
+
+    Schema: aegis-evidence-bundle/2026-06. The bundle embeds every
+    public key, every signed daily Merkle root, and every audit row
+    with per-row mapping to EU AI Act articles / NIST AI RMF / SOC 2
+    control IDs. The customer's auditor verifies it offline with
+    `python -m aegis_verify --bundle <file>`.
+
+    framework: eu-ai-act | nist-ai-rmf | soc2
+    """
+    from services.audit.verifiable_bundle import generate_verifiable_bundle
+    _VALID = {"eu-ai-act", "nist-ai-rmf", "soc2"}
+    if framework not in _VALID:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown framework '{framework}'. Valid: {sorted(_VALID)}",
+        )
+    if period_end <= period_start:
+        raise HTTPException(status_code=400, detail="period_end must be after period_start")
+
+    bundle = await generate_verifiable_bundle(
+        db, tenant_id, framework, period_start, period_end,
+    )
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"aegis-verifiable-{framework}-{str(tenant_id)[:8]}-{ts}.json"
+    out_path = _EXPORT_DIR / filename
+    export_bundle_as_json(bundle, out_path)
+    return FileResponse(
+        path=str(out_path),
+        filename=filename,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @compliance_router.get("/export/{bundle_type}")
 async def export_compliance_bundle(
     bundle_type: str,
@@ -839,13 +1091,14 @@ async def export_compliance_bundle(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     period_start: datetime = Query(..., description="ISO-8601 period start"),
     period_end: datetime = Query(..., description="ISO-8601 period end"),
+    format: str = Query("json", description="json | csv (applies to bundle_type=grc only)"),
 ) -> FileResponse:
     """
     Download a compliance bundle as a JSON file.
 
-    bundle_type: tool-ledger | eu-ai-act | nist-ai-rmf | soc2
+    bundle_type: tool-ledger | eu-ai-act | nist-ai-rmf | soc2 | dpdp | grc
     """
-    _VALID = {"tool-ledger", "eu-ai-act", "nist-ai-rmf", "soc2"}
+    _VALID = {"tool-ledger", "eu-ai-act", "nist-ai-rmf", "soc2", "dpdp", "grc"}
     if bundle_type not in _VALID:
         raise HTTPException(
             status_code=400,
@@ -860,6 +1113,16 @@ async def export_compliance_bundle(
         bundle = await generate_eu_ai_act_bundle(db, tenant_id, period_start, period_end)
     elif bundle_type == "nist-ai-rmf":
         bundle = await generate_nist_ai_rmf_bundle(db, tenant_id, period_start, period_end)
+    elif bundle_type == "dpdp":
+        bundle = await generate_dpdp_bundle(db, tenant_id, period_start, period_end)
+    elif bundle_type == "grc":
+        # A6 — Vanta/Drata-style control-evidence export. Each evidence row
+        # carries the AEVF bundle URL + event_hash so the auditor can pivot
+        # from the GRC platform to the verifiable bundle. CSV or JSON via
+        # ?format=json|csv (default json).
+        return await _build_grc_export_response(
+            db, tenant_id, period_start, period_end, output=format,
+        )
     else:  # soc2
         bundle = await generate_soc2_evidence(db, tenant_id, period_start, period_end)
 
@@ -875,6 +1138,91 @@ async def export_compliance_bundle(
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# A6 — GRC evidence export (Vanta / Drata / Secureframe style)
+# ---------------------------------------------------------------------------
+
+async def _build_grc_export_response(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    period_start: datetime,
+    period_end: datetime,
+    output: str = "json",
+) -> Response:
+    """Build the GRC evidence response — JSON list or CSV string.
+
+    The format is selected via the `format` query parameter on the wrapper
+    endpoint below; this helper just executes the build.
+    """
+    from services.audit.grc_export import build_grc_export
+    from services.audit.verifiable_bundle import _map_row_to_controls
+
+    # Pull every row in the period — bounded by the same query the
+    # eu-ai-act bundle would issue, so the GRC export and the verifiable
+    # bundle stay synchronized in row coverage.
+    rows_result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= period_start)
+        .where(AuditLog.timestamp <= period_end)
+        .order_by(AuditLog.timestamp.asc())
+        .limit(5000)
+    )
+    rows = list(rows_result.scalars().all())
+    mappings_by_id = {r.id: _map_row_to_controls(r) for r in rows}
+
+    body = build_grc_export(rows, mappings_by_id, output=output)
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    if output == "csv":
+        filename = f"acp-grc-{str(tenant_id)[:8]}-{ts}.csv"
+        return Response(
+            content=body if isinstance(body, str) else "",
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    # default → JSON
+    import json as _json
+    filename = f"acp-grc-{str(tenant_id)[:8]}-{ts}.json"
+    return Response(
+        content=_json.dumps({
+            "format":            "aegis-grc-export/2026-06",
+            "aevf_spec_version": "aevf/0.1.0",
+            "tenant_id":         str(tenant_id),
+            "period":            {
+                "start": period_start.isoformat(),
+                "end":   period_end.isoformat(),
+            },
+            "generated_at":      datetime.now(UTC).isoformat(),
+            "evidence":          body,
+        }, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@compliance_router.get("/export/grc")
+async def export_grc_evidence(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    period_start: datetime = Query(..., description="ISO-8601 period start"),
+    period_end:   datetime = Query(..., description="ISO-8601 period end"),
+    format:       str = Query("json", description="json | csv"),
+) -> Response:
+    """A6 — Vanta/Drata-style control-evidence export.
+
+    Each evidence record names a (framework, control_id) the audit row
+    evidences AND carries `aevf_bundle_url` + `aevf_event_hash` so the
+    auditor can pivot from the GRC platform to the verifiable AEVF
+    bundle and verify the same row offline.
+    """
+    if period_end <= period_start:
+        raise HTTPException(status_code=400, detail="period_end must be after period_start")
+    if format not in ("json", "csv"):
+        raise HTTPException(status_code=400, detail="format must be 'json' or 'csv'")
+    return await _build_grc_export_response(db, tenant_id, period_start, period_end, output=format)
 
 
 # ---------------------------------------------------------------------------

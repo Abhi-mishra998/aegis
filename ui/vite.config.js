@@ -1,7 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const BACKEND = 'http://localhost:8000'
+// AEGIS_BACKEND lets the Sprint 4 e2e runner point the dev server at
+// dev.aegisagent.in while still exercising the Sprint 4 UI code in this
+// working copy. Default localhost preserves the existing on-laptop
+// docker-compose workflow exactly as it was.
+const BACKEND = process.env.AEGIS_BACKEND || 'http://localhost:8000'
 
 // All paths served by the gateway — proxied same-origin so cookies and CORS
 // are never an issue in dev. In production the nginx container handles routing.

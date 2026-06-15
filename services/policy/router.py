@@ -147,6 +147,13 @@ def _build_opa_input(
     """
     Central OPA input builder.
     Ensures a consistent schema for all policy requests, including metadata.
+
+    SPRINT enterprise-grade 2026-06-14: `metadata` is now forwarded to OPA
+    so the action-semantics rules can read `input.metadata.arguments.{...}`.
+    Before this, the slow path built opa_input without metadata, so every
+    rule in action_semantics_deny.rego that keys off command_norm /
+    query_norm / row_limit / k8s_namespace evaluated against empty inputs
+    and never fired.
     """
     permissions = []
     for p in agent.get("permissions", []):
@@ -172,11 +179,16 @@ def _build_opa_input(
         "risk_score": payload.risk_score,
         "behavior_history": payload.behavior_history,
         "policy_version": payload.policy_version,
+        # Merge the inbound metadata with the request envelope. The earlier
+        # version of this dict was buggy: it set "metadata" twice — the second
+        # write silently clobbered the first, dropping request_id + timestamp
+        # whenever payload.metadata was non-empty. Now one merged dict, with
+        # the envelope fields winning over any caller-supplied collision.
         "metadata": {
+            **(payload.metadata or {}),
             "request_id": payload.request_id or structlog.contextvars.get_contextvars().get("request_id"),
             "timestamp": payload.timestamp.isoformat(),
-            **payload.metadata
-        }
+        },
     }
 
 
@@ -241,21 +253,88 @@ async def evaluate(
     4. Logs decision and adjustment to Audit Service
     5. Returns unified APIResponse
     """
+    # ARCH-1/3/4 2026-06-15 — defaults so the caller always gets the
+    # explainability fields filled even on the slow path or on allow.
+    tier = "allow"
+    findings: list[str] = []
+    policy_id = ""
+    risk_score_inherent = 0
+    explanation = ""
+
     # Fast-path: gateway embedded JWT agent_claims → evaluate locally (< 1ms, no HTTP)
+    # FUP-4 2026-06-15 — also splits the result into SEC + GOV slices so
+    # the response carries engine attribution.
+    sec_slice: dict[str, Any] = {"tier": "allow", "findings": [], "policy_id": "", "risk_score": 0}
+    gov_slice: dict[str, Any] = {"tier": "allow", "findings": [], "policy_id": "", "risk_score": 0}
     if payload.agent_claims:
         from services.policy.local_eval import evaluate
+        from services.policy.local_action_semantics import evaluate_full as eval_action_semantics_full
+        from services.policy.security_engine import evaluate_security
+        from services.policy.governance_engine import evaluate_governance
         agent_claims = payload.agent_claims
+        risk_level = agent_claims.get("risk_level", "low")
         allowed, reason, risk_adjustment = evaluate(
             agent_status=str(agent_claims.get("agent_status") or agent_claims.get("status") or "active"),
             permissions=agent_claims.get("permissions", []),
             tool=payload.tool,
             risk_score=payload.risk_score,
-            risk_level=agent_claims.get("risk_level", "low"),
+            risk_level=risk_level,
         )
+        # SPRINT enterprise-grade 2026-06-14 / ARCH-1 2026-06-15: action-
+        # semantics now returns the full tier + findings + policy_id +
+        # explanation bag. The fast path always queries it (even on allow)
+        # so MONITOR-tier informational findings still surface in the
+        # response — that's how the SOC sees "schema_recon happened" or
+        # "compression observed" even when no block fired.
+        if allowed:
+            meta = payload.metadata or {}
+            arguments = meta.get("arguments") if isinstance(meta, dict) else None
+            full = eval_action_semantics_full(arguments, risk_level)
+            tier = full.get("tier") or "allow"
+            findings = list(full.get("findings") or [])
+            policy_id = full.get("policy_id") or ""
+            risk_score_inherent = int(full.get("risk_score") or 0)
+            explanation = full.get("explanation") or ""
+            # ARCH-8 / FUP-4: fan-out engine slices.
+            try:
+                sec_full = evaluate_security(arguments, risk_level)
+                gov_full = evaluate_governance(arguments, risk_level)
+                sec_slice = {
+                    "tier":       sec_full.get("tier") or "allow",
+                    "findings":   list(sec_full.get("findings") or []),
+                    "policy_id":  sec_full.get("policy_id") or "",
+                    "risk_score": int(sec_full.get("risk_score") or 0),
+                }
+                gov_slice = {
+                    "tier":       gov_full.get("tier") or "allow",
+                    "findings":   list(gov_full.get("findings") or []),
+                    "policy_id":  gov_full.get("policy_id") or "",
+                    "risk_score": int(gov_full.get("risk_score") or 0),
+                }
+            except Exception:
+                pass
+            if tier in ("deny", "quarantine"):
+                allowed = False
+                reason = policy_id or full.get("reason") or "policy_deny"
+                risk_adjustment = 0.95 if tier == "quarantine" else 0.90
+            elif tier == "escalate":
+                allowed = False
+                # __escalate suffix preserves the decision engine's
+                # "approval_required vs hard deny" downstream branch.
+                reason = (policy_id or full.get("reason") or "policy_escalate") + "__escalate"
+                risk_adjustment = 0.80
+            # tier in ("allow", "monitor") → keep allowed=True, surface findings.
     else:
         agent_dict = await _fetch_agent(payload.tenant_id, payload.agent_id)
         opa_input = _build_opa_input(agent_dict, payload)
         allowed, reason, risk_adjustment = await opa_client.check_policy(opa_input)
+        # Slow path doesn't yet surface findings/tier — OPA returns just
+        # (allowed, reason, risk). Derive a coarse tier from the suffix.
+        if not allowed:
+            tier = "escalate" if reason.endswith("__escalate") else "deny"
+            findings = [reason.replace("__escalate", "")]
+            policy_id = reason.replace("__escalate", "")
+            risk_score_inherent = 90 if tier == "deny" else 50
 
     asyncio.create_task(_safe_bg(_log_audit(
         payload.tenant_id, payload.agent_id, payload.tool,
@@ -263,8 +342,18 @@ async def evaluate(
     )))
 
     if not allowed:
-        logger.warning("policy_denied", agent_id=str(payload.agent_id), tool=payload.tool, reason=reason)
+        logger.warning(
+            "policy_denied", agent_id=str(payload.agent_id),
+            tool=payload.tool, reason=reason, tier=tier,
+            policy_id=policy_id, findings=findings,
+        )
 
+    # Sprint 1 2026-06-15 — MITRE tactic+technique is added GATEWAY-SIDE
+    # (services/gateway/middleware.py) because the policy container today
+    # mounts only services/policy/ — it doesn't have services/security
+    # on disk. The gateway has the whole services tree, so the lookup
+    # there is free. EvaluationResponse.mitre stays in the schema as a
+    # zero-cost field (defaulted to {}) so contract is unchanged.
     return APIResponse(
         data=EvaluationResponse(
             agent_id=payload.agent_id,
@@ -273,6 +362,13 @@ async def evaluate(
             reason=reason,
             risk_adjustment=risk_adjustment,
             evaluated_at=datetime.now(tz=UTC),
+            tier=tier,
+            findings=findings,
+            policy_id=policy_id,
+            risk_score=risk_score_inherent,
+            explanation=explanation,
+            security=sec_slice,
+            governance=gov_slice,
         )
     )
 

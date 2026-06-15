@@ -68,6 +68,65 @@ resource "aws_iam_role_policy" "s3_backup" {
   policy = data.aws_iam_policy_document.s3_backup[0].json
 }
 
+# Sprint 9 — bundle-launch reads: RDS endpoint, Redis endpoint, Secrets,
+# SSM parameters. Scoped to the prod-ha resources by name prefix.
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "bundle_launch" {
+  statement {
+    sid    = "DescribeInfra"
+    effect = "Allow"
+    actions = [
+      "rds:DescribeDBInstances",
+      "elasticache:DescribeReplicationGroups",
+      "elasticache:DescribeCacheClusters",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ReadSecretsManager"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+    ]
+    resources = [
+      "arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*",
+    ]
+  }
+
+  statement {
+    sid    = "ReadSSMParameters"
+    effect = "Allow"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+    ]
+    resources = [
+      "arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:parameter/${var.name_prefix}/*",
+    ]
+  }
+
+  statement {
+    sid       = "KmsDecryptForSecretsAndSsm"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:aws:secretsmanager:arn"
+      values   = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "bundle_launch" {
+  name   = "${var.name_prefix}-bundle-launch"
+  role   = aws_iam_role.ec2.id
+  policy = data.aws_iam_policy_document.bundle_launch.json
+}
+
 # Instance profile — what EC2 actually receives.
 resource "aws_iam_instance_profile" "ec2" {
   name = "${var.name_prefix}-ec2-role"

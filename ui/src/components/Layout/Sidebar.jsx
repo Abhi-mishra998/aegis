@@ -6,6 +6,8 @@ import {
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
   CreditCard, Radio, Bell, BookOpen, Github,
+  Workflow, MessagesSquare, Gauge, HeartPulse, DollarSign, Share2,
+  Beaker, EyeOff, Inbox, Sparkles,
 } from 'lucide-react'
 import { authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
@@ -17,6 +19,8 @@ import AgentScopePicker from './AgentScopePicker'
 // `hint` is the keyboard shortcut surfaced in the sidebar — kept in sync with
 // the bindings registered in App.jsx:<GlobalShortcuts>.
 const primaryNav = [
+  { path: '/live-demo',       label: 'Live Demo',       icon: Sparkles,     hint: 'G X' },
+  { path: '/fleet',           label: 'Fleet',           icon: Gauge,        hint: 'G H' },
   { path: '/flight-recorder', label: 'Flight Recorder', icon: Film,         hint: 'G F' },
   { path: '/policy-builder',  label: 'Policies',        icon: GitMerge,     hint: 'G P' },
   { path: '/audit-logs',      label: 'Audit Trail',     icon: BarChart2,    hint: 'G A' },
@@ -27,10 +31,24 @@ const primaryNav = [
 // Secondary nav — power-user operations, collapsed by default.
 const operationsNav = [
   { path: '/agents',          label: 'Agents',           icon: Users       },
+  // Sprint 3 — Decision + Session Explorer
+  { path: '/decision-explorer', label: 'Decision Explorer', icon: Workflow,        hint: 'G D' },
+  { path: '/session-explorer',  label: 'Session Explorer',  icon: MessagesSquare,  hint: 'G E' },
+  // Sprint 4 — Agent FinOps + topology
+  { path: '/agent-health',    label: 'Agent Health',     icon: HeartPulse  },
+  { path: '/agent-cost',      label: 'Agent FinOps',     icon: DollarSign  },
+  { path: '/agent-topology',  label: 'Agent Topology',   icon: Share2      },
+  // Sprint 5 — Attack Evaluation Suite
+  { path: '/evaluation',      label: 'Evaluation',       icon: Beaker      },
+  // Sprint 6 — Shadow Mode
+  { path: '/shadow-mode',     label: 'Shadow Mode',      icon: EyeOff      },
+  // Sprint 7 — Policy Playground (replay history under a draft policy)
+  { path: '/policy-playground', label: 'Policy Replay',  icon: Beaker      },
   { path: '/identity-graph',  label: 'Identity Graph',   icon: Network,    hint: 'G G' },
   { path: '/autonomy',        label: 'Autonomy',         icon: ShieldCheck },
+  { path: '/approval-inbox',  label: 'Approval Inbox',   icon: Inbox       },
   { path: '/forensics',       label: 'Forensics',        icon: FileText    },
-  { path: '/playground',      label: 'Playground',       icon: Terminal    },
+  { path: '/playground',      label: 'Agent Sandbox',    icon: Terminal    },
   { path: '/live-feed',        label: 'Live Feed',         icon: Radio,      hint: 'G L' },
   { path: '/playbooks',       label: 'Playbooks',         icon: BookOpen    },
   { path: '/auto-response',   label: 'Auto Response',    icon: Bot         },

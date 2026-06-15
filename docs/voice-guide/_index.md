@@ -27,7 +27,7 @@ The decisions in the table below are LOCKED as of 2026-06-01. Each was made deli
 | Retrieval | Hybrid BM25 + dense (`all-MiniLM-L6-v2`) + cross-encoder rerank (`ms-marco-MiniLM-L-6-v2`) | Sparse catches exact-keyword queries; dense catches paraphrases; the cross-encoder rerank gives precision. All CPU. |
 | Vector store | ChromaDB persistent on EBS | Embedded, no service to run, **1,794 chunks** index from 103 docs at <30 ms query latency |
 | Transport | LiveKit Cloud "Build" tier (free) | Global SFU is out of scope. The Build tier has a hard cap (1,000 agent-minutes/mo, 5 concurrent sessions), which is preferable to a metered bill |
-| Frontend integration | Aegis UI navbar button → embedded panel | One URL (`dev.aegisagent.in`), already authenticated, already HTTPS, no separate domain |
+| Frontend integration | Aegis UI navbar button → embedded panel | One URL (`ha.aegisagent.in`), already authenticated, already HTTPS, no separate domain |
 | Persona | Senior cybersecurity engineer, no nanny disclaimers, contractions, short sentences, mid-thought openings | Defined in `voice-agent/agent/persona/Modelfile` (Ollama syntax) |
 
 ## Topology at a glance
@@ -36,7 +36,7 @@ The Voice Guide is one EC2 instance plus four hosted APIs, fronted by LiveKit Cl
 
 ```mermaid
 flowchart LR
-    User[Browser microphone<br>dev.aegisagent.in]
+    User[Browser microphone<br>ha.aegisagent.in]
     GW["Aegis Gateway<br>POST /voice/token<br>GET /voice/status"]
     LK[LiveKit Cloud<br>Build tier · India South]
     EC2["EC2 t3.medium<br>aegis-voice-guide<br>ap-south-1, EIP attached"]
