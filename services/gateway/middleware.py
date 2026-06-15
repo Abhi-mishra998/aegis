@@ -92,6 +92,9 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/usage",
     "/billing",
     "/incidents",
+    # Sprint 4 — kill-chain storyline read API. Detection-side, no tool
+    # execution semantics; pairs with /incidents (which is operations-side).
+    "/storylines",
     "/metrics",
     "/risk",
     "/stream",
@@ -659,6 +662,67 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
 
                 # Guaranteed Logging + Billing for Security Block (synchronous)
                 await self._log_decision(t_id_str, agent_id, tool_name, decision, request_id, tokens)
+
+                # Sprint 4 — Incident Storyline. Append this enforcement
+                # outcome onto the storyline keyed by (tenant, session) →
+                # cross-agent chain → (tenant, agent) fallback. Best-effort:
+                # any Redis failure inside recorder.record_step is swallowed
+                # so the user response is never blocked on storyline
+                # recording. The session id comes from the gateway's auth
+                # middleware via request.state.session_id (set when the JWT
+                # carries one, empty otherwise).
+                try:
+                    from services.security.incidents import recorder as _storyline_recorder
+                    from services.security import signal_registry as _sigreg
+
+                    _findings_for_story = list(
+                        (decision.findings or tool_metadata.get("signal_findings") or [])
+                    )
+                    # Primary finding = first non-attack-chain finding; falls
+                    # back to the attack_chain wrapper itself if that's all
+                    # we have.
+                    _primary = next(
+                        (f for f in _findings_for_story
+                         if not str(f).startswith("attack_chain:")),
+                        _findings_for_story[0] if _findings_for_story else "",
+                    )
+                    _mitre = _sigreg.mitre_for_finding(_primary) if _primary else {}
+                    _xagent_chain = tool_metadata.get("cross_agent_chain") if isinstance(tool_metadata, dict) else None
+                    _tier_str = (
+                        "kill" if decision.action == ExecutionAction.KILL
+                        else "deny" if decision.action == ExecutionAction.DENY
+                        else "escalate"
+                    )
+                    _policy_id_for_story = (
+                        decision.metadata.get("policy_reason")
+                        if isinstance(decision.metadata, dict) else ""
+                    ) or ""
+                    _explanation = ""
+                    if isinstance(decision.metadata, dict):
+                        _explanation = str(
+                            decision.metadata.get("policy_explanation") or
+                            decision.metadata.get("policy_reason") or
+                            ""
+                        )
+                    asyncio.create_task(_safe_bg(_storyline_recorder.record_step(
+                        self.redis,
+                        tenant_id=t_id_str,
+                        agent_id=str(agent_id),
+                        session_id=getattr(request.state, "session_id", "") or "",
+                        signal_id=str(_primary),
+                        mitre_tactic=str(_mitre.get("tactic") or ""),
+                        mitre_technique=str(_mitre.get("technique") or ""),
+                        objective=str(_mitre.get("objective") or ""),
+                        tier=_tier_str,
+                        policy_id=str(_policy_id_for_story),
+                        target=str(tool_metadata.get("target") or "") if isinstance(tool_metadata, dict) else "",
+                        explanation=_explanation,
+                        risk_score=int(float(getattr(decision, "risk", 0.0) or 0.0) * 100),
+                        cross_agent_chain=_xagent_chain if isinstance(_xagent_chain, dict) else None,
+                    )))
+                except Exception as _sx:
+                    logger.warning("storyline_record_step_failed", error=str(_sx))
+
                 _flight_final["decision"] = action
                 _flight_final["risk"]     = float(getattr(decision, "risk", 0.0) or 0.0)
                 _flight_final["status"]   = "failed"
