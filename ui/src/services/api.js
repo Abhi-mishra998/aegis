@@ -1,5 +1,6 @@
 import { emitAuthFailure } from "../lib/authEvents";
 import { parseRule, parseRuleList } from "../lib/schemas";
+import { attachClerkAuth, hasClerkAuth } from "./clerkAuth";
 
 // In dev: empty string → relative URLs → Vite proxy routes to :8000 (same-origin, no CORS/cookie issues).
 // In production (Docker/k8s): set VITE_GATEWAY_URL=https://your-gateway or leave empty for nginx proxy.
@@ -44,6 +45,12 @@ const isSessionValid = () => {
   // The httpOnly cookie remains the server-side source of truth, but client-side
   // gating must match the App-level redirect predicate or we leak requests with
   // an expired session before the auth event clears state.
+  //
+  // Clerk path: if ClerkAuthBridge has registered a token getter, an active
+  // Clerk session exists — the gateway will validate the Bearer JWT directly.
+  // Accept that as session-valid even before the bridge has mirrored
+  // tenant_id into localStorage.
+  if (hasClerkAuth()) return true;
   const tenantId = localStorage.getItem("tenant_id");
   const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10);
   return !!tenantId && expiry > Date.now();
@@ -74,6 +81,11 @@ const request = async (url, options = {}, retry = 1) => {
       "X-Timestamp": Date.now().toString(),
       ...(options.headers || {}),
     };
+
+    // Attach Clerk Bearer token if a session exists. Falls through silently
+    // (no header) for legacy cookie-auth flows so old admin@acp.local users
+    // still work. Gateway accepts either when ACP_AUTH_PROVIDER=both.
+    await attachClerkAuth(headers);
 
     const base = options.overrideBase || API_BASE;
     const finalUrl = url.startsWith("http") ? url : `${base}${url}`;
@@ -171,6 +183,7 @@ const blobRequest = async (url, options = {}) => {
     ...(tenantId && { "X-Tenant-ID": tenantId }),
     "X-Request-ID": crypto.randomUUID(),
   };
+  await attachClerkAuth(headers);
   const finalUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
   const res = await fetch(finalUrl, { ...options, headers, credentials: "include" });
   if (res.status === 401) {

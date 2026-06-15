@@ -19,9 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.audit_stream import push_audit_event
 from sdk.common.auth import extract_bearer_token, verify_internal_secret
+from sdk.common.clerk_auth import ClerkTokenValidator
 from sdk.common.config import settings
 from sdk.common.db import get_db
 from sdk.common.deadline import check_deadline
+from sdk.common.exceptions import ACPAuthError
 from sdk.common.invariants import assert_org_consistency
 from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
@@ -744,6 +746,188 @@ async def upsert_tenant(
         "monthly_request_cap":  monthly_val,
         "daily_inference_cost_cap_usd": cost_cap_val,
     }
+
+
+# =============================================================================
+# Clerk synchronous provision — closes the signup → first-request race.
+# =============================================================================
+#
+# The Clerk webhook receiver (services/identity/webhooks_clerk.py) is the
+# authoritative provisioning path: every user.created / organization.created
+# event lands an Aegis Org + Tenant + User row. But webhook delivery has
+# latency (Clerk → svix → us, typically <2s but no SLA). For the case where
+# the customer just signed up via the Clerk SignUp component and the
+# frontend immediately wants to call /agents (or any tenant-scoped route),
+# we expose this synchronous endpoint:
+#
+#   POST /auth/clerk/provision
+#   Authorization: Bearer <Clerk JWT>
+#
+# The handler:
+#   1. Validates the Clerk JWT via the shared ClerkTokenValidator (RS256+JWKS).
+#   2. Extracts clerk_user_id (sub) + clerk_org_id (org_id native claim).
+#   3. Idempotently upserts Organization + Tenant + User (same logic the
+#      webhook handlers run — actually delegates to them).
+#   4. Writes aegis_tenant_id + aegis_org_id back to Clerk's
+#      org.public_metadata so the next JWT carries them as claims.
+#   5. Returns the provisioned identifiers.
+#
+# Idempotency: if the webhook already landed first, the upserts are no-ops
+# and the endpoint returns the existing identifiers — calling it is always
+# safe to retry.
+#
+# This endpoint MUST be in the gateway's auth skip-list because the caller
+# is presenting a Clerk JWT, not an Aegis-issued one, and at signup time
+# they don't yet have an aegis_tenant_id in any token claim.
+
+
+from services.identity.clerk_backend_api import (  # noqa: E402
+    ClerkBackendAPIError,
+    get_organization,
+    list_user_organizations,
+)
+from services.identity.webhooks_clerk import (  # noqa: E402
+    _handle_membership_created_or_updated,
+    _handle_organization_created,
+)
+
+
+@router.post(
+    "/auth/clerk/provision",
+    summary="Synchronously provision Aegis Org+Tenant+User from a Clerk JWT",
+)
+async def provision_from_clerk(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    authorization: Annotated[str, Header()],
+) -> APIResponse[dict]:
+    """
+    Auth: Clerk Bearer JWT (not an Aegis-issued token). The handler
+    validates the JWT via JWKS, then provisions the Aegis rows that the
+    webhook would otherwise create asynchronously.
+
+    Body: none. All required identifiers come from the JWT.
+
+    Returns:
+        {
+          "tenant_id": <uuid>,
+          "organization_id": <uuid>,
+          "user_id": <uuid>,
+          "role": <canonical Aegis role>,
+          "shadow_mode_until": <iso8601>,
+          "provisioned": <bool, true if this call created new rows>
+        }
+    """
+    raw = extract_bearer_token(authorization) or ""
+    if not raw:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization: Bearer header",
+        )
+
+    validator = ClerkTokenValidator(redis_client=redis)
+    try:
+        claims = await validator.validate(raw)
+    except ACPAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    clerk_user_id = claims.get("clerk_user_id") or claims.get("sub") or ""
+    if not clerk_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Clerk JWT missing `sub` (user id) claim",
+        )
+
+    # Pull the native Clerk org_id off the unverified payload — we already
+    # know the JWT is signature-valid, so it's safe to consult.
+    from jose import jwt as _jose_jwt  # local import keeps cold start lean
+    try:
+        unverified = _jose_jwt.get_unverified_claims(raw)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot read Clerk JWT claims: {exc}",
+        ) from exc
+    clerk_org_id = str(
+        unverified.get("org_id") or claims.get("org_id") or "",
+    )
+    if not clerk_org_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Clerk JWT carries no `org_id` claim — sign in to an "
+                "organization (or create one) before calling /auth/clerk/provision."
+            ),
+        )
+
+    # Need org name + user email + role. Try the Clerk Backend API first
+    # for the richest payload; fall back to claims-only if Clerk is down.
+    org_name = clerk_org_id
+    org_slug = clerk_org_id
+    try:
+        org_obj = await get_organization(clerk_org_id)
+        org_name = str(org_obj.get("name") or clerk_org_id)[:255]
+        org_slug = str(org_obj.get("slug") or clerk_org_id)[:100]
+    except ClerkBackendAPIError as exc:
+        logger.warning(
+            "clerk_get_organization_failed",
+            clerk_org_id=clerk_org_id, status=exc.status_code,
+        )
+
+    org_role = str(unverified.get("org_role") or "org:owner")
+
+    # Step 1 — Organization + Tenant (idempotent)
+    org_result = await _handle_organization_created(
+        db, redis,
+        {"id": clerk_org_id, "name": org_name, "slug": org_slug},
+    )
+
+    # Step 2 — User row (idempotent). Synthesise the same membership shape
+    # the webhook would deliver so we share the upsert path.
+    email = claims.get("email") or ""
+    if not email:
+        # Pull from Clerk's API for accuracy
+        try:
+            memberships = await list_user_organizations(clerk_user_id)
+            for m in memberships:
+                pud = m.get("public_user_data") or {}
+                identifier = pud.get("identifier") or ""
+                if identifier:
+                    email = identifier
+                    break
+        except ClerkBackendAPIError as exc:
+            logger.warning(
+                "clerk_list_memberships_failed",
+                clerk_user_id=clerk_user_id, status=exc.status_code,
+            )
+
+    membership_data = {
+        "organization": {"id": clerk_org_id},
+        "role": org_role,
+        "public_user_data": {
+            "user_id": clerk_user_id,
+            "identifier": email,
+            "email_addresses": (
+                [{"id": "primary", "email_address": email}] if email else []
+            ),
+            "primary_email_address_id": "primary",
+        },
+    }
+    user_result = await _handle_membership_created_or_updated(
+        db, redis, membership_data,
+    )
+
+    return APIResponse(
+        data={
+            "tenant_id":        org_result.get("tenant_id"),
+            "organization_id":  org_result.get("organization_id"),
+            "user_id":          user_result.get("user_id"),
+            "role":             user_result.get("role"),
+            "shadow_mode_until": org_result.get("shadow_mode_until"),
+            "clerk_user_id":    clerk_user_id,
+            "clerk_org_id":     clerk_org_id,
+        },
+    )
 
 
 # =============================================================================

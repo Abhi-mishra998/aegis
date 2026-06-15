@@ -1,5 +1,5 @@
 import React from 'react';
-import { SignIn } from '@clerk/react';
+import { SignUp } from '@clerk/react';
 import { Link } from 'react-router-dom';
 import { Shield, Lock } from 'lucide-react';
 
@@ -39,7 +39,7 @@ const aegisAppearance = {
   },
 };
 
-export default function Login() {
+export default function Signup() {
   return (
     <div className="min-h-screen bg-[#030303] flex flex-col items-center justify-center px-4 py-10 relative overflow-hidden">
       <div
@@ -58,33 +58,34 @@ export default function Login() {
           </div>
           <div className="text-center space-y-1.5">
             <h1 className="text-2xl font-bold tracking-tight text-white">
-              AgentControl
+              Create your workspace
             </h1>
-            <p className="text-xs text-neutral-400 leading-relaxed max-w-[260px] mx-auto">
-              Tamper-evident replay + runtime deny for AI agents.
+            <p className="text-xs text-neutral-400 leading-relaxed max-w-[280px] mx-auto">
+              Aegis protects your AI agents in shadow mode for the first 14
+              days. No production breakage. Block when you're ready.
             </p>
           </div>
         </div>
 
-        <SignIn
-          path="/login"
+        <SignUp
+          path="/signup"
           routing="path"
-          signUpUrl="/signup"
-          afterSignInUrl="/flight-recorder"
+          signInUrl="/login"
+          afterSignUpUrl="/flight-recorder"
           appearance={aegisAppearance}
         />
 
         <div className="flex items-center justify-center gap-2 mt-5">
           <Lock size={11} className="text-neutral-700" aria-hidden="true" />
           <p className="text-xs text-neutral-700">
-            Encrypted · Authorized Personnel Only
+            14-day shadow mode · Tamper-evident audit · ed25519 receipts
           </p>
         </div>
 
         <p className="text-center text-[11px] text-neutral-500 mt-3">
-          Don't have an account?{' '}
-          <Link to="/signup" className="text-white hover:underline">
-            Sign up
+          Already have an account?{' '}
+          <Link to="/login" className="text-white hover:underline">
+            Sign in
           </Link>
         </p>
       </div>

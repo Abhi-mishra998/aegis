@@ -12,6 +12,8 @@ import { onAuthFailure } from './lib/authEvents';
 import { clearSessionMetadata } from './services/api';
 
 import Login from './pages/Login';
+import Signup from './pages/Signup';
+import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import ExecutiveDashboard from './pages/ExecutiveDashboard';
 import Settings from './pages/Settings';
 import Agents from './pages/Agents';
@@ -223,8 +225,16 @@ function App() {
               />
             )}
 
+            {/* Mirrors Clerk session → legacy AuthContext + localStorage so the
+                existing ProtectedRoute / API client keep working without a
+                Clerk-specific rewrite of every consumer. */}
+            <ClerkAuthBridge />
+
             <Routes>
-              <Route path="/login" element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Login />} />
+              {/* Clerk's <SignIn /> / <SignUp /> components own sub-routes
+                  (e.g. /signup/verify-email-address) — the `/*` is required. */}
+              <Route path="/login/*"  element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Login />} />
+              <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Signup />} />
 
               {/* Flight Recorder is the homepage — tamper-evident replay is the wedge */}
               <Route path="/"          element={<Navigate to="/flight-recorder" />} />

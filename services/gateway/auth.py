@@ -24,9 +24,14 @@ from typing import Any
 from jose import ExpiredSignatureError, JWTError, jwt
 from redis.asyncio import Redis
 
+from fastapi import Header, HTTPException, status
+
+from sdk.common.auth import extract_bearer_token
 from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX, REDIS_TOKEN_PREFIX
 from sdk.common.exceptions import ACPAuthError
+from sdk.common.roles import Role, canonical_role
+from services.gateway.auth_clerk import get_clerk_validator, looks_like_clerk_token
 
 REDIS_TOKEN_VALIDATION_PREFIX = "acp:token_validation:"
 
@@ -186,13 +191,22 @@ class LocalTokenValidator:
         """
         Validate token signature, expiry, AND Identity-issued status.
 
+        Dispatches to one of two validators based on ACP_AUTH_PROVIDER and
+        the token's issuer claim:
+
+          - legacy: HS256 self-issued, gated by Identity active-key in Redis.
+          - clerk:  RS256 Clerk-issued, gated by JWKS signature only.
+
         Returns:
-            Decoded payload dict if valid.
+            Decoded payload dict if valid. Shape is identical regardless of
+            provider so downstream middleware does not need to know which
+            path validated the token.
 
         Raises:
-            ACPAuthError: If signature is invalid, token is expired, required
-                          claims are missing, or Identity does not recognize
-                          this token (active_key missing in Redis).
+            ACPAuthError: signature invalid, token expired, required claims
+                          missing, Identity does not recognize the token
+                          (legacy active_key missing), or no validator is
+                          enabled for the token's issuer.
         """
         token_hash = self._token_hash(token)
 
@@ -214,23 +228,39 @@ class LocalTokenValidator:
                 _LOCAL_TOKEN_LRU.set(token_hash, cached)
                 return cached
 
-        # Cache miss: validate locally
-        payload = self._validate_signature(token)
+        # Cache miss: dispatch by provider + token shape.
+        auth_provider = settings.ACP_AUTH_PROVIDER
+        is_clerk = (
+            auth_provider in ("clerk", "both")
+            and looks_like_clerk_token(token)
+        )
 
-        # C-5 FIX (2026-05-13): Confirm Identity actually issued this token by
-        # checking the active_key it sets at issuance. Without this, anyone with
-        # JWT_SECRET_KEY can mint accepted tokens indefinitely. Fails CLOSED on
-        # Redis error: a Redis outage should not be an authentication bypass.
-        if self._redis is not None:
-            active_key = f"{REDIS_TOKEN_PREFIX}{self._token_hash(token)}"
-            try:
-                if not await self._redis.exists(active_key):
-                    raise ACPAuthError("Token not recognized by Identity service")
-            except ACPAuthError:
-                raise
-            except Exception as exc:
-                # Fail closed: do not let a Redis hiccup become an auth bypass.
-                raise ACPAuthError("Authentication infrastructure unavailable") from exc
+        if is_clerk:
+            clerk_validator = get_clerk_validator(self._redis)
+            payload = await clerk_validator.validate(token)
+        elif auth_provider in ("legacy", "both"):
+            payload = self._validate_signature(token)
+
+            # C-5 FIX (2026-05-13): Confirm Identity actually issued this token
+            # by checking the active_key it sets at issuance. Without this,
+            # anyone with JWT_SECRET_KEY can mint accepted tokens indefinitely.
+            # Fails CLOSED on Redis error.
+            if self._redis is not None:
+                active_key = f"{REDIS_TOKEN_PREFIX}{token_hash}"
+                try:
+                    if not await self._redis.exists(active_key):
+                        raise ACPAuthError("Token not recognized by Identity service")
+                except ACPAuthError:
+                    raise
+                except Exception as exc:
+                    raise ACPAuthError(
+                        "Authentication infrastructure unavailable",
+                    ) from exc
+            payload.setdefault("auth_provider", "legacy")
+        else:
+            raise ACPAuthError(
+                f"No validator enabled for this token (ACP_AUTH_PROVIDER={auth_provider!r})",
+            )
 
         # Store in cache for next request (with short TTL to match token expiry)
         if self._redis and "exp" in payload:
@@ -316,5 +346,116 @@ def init_token_validator(redis_client: Redis | None = None) -> LocalTokenValidat
     return token_validator
 
 
+# ---------------------------------------------------------------------------
+# verify_role(*allowed) — FastAPI dependency factory
+# ---------------------------------------------------------------------------
+# Usage:
+#
+#     from services.gateway.auth import verify_role
+#     from sdk.common.roles import Role
+#
+#     @router.post("/workspace/exit-shadow-mode", dependencies=[Depends(verify_role(Role.OWNER))])
+#     async def exit_shadow_mode(...): ...
+#
+# Or to also receive the decoded claims:
+#
+#     @router.get("/admin/foo")
+#     async def admin_foo(
+#         claims: dict = Depends(verify_role(Role.OWNER, Role.ADMIN)),
+#     ): ...
+#
+# The dependency:
+#   1. Reads the Authorization: Bearer header.
+#   2. Validates the token via the same `token_validator` global the
+#      gateway middleware uses — so legacy HS256 and Clerk RS256 tokens
+#      both flow through the same path.
+#   3. Projects the JWT's `role` claim onto the canonical Role vocabulary
+#      via sdk.common.roles.canonical_role().
+#   4. Raises 403 if the projected role is not in `allowed`.
+#   5. Returns the decoded claims dict on success.
+#
+# Behavioural choices:
+#   - Always 401 on missing/invalid token (authentication failure).
+#   - Always 403 on role mismatch (authorization failure).
+#   - Never silently allow if `allowed` is empty — that's treated as a
+#     programmer error and raises ValueError at dependency build time.
+
+
+def verify_role(*allowed):
+    """Factory returning a FastAPI dependency that gates by canonical Role.
+
+    Accepts either Role enum members or raw role strings. Strings are
+    canonicalized so verify_role("admin") and verify_role(Role.ADMIN)
+    behave identically.
+    """
+    if not allowed:
+        raise ValueError(
+            "verify_role() requires at least one allowed role — empty allowlist "
+            "would silently authorize every role.",
+        )
+
+    allowed_set: frozenset[str] = frozenset(
+        (r.value if isinstance(r, Role) else canonical_role(str(r)))
+        for r in allowed
+    )
+
+    async def _dependency(
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        if not authorization:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing Authorization header",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        raw = extract_bearer_token(authorization)
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Malformed Authorization header — expected 'Bearer <token>'",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if token_validator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Token validator not yet initialized",
+            )
+
+        try:
+            claims = await token_validator.validate(raw)
+        except ACPAuthError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
+
+        role_canonical = canonical_role(claims.get("role"))
+        if role_canonical not in allowed_set:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Role {role_canonical!r} is not permitted on this endpoint. "
+                    f"Required: {sorted(allowed_set)}."
+                ),
+            )
+
+        # Stamp the canonical projection onto the claims so route handlers
+        # don't need to call canonical_role() themselves.
+        claims["role_canonical"] = role_canonical
+        return claims
+
+    # Helpful for tests + introspection.
+    _dependency.allowed_roles = allowed_set  # type: ignore[attr-defined]
+    return _dependency
+
+
 # Re-export so middleware can import it from here without re-importing constants
-__all__ = ["LocalTokenValidator", "token_validator", "REDIS_REVOKE_PREFIX"]
+__all__ = [
+    "LocalTokenValidator",
+    "token_validator",
+    "REDIS_REVOKE_PREFIX",
+    "verify_role",
+]
