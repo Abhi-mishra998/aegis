@@ -2,6 +2,14 @@
 
 * [Home](README.md)
 
+## AEVF — Open Verification Standard
+
+* [Overview](AEVF/README.md)
+* [Specification (aevf/0.1.0)](AEVF/spec.md)
+* [Auditor Checklist](AEVF/auditor-checklist.md)
+* [Reference Audit Report Template](AEVF/reference-audit-report.md)
+* [Reference Evidence Package](AEVF/reference-bundle.md)
+
 ## Introduction
 
 * [What is Aegis?](introduction/what-is-aegis.md)
@@ -14,6 +22,7 @@
 
 * [System Overview](architecture/system-overview.md)
 * [Gateway Pipeline](architecture/10-stage-pipeline.md)
+* [Decision Explorer](architecture/decision-explorer.md)
 * [Flow of a Decision](architecture/flow-of-a-decision.md)
 * [Data Model](architecture/data-model.md)
 * [Multi-Tenancy](architecture/multi-tenancy.md)
@@ -49,6 +58,7 @@
 
 * [UI Map](ui/_index.md)
 * Primary nav
+  * [Live Demo](ui/primary/live-demo.md)
   * [Flight Recorder](ui/primary/flight-recorder.md)
   * [Policies](ui/primary/policies.md)
   * [Audit Trail](ui/primary/audit-trail.md)
@@ -93,10 +103,17 @@
 * [RAG and LLM Strategy](voice-guide/rag-and-llm.md)
 * [Deployment and Operations](voice-guide/deployment.md)
 
+## Integrations
+
+* [SDK Wrappers (PyPI)](integrations/sdk-wrappers.md)
+* [Evidence Export Adapters (SIEM + GRC)](integrations/evidence-export.md)
+
 ## Security
 
 * [Cryptographic Audit Chain](security/crypto-audit-chain.md)
+* [Detection Pipeline](security/detection-pipeline.md)
 * [JWT Authentication](security/jwt-auth.md)
+* [Mesh Authentication](security/mesh-auth.md)
 * [RBAC Roles](security/rbac-roles.md)
 * [Kill Switch](security/kill-switch.md)
 * [OPA Policies](security/opa-policies.md)
@@ -108,6 +125,7 @@
 * [Deployment](operations/deployment.md)
 * [Backup and Restore](operations/backup-restore.md)
 * [Key Rotation](operations/key-rotation.md)
+* [SIEM Forwarders](operations/siem-forwarders.md)
 * [Soak Tests](operations/soak-tests.md)
 * [Tenant Data Requests](operations/tenant-data-requests.md)
 * [Observability](operations/observability.md)

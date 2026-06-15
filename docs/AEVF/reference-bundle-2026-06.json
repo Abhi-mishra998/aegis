@@ -1,0 +1,256 @@
+{
+  "format_version": "aegis-evidence-bundle/2026-06",
+  "framework": "eu-ai-act",
+  "generated_at": "2026-06-14T00:00:00+00:00",
+  "merkle_roots": [
+    {
+      "algorithm": "ed25519",
+      "kid": "1e20d4676026a3a3d78fdec9a94c359b",
+      "leaf_count": 3,
+      "leaf_range_end_id": "aaaaaaaa-0000-4000-8000-000000000003",
+      "leaf_range_start_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "prev_root_hash": null,
+      "root_date": "2026-06-12",
+      "root_hash": "18d25d747b16b3484b30d00affd9b99354603c8a0c7dd7eb8d85a8b09790039c",
+      "signature_b64": "p_ToZMwIoHHS09C2uAla5QQ5Qxoxe52tsbXpvmIvgeHeO3f3v2xIhhTXrKVaZRXutNWP7WDeGVw0_2EjhUh5BQ",
+      "signed_payload_canonical_json": "{\"kind\":\"transparency_root\",\"leaf_count\":3,\"leaf_range_end_id\":\"aaaaaaaa-0000-4000-8000-000000000003\",\"leaf_range_start_id\":\"aaaaaaaa-0000-4000-8000-000000000001\",\"prev_root_hash\":null,\"root_date\":\"2026-06-12\",\"root_hash\":\"18d25d747b16b3484b30d00affd9b99354603c8a0c7dd7eb8d85a8b09790039c\",\"tenant_id\":\"11111111-1111-1111-1111-111111111111\",\"version\":4}"
+    },
+    {
+      "algorithm": "ed25519",
+      "kid": "1e20d4676026a3a3d78fdec9a94c359b",
+      "leaf_count": 2,
+      "leaf_range_end_id": "bbbbbbbb-0000-4000-8000-000000000005",
+      "leaf_range_start_id": "bbbbbbbb-0000-4000-8000-000000000004",
+      "prev_root_hash": "18d25d747b16b3484b30d00affd9b99354603c8a0c7dd7eb8d85a8b09790039c",
+      "root_date": "2026-06-13",
+      "root_hash": "a82b827e93a1b05c80ff687b97dc062ecb2e69ba18e06e7d16e2d6e198a73824",
+      "signature_b64": "3vCmF_JPd8CMj3bP3z7qh_OkFthAKO9OJqrtROF_TnhuxGdnsksCnsQVf_ioHZDIuFp7L67JuSvrPsYwCVV1CQ",
+      "signed_payload_canonical_json": "{\"kind\":\"transparency_root\",\"leaf_count\":2,\"leaf_range_end_id\":\"bbbbbbbb-0000-4000-8000-000000000005\",\"leaf_range_start_id\":\"bbbbbbbb-0000-4000-8000-000000000004\",\"prev_root_hash\":\"18d25d747b16b3484b30d00affd9b99354603c8a0c7dd7eb8d85a8b09790039c\",\"root_date\":\"2026-06-13\",\"root_hash\":\"a82b827e93a1b05c80ff687b97dc062ecb2e69ba18e06e7d16e2d6e198a73824\",\"tenant_id\":\"11111111-1111-1111-1111-111111111111\",\"version\":4}"
+    }
+  ],
+  "period": {
+    "end": "2026-06-13",
+    "start": "2026-06-12"
+  },
+  "producer_metadata": {
+    "deterministic": true,
+    "name": "AEVF Reference Generator",
+    "purpose": "Reference Evidence Package for AEVF v0.1.0",
+    "seed_source": "sha256(AEVF_REFERENCE_BUNDLE_SEED_2026_06)"
+  },
+  "public_keys": [
+    {
+      "algorithm": "ed25519",
+      "kid": "1e20d4676026a3a3d78fdec9a94c359b",
+      "pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAiQnH1HTBUqCIMBBL/MuSn7Uh2UBLkNjqy85oA2Q0RvM=\n-----END PUBLIC KEY-----\n",
+      "valid_from": "2026-01-01T00:00:00+00:00",
+      "valid_to": null
+    }
+  ],
+  "records": [
+    {
+      "audit_row": {
+        "action": "execute_tool",
+        "agent_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "chain_shard": 0,
+        "decision": "allow",
+        "event_hash": "7b5515294570a6d8ede45f2de414aec7643cdee5bffed82404a1e0712482be5f",
+        "id": "aaaaaaaa-0000-4000-8000-000000000001",
+        "metadata_json": {
+          "path": "/app/config/feature_flags.json",
+          "risk_score": 0.05
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "reason": "",
+        "request_id": "req-day1-001",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "timestamp": "2026-06-12T09:14:00.000000+00:00",
+        "tool": "tool.read_file"
+      },
+      "mappings": {
+        "dpdp": [
+          "Section 8(5)"
+        ],
+        "eu_ai_act": [
+          "Article 12"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.7"
+        ],
+        "soc2": [
+          "CC7.2"
+        ]
+      },
+      "merkle_root_date": "2026-06-12"
+    },
+    {
+      "audit_row": {
+        "action": "execute_tool",
+        "agent_id": "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "chain_shard": 0,
+        "decision": "deny",
+        "event_hash": "dadb031cb92fffb77e341617cfa41183a0ebac932766c0a9a09c7c8847233d42",
+        "id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "metadata_json": {
+          "agent_risk": "medium",
+          "policy_rule": "action_semantics_deny._pii_row_threshold_breached",
+          "query": "SELECT * FROM customers",
+          "risk_score": 0.92
+        },
+        "prev_hash": "7b5515294570a6d8ede45f2de414aec7643cdee5bffed82404a1e0712482be5f",
+        "reason": "bulk_pii_egress_above_threshold",
+        "request_id": "req-day1-002",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "timestamp": "2026-06-12T11:42:13.000000+00:00",
+        "tool": "tool.sql_query"
+      },
+      "mappings": {
+        "dpdp": [
+          "Section 8(5)",
+          "Section 8(6)"
+        ],
+        "eu_ai_act": [
+          "Article 12",
+          "Article 13",
+          "Article 14"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.7",
+          "MANAGE 4.2"
+        ],
+        "soc2": [
+          "CC6.1",
+          "CC7.2"
+        ]
+      },
+      "merkle_root_date": "2026-06-12"
+    },
+    {
+      "audit_row": {
+        "action": "execute_tool",
+        "agent_id": "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "chain_shard": 0,
+        "decision": "allow",
+        "event_hash": "ecafdbdc110c5be2a22d38c1d68fecf6db9e1b5b437120edf43564dc9e076d3b",
+        "id": "aaaaaaaa-0000-4000-8000-000000000003",
+        "metadata_json": {
+          "query": "SELECT count(*) FROM audit_logs WHERE created_at > now() - interval '1 day'",
+          "risk_score": 0.1
+        },
+        "prev_hash": "dadb031cb92fffb77e341617cfa41183a0ebac932766c0a9a09c7c8847233d42",
+        "reason": "",
+        "request_id": "req-day1-003",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "timestamp": "2026-06-12T17:05:09.000000+00:00",
+        "tool": "tool.sql_query"
+      },
+      "mappings": {
+        "dpdp": [
+          "Section 8(5)"
+        ],
+        "eu_ai_act": [
+          "Article 12"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.7"
+        ],
+        "soc2": [
+          "CC7.2"
+        ]
+      },
+      "merkle_root_date": "2026-06-12"
+    },
+    {
+      "audit_row": {
+        "action": "execute_tool",
+        "agent_id": "33333333-cccc-4ccc-8ccc-cccccccccccc",
+        "chain_shard": 0,
+        "decision": "deny",
+        "event_hash": "34f374a738f987c0471f9bd886c99db30fd9d17ffb01e0531941d938381d9625",
+        "id": "bbbbbbbb-0000-4000-8000-000000000004",
+        "metadata_json": {
+          "agent_risk": "low",
+          "command": "kubectl delete ns prod --force",
+          "k8s_namespace": "prod",
+          "policy_rule": "action_semantics_deny._k8s_prod_destruction",
+          "risk_score": 0.95
+        },
+        "prev_hash": "ecafdbdc110c5be2a22d38c1d68fecf6db9e1b5b437120edf43564dc9e076d3b",
+        "reason": "k8s_prod_namespace_destruction",
+        "request_id": "req-day2-001",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "timestamp": "2026-06-13T08:21:55.000000+00:00",
+        "tool": "tool.shell"
+      },
+      "mappings": {
+        "dpdp": [
+          "Section 8(5)"
+        ],
+        "eu_ai_act": [
+          "Article 12",
+          "Article 14"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.7",
+          "MANAGE 4.2"
+        ],
+        "soc2": [
+          "CC6.1",
+          "CC7.2",
+          "CC8.1"
+        ]
+      },
+      "merkle_root_date": "2026-06-13"
+    },
+    {
+      "audit_row": {
+        "action": "execute_tool",
+        "agent_id": "44444444-dddd-4ddd-8ddd-dddddddddddd",
+        "chain_shard": 0,
+        "decision": "escalate",
+        "event_hash": "3a66e57057ef9c1376f0a4cb93039f2b5007f8ed1cff654473c9b5f06982a024",
+        "id": "bbbbbbbb-0000-4000-8000-000000000005",
+        "metadata_json": {
+          "agent_risk": "medium",
+          "body_excerpt": "POST customer list with email and phone columns",
+          "operator_action_required": true,
+          "policy_rule": "action_semantics_deny._external_exfil",
+          "risk_score": 0.78,
+          "url": "https://api.external-vendor.com/sync"
+        },
+        "prev_hash": "34f374a738f987c0471f9bd886c99db30fd9d17ffb01e0531941d938381d9625",
+        "reason": "external_pii_exfil",
+        "request_id": "req-day2-002",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "timestamp": "2026-06-13T14:33:21.000000+00:00",
+        "tool": "tool.http_request"
+      },
+      "mappings": {
+        "dpdp": [
+          "Section 8(5)",
+          "Section 8(8)"
+        ],
+        "eu_ai_act": [
+          "Article 12",
+          "Article 14"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.7",
+          "MAP 3.1"
+        ],
+        "soc2": [
+          "CC6.1",
+          "CC7.2"
+        ]
+      },
+      "merkle_root_date": "2026-06-13"
+    }
+  ],
+  "retention_metadata": {
+    "configured_retention_days": 180,
+    "earliest_row_in_bundle": "2026-06-12T09:14:00.000000+00:00",
+    "latest_row_in_bundle": "2026-06-13T14:33:21.000000+00:00",
+    "policy": "6_months_minimum"
+  },
+  "tenant_id": "11111111-1111-1111-1111-111111111111"
+}
