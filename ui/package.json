@@ -11,6 +11,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@clerk/react": "^6.9.1",
     "@livekit/components-react": "^2.6.0",
     "livekit-client": "^2.5.0",
     "lucide-react": "^0.292.0",

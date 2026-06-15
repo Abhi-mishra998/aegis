@@ -287,6 +287,60 @@ class ACPSettings(BaseSettings):
         ),
     )
 
+    # ─────────────────────────────────────────────────────────────
+    # 🔑 Clerk Auth (Sprint 1 — Real SaaS auth)
+    # ─────────────────────────────────────────────────────────────
+    # The gateway validates Clerk-issued JWTs (RS256, JWKS-rotated) alongside
+    # the existing HS256 self-issued JWTs while ACP_AUTH_PROVIDER=both. The
+    # identity service receives Clerk webhooks (user.created, organization.*)
+    # and provisions Aegis Org/Tenant/User rows in lockstep.
+    ACP_AUTH_PROVIDER: str = Field(
+        default="legacy",
+        description="Auth backend: 'legacy' (HS256 only), 'clerk' (RS256 only), 'both' (accept either).",
+    )
+    CLERK_PUBLISHABLE_KEY: str = Field(
+        default="",
+        description="Clerk publishable key (pk_test_... or pk_live_...). Backend uses it for diagnostics; UI loads it via VITE_CLERK_PUBLISHABLE_KEY.",
+    )
+    CLERK_SECRET_KEY: str = Field(
+        default="",
+        description="Clerk secret key (sk_test_... or sk_live_...). Used to call Clerk's Backend API for provisioning + metadata writes.",
+    )
+    CLERK_FRONTEND_API: str = Field(
+        default="",
+        description="Clerk frontend API base URL (e.g. https://close-moray-54.clerk.accounts.dev).",
+    )
+    CLERK_JWKS_URL: str = Field(
+        default="",
+        description="JWKS endpoint URL — typically {CLERK_FRONTEND_API}/.well-known/jwks.json.",
+    )
+    CLERK_ISSUER: str = Field(
+        default="",
+        description="Expected iss claim on Clerk-signed JWTs. Must match CLERK_FRONTEND_API.",
+    )
+    CLERK_WEBHOOK_SECRET: str = Field(
+        default="",
+        description="Svix webhook signing secret (whsec_...) for verifying inbound Clerk webhooks.",
+    )
+    CLERK_JWT_TEMPLATE: str = Field(
+        default="aegis",
+        description="Clerk JWT template name; the frontend calls getToken({template: this}).",
+    )
+    CLERK_JWKS_CACHE_SECONDS: int = Field(
+        default=3600,
+        description="JWKS cache TTL in seconds. Clerk rotates keys infrequently; a 1h cache balances safety and load.",
+    )
+
+    @field_validator("ACP_AUTH_PROVIDER")
+    @classmethod
+    def _allowed_auth_provider(cls, v: str) -> str:
+        allowed = {"legacy", "clerk", "both"}
+        if v not in allowed:
+            raise ValueError(
+                f"ACP_AUTH_PROVIDER must be one of {sorted(allowed)}; got {v!r}."
+            )
+        return v
+
 
 # Singleton instance
 settings = ACPSettings()

@@ -9,6 +9,7 @@ from sdk.common.db import engine, get_session_factory
 from sdk.common.migrate import check_schema
 from sdk.utils import setup_app
 from services.identity.router import router
+from services.identity.webhooks_clerk import router as clerk_webhooks_router
 
 
 @asynccontextmanager
@@ -30,3 +31,4 @@ app = FastAPI(
 setup_app(app, "identity")
 
 app.include_router(router)
+app.include_router(clerk_webhooks_router)

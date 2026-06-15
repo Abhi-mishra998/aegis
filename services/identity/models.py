@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,11 +23,54 @@ class CredentialStatus(StrEnum):
 
 
 class UserRole(StrEnum):
+    """
+    Persisted user-role vocabulary.
+
+    The original 5 values (ADMIN/SECURITY/AUDITOR/VIEWER/AGENT) predate the
+    Sprint-1 Real-SaaS effort. The next 4 (OWNER/SECURITY_ANALYST/DEVELOPER/
+    READ_ONLY) were added on top to model self-serve workspace permissions:
+
+      - OWNER            — billing + can-delete-workspace; one per workspace.
+      - ADMIN            — manage members, policies, integrations; many.
+      - SECURITY_ANALYST — read all incidents + audit; manage policies.
+      - DEVELOPER        — read incidents for their agents; create agents.
+      - READ_ONLY        — read dashboard + audit; no writes.
+
+    The legacy values (SECURITY, AUDITOR, VIEWER, AGENT) stay in the enum for
+    back-compat with rows written before the migration; new signups always
+    use the OWNER/ADMIN/... vocabulary. The verify_role gateway middleware
+    accepts either pool.
+    """
+
+    # Legacy (do not use for new code)
     ADMIN = "ADMIN"
     SECURITY = "SECURITY"
     AUDITOR = "AUDITOR"
     VIEWER = "VIEWER"
     AGENT = "AGENT"
+
+    # Real-SaaS canonical roles (Sprint 1)
+    OWNER = "OWNER"
+    SECURITY_ANALYST = "SECURITY_ANALYST"
+    DEVELOPER = "DEVELOPER"
+    READ_ONLY = "READ_ONLY"
+
+
+# Canonical role vocabulary lives in sdk.common.roles so the gateway's
+# verify_role middleware and the identity writer share one source of truth.
+from sdk.common.roles import LEGACY_ROLE_TO_CANONICAL, Role, canonical_role  # noqa: E402,F401
+
+
+# Sprint 1 shadow-mode default: every new workspace runs in observe-only
+# mode for 14 days before its first deny/escalate actually blocks the
+# customer's agent traffic. Centralised so /signup, the Clerk webhook
+# receiver, and the alembic server_default all stay in lockstep.
+SHADOW_MODE_DEFAULT_DAYS = 14
+
+
+def default_shadow_mode_until() -> datetime:
+    """Default value for Tenant.shadow_mode_until on new rows."""
+    return datetime.utcnow() + timedelta(days=SHADOW_MODE_DEFAULT_DAYS)
 
 
 class TenantTier(StrEnum):
@@ -54,7 +97,8 @@ class DegradedModePolicy(StrEnum):
 class Organization(Base, IdMixin, TimestampMixin):
     """
     Top-level org entity. One org owns one or more tenants.
-    Created implicitly when the first admin user registers.
+    Created implicitly when the first admin user registers, or by the
+    Clerk webhook when an `organization.created` event arrives.
     """
 
     __tablename__ = "organizations"
@@ -62,6 +106,13 @@ class Organization(Base, IdMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Clerk linkage — set when the org was either created by a Clerk webhook
+    # OR provisioned by /auth/clerk/provision after a self-serve signup. NULL
+    # on legacy orgs created before Sprint 1.
+    clerk_org_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True,
+    )
 
 
 class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
@@ -126,6 +177,17 @@ class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
         nullable=False,
     )
 
+    # Sprint 1 — Shadow mode default. Every freshly-created workspace runs in
+    # observe-only mode for 14 days. Deny/escalate decisions still fire in
+    # the engine but the gateway middleware downgrades them to an audited
+    # `would_have_blocked` event, leaving the customer's agent traffic
+    # untouched. Owners can extend or exit early via POST /workspace/exit-shadow-mode.
+    shadow_mode_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        server_default=text("now() + interval '14 days'"),
+    )
+
 
 class AgentCredential(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Stores hashed secrets + status for agent authentication."""
@@ -171,6 +233,13 @@ class User(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     last_login: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Clerk linkage — set when the user was either created by a Clerk webhook
+    # OR self-served via the Clerk SignUp component. NULL on legacy users
+    # (admin@acp.local, brutal-test agents, etc.) created before Sprint 1.
+    clerk_user_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True,
+    )
 
 # ---------------------------------------------------------------------------
 # HARDENED INVARIANTS (SQLAlchemy Events)

@@ -73,6 +73,12 @@ _SKIP_PATHS = frozenset(
         # sprint-5.3: Stripe webhook authenticates via Stripe-Signature, not JWT.
         # The handler verifies the signature before processing the event.
         "/billing/stripe/webhook",
+        # Sprint 1 — Clerk integration surface. The webhook authenticates
+        # via Svix signature (verified upstream in identity); the
+        # provision endpoint authenticates via Clerk Bearer JWT validated
+        # against Clerk's JWKS. Neither carries an Aegis-issued token.
+        "/webhooks/clerk",
+        "/auth/clerk/provision",
     ]
 )
 
