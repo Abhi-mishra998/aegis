@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useId } from 'react';
 import { registryService } from '../services/api';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -329,6 +329,33 @@ export default function Agents() {
           <p className="text-xs text-green-400">{success}</p>
         </div>
       )}
+
+      {/* ── Sprint 2 — Onboarding Wizard CTA ── */}
+      <Link
+        to="/onboarding"
+        className="block group rounded-2xl border border-white/[0.07] bg-gradient-to-r from-white/[0.04] to-white/[0.01] hover:border-white/20 hover:from-white/[0.07] transition-all p-5"
+        aria-label="Start the Aegis Onboarding Wizard"
+      >
+        <div className="flex items-center gap-4">
+          <div className="w-11 h-11 rounded-xl bg-white text-black flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.15)] shrink-0">
+            <Plus size={20} aria-hidden="true" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-base font-semibold text-white flex items-center gap-2">
+              Add an agent via the Onboarding Wizard
+              <span className="text-[10px] uppercase tracking-widest text-neutral-500 border border-white/10 rounded px-1.5 py-0.5">Recommended</span>
+            </div>
+            <p className="text-xs text-neutral-400 mt-1">
+              Pick your SDK → name your agent → copy the install snippet. ~60 seconds.
+              Your LLM key never touches Aegis.
+            </p>
+          </div>
+          <div className="text-xs text-neutral-500 group-hover:text-white transition-colors hidden sm:flex items-center gap-1">
+            Start
+            <ExternalLink size={12} aria-hidden="true" />
+          </div>
+        </div>
+      </Link>
 
       {/* ── Deploy + fleet status ── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

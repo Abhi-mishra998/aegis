@@ -13,6 +13,7 @@ from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.registry.router import router
 from services.registry.service import set_registry_redis
+from services.registry.wizard import router as wizard_router
 
 
 @asynccontextmanager
@@ -40,4 +41,7 @@ app = FastAPI(
 # Consolidated SDK Setup
 setup_app(app, "registry")
 
+# Wizard mounted BEFORE the agent CRUD router so /agents/wizard wins the
+# match against /agents/{agent_id} (FastAPI matches in declaration order).
+app.include_router(wizard_router)
 app.include_router(router)

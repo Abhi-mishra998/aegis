@@ -91,6 +91,67 @@ async def create_agent(request: Request, response: Response) -> Any:
     return result
 
 
+# Sprint 2 — Onboarding Wizard composer + install-snippet. Declared
+# BEFORE the catch-all /agents/{agent_id} so "wizard" is never parsed
+# as a UUID.
+
+
+@router.post("/agents/wizard", tags=["agents", "wizard"])
+async def wizard_create_agent(request: Request, response: Response) -> Any:
+    """Proxy → Registry's POST /agents/wizard.
+
+    Forwards the body verbatim. The actor's email (Clerk session) is
+    injected as ``owner_id`` so audit + ownership trail carry the real
+    human, matching the same M-12 pattern used by POST /agents.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = dict(body or {})
+
+    actor = getattr(request.state, "actor", "unknown")
+    if actor and actor != "unknown" and not body.get("owner_id"):
+        body["owner_id"] = actor
+
+    resp = await request.app.state.client.post(
+        f"{_base()}/agents/wizard",
+        json=body,
+        headers=internal_headers(request),
+        timeout=12.0,
+    )
+    response.status_code = resp.status_code
+    try:
+        result = resp.json()
+    except Exception:
+        result = {"success": False, "error": "Upstream returned non-JSON"}
+
+    # Fan out the agent_created SSE event so LiveFeed renders the new row.
+    tenant_id_str = request.headers.get("X-Tenant-ID", "")
+    if tenant_id_str and resp.status_code in (200, 201) and isinstance(result, dict):
+        data = result.get("data", {})
+        if isinstance(data, dict):
+            new_agent_id = str(data.get("agent_id", "")) or None
+            await publish_event(
+                _redis,
+                tenant_id_str,
+                "agent_created",
+                {"agent_id": new_agent_id, "via": "wizard"},
+                agent_id=new_agent_id,
+            )
+    return result
+
+
+@router.get("/agents/wizard/install-snippet/{agent_id}/{provider}", tags=["agents", "wizard"])
+async def wizard_install_snippet(agent_id: str, provider: str, request: Request) -> Any:
+    """Proxy → Registry's per-provider install-snippet builder."""
+    return await trust_proxy(
+        settings.REGISTRY_SERVICE_URL,
+        f"/agents/wizard/install-snippet/{agent_id}/{provider}",
+        request,
+    )
+
+
 # Specific paths /agents/summary + /registry/tools must precede the
 # catch-all /agents/{agent_id} so FastAPI doesn't match "summary" or
 # "tools" as an agent_id.
