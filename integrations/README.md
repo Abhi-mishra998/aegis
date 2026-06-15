@@ -120,15 +120,11 @@ All three packages read from the same set of env vars:
 
 ---
 
-## Fail-open behaviour
+## Fail-closed by default
 
-All three packages are designed to **never crash your agent**. If the Aegis gateway is unreachable or returns an unexpected status:
+All three packages **fail closed** if Aegis is unreachable: tool calls return `deny` with reason `aegis_unreachable_fail_closed` or `aegis_http_<code>`. Allowing unchecked tool calls through because the security plane was down defeats the whole point of the integration — it's the exact failure mode the SDK exists to prevent.
 
-- The tool call is **allowed** (fail-open)
-- A `findings` field of `["aegis_error:<ExceptionType>"]` is attached to the internal decision object
-- Your agent continues uninterrupted
-
-To switch to **fail-closed** (block on network error), set `fail_closed=True` in the constructor (all three packages support this flag).
+This is enforced in `aegis_anthropic/__init__.py:AegisClient.check()` and the equivalent in `aegis_openai` / `aegis_langchain`. Your agent still continues — the loop just sees a denied tool result and reasons over it like any other observation.
 
 ---
 
