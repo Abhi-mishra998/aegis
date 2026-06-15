@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import pool
@@ -43,6 +44,25 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from sdk.common.config import settings
 from sdk.common.db import Base
+
+
+def _purge_appledouble(script_location: str | None) -> None:
+    # macOS tar (without COPYFILE_DISABLE=1) emits AppleDouble files prefixed
+    # with `._` alongside every real file. Alembic walks the versions dir and
+    # tries to load every `*.py` it finds; AppleDouble files have a binary
+    # header with NUL bytes and crash with "source code string cannot contain
+    # null bytes", taking the whole service down on boot.
+    if not script_location:
+        return
+    versions = Path(script_location) / "versions"
+    if not versions.is_dir():
+        return
+    for p in versions.iterdir():
+        if p.name.startswith("._") or p.name == ".DS_Store":
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 def run(
@@ -71,6 +91,7 @@ def run(
     config = context.config
     if config.config_file_name is not None:
         fileConfig(config.config_file_name)
+    _purge_appledouble(config.get_main_option("script_location"))
 
     def run_migrations_offline() -> None:
         context.configure(
