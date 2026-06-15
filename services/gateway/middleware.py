@@ -27,11 +27,13 @@ import time
 import urllib.parse
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 import httpx
 import structlog
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import Counter
 from redis.asyncio import Redis
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -39,6 +41,7 @@ from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.ratelimit import RateLimiter
 from services.decision.schemas import Decision, ExecutionAction
+from services.gateway._helpers import publish_event
 from services.gateway._mw_audit import _AuditMixin
 from services.gateway._mw_auth import _AuthMixin
 from services.gateway._mw_rate_limit import _RateLimitMixin
@@ -164,6 +167,49 @@ _IDEMPOTENCY_TTL_MAP = {
 }
 _IDEMPOTENCY_PREFIX = "acp:idempotency:"
 _GLOBAL_SLA_BUDGET = 2.0  # seconds — caps P99 at ~2s; fail-fast beats retrying into a dead downstream
+
+
+# Sprint 3 — Shadow mode helpers.
+#
+# `would_have_blocked` is the canonical action name written to audit rows
+# when the policy engine returned deny/escalate but the workspace was
+# still inside its 14-day shadow window. The gateway short-circuits the
+# normal deny response, lets the SDK proceed to execute the tool, and
+# records the would-have-blocked event so the operator can review on the
+# Shadow Review page.
+SHADOW_DOWNGRADES_TOTAL = Counter(
+    "acp_shadow_downgrades_total",
+    "Policy deny/escalate decisions downgraded to would_have_blocked under shadow mode",
+    ["tenant_id", "original_action"],
+)
+
+
+def _shadow_mode_active(request: Request) -> bool:
+    """
+    True when the workspace's `shadow_mode_until` value is still in the
+    future. Tolerates string (ISO-8601) and datetime values for the
+    state attribute — the tenant metadata fetch can return either
+    depending on whether the cache deserializes timestamps.
+    """
+    raw = getattr(request.state, "shadow_mode_until", None)
+    if raw is None:
+        return False
+    if isinstance(raw, str):
+        try:
+            # Accept both ``...+00:00`` and ``...Z`` suffixes.
+            normalized = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+            until = datetime.fromisoformat(normalized)
+        except Exception:
+            return False
+    elif isinstance(raw, datetime):
+        until = raw
+    else:
+        return False
+    # Compare in UTC. If the stored value is naive we treat it as UTC by
+    # convention (the migration's server_default uses now() which is
+    # always UTC in our deploys).
+    now = datetime.now(tz=until.tzinfo) if until.tzinfo else datetime.utcnow()
+    return until > now
 
 
 class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixin, BaseHTTPMiddleware):
@@ -1274,6 +1320,94 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             except Exception:
                 logger.exception("shadow_eval_dispatch_failed")
 
+            # Sprint 3 — Shadow Mode pre-check.
+            # If the workspace is inside its 14-day observe-only window AND
+            # the policy returned DENY or ESCALATE (KILL never downgrades —
+            # it represents an active threat being terminated), record a
+            # would_have_blocked audit + SSE event + counter bump, then
+            # mutate decision.action to ALLOW so the deny/escalate block
+            # below simply doesn't fire. The SDK gets a normal allow back
+            # and the customer's production agent traffic is uninterrupted.
+            #
+            # Implementation note: mutating `decision.action` is safe here
+            # because services.decision.schemas.Decision has
+            # ConfigDict(strict=False) — the model permits attribute writes
+            # — and the only downstream readers (emit_graph_event,
+            # _flight_final assignment) use the local `action` variable
+            # which we also update.
+            if (
+                decision.action in (ExecutionAction.DENY, ExecutionAction.ESCALATE)
+                and _shadow_mode_active(request)
+            ):
+                _shadow_orig = (
+                    "escalate" if decision.action == ExecutionAction.ESCALATE else "deny"
+                )
+                try:
+                    SHADOW_DOWNGRADES_TOTAL.labels(
+                        tenant_id=t_id_str, original_action=_shadow_orig,
+                    ).inc()
+                except Exception:
+                    pass
+                _decision_findings = list(getattr(decision, "findings", []) or [])
+                _decision_reasons  = list(reasons or [])
+                _decision_meta_for_shadow = (
+                    decision.metadata if isinstance(decision.metadata, dict) else {}
+                )
+                _policy_id_for_shadow = str(
+                    _decision_meta_for_shadow.get("policy_id") or
+                    _decision_meta_for_shadow.get("policy_reason") or ""
+                ) or None
+                try:
+                    await self._log_audit(
+                        t_id_str, agent_id, "execute_tool", tool_name,
+                        "would_have_blocked",
+                        (
+                            f"Shadow mode: would have {_shadow_orig}d — "
+                            f"{', '.join(_decision_reasons[:2]) if _decision_reasons else 'policy block'}"
+                        ),
+                        request_id,
+                        {
+                            "status":          200,
+                            "risk_score":      risk_score,
+                            "original_action": _shadow_orig,
+                            "reasons":         _decision_reasons,
+                            "findings":        _decision_findings,
+                            "policy_id":       _policy_id_for_shadow,
+                        },
+                    )
+                except Exception as _audit_exc:
+                    logger.warning(
+                        "shadow_downgrade_audit_failed",
+                        error=str(_audit_exc), request_id=request_id,
+                    )
+                asyncio.create_task(_safe_bg(publish_event(
+                    self.redis, t_id_str, "would_have_blocked",
+                    {
+                        "agent_id":        str(agent_id),
+                        "tool":            tool_name,
+                        "original_action": _shadow_orig,
+                        "reasons":         _decision_reasons[:5],
+                        "findings":        _decision_findings[:5],
+                        "request_id":      request_id,
+                        "risk_score":      risk_score,
+                        "policy_id":       _policy_id_for_shadow,
+                    },
+                    agent_id=str(agent_id),
+                )))
+                request.state.shadow_downgraded = True
+                request.state.shadow_original_action = _shadow_orig
+                try:
+                    decision.action = ExecutionAction.ALLOW
+                except Exception:
+                    # Best-effort — if the Pydantic model has been frozen
+                    # by a future change, fall back to the deny path.
+                    logger.warning(
+                        "shadow_downgrade_decision_mutate_failed",
+                        request_id=request_id,
+                    )
+                else:
+                    action = "allow"
+
             if decision.action in (ExecutionAction.KILL, ExecutionAction.DENY, ExecutionAction.ESCALATE):
                 if decision.action == ExecutionAction.KILL:
                     await self._kill_token(request)
@@ -2146,6 +2280,13 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         )
         request.state.tier = tier
         request.state.rpm_limit = rpm_limit
+        # Sprint 3 — Shadow mode. ISO-8601 timestamp the workspace exits
+        # observe-only mode. The downgrade hook (above the deny/escalate
+        # response build) checks this against now() and, when the window
+        # is open, records `would_have_blocked` audit + SSE events
+        # instead of actually blocking the agent's tool call. NULL on
+        # legacy tenants (=> never in shadow mode).
+        request.state.shadow_mode_until = tenant_meta.get("shadow_mode_until")
         # Sprint 3.2 — per-tenant quota fields stashed for the quota
         # check below + the /tenant/quota endpoint.
         request.state.quota_limits = {

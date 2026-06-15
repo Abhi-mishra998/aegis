@@ -40,8 +40,11 @@ const operationsNav = [
   { path: '/agent-topology',  label: 'Agent Topology',   icon: Share2      },
   // Sprint 5 — Attack Evaluation Suite
   { path: '/evaluation',      label: 'Evaluation',       icon: Beaker      },
-  // Sprint 6 — Shadow Mode
+  // Sprint 6 — Shadow Mode (legacy analytics)
   { path: '/shadow-mode',     label: 'Shadow Mode',      icon: EyeOff      },
+  // Sprint 3 — Shadow Mode Review (owner-facing review feed for the
+  // 14-day default observe-only window every new workspace starts in).
+  { path: '/shadow-review',   label: 'Shadow Review',    icon: ShieldCheck },
   // Sprint 7 — Policy Playground (replay history under a draft policy)
   { path: '/policy-playground', label: 'Policy Replay',  icon: Beaker      },
   { path: '/identity-graph',  label: 'Identity Graph',   icon: Network,    hint: 'G G' },

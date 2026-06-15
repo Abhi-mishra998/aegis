@@ -271,6 +271,13 @@ export const api = {
   getSSOProviders: () => request("/auth/sso/providers").catch(() => ({ providers: [] })),
 };
 
+// Sprint 3 — Workspace (shadow mode + future workspace settings).
+export const workspaceService = {
+  me: () => request("/workspace/me"),
+  exitShadowMode: () =>
+    request("/workspace/exit-shadow-mode", { method: "POST" }),
+};
+
 // Helper to append agent_id to existing URLs.
 const _withAgent = (url, agentId) => {
   if (!agentId) return url;
@@ -283,6 +290,14 @@ export const auditService = {
     request(_withAgent(`/audit/logs?limit=${limit}&offset=${offset}`, agentId)),
   getAgentLogs: (agentId, limit = 15) => request(`/audit/logs?agent_id=${agentId}&limit=${limit}`),
   getKillSwitchHistory: (limit = 20) => request(`/audit/logs?action=kill&limit=${limit}`),
+  // Sprint 3 — Shadow Mode review feed.
+  getShadowEvents: (limit = 50, offset = 0, agentId) =>
+    request(
+      _withAgent(
+        `/audit/logs?action=would_have_blocked&limit=${limit}&offset=${offset}`,
+        agentId,
+      ),
+    ),
   searchLogs: (params) => {
     // AWS WAFv2 SQLi managed rule blocks any JSON body with `"limit":<n>` (it
     // reads `LIMIT N` as SQL injection). We route the same filters through
