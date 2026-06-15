@@ -511,6 +511,9 @@ from services.gateway.routers.remediation import (
 from services.gateway.routers.storylines import (
     router as _storylines_router,  # noqa: E402
 )
+from services.gateway.routers.threatintel import (
+    router as _threatintel_router,  # noqa: E402
+)
 from services.gateway.routers.stripe_webhook import (
     router as _stripe_router,  # noqa: E402
 )
@@ -537,6 +540,7 @@ app.include_router(_incidents_router)
 app.include_router(_storylines_router)
 app.include_router(_iag_router)
 app.include_router(_remediation_router)
+app.include_router(_threatintel_router)
 app.include_router(_billing_router)
 app.include_router(_compliance_router)
 app.include_router(_transparency_router)
