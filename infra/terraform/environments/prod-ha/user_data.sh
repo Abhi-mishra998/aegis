@@ -43,6 +43,10 @@ if [[ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]]; then
 fi
 
 # ── 2. Fetch the latest bundle ─────────────────────────────────────────
+# Bundle is built by scripts/ops/build_release_bundle.sh — it ensures the
+# tarball contains the root Dockerfile, infra/docker-compose*.yml, and
+# pre-built ui/dist/ (the three pieces a partial sprint-delta misses
+# and that, when absent, hard-cycle the ASG).
 mkdir -p /opt/aegis
 aws s3 cp \
     "s3://acp-backups-prodha-628478946931/releases/current.tar.gz" \
