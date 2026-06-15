@@ -504,6 +504,9 @@ from services.gateway.routers.policy import router as _policy_router  # noqa: E4
 from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
 from services.gateway.routers.risk import router as _risk_router  # noqa: E402
 from services.gateway.routers.sso import router as _sso_router  # noqa: E402
+from services.gateway.routers.storylines import (
+    router as _storylines_router,  # noqa: E402
+)
 from services.gateway.routers.stripe_webhook import (
     router as _stripe_router,  # noqa: E402
 )
@@ -527,6 +530,7 @@ app.include_router(_dashboard_router)
 app.include_router(_auto_response_router)
 app.include_router(_audit_router)
 app.include_router(_incidents_router)
+app.include_router(_storylines_router)
 app.include_router(_billing_router)
 app.include_router(_compliance_router)
 app.include_router(_transparency_router)
