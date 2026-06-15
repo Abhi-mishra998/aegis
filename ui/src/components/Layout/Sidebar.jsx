@@ -19,18 +19,22 @@ import AgentScopePicker from './AgentScopePicker'
 // `hint` is the keyboard shortcut surfaced in the sidebar — kept in sync with
 // the bindings registered in App.jsx:<GlobalShortcuts>.
 const primaryNav = [
-  { path: '/live-demo',       label: 'Live Demo',       icon: Sparkles,     hint: 'G X' },
-  { path: '/fleet',           label: 'Fleet',           icon: Gauge,        hint: 'G H' },
-  { path: '/flight-recorder', label: 'Flight Recorder', icon: Film,         hint: 'G F' },
-  { path: '/policy-builder',  label: 'Policies',        icon: GitMerge,     hint: 'G P' },
-  { path: '/audit-logs',      label: 'Audit Trail',     icon: BarChart2,    hint: 'G A' },
+  // Sprint 4 — Dashboard is the landing tile every owner sees first.
+  { path: '/dashboard',       label: 'Dashboard',       icon: Gauge,        hint: 'G D' },
+  { path: '/agents',          label: 'Agents',          icon: Users,        hint: 'G A' },
   { path: '/incidents',       label: 'Incidents',       icon: AlertTriangle,hint: 'G I' },
+  { path: '/live-feed',       label: 'Live Feed',       icon: Radio,        hint: 'G L' },
+  { path: '/policy-builder',  label: 'Policies',        icon: GitMerge,     hint: 'G P' },
+  { path: '/shadow-review',   label: 'Shadow Review',   icon: ShieldCheck,  hint: 'G W' },
   { path: '/settings',        label: 'Settings',        icon: SettingsIcon, hint: 'G S' },
 ]
 
 // Secondary nav — power-user operations, collapsed by default.
 const operationsNav = [
-  { path: '/agents',          label: 'Agents',           icon: Users       },
+  // Sprint 4 — Flight Recorder demoted from primary to operations.
+  { path: '/flight-recorder', label: 'Flight Recorder',  icon: Film,        hint: 'G F' },
+  { path: '/audit-logs',      label: 'Audit Trail',      icon: BarChart2   },
+  { path: '/fleet',           label: 'Fleet',            icon: Gauge       },
   // Sprint 3 — Decision + Session Explorer
   { path: '/decision-explorer', label: 'Decision Explorer', icon: Workflow,        hint: 'G D' },
   { path: '/session-explorer',  label: 'Session Explorer',  icon: MessagesSquare,  hint: 'G E' },

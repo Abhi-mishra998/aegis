@@ -23,8 +23,8 @@ Translation layer between PRODUCT_PLAN.md (v2, locked) and ground-level work. On
 |---|---|---|---|---|---|
 | 1 | 1 | Clerk self-serve signup + shadow mode + Role enum | ✅ DONE | commit 6b5b3a7 / ASG 21cd7092 | `/webhooks/clerk` 400 missing-svix; `/system/health` 12/12 |
 | 2 | 2 | Agent Onboarding Wizard (3-step, no LLM key) | ✅ DONE | commit 8c21e16 / ASG 29475f7d | `/agents/wizard` 401 (route live); `/onboarding` 200 (Vite dist served); 105/105 tests; 12/12 healthy p95 38ms |
-| 3 | 3.1 | Shadow Mode review surface + would_have_blocked middleware | 🚧 IN-FLIGHT | committed locally | 117/117 tests; deploy pending |
-| 4 | 3.2 | Dashboard landing (Agent Inventory hero) | ⏳ | — | — |
+| 3 | 3.1 | Shadow Mode review surface + would_have_blocked middleware | ✅ DONE | commit e89a33b + 96c873c / ASG 4ca3b61d + 1e742e76 | `/workspace/me` 401 JSON; `/workspace/exit-shadow-mode` 401 JSON; nginx allow-list fixed; 117/117 tests; 12/12 healthy p95 40ms |
+| 4 | 3.2 | Dashboard landing (Agent Inventory hero) | 🚧 IN-FLIGHT | committed locally | 124/124 tests; deploy pending |
 | 5 | 3.4 | Incidents enriched (blast radius + remediation + forensics tabs) | ⏳ | — | — |
 | 6 | 3 cleanup | UI consolidation: 49→15 pages, sidebar restructure | ⏳ | — | — |
 | 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | ⏳ | — | — |

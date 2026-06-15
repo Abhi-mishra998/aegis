@@ -271,11 +271,12 @@ export const api = {
   getSSOProviders: () => request("/auth/sso/providers").catch(() => ({ providers: [] })),
 };
 
-// Sprint 3 — Workspace (shadow mode + future workspace settings).
+// Sprint 3-4 — Workspace surface (shadow mode + inventory + future settings).
 export const workspaceService = {
   me: () => request("/workspace/me"),
   exitShadowMode: () =>
     request("/workspace/exit-shadow-mode", { method: "POST" }),
+  inventory: () => request("/workspace/inventory"),
 };
 
 // Helper to append agent_id to existing URLs.
