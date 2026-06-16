@@ -109,10 +109,14 @@ for path in './Dockerfile' './infra/docker-compose.yml' './ui/Dockerfile' './ui/
 done
 echo "→ Sanity check passed (root Dockerfile + compose + ui/dist present)"
 
-# Post-tar safety: confirm no .env snuck in. Sprint 10 extends the
-# original infra/.env check to repo-root .env, .env.local, ui/.env,
-# ui/.env.local, and .env.aws* — every secret-bearing shape.
-LEAKED_ENV=$(tar -tzf "$OUT" | grep -E '\.env(\.|$)' | grep -E '^(\./)?(\.env|infra/\.env|ui/\.env|\.env\.aws)' || true)
+# Post-tar safety: confirm no SECRET-bearing .env snuck in. We deliberately
+# allow .env.example (public template) and .env.production (Vite override
+# that only carries VITE_GATEWAY_URL). The forbidden shapes are the
+# secret-bearing ones: bare .env, .env.local, infra/.env, infra/.env.local,
+# ui/.env, ui/.env.local, .env.aws*.
+LEAKED_ENV=$(tar -tzf "$OUT" \
+    | grep -E '^(\./)?(\.env(\.local|\.aws[A-Za-z0-9.]*)?|infra/\.env(\.local)?|ui/\.env(\.local)?)$' \
+    || true)
 if [[ -n "$LEAKED_ENV" ]]; then
     echo "FAIL — bundle contains secret-bearing env files; aborting upload" >&2
     echo "$LEAKED_ENV" >&2
