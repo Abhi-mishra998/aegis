@@ -56,6 +56,27 @@ const isSessionValid = () => {
   return !!tenantId && expiry > Date.now();
 };
 
+// Identity endpoints whose response IS the authoritative answer about
+// "who am I / what workspace am I in" — for these, a tenant_id that
+// differs from the cached localStorage value means the cache is stale
+// (Clerk org switch, multi-tenant user, post-provision refresh), NOT a
+// cross-tenant leak. We reconcile localStorage from the response.
+// Every OTHER endpoint scoped to a tenant is treated as a real leak
+// check: if the gateway accidentally returns another tenant's data, kill
+// the session.
+const _IDENTITY_PATHS = new Set([
+  "/auth/me",
+  "/workspace/me",
+]);
+
+const _isIdentityPath = (url) => {
+  if (typeof url !== "string") return false;
+  // Strip query string + leading host (request() accepts either /path or
+  // a full URL with overrideBase).
+  const path = url.split("?")[0].replace(/^https?:\/\/[^/]+/, "");
+  return _IDENTITY_PATHS.has(path);
+};
+
 // Shared status → JSON pipeline. Used by request() AND by the
 // post-Clerk-refresh retry below so a fresh-token replay surfaces the
 // success body (or downstream 4xx/5xx) through the exact same handling
@@ -98,9 +119,23 @@ const _handleResponse = async (res, url) => {
   const sessionTenant = localStorage.getItem("tenant_id");
   const responseTenant = json?.data?.tenant_id ?? json?.tenant_id;
   if (sessionTenant && responseTenant && responseTenant !== sessionTenant) {
-    console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
-    emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
-    throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
+    if (_isIdentityPath(url)) {
+      // The response is authoritative for our own identity. Reconcile
+      // the cache silently — this happens whenever a user's Clerk
+      // session swaps active orgs (multi-tenant users), or right after
+      // /auth/clerk/provision rewrites User.tenant_id to match the
+      // currently-active workspace. Killing the session here is the
+      // single biggest source of "Authentication boundary violated"
+      // overlay flashes during normal usage.
+      console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", {
+        sessionTenant, responseTenant, url,
+      });
+      try { localStorage.setItem("tenant_id", responseTenant); } catch (_) {}
+    } else {
+      console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
+      emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
+      throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
+    }
   }
 
   return json;
