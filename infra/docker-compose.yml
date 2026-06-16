@@ -220,6 +220,12 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://registry_user:${REGISTRY_DB_PASSWORD:-registry_prod_pwd}@pgbouncer:6432/acp_registry
       - AUDIT_SERVICE_URL=http://audit:8000
+      # Sprint 2 wizard mints acp_... keys via the API service. Without
+      # this var the registry container falls back to the localhost:8005
+      # default from sdk/common/config.py and the connect attempt dies,
+      # surfacing as a 500 on POST /agents/wizard. Same hostname the
+      # gateway uses below.
+      - API_SERVICE_URL=http://api:8000
     ports:
       - "127.0.0.1:8001:8000"
     command: >
