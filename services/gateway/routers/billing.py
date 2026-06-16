@@ -163,8 +163,13 @@ async def billing_checkout_session(request: Request) -> Any:
         )
 
     # Customer email — pull from the JWT-validated user state. Stripe
-    # uses this to pre-fill the checkout form.
-    customer_email = getattr(request.state, "actor", "") or ""
+    # uses this to pre-fill the checkout form. Legacy HS256 JWTs carry
+    # the user_id UUID in `sub`, which is what request.state.actor
+    # resolves to — that's NOT an email and Stripe rejects it with
+    # `email_invalid`. Only pre-fill when the actor actually looks like
+    # an email address (the case for Clerk RS256 JWTs).
+    customer_email_raw = getattr(request.state, "actor", "") or ""
+    customer_email = customer_email_raw if "@" in customer_email_raw else ""
 
     form_data: dict[str, Any] = {
         "mode":                                  "subscription",
