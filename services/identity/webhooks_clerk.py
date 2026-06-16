@@ -276,9 +276,16 @@ async def _handle_organization_created(
     # claims. Failures here are NON-FATAL — the Redis mapping above is
     # the gateway's fallback path, so a Clerk API outage cannot block
     # provisioning.
+    #
+    # `aegis_org_id` MUST equal `aegis_tenant_id` to satisfy the SaaS
+    # strict invariant (`ck_users_org_tenant_match`). The Organization PK
+    # (`org.id`) is a separate UUID used only as an internal FK target;
+    # it must NEVER leak into a JWT claim, or the gateway's write-path
+    # invariant check 403s every Clerk user with
+    # "Org consistency violation during gateway write path".
     await _write_aegis_metadata(
         clerk_org_id=clerk_org_id,
-        aegis_org_id=str(org.id),
+        aegis_org_id=str(tenant.tenant_id),
         aegis_tenant_id=str(tenant.tenant_id),
     )
 
