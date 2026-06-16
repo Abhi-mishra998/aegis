@@ -145,9 +145,61 @@ async def proxy_agent_token(request: Request, response: Response) -> Any:
 
 
 @router.post("/auth/logout", tags=["auth"])
-async def logout(response: Response) -> dict[str, Any]:
-    """Clear session cookies and terminate gateway session."""
+async def logout(request: Request, response: Response) -> dict[str, Any]:
+    """Terminate the gateway session.
+
+    Three actions, in order:
+      1. Revoke the current JWT server-side so a stolen token can't ride a
+         tab the user thought they signed out of. We mark the sha256(token)
+         in Redis with a 24h TTL — the gateway's auth path checks this on
+         every subsequent request via the existing kill-token plumbing
+         (REDIS_REVOKE_PREFIX) and also drops the in-process LRU entry
+         via the revocation pub/sub channel.
+      2. Drop the in-process LRU cache for that token on this worker so
+         the very next request doesn't accidentally rehydrate from cache.
+      3. Clear the acp_token cookie. (Always run, even if revocation
+         fails — the user's intent is clear and we shouldn't strand them
+         on a Redis hiccup.)
+    """
     is_secure = settings.ENVIRONMENT == "production"
+
+    # 1. Best-effort server-side revocation. We capture the token from the
+    #    Authorization header OR the cookie — whichever is in use for the
+    #    current request.
+    token: str = ""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.cookies.get("acp_token", "") or ""
+
+    if token:
+        try:
+            import hashlib
+            from sdk.common.redis import get_redis_client
+            from services.gateway.auth import (
+                REDIS_REVOKE_PREFIX,
+                TOKEN_REVOCATIONS_CHANNEL,
+                invalidate_local_token,
+            )
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            redis_client = get_redis_client(settings.REDIS_URL, decode_responses=False)
+            await redis_client.setex(
+                f"{REDIS_REVOKE_PREFIX}{token_hash}", 86400, "logout",
+            )
+            # Best-effort fan-out so peer workers drop their LRU entries.
+            try:
+                await redis_client.publish(TOKEN_REVOCATIONS_CHANNEL, token_hash)
+            except Exception:
+                pass
+            invalidate_local_token(token)
+        except Exception as exc:  # noqa: BLE001
+            # Logout must never 5xx on the user — log and move on.
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "logout_revoke_failed", error=str(exc),
+            )
+
     response.delete_cookie("acp_token", secure=is_secure, httponly=True, samesite="strict")
     return {"success": True, "message": "Cleared session cookies."}
 

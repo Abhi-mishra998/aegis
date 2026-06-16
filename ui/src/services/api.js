@@ -1,6 +1,6 @@
 import { emitAuthFailure } from "../lib/authEvents";
 import { parseRule, parseRuleList } from "../lib/schemas";
-import { attachClerkAuth, hasClerkAuth } from "./clerkAuth";
+import { attachClerkAuth, getClerkToken, hasClerkAuth } from "./clerkAuth";
 
 // In dev: empty string → relative URLs → Vite proxy routes to :8000 (same-origin, no CORS/cookie issues).
 // In production (Docker/k8s): set VITE_GATEWAY_URL=https://your-gateway or leave empty for nginx proxy.
@@ -56,6 +56,56 @@ const isSessionValid = () => {
   return !!tenantId && expiry > Date.now();
 };
 
+// Shared status → JSON pipeline. Used by request() AND by the
+// post-Clerk-refresh retry below so a fresh-token replay surfaces the
+// success body (or downstream 4xx/5xx) through the exact same handling
+// the caller already expects.
+const _handleResponse = async (res, url) => {
+  if (res.status === 429) {
+    const txt = await res.text().catch(() => "");
+    let msg = "Too many requests — please wait a moment and try again.";
+    try { const p = JSON.parse(txt); msg = p.detail || p.error || msg; } catch {}
+    console.warn(`RATE_LIMITED [429] ${url}:`, msg);
+    const rlErr = new Error(msg);
+    rlErr._noRetry = true;
+    throw rlErr;
+  }
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    let parsedError = errorText;
+    try {
+      const parsed = JSON.parse(errorText);
+      parsedError = parsed.error || parsed.detail || parsed.message || errorText;
+    } catch (e) {
+      // Non-JSON body. If it looks like an HTML error page (nginx default,
+      // load-balancer block, WAF rejection), collapse it to a short string so
+      // downstream renders ("Decision: <HTML>…") don't leak raw markup.
+      if (typeof errorText === "string" && /^\s*<(!doctype|html|head|body|center)/i.test(errorText)) {
+        parsedError = `Upstream returned HTML ${res.status}`;
+      }
+    }
+    console.error(`API_ERROR [${res.status}] ${url}:`, parsedError);
+    const apiErr = new Error(parsedError || "API Error");
+    apiErr._status = res.status;
+    if (res.status >= 400 && res.status < 500) apiErr._noRetry = true;
+    throw apiErr;
+  }
+
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : {};
+
+  const sessionTenant = localStorage.getItem("tenant_id");
+  const responseTenant = json?.data?.tenant_id ?? json?.tenant_id;
+  if (sessionTenant && responseTenant && responseTenant !== sessionTenant) {
+    console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
+    emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
+    throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
+  }
+
+  return json;
+};
+
 const request = async (url, options = {}, retry = 1) => {
   try {
     const tenantId = localStorage.getItem("tenant_id");
@@ -97,62 +147,46 @@ const request = async (url, options = {}, retry = 1) => {
     });
 
     if (res.status === 401) {
+      // Clerk session race: the Clerk JWT lifetime is 60s, and the periodic
+      // refresh in ClerkAuthBridge runs every 10s. A tab waking from
+      // background or a request landing right at the 60s boundary can ship
+      // an expired Bearer that arrives a second before the next refresh
+      // tick. Before declaring the session dead and bouncing the user to
+      // /login, ask Clerk for a fresh token and replay the request ONCE.
+      // If that still 401s the session really is dead.
+      const isClerkSession = hasClerkAuth();
+      if (isClerkSession && !options._authRetried) {
+        try {
+          const freshToken = await getClerkToken();
+          if (freshToken) {
+            const retryHeaders = {
+              ...headers,
+              Authorization: `Bearer ${freshToken}`,
+            };
+            const retryRes = await fetch(finalUrl, {
+              ...options,
+              headers: retryHeaders,
+              credentials: "include",
+            });
+            if (retryRes.status !== 401) {
+              return await _handleResponse(retryRes, url);
+            }
+          }
+        } catch (refreshErr) {
+          console.warn("Clerk refresh-on-401 failed", refreshErr);
+        }
+      }
       console.error(`AUTHENTICATION_REQUIRED [401] ${url}`);
       clearSessionMetadata();
       if (window.location.pathname !== "/login") {
         emitAuthFailure({ reason: "unauthorized", url, statusCode: 401 });
       }
-      // Throw a special sentinel so the catch block knows NOT to retry
       const authErr = new Error("UNAUTHORIZED: Session expired or credentials invalid.");
       authErr._noRetry = true;
       throw authErr;
     }
 
-    if (res.status === 429) {
-      const txt = await res.text().catch(() => "");
-      let msg = "Too many requests — please wait a moment and try again.";
-      try { const p = JSON.parse(txt); msg = p.detail || p.error || msg; } catch {}
-      console.warn(`RATE_LIMITED [429] ${url}:`, msg);
-      const rlErr = new Error(msg);
-      rlErr._noRetry = true;
-      throw rlErr;
-    }
-
-    if (!res.ok) {
-      const errorText = await res.text();
-      let parsedError = errorText;
-      try {
-        const parsed = JSON.parse(errorText);
-        parsedError = parsed.error || parsed.detail || parsed.message || errorText;
-      } catch (e) {
-        // Non-JSON body. If it looks like an HTML error page (nginx default,
-        // load-balancer block, WAF rejection), collapse it to a short string so
-        // downstream renders ("Decision: <HTML>…") don't leak raw markup.
-        if (typeof errorText === "string" && /^\s*<(!doctype|html|head|body|center)/i.test(errorText)) {
-          parsedError = `Upstream returned HTML ${res.status}`;
-        }
-      }
-      console.error(`API_ERROR [${res.status}] ${url}:`, parsedError);
-      const apiErr = new Error(parsedError || "API Error");
-      apiErr._status = res.status;
-      // 4xx client errors are not retryable (the request was wrong, not transient)
-      if (res.status >= 400 && res.status < 500) apiErr._noRetry = true;
-      throw apiErr;
-    }
-
-    const text = await res.text();
-    const json = text ? JSON.parse(text) : {};
-
-    // Multi-Tenant Isolation: reject responses that carry a different tenant_id
-    const sessionTenant = localStorage.getItem("tenant_id");
-    const responseTenant = json?.data?.tenant_id ?? json?.tenant_id;
-    if (sessionTenant && responseTenant && responseTenant !== sessionTenant) {
-      console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
-      emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
-      throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
-    }
-
-    return json;
+    return await _handleResponse(res, url);
   } catch (err) {
     if (err.name === "TypeError" && err.message === "Failed to fetch") {
       console.error(`NETWORK_ERROR: Cannot reach ${API_BASE}. Check backend services.`);

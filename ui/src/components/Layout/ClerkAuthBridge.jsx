@@ -3,6 +3,7 @@ import { useUser, useAuth as useClerkAuth, useOrganization } from '@clerk/react'
 import { useAuth as useAegisAuth } from '../../hooks/useAuth';
 import { setSessionMetadata, clearSessionMetadata } from '../../services/api';
 import { setClerkTokenGetter } from '../../services/clerkAuth';
+import { emitAuthFailure } from '../../lib/authEvents';
 
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || '';
 
@@ -53,6 +54,13 @@ function decodeJwtPayload(token) {
   }
 }
 
+// Consecutive refresh failures that we tolerate before raising a hard
+// auth_failure event. Five * 10s poll interval = ~50s of silent retry
+// before the user sees the SOC incident overlay — enough to ride out a
+// brief Clerk hiccup, short enough that a permanently-broken session
+// surfaces fast.
+const REFRESH_FAILURE_BUDGET = 5;
+
 /**
  * ClerkAuthBridge — mirrors Clerk's session state into the legacy
  * AuthContext + localStorage so the rest of the app (ProtectedRoute,
@@ -77,12 +85,30 @@ export default function ClerkAuthBridge() {
   const { organization, membership, isLoaded: orgLoaded } = useOrganization();
   const { updateAuth } = useAegisAuth();
 
+  // Stable ref for the latest getToken. Clerk's hook returns a NEW
+  // function reference on most re-renders; putting getToken directly into
+  // the dependency arrays of the primary AND refresh effects below caused
+  // each one to tear down + re-arm on every render. That made the
+  // primary IIFE fire `/auth/clerk/provision` repeatedly and the refresh
+  // interval never get to tick.
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
+
+  // tenant_id we last mirrored — used to skip provision on benign
+  // re-renders where the organization/membership refs churn but nothing
+  // about the signed-in identity actually changed.
+  const lastMirroredRef = useRef({
+    clerkUserId: null,
+    clerkOrgId:  null,
+  });
+
   useEffect(() => {
     if (!userLoaded || !orgLoaded) return;
 
     if (!isSignedIn) {
       setClerkTokenGetter(null);
       clearSessionMetadata();
+      lastMirroredRef.current = { clerkUserId: null, clerkOrgId: null };
       updateAuth({
         isAuthenticated: false,
         user: null,
@@ -99,15 +125,34 @@ export default function ClerkAuthBridge() {
     // session token — the gateway resolves the rest via the org→tenant
     // mapping the webhook receiver caches in Redis.
     const fetchAegisToken = async () => {
+      const get = getTokenRef.current;
       try {
-        const token = await getToken({ template: 'aegis' });
+        const token = await get({ template: 'aegis' });
         if (token) return token;
       } catch (err) {
         // Template missing — fall through to default token.
       }
-      return getToken();
+      return get();
     };
     setClerkTokenGetter(fetchAegisToken);
+
+    // Skip the heavy provision if we have already mirrored this exact
+    // (Clerk user, Clerk org) tuple in this tab. The clerk_user_id +
+    // org_id from the JWT are the identity that matters; downstream
+    // identity churn (membership permission shuffle, org name edit)
+    // doesn't require a re-provision.
+    const currentUserId = user?.id || null;
+    const currentOrgId  = organization?.id || null;
+    const alreadyMirrored =
+      lastMirroredRef.current.clerkUserId === currentUserId &&
+      lastMirroredRef.current.clerkOrgId  === currentOrgId &&
+      Boolean(localStorage.getItem('tenant_id'));
+
+    if (alreadyMirrored) {
+      // The refresh effect below will handle JWT rotation; nothing to
+      // do here.
+      return;
+    }
 
     let cancelled = false;
 
@@ -140,11 +185,8 @@ export default function ClerkAuthBridge() {
       // we mark the session live; the endpoint is idempotent so a
       // late-arriving webhook is harmless.
       //
-      // Called on EVERY sign-in (not just when tenantId is missing) — the
-      // gateway side of this endpoint also sets the acp_token httpOnly
-      // cookie that the SSE EventSource needs. Without that cookie the
-      // browser shows "Syncing" forever because EventSource can't attach
-      // the Authorization header.
+      // Also sets the acp_token httpOnly cookie that the SSE EventSource
+      // needs (browser EventSource can't attach the Authorization header).
       if (token) {
         const provisioned = await clerkProvision(token);
         if (cancelled) return;
@@ -173,51 +215,48 @@ export default function ClerkAuthBridge() {
         role,
         token: null,
       });
+      lastMirroredRef.current = {
+        clerkUserId: currentUserId,
+        clerkOrgId:  currentOrgId,
+      };
     })();
 
     return () => {
       cancelled = true;
     };
+    // Deps: only the booleans + identifying tuples that actually change
+    // what we'd write. getToken is intentionally NOT here — its ref churns
+    // on every render and the latest function lives on getTokenRef.
   }, [
     userLoaded,
     orgLoaded,
     isSignedIn,
-    user,
-    organization,
-    membership,
-    getToken,
+    user?.id,
+    organization?.id,
+    membership?.role,
+    user?.primaryEmailAddress?.emailAddress,
     updateAuth,
   ]);
-
-  // Stable ref for the latest getToken — Clerk's hook returns a NEW
-  // function reference on most re-renders, which would cause every render
-  // to tear down the refresh interval below and re-arm it. The result was
-  // that no refresh ever fired between the 5s kick and the next re-render,
-  // so the cookie's Clerk JWT actually expired (60s TTL) → SSE 401 with
-  // "Clerk token has expired" → user saw session-expired overlay.
-  const getTokenRef = useRef(getToken);
-  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
 
   // Periodic refresh — Clerk's default JWT lifetime is 60 seconds. Without
   // this loop the cookie expires, SSE handshake 401s, App.jsx fires
   // session_expired, and the IncidentOverlay pops up.
   //
-  // Deps: ONLY the auth-presence booleans. With getToken behind a ref
-  // the effect arms exactly once per sign-in and tears down exactly once
-  // on sign-out — no per-render restarts.
-  //
   // Strategy: poll every 10 seconds. Only refresh the cookie when the
   // current JWT is < 25 seconds from expiry. That gives us:
   //   - At most one Clerk getToken() call per 30 seconds of session
-  //     (well under dev-mode rate limits — what was blowing up the
-  //     Lighthouse/page LCP)
   //   - Cookie always refreshed at least 25s before expiry, so the
   //     SSE never sees an expired token at handshake.
+  //
+  // Failure handling: count consecutive failures and after
+  // REFRESH_FAILURE_BUDGET in a row, fire an auth_failure event so the
+  // user sees the SOC overlay instead of an indefinitely-frozen session.
   useEffect(() => {
     if (!userLoaded || !orgLoaded || !isSignedIn) return;
 
     let cancelled = false;
     let inFlight = false;
+    let consecutiveFailures = 0;
     const POLL_INTERVAL_MS    = 10_000;
     const REFRESH_AHEAD_MS    = 25_000;
 
@@ -228,12 +267,22 @@ export default function ClerkAuthBridge() {
         const fetchToken = getTokenRef.current;
         const token = await fetchToken({ template: 'aegis' })
           .catch(() => fetchToken());
-        if (cancelled || !token) return;
+        if (cancelled || !token) {
+          if (!cancelled && !token) {
+            consecutiveFailures += 1;
+          }
+          return;
+        }
         // Re-call /auth/clerk/provision so the gateway re-issues the
         // acp_token cookie with the freshly-refreshed Clerk JWT.
         // Idempotent.
-        await clerkProvision(token);
+        const provisioned = await clerkProvision(token);
         if (cancelled) return;
+        if (!provisioned) {
+          consecutiveFailures += 1;
+        } else {
+          consecutiveFailures = 0;
+        }
         // Update the session-timer's expiry so App.jsx's 5s poll
         // doesn't fire session_expired.
         const payload = decodeJwtPayload(token);
@@ -250,9 +299,20 @@ export default function ClerkAuthBridge() {
           role,
         });
       } catch (err) {
-        // Silent — Clerk's own session manager retries.
+        consecutiveFailures += 1;
+        console.warn('ClerkAuthBridge: refresh tick failed', err);
       } finally {
         inFlight = false;
+        if (consecutiveFailures >= REFRESH_FAILURE_BUDGET && !cancelled) {
+          // Stop the loop and surface the failure. The incident handler
+          // in App.jsx will clear localStorage + bounce to /login.
+          cancelled = true;
+          emitAuthFailure({
+            reason: 'refresh_failed',
+            url: '/auth/clerk/provision',
+            statusCode: null,
+          });
+        }
       }
     };
 
