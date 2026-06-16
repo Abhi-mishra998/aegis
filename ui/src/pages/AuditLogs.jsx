@@ -15,6 +15,24 @@ import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 
+/* ── Display helpers ───────────────────────────────────────────────────────── */
+// Backend writes the literal string "unknown" / "unknown_tool" / null-UUID
+// when a request arrived too early in the pipeline to attribute (pre-auth
+// 401s, malformed bodies, etc.). Surface these as an em-dash so the audit
+// table doesn't look noisy with the same word repeating in every row.
+const NULL_UUID = '00000000-0000-0000-0000-000000000000'
+const SENTINEL_PLACEHOLDERS = new Set(['unknown', 'unknown_tool', '', NULL_UUID])
+
+function isPlaceholder(v) {
+  if (v == null) return true
+  const s = String(v).toLowerCase().trim()
+  return SENTINEL_PLACEHOLDERS.has(s)
+}
+
+function display(v, fallback = '—') {
+  return isPlaceholder(v) ? fallback : v
+}
+
 /* ── Decision badge ────────────────────────────────────────────────────────── */
 const DECISION_STYLES = {
   allow:    'text-green-400  bg-green-500/10  border-green-500/20',
@@ -26,7 +44,14 @@ const DECISION_STYLES = {
 }
 
 function DecisionBadge({ decision }) {
-  const d = (decision || 'unknown').toLowerCase()
+  if (isPlaceholder(decision)) {
+    return (
+      <span className="status-badge text-neutral-500 bg-white/[0.03] border-white/[0.06]">
+        —
+      </span>
+    )
+  }
+  const d = String(decision).toLowerCase()
   return (
     <span className={`status-badge ${DECISION_STYLES[d] ?? 'text-neutral-400 bg-white/5 border-white/10'}`}>
       {d.toUpperCase()}
@@ -789,11 +814,13 @@ export default function AuditLogs() {
                       const ts = log.timestamp
                         ? new Date(log.timestamp).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
                         : '—'
-                      const agentShort = log.agent_id
-                        ? `${log.agent_id.slice(0, 8)}…${log.agent_id.slice(-4)}`
-                        : '—'
-                      const reqShort = log.request_id ? `${log.request_id.slice(0, 8)}…` : '—'
+                      const agentShort = isPlaceholder(log.agent_id)
+                        ? '—'
+                        : `${log.agent_id.slice(0, 8)}…${log.agent_id.slice(-4)}`
+                      const reqShort = isPlaceholder(log.request_id) ? '—' : `${log.request_id.slice(0, 8)}…`
                       const rowId = log.id || idx
+                      const toolDisplay = display(log.tool)
+                      const reasonDisplay = isPlaceholder(log.reason) ? null : log.reason
 
                       return (
                         <React.Fragment key={rowId}>
@@ -806,16 +833,22 @@ export default function AuditLogs() {
                             role="row"
                           >
                             <td className="table-td first:pl-5 font-mono whitespace-nowrap">{ts}</td>
-                            <td className="table-td font-mono">{agentShort}</td>
-                            <td className="table-td font-bold">{log.tool || '—'}</td>
+                            <td className="table-td font-mono">
+                              {agentShort === '—'
+                                ? <span className="text-neutral-600">—</span>
+                                : agentShort}
+                            </td>
+                            <td className={`table-td ${toolDisplay === '—' ? 'text-neutral-600' : 'font-bold'}`}>
+                              {toolDisplay}
+                            </td>
                             <td className="table-td"><DecisionBadge decision={log.decision} /></td>
                             <td className="table-td"><RiskPill score={log.risk_score} /></td>
                             <td className="table-td max-w-[160px] truncate text-neutral-500 italic">
-                              {log.reason ? `"${log.reason}"` : '—'}
+                              {reasonDisplay ? `"${reasonDisplay}"` : <span className="not-italic text-neutral-600">—</span>}
                             </td>
                             <td className="table-td font-mono text-neutral-600">{reqShort}</td>
                             <td className="table-td pr-2">
-                              {log.agent_id && (
+                              {!isPlaceholder(log.agent_id) && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); navigate(`/forensics?agent=${log.agent_id}`) }}
                                   aria-label={`Investigate agent ${agentShort}`}
