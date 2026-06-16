@@ -37,16 +37,18 @@ router = APIRouter(
 
 _TIME_RANGE_HOURS = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
 
-_ADMIN_ROLES = {"ADMIN", "SUPER_ADMIN", "SYSTEM"}
+# Sprint 1 — Role enum extended. OWNER is the highest tier (subsumes ADMIN);
+# SECURITY_ANALYST is the renamed SECURITY. Both legacy + new names accepted.
+_ADMIN_ROLES = {"OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY", "SUPER_ADMIN", "SYSTEM"}
 
 
 def _require_admin(request: Request) -> str:
-    """RBAC guard: only ADMIN+ roles may create/delete/toggle ARE rules."""
+    """RBAC guard: OWNER, ADMIN, SECURITY_ANALYST may create/delete/toggle ARE rules."""
     role = (request.headers.get("X-ACP-Role") or "").upper()
     if role not in _ADMIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Role '{role}' is not permitted to manage ARE rules (requires ADMIN+)",
+            detail=f"Role '{role}' is not permitted to manage ARE rules (requires OWNER, ADMIN, or SECURITY_ANALYST)",
         )
     return role
 
