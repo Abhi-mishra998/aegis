@@ -42,6 +42,98 @@ def _tenant_id(request: Request) -> str:
     return str(tid)
 
 
+_TACTIC_NAMES: dict[str, str] = {
+    "TA0001": "Initial Access",
+    "TA0002": "Execution",
+    "TA0003": "Persistence",
+    "TA0004": "Privilege Escalation",
+    "TA0005": "Defense Evasion",
+    "TA0006": "Credential Access",
+    "TA0007": "Discovery",
+    "TA0008": "Lateral Movement",
+    "TA0009": "Collection",
+    "TA0010": "Exfiltration",
+    "TA0011": "Command and Control",
+    "TA0040": "Impact",
+}
+
+
+@router.get("/iag/mitre-coverage", tags=["IAG"])
+async def get_mitre_coverage(request: Request) -> Any:
+    """Sprint 7 — MITRE ATT&CK coverage matrix.
+
+    Returns the 34 SignalDefinition entries grouped by tactic →
+    technique → list of signals. The frontend's MitreCoverageGrid
+    renders the result as a 12-tactic heatmap; cell colour comes from
+    the max severity within that technique's signals.
+
+    No DB call: the registry is module-level and immutable after
+    import. Endpoint is JWT-gated by the gateway middleware, so we
+    only enforce ``tenant_id`` is present (so the response can carry
+    audit metadata if the caller is curious).
+    """
+    _ = _tenant_id(request)  # enforces JWT but result not used
+
+    from services.security import signal_registry as _sr
+
+    by_tactic: dict[str, dict[str, Any]] = {}
+    for sig in _sr.all_signals():
+        tactic_id = sig.mitre_tactic
+        technique_id = sig.mitre_technique_id
+        technique_name = sig.mitre_technique[len(technique_id) + 1:] if " " in sig.mitre_technique else sig.mitre_technique
+
+        if tactic_id not in by_tactic:
+            by_tactic[tactic_id] = {
+                "tactic_id":   tactic_id,
+                "tactic_name": _TACTIC_NAMES.get(tactic_id, tactic_id),
+                "techniques":  {},
+            }
+        techniques = by_tactic[tactic_id]["techniques"]
+        if technique_id not in techniques:
+            techniques[technique_id] = {
+                "technique_id":   technique_id,
+                "technique_name": technique_name,
+                "signals":        [],
+                "max_severity":   "",
+                "max_score":      0,
+            }
+        techniques[technique_id]["signals"].append(
+            {
+                "id":               sig.id,
+                "severity":         sig.severity.value if hasattr(sig.severity, "value") else str(sig.severity),
+                "default_score":    sig.default_score,
+                "default_response": sig.default_response,
+                "description":      sig.description,
+            },
+        )
+        if sig.default_score > techniques[technique_id]["max_score"]:
+            techniques[technique_id]["max_score"] = sig.default_score
+            techniques[technique_id]["max_severity"] = (
+                sig.severity.value if hasattr(sig.severity, "value") else str(sig.severity)
+            )
+
+    # Collapse technique dicts to lists for stable iteration order.
+    tactics = []
+    for tactic_id in sorted(by_tactic.keys()):
+        block = by_tactic[tactic_id]
+        techniques_list = sorted(block["techniques"].values(), key=lambda t: t["technique_id"])
+        tactics.append(
+            {
+                "tactic_id":      tactic_id,
+                "tactic_name":    block["tactic_name"],
+                "technique_count": len(techniques_list),
+                "signal_count":   sum(len(t["signals"]) for t in techniques_list),
+                "techniques":     techniques_list,
+            },
+        )
+
+    return {
+        "tactics":     tactics,
+        "signal_total": sum(t["signal_count"] for t in tactics),
+        "tactic_total": len(tactics),
+    }
+
+
 @router.get("/iag/agents/{agent_id}", tags=["IAG"])
 async def get_agent_iag(agent_id: str, request: Request) -> Any:
     """Accessible-resources view for one agent.

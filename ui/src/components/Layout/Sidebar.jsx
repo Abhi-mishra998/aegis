@@ -42,6 +42,7 @@ const advancedNav = [
   { path: '/playbooks',         label: 'Playbooks',        icon: BookOpen  },
   { path: '/auto-response',     label: 'Auto-Response',    icon: Bot       },
   { path: '/identity-graph',    label: 'Identity Graph',   icon: Network,  hint: 'G G' },
+  { path: '/threat-graph',      label: 'Threat Graph',     icon: Crosshair, hint: 'G T' },
   { path: '/shadow-mode',       label: 'Shadow Mode',      icon: EyeOff    },
   { path: '/shadow-review',     label: 'Shadow Review',    icon: ShieldCheck },
   { path: '/flight-recorder',   label: 'Flight Recorder',  icon: Film,     hint: 'G F' },

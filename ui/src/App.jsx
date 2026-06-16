@@ -18,6 +18,7 @@ import ShadowModeReview from './pages/ShadowModeReview';
 import Dashboard from './pages/Dashboard';
 import Policies from './pages/Policies';
 import AgentSnapshot from './pages/AgentSnapshot';
+import ThreatGraph from './pages/ThreatGraph';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import Settings from './pages/Settings';
 import Agents from './pages/Agents';
@@ -238,6 +239,7 @@ function App() {
               <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Signup />} />
               <Route path="/onboarding" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
               <Route path="/shadow-review" element={<ProtectedRoute><ShadowModeReview /></ProtectedRoute>} />
+              <Route path="/threat-graph"  element={<ProtectedRoute><ThreatGraph /></ProtectedRoute>} />
 
               {/* Sprint 4 — Dashboard is the landing page; FlightRecorder
                   moves to /audit-feed for analysts. */}
