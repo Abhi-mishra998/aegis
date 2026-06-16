@@ -71,6 +71,33 @@ class ACPSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────
     # 🌐 External Services
     # ─────────────────────────────────────────────────────────────
+
+    # Sprint 17 — Aegis for Teams. The corporate Anthropic API key that
+    # the /v1/messages proxy uses upstream when forwarding employee
+    # virtual-key calls to api.anthropic.com. Empty string disables the
+    # proxy (the endpoint returns 503 with a configuration message).
+    # For multi-tenant SaaS this will move to a per-tenant encrypted
+    # column in a follow-on sprint; the env-var path is the single-
+    # tenant deployment story.
+    UPSTREAM_ANTHROPIC_KEY: str = Field(
+        default="",
+        description=(
+            "Corporate Anthropic API key used by the /v1/messages "
+            "Aegis-for-Teams proxy. Empty disables the proxy."
+        ),
+    )
+
+    # Sprint 17 — separate URL for the api-service database (where
+    # api_keys lives). Falls back to DATABASE_URL when unset so legacy
+    # single-DB deployments keep working.
+    API_DATABASE_URL: str = Field(
+        default="",
+        description=(
+            "Optional: connection string for the api-service database. "
+            "If empty, falls back to DATABASE_URL."
+        ),
+    )
+
     GROQ_API_KEY: str = Field(
         default="",
         description="Groq API key for the insight/groq_worker services. Leave empty to disable Groq features."

@@ -1013,3 +1013,29 @@ export const demoService = {
   }),
 }
 
+// Sprint 17 — Aegis for Teams. The /team page lists each employee's
+// virtual key plus today + this-month USD spend; the OWNER/ADMIN mints
+// new keys here too. The /v1/messages Anthropic-proxy endpoint that
+// uses these keys is server-only — the browser never calls it
+// directly.
+export const teamService = {
+  // List every employee virtual key for the current tenant joined with
+  // their Redis-tracked spend.
+  listEmployees: () => request('/team/employees'),
+
+  // Mint a new acp_emp_… virtual key for one employee. Returns the raw
+  // key ONCE — the caller is responsible for displaying it to the
+  // admin so they can hand it to the employee. After this response
+  // there is no API path to recover the raw key (only the prefix).
+  mintEmployeeKey: (payload) =>
+    request('/api-keys/employees', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // Revoke an employee virtual key. Re-uses the existing /api-keys/{id}
+  // DELETE so we don't fork the API service.
+  revokeKey: (keyId) =>
+    request(`/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
+}
+

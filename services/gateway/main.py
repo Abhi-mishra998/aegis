@@ -547,6 +547,8 @@ from services.gateway.routers.transparency import (
 )
 from services.gateway.routers.users import router as _users_router  # noqa: E402
 from services.gateway.routers.voice import router as _voice_router  # noqa: E402
+# Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
+from services.gateway.routers.messages import router as _messages_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
@@ -576,6 +578,7 @@ app.include_router(_workspace_router)
 app.include_router(_tenant_router)
 app.include_router(_voice_router)
 app.include_router(_demo_router)
+app.include_router(_messages_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),

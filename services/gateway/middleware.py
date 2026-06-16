@@ -87,7 +87,14 @@ _SKIP_PATHS = frozenset(
 
 # SSO callback paths are public (browser redirects from OAuth providers carry no auth headers).
 # They are matched by prefix rather than exact path because they include /{provider}/callback.
-_SKIP_PATH_PREFIXES = ("/auth/sso/",)
+#
+# Sprint 17 — `/v1/messages` is the Aegis-for-Teams Anthropic-compatible
+# proxy. Auth is `x-api-key: acp_emp_…` (Anthropic SDK shape, NOT Aegis
+# JWT), so the gateway middleware must skip its standard JWT auth here.
+# The router does its own validation against the api_keys table + the
+# subject_kind='employee' constraint, so the path is NOT actually public
+# even though it's skip-listed.
+_SKIP_PATH_PREFIXES = ("/auth/sso/", "/v1/messages")
 
 # Management paths: require auth + rate-limiting, but bypass the agent
 # tool-execution security pipeline (OPA policy + Decision Engine).
@@ -117,6 +124,10 @@ _MANAGEMENT_PATH_PREFIXES = (
     # CRUD surface for the post-Clerk-signup dashboard; NOT an agent
     # tool-execution path, so it must bypass tool-name extraction.
     "/workspace",
+    # Sprint 17 — Aegis for Teams employee + spend rollup UI surface.
+    # The `/v1/messages` LLM proxy is skip-listed separately because it
+    # uses x-api-key auth; `/team` paths use the standard JWT.
+    "/team",
     "/metrics",
     "/risk",
     "/stream",

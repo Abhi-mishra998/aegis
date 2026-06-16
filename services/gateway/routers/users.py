@@ -104,9 +104,34 @@ async def deactivate_user_proxy(user_id: str, request: Request) -> Any:
 
 @router.get("/api-keys", tags=["API Keys"])
 async def list_api_keys(request: Request) -> Any:
-    """Proxy → API service list keys."""
+    """Proxy → API service list keys.
+
+    Sprint 17 — query-string ``?subject_kind=employee`` filters to the
+    employee virtual keys for the Team page. The legacy Developer panel
+    omits the parameter and still sees all kinds.
+    """
+    params = {}
+    sk = request.query_params.get("subject_kind")
+    if sk:
+        params["subject_kind"] = sk
     resp = await request.app.state.client.get(
         f"{_api_base()}/api-keys",
+        params=params,
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
+# Sprint 17 — Aegis for Teams. Mint a virtual `acp_emp_…` key for one
+# employee. Proxies to the API service's new endpoint; same auth shape
+# as the other /api-keys/* proxies.
+@router.post("/api-keys/employees", tags=["API Keys"])
+async def create_employee_key(request: Request) -> Any:
+    """Proxy → API service mint employee key."""
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_api_base()}/api-keys/employees",
+        json=body,
         headers=internal_headers(request),
     )
     return passthrough(resp)

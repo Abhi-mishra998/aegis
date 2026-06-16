@@ -26,6 +26,11 @@ import AgentScopePicker from './AgentScopePicker'
 const primaryNav = [
   { path: '/dashboard',       label: 'Dashboard',  icon: Gauge,         hint: 'G D' },
   { path: '/agents',          label: 'Agents',     icon: Users,         hint: 'G A' },
+  // Sprint 17 — Aegis for Teams. Sits between Agents (production AI
+  // agents, SDK-on-endpoint) and Incidents so the operator can swing
+  // between "who's writing my agents" and "who's using my employees'
+  // Claude keys" without leaving the primary nav.
+  { path: '/team',            label: 'Team',       icon: Users,         hint: 'G M' },
   { path: '/incidents',       label: 'Incidents',  icon: AlertTriangle, hint: 'G I' },
   { path: '/live-feed',       label: 'Live Feed',  icon: Radio,         hint: 'G L' },
   { path: '/policies',        label: 'Policies',   icon: GitMerge,      hint: 'G P' },
