@@ -979,7 +979,7 @@ async def workspace_exit_shadow_mode(
             agent_id=None,
             action="workspace_exit_shadow_mode",
             metadata={
-                "actor":             x_acp_actor or "unknown",
+                "actor":             x_acp_actor or "",
                 "previous_until":    previous.isoformat() if previous else None,
             },
         )
@@ -1084,7 +1084,7 @@ async def patch_system_values(
             agent_id=None,
             action="workspace_system_values_update",
             metadata={
-                "actor":           x_acp_actor or "unknown",
+                "actor":           x_acp_actor or "",
                 "applied":         normalized,
                 "new_state":       current,
             },

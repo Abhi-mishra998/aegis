@@ -160,17 +160,25 @@ export default function Agents() {
   };
 
   const handleQuarantine = async () => {
-    await registryService.updateAgent(quarantineTarget.id, { status: 'QUARANTINED' });
-    await fetchAgents();
-    await refreshAgents();
-    addToast(`Agent "${quarantineTarget.name}" quarantined`, 'info');
+    try {
+      await registryService.updateAgent(quarantineTarget.id, { status: 'QUARANTINED' });
+      await fetchAgents();
+      await refreshAgents();
+      addToast(`Agent "${quarantineTarget.name}" quarantined`, 'info');
+    } catch (err) {
+      addToast(err?.message || 'Quarantine failed', 'error');
+    }
   };
 
   const handleReactivate = async () => {
-    await registryService.updateAgent(reactivateTarget.id, { status: 'ACTIVE' });
-    await fetchAgents();
-    await refreshAgents();
-    addToast(`Agent "${reactivateTarget.name}" reactivated`, 'success');
+    try {
+      await registryService.updateAgent(reactivateTarget.id, { status: 'ACTIVE' });
+      await fetchAgents();
+      await refreshAgents();
+      addToast(`Agent "${reactivateTarget.name}" reactivated`, 'success');
+    } catch (err) {
+      addToast(err?.message || 'Reactivation failed', 'error');
+    }
   };
 
   const filtered = agents.filter((a) =>

@@ -1036,14 +1036,19 @@ export default function AutoResponse() {
   }
 
   const handleSaveRule = async (form) => {
-    if (editRule && editRule !== true) {
-      await autoResponseService.updateRule(editRule.id, form)
-      addToast('Rule updated', 'success')
-    } else {
-      await autoResponseService.createRule(form)
-      addToast('Rule created', 'success')
+    try {
+      if (editRule && editRule !== true) {
+        await autoResponseService.updateRule(editRule.id, form)
+        addToast('Rule updated', 'success')
+      } else {
+        await autoResponseService.createRule(form)
+        addToast('Rule created', 'success')
+      }
+      fetchAll()
+    } catch (err) {
+      addToast(err?.message || 'Failed to save rule', 'error')
+      throw err  // let the modal stay open so the operator can fix + retry
     }
-    fetchAll()
   }
 
   const handleToggleRule = async (rule) => {

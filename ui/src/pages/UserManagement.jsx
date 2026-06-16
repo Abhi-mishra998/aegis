@@ -118,16 +118,28 @@ function UserRow({ user, onUpdate, onDeactivate }) {
 
   const changeRole = async (newRole) => {
     setSaving(true)
-    await onUpdate(user.id, { role: newRole })
-    setSaving(false)
-    setEditRole(false)
+    try {
+      await onUpdate(user.id, { role: newRole })
+      setEditRole(false)
+    } catch {
+      // Parent's onUpdate already surfaces the error; just don't leave the
+      // dropdown stuck open in a "still saving" state if the API rejected.
+    } finally {
+      setSaving(false)
+    }
   }
 
   const toggleActive = async () => {
     setSaving(true)
-    if (user.is_active) await onDeactivate(user.id)
-    else await onUpdate(user.id, { is_active: true })
-    setSaving(false)
+    try {
+      if (user.is_active) await onDeactivate(user.id)
+      else await onUpdate(user.id, { is_active: true })
+    } catch {
+      // onUpdate/onDeactivate surface errors at the parent; clearing the
+      // spinner here is what matters so the row doesn't look frozen.
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
