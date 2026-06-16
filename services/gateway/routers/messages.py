@@ -532,31 +532,41 @@ async def team_overview(request: Request) -> APIResponse[dict]:
 
     # Audit-log roll-up — last 30 days, action='llm_proxy_call'.
     # Source of truth for requests + spend + harmful counts (Redis is
-    # only the fast-path budget counter).
-    proxy_url = (
-        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}"
-        "/logs/search"
-    )
+    # only the fast-path budget counter). Uses GET /logs (not POST
+    # /logs/search) because WAFv2 blocks JSON bodies with "limit":N
+    # as SQL injection — and the GET variant supports the same filters
+    # via query params. Hard cap is 1000 rows (audit-svc query limit);
+    # at ~30 r/employee/day this comfortably covers 30 employees.
+    from datetime import datetime, timedelta, timezone
+
+    start_iso = (
+        datetime.now(tz=timezone.utc) - timedelta(days=30)
+    ).isoformat()
+    proxy_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs"
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(
                 proxy_url,
                 params={
-                    "action": "llm_proxy_call",
-                    "days":   30,
-                    "limit":  10_000,
+                    "action":     "llm_proxy_call",
+                    "start_date": start_iso,
+                    "limit":      1000,
                 },
                 headers=internal_headers(request),
             )
-        rows = (resp.json() if resp.status_code == 200 else {}).get("data") or []
-        if not isinstance(rows, list):
-            rows = rows.get("items", []) if isinstance(rows, dict) else []
+        body = resp.json() if resp.status_code == 200 else {}
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, dict):
+            rows = data.get("items", []) or []
+        elif isinstance(data, list):
+            rows = data
+        else:
+            rows = []
     except httpx.HTTPError:
         rows = []
 
     # Aggregate per-department + per-day.
     from collections import defaultdict
-    from datetime import datetime, timedelta, timezone
 
     dept_requests:   dict[str, int]   = defaultdict(int)
     dept_spend:      dict[str, float] = defaultdict(float)
