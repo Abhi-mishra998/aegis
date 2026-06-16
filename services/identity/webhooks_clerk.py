@@ -466,11 +466,18 @@ async def _handle_membership_created_or_updated(
         # NOT-NULL constraint is satisfied. The user cannot log in via the
         # legacy /auth/login path with this row.
         placeholder_hash = "$2b$12$ClerkOwnsThisPasswordPlaceholderHashXXXX"
+        # `users.org_id == users.tenant_id` is enforced by the
+        # ck_users_org_tenant_match check constraint (SaaS strict
+        # invariant). The legacy login path always sets both columns to
+        # the same UUID. For Clerk users, set both to tenant.tenant_id —
+        # the Organization PK (org.id) is a SEPARATE UUID and was the
+        # source of every Clerk-signup IntegrityError that prevented
+        # /auth/clerk/provision from ever completing.
         user = User(
             email=email or f"{clerk_user_id}@clerk.invalid",
             hashed_password=placeholder_hash,
             tenant_id=tenant.tenant_id,
-            org_id=org.id,
+            org_id=tenant.tenant_id,
             role=role_enum,
             is_active=True,
             clerk_user_id=clerk_user_id,
@@ -479,7 +486,7 @@ async def _handle_membership_created_or_updated(
     else:
         user.role = role_enum
         user.tenant_id = tenant.tenant_id
-        user.org_id = org.id
+        user.org_id = tenant.tenant_id
         user.is_active = True
         if user.clerk_user_id is None:
             user.clerk_user_id = clerk_user_id
