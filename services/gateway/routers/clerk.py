@@ -97,6 +97,15 @@ async def proxy_clerk_provision(request: Request) -> Response:
     Unlike most /auth/* proxies, we do NOT add `internal_headers` — the
     upstream handler authenticates against the Clerk JWT itself, and any
     Aegis-mesh secret would only obscure the actual authenticator.
+
+    Sprint-1 follow-up: ALSO set the Clerk JWT as the `acp_token`
+    httpOnly cookie. The browser EventSource API can't attach custom
+    headers, so the SSE endpoint /events/stream can only authenticate
+    Clerk users via the cookie (the gateway's token_validator routes
+    Clerk RS256 tokens through Clerk's JWKS regardless of whether
+    they arrive via the Authorization header or the cookie). Without
+    this set-cookie, Clerk users see the topbar "Syncing" indicator
+    forever because the SSE handshake gets 401 every time.
     """
     raw_body = await request.body()
 
@@ -127,8 +136,26 @@ async def proxy_clerk_provision(request: Request) -> Response:
             media_type="application/json",
         )
 
-    return Response(
+    out = Response(
         content=resp.content,
         status_code=resp.status_code,
         media_type=resp.headers.get("content-type", "application/json"),
     )
+
+    # On successful provision, mirror the Clerk JWT into the acp_token
+    # cookie. Mirrors the legacy /auth/token cookie convention: httpOnly,
+    # samesite=strict, 1-day TTL, secure-flag gated on production.
+    if 200 <= resp.status_code < 300 and auth and auth.lower().startswith("bearer "):
+        clerk_jwt = auth[7:].strip()
+        if clerk_jwt:
+            is_secure = settings.ENVIRONMENT == "production"
+            out.set_cookie(
+                key="acp_token",
+                value=clerk_jwt,
+                httponly=True,
+                secure=is_secure,
+                samesite="strict",
+                max_age=86400,
+            )
+
+    return out
