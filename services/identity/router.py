@@ -226,6 +226,57 @@ async def get_me(
         raise HTTPException(status_code=401, detail="Invalid or missing auth header")
 
     token = extract_bearer_token(authorization) or ""
+
+    # Sprint 1 — dispatch by token shape. Legacy HS256 tokens carry our
+    # local `typ: ACP_ACCESS` claim and validate against JWT_SECRET_KEY.
+    # Clerk RS256 tokens carry our Clerk issuer URL and validate against
+    # Clerk's JWKS. /auth/me was originally written assuming only legacy
+    # tokens existed; with ACP_AUTH_PROVIDER=both every Clerk-signed-in
+    # user hit `Invalid token` here, which propagated as 401 to every
+    # page that did an initial getMe() probe.
+    from sdk.common.clerk_auth import (
+        ClerkTokenValidator,
+        looks_like_clerk_token,
+    )
+
+    claims: dict
+    if looks_like_clerk_token(token):
+        try:
+            validator = ClerkTokenValidator(redis_client=redis)
+            claims = await validator.validate(token)
+        except Exception as err:
+            raise HTTPException(
+                status_code=401, detail=f"Invalid Clerk token: {type(err).__name__}",
+            ) from err
+        # The Clerk claims map onto our canonical shape via
+        # validator.validate; aegis_user_id lives on the `user_id`
+        # claim. If the user row hasn't been provisioned yet, fall back
+        # to the clerk_user_id lookup so the first /auth/me on signup
+        # doesn't 404.
+        user_id_str = claims.get("user_id") or ""
+        clerk_user_id = claims.get("clerk_user_id") or claims.get("sub") or ""
+        result = None
+        if user_id_str:
+            try:
+                result = await db.execute(
+                    select(User).where(User.id == uuid.UUID(user_id_str)),
+                )
+            except ValueError:
+                result = None
+        user = result.scalar_one_or_none() if result is not None else None
+        if user is None and clerk_user_id:
+            r2 = await db.execute(
+                select(User).where(User.clerk_user_id == clerk_user_id),
+            )
+            user = r2.scalar_one_or_none()
+        if user is None:
+            raise HTTPException(
+                status_code=404,
+                detail="User not provisioned — sign out and sign in again",
+            )
+        return APIResponse(data=UserResponse.model_validate(user))
+
+    # Legacy HS256 path
     token_svc = TokenService(redis)
     try:
         claims = await token_svc.verify(token)
