@@ -143,7 +143,9 @@ export default function Dashboard() {
     const by = inventory?.by_risk || {};
     return ['critical', 'high', 'medium', 'low']
       .map((tier) => [tier, by[tier] || 0])
-      .filter(([, c]) => c > 0 || tier === 'medium');
+      // Always show medium even at zero so the tier-grid never collapses
+      // to one card. Other tiers only render when populated.
+      .filter(([t, c]) => c > 0 || t === 'medium');
   }, [inventory]);
 
   const shadowActive = !!workspace?.shadow_mode_active;

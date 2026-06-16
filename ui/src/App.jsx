@@ -236,8 +236,8 @@ function App() {
             <Routes>
               {/* Clerk's <SignIn /> / <SignUp /> components own sub-routes
                   (e.g. /signup/verify-email-address) — the `/*` is required. */}
-              <Route path="/login/*"  element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Login />} />
-              <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/flight-recorder" /> : <Signup />} />
+              <Route path="/login/*"  element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Login />} />
+              <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Signup />} />
               <Route path="/onboarding" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
               <Route path="/shadow-review" element={<ProtectedRoute><ShadowModeReview /></ProtectedRoute>} />
 
@@ -311,7 +311,7 @@ function App() {
               {/* Executive view — accessible by URL for buyer demos */}
               <Route path="/executive-summary" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
 
-              <Route path="*" element={<Navigate to="/flight-recorder" />} />
+              <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>
 
             {/* Command palette — inside BrowserRouter so useNavigate() has context */}

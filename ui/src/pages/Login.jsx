@@ -70,7 +70,7 @@ export default function Login() {
           path="/login"
           routing="path"
           signUpUrl="/signup"
-          afterSignInUrl="/flight-recorder"
+          afterSignInUrl="/dashboard"
           appearance={aegisAppearance}
         />
 

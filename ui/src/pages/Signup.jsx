@@ -71,7 +71,7 @@ export default function Signup() {
           path="/signup"
           routing="path"
           signInUrl="/login"
-          afterSignUpUrl="/flight-recorder"
+          afterSignUpUrl="/dashboard"
           appearance={aegisAppearance}
         />
 

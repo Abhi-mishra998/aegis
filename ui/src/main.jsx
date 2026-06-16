@@ -18,8 +18,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       publishableKey={CLERK_PUBLISHABLE_KEY}
       signInUrl="/login"
       signUpUrl="/signup"
-      afterSignInUrl="/flight-recorder"
-      afterSignUpUrl="/flight-recorder"
+      afterSignInUrl="/dashboard"
+      afterSignUpUrl="/dashboard"
       afterSignOutUrl="/login"
     >
       <App />
