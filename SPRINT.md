@@ -30,9 +30,34 @@ Translation layer between PRODUCT_PLAN.md (v2, locked) and ground-level work. On
 | 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | ✅ DONE | commit 13cd686 / ASG 2fa88480 | `/iag/mitre-coverage` 401 JSON; `/threat-graph` 200; new bundle `CIZz3R6h`; "Threat Graph"/"IAG graph"/reactflow in bundle; 129/129 tests; 12/12 healthy p95 53ms |
 | 8 | 5 | Blast Radius dollar formula + workspace value tags | ✅ DONE | commit c557613 / ASG 8f5e56ea | `/workspace/system-values` 401 JSON; `/settings?tab=system-values` 200; new bundle `oOcZd_7I`; "Could have reached" + "System Values" strings in bundle; alembic `a7b8c9d0e1f2` head; 137/137 tests; 12/12 healthy p95 40ms |
 | 9 | 6 | Stripe billing wiring (model exists, wire it) | ✅ DONE | commit 8444a55 / ASG 176a4a4f | `/billing/plan`, `/billing/checkout-session`, `/billing/portal-session` all 401 JSON; new bundle `B6LjsKe5`; "Plan" + "Manage billing" strings in bundle; 144/144 tests; 12/12 healthy p95 42ms. **Operator gap**: STRIPE_SECRET_KEY + price IDs still need to land via SSM before endpoints function. |
-| 10 | 6 | Production hardening: CSP, security headers, audit-chain refresh | 🚧 IN-FLIGHT | committed locally | 150/150 tests; deploy pending |
+| 10 | 6 | Production hardening: CSP, security headers, audit-chain refresh | ✅ DONE | commits 921a941 + fb973b6 + 4266602 / ASGs 90f97ee0 + 144d03e9 | All 6 headers on `/dashboard` SPA (CSP / HSTS / Permissions-Policy / Referrer-Policy / X-Content-Type-Options / X-Frame-Options); gateway SecurityHeadersMiddleware applies same on JSON; bundle .env-leak guard live (catches `sk_live_…`/`whsec_…` strings); rotate_clerk_keys.py dry-run-verified; 150/150 tests; 12/12 healthy p95 41ms. Took 3 ships — first ship had nginx `add_header` inheritance bug, fixed on the third. |
 
 Phase 4 (3 pilots) is calendar work, not code — outside this file's scope.
+
+---
+
+## 🏁 Roadmap complete — 2026-06-16
+
+All 10 code sprints from PRODUCT_PLAN.md v2 shipped to `ha.aegisagent.in`:
+
+- **15 deploy cycles** (10 sprints + 5 hotfixes for Sprint 3 nginx, Sprint 4 React bug, Sprint 6 routing, Sprint 10 bundle guard + Sprint 10 nginx headers).
+- **150/150 Python unit tests** green across roles, JWKS, webhooks, signups, wizard, shadow mode, inventory, MITRE coverage, dollar formula, Stripe, security headers.
+- **0 backend services deleted** (founder's hard rule honored).
+- **3 UI pages deleted** (LiveDemo / Pricing / ExecutiveDashboard) — only outright UI removals.
+- **8 commits with no Co-Authored-By: Claude** (founder's hard rule honored).
+- **Live evidence cited per sprint** in the table above — no claim without a probe + bundle hash + tests-green.
+
+### What's NOT done (intentionally deferred)
+- Phase 4 pilot outreach — calendar work.
+- Phase 6 SOC2 Type II — gated on 9-month timer + lawyer-reviewed BAA template.
+- Operator gap: STRIPE_SECRET_KEY + STRIPE_PRO_PRICE_ID + STRIPE_ENTERPRISE_PRICE_ID still need to land on prod via SSM. /billing/plan reports `stripe_configured=false` until they do.
+- EU + US data residency replication (Terraform stack duplication) — Phase 6.
+- White-glove migration tooling — Phase 6.
+
+### Live infra (final state)
+- ALB `https://ha.aegisagent.in` · ASG 2× m6g.medium · RDS Multi-AZ · ElastiCache 2-node · ap-south-1.
+- 12/12 services healthy · p95 ~40 ms end-to-end · CSP/HSTS/Permissions-Policy on every response.
+- alembic head: `a7b8c9d0e1f2` (Sprint 8 — tenants.system_values).
 
 ---
 
