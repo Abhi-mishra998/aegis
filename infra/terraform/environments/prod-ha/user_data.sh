@@ -139,6 +139,48 @@ GRAFANA_ADMIN_PASSWORD=${JWT_KEY}
 EOF
 chmod 600 /opt/aegis/infra/.env
 
+# ── 4b. Overlay operator-owned vars from SSM SecureString ──────────────
+# Sprint-10 follow-on. The bundle's exclude list drops the repo-root .env
+# (so dev secrets never ship to prod), which means CLERK_*, STRIPE_*, and
+# ACP_AUTH_PROVIDER live ONLY in SSM. Without this overlay, every fresh
+# instance launches with /webhooks/clerk → 503 (no CLERK_WEBHOOK_SECRET),
+# /billing/checkout-session → 500 (no STRIPE_SECRET_KEY), and Clerk RS256
+# JWTs are rejected by the LocalTokenValidator (no JWKS URL).
+# Same parameter map as scripts/ops/restore_prod_env_from_ssm.sh.
+SSM_PREFIX="/${NAME_PREFIX}"
+ssm_pull() {
+    aws --region "${REGION}" ssm get-parameter --name "$1" \
+        --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || true
+}
+declare -A SSM_OVERLAY=(
+    ["${SSM_PREFIX}/clerk/secret-key"]="CLERK_SECRET_KEY"
+    ["${SSM_PREFIX}/clerk/webhook-secret"]="CLERK_WEBHOOK_SECRET"
+    ["${SSM_PREFIX}/clerk/publishable-key"]="CLERK_PUBLISHABLE_KEY"
+    ["${SSM_PREFIX}/clerk/frontend-api"]="CLERK_FRONTEND_API"
+    ["${SSM_PREFIX}/clerk/jwks-url"]="CLERK_JWKS_URL"
+    ["${SSM_PREFIX}/clerk/issuer"]="CLERK_ISSUER"
+    ["${SSM_PREFIX}/clerk/jwt-template"]="CLERK_JWT_TEMPLATE"
+    ["${SSM_PREFIX}/aegis/auth-provider"]="ACP_AUTH_PROVIDER"
+    ["${SSM_PREFIX}/stripe/secret-key"]="STRIPE_SECRET_KEY"
+    ["${SSM_PREFIX}/stripe/pro-price-id"]="STRIPE_PRO_PRICE_ID"
+    ["${SSM_PREFIX}/stripe/enterprise-price-id"]="STRIPE_ENTERPRISE_PRICE_ID"
+    ["${SSM_PREFIX}/stripe/webhook-secret"]="STRIPE_WEBHOOK_SECRET"
+)
+{
+    echo ""
+    echo "# Overlaid from SSM at $(date -u +%Y-%m-%dT%H:%M:%SZ) — see user_data.sh §4b"
+    for path in "${!SSM_OVERLAY[@]}"; do
+        env_name="${SSM_OVERLAY[$path]}"
+        val="$(ssm_pull "$path")"
+        if [[ -n "$val" && "$val" != "None" ]]; then
+            echo "${env_name}=${val}"
+        else
+            echo "[user-data] WARN: ${path} missing — ${env_name} not set" >&2
+        fi
+    done
+} >> /opt/aegis/infra/.env
+chmod 600 /opt/aegis/infra/.env
+
 # ── 5. Render pgbouncer.aws.ini with the resolved RDS host ─────────────
 cat > /opt/aegis/infra/pgbouncer.aws.ini <<EOF
 [databases]
@@ -189,6 +231,22 @@ cat > /opt/aegis/infra/userlist.txt <<EOF
 "behavior_user"       "${RDS_PASSWORD}"
 EOF
 chmod 644 /opt/aegis/infra/userlist.txt
+
+# ── 6b. Docker Hub login (prevents anonymous rate-limit on burst pulls) ─
+# Recurring outage root cause: Docker Hub's 100/6h anonymous limit on the
+# NAT egress IP gets burned through during a sequence of ASG refreshes,
+# leaving fresh instances unable to pull postgres/redis/grafana/etc — they
+# fail with `toomanyrequests` mid-compose-up and never become ALB-healthy.
+# Authenticated free-tier limit is 200/6h per user — enough headroom for
+# the rare burst we trigger during a release.
+HUB_USER="$(ssm_pull "${SSM_PREFIX}/docker/hub-user")"
+HUB_PAT="$(ssm_pull "${SSM_PREFIX}/docker/hub-pat")"
+if [[ -n "${HUB_USER}" && -n "${HUB_PAT}" && "${HUB_USER}" != "None" ]]; then
+    echo "${HUB_PAT}" | docker login --username "${HUB_USER}" --password-stdin
+    echo "[user-data] docker hub login ${HUB_USER} OK"
+else
+    echo "[user-data] WARN: docker hub creds missing in SSM — pulls will be anonymous (rate-limited)"
+fi
 
 # ── 7. Boot the stack ──────────────────────────────────────────────────
 cd /opt/aegis/infra
