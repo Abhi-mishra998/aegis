@@ -23,6 +23,7 @@ import {
   auditService,
 } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
+import { useAuth } from '../hooks/useAuth';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
 
@@ -92,6 +93,7 @@ function RiskTile({ tier, count, total }) {
 }
 
 export default function Dashboard() {
+  const { tenant_id } = useAuth();
   const [inventory, setInventory] = useState(null);
   const [workspace, setWorkspace] = useState(null);
   const [recentEvents, setRecentEvents] = useState([]);
@@ -100,32 +102,54 @@ export default function Dashboard() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [liveEventCount, setLiveEventCount] = useState(0);
 
+  // Refetch when tenant_id changes (e.g., ClerkAuthBridge mirrors session
+  // *after* this page mounted — without re-deriving on tenant_id, the user
+  // sees a permanent "—" / "Failed to load" until they manually click
+  // Refresh).
   useEffect(() => {
+    if (!tenant_id) {
+      // ProtectedRoute holds the bridge-syncing screen until tenant_id
+      // arrives; in case a parent ever bypasses that gate, surface an
+      // explanatory loading state rather than firing a doomed request.
+      setLoading(true);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
-    Promise.all([
-      workspaceService.inventory().catch(() => null),
-      workspaceService.me().catch(() => null),
-      auditService.getLogs(10, 0).catch(() => null),
-    ]).then(([invResp, wsResp, evResp]) => {
+    Promise.allSettled([
+      workspaceService.inventory(),
+      workspaceService.me(),
+      auditService.getLogs(10, 0),
+    ]).then((results) => {
       if (cancelled) return;
+      const [invResult, wsResult, evResult] = results;
+      const invResp = invResult.status === 'fulfilled' ? invResult.value : null;
+      const wsResp  = wsResult.status  === 'fulfilled' ? wsResult.value  : null;
+      const evResp  = evResult.status  === 'fulfilled' ? evResult.value  : null;
       setInventory(invResp?.data || invResp || null);
       setWorkspace(wsResp?.data || wsResp || null);
       const items = evResp?.data?.items || evResp?.data || evResp?.items || [];
       setRecentEvents(Array.isArray(items) ? items.slice(0, 8) : []);
       setLoading(false);
-      setError('');
-    }).catch((err) => {
-      if (cancelled) return;
-      setError(err?.message || 'Failed to load dashboard data');
-      setLoading(false);
+      // If ALL three failed, surface a single banner; one partial failure
+      // shouldn't blank the dashboard, but a total network outage should be
+      // visible.
+      const allFailed = results.every((r) => r.status === 'rejected');
+      if (allFailed) {
+        setError(results[0].reason?.message || 'Failed to load dashboard data');
+      } else {
+        setError('');
+      }
     });
     return () => { cancelled = true; };
-  }, [refreshTick]);
+  }, [refreshTick, tenant_id]);
 
   // Live tick on any SSE event so the operator sees the "Live" badge move.
+  // SSE handshake needs the acp_token cookie set by /auth/clerk/provision;
+  // gate on tenant_id so we don't open a doomed connection during the
+  // sign-in bridge window.
   useSSE({
-    enabled: true,
+    enabled: Boolean(tenant_id),
     onMessage: (evt) => {
       if (!evt?.type) return;
       setLiveEventCount((c) => c + 1);

@@ -621,6 +621,16 @@ async def refresh_token(
     agent_id = uuid.UUID(claims["agent_id"]) if "agent_id" in claims else None
     user_id = uuid.UUID(claims["user_id"]) if "user_id" in claims else None
     role = claims.get("role", "viewer")
+    # Forward org_id from the validated claim so the refreshed token
+    # carries the same SaaS-invariant tuple (without this the new token
+    # falls back to tenant_id and the next strict-invariant check fails
+    # 403 for any account where org_id ≠ tenant_id, which becomes the
+    # rule once multi-org tiers ship).
+    org_id_claim = claims.get("org_id")
+    try:
+        org_id = uuid.UUID(org_id_claim) if org_id_claim else None
+    except (ValueError, TypeError):
+        org_id = None
 
     # 1. HARDENING: Re-validate status in DB
     if agent_id:
@@ -632,23 +642,37 @@ async def refresh_token(
         cred = res.scalar_one_or_none()
         if not cred or cred.status != CredentialStatus.ACTIVE:
             raise HTTPException(status_code=401, detail="Agent credentials are no longer active")
+        if org_id is None:
+            org_id = cred.org_id
     elif user_id:
         stmt = select(User).where(User.id == user_id, User.tenant_id == tenant_id)
         res = await db.execute(stmt)
         user = res.scalar_one_or_none()
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="User account is no longer active")
+        if org_id is None:
+            org_id = user.org_id
 
-    # 2. Revoke old token
-    await token_svc.revoke(token)
-
-    # Issue new token
+    # 2. Issue NEW token first. If issuance fails the caller still holds a
+    #    valid old token and can retry. The previous order revoked the old
+    #    token before issuing the new one, which left the caller stranded
+    #    on any Redis hiccup mid-refresh (no valid token, next request 401s
+    #    and they get bounced to /login mid-session).
     new_token, expires_in = await token_svc.issue(
         tenant_id=tenant_id,
         agent_id=agent_id,
         user_id=user_id,
-        role=role
+        role=role,
+        org_id=org_id,
     )
+
+    # 3. Only after a successful mint do we revoke the old token. A failure
+    #    here is logged but non-fatal — the new token is already valid and
+    #    the old one will expire naturally at its original exp.
+    try:
+        await token_svc.revoke(token)
+    except Exception as exc:
+        logger.warning("refresh_revoke_old_failed", error=str(exc))
 
     return APIResponse(
         data=TokenResponse(
