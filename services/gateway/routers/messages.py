@@ -343,6 +343,41 @@ async def proxy_anthropic_messages(request: Request) -> Response:
 # ─────────────────────────────────────────────────────────────────────
 
 
+async def _list_employee_keys_from_apisvc(request: Request) -> list[dict]:
+    """Shared helper: fetch every employee virtual key for the tenant.
+
+    Used by both the per-employee /team/employees rollup and the
+    Sprint 17.5 /team/overview aggregation. Goes through the api-svc
+    HTTP contract so the gateway never opens a direct DB connection to
+    the api database (the gateway's DATABASE_URL points at identity).
+    """
+    url = f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(
+                url,
+                params={"subject_kind": "employee"},
+                headers=internal_headers(request),
+            )
+    except httpx.HTTPError as exc:
+        logger.error("team_employees_list_upstream_error", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"api service unreachable: {type(exc).__name__}",
+        ) from exc
+
+    if resp.status_code != 200:
+        logger.warning(
+            "team_employees_list_upstream_non_200",
+            status=resp.status_code,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not list employee keys from the api service.",
+        )
+    return (resp.json() or {}).get("data") or []
+
+
 @router.get("/team/employees")
 async def list_team_employees(request: Request) -> APIResponse[list[dict]]:
     """List employee virtual keys + current-period spend for the tenant.
@@ -384,35 +419,7 @@ async def list_team_employees(request: Request) -> APIResponse[list[dict]]:
             detail=f"Invalid tenant_id: {tenant_id_str!r}",
         )
 
-    # Load all employee keys for the tenant via the api service. Same
-    # pattern as the rest of the gateway — we never read the api_keys
-    # table directly because the gateway's own DATABASE_URL points at
-    # acp_identity, not acp_api.
-    url = f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys"
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(
-                url,
-                params={"subject_kind": "employee"},
-                headers=internal_headers(request),
-            )
-        if resp.status_code != 200:
-            logger.warning(
-                "team_employees_list_upstream_non_200",
-                status=resp.status_code,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Could not list employee keys from the api service.",
-            )
-        body = resp.json()
-        keys: list[dict] = body.get("data") or []
-    except httpx.HTTPError as exc:
-        logger.error("team_employees_list_upstream_error", error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"api service unreachable: {type(exc).__name__}",
-        ) from exc
+    keys = await _list_employee_keys_from_apisvc(request)
 
     # Join with Redis spend.
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
@@ -431,6 +438,7 @@ async def list_team_employees(request: Request) -> APIResponse[list[dict]]:
                 "email":            email,
                 "name":             k.get("name"),
                 "is_active":        bool(k.get("is_active", True)),
+                "department":       k.get("department"),
                 "daily_budget_usd":   k.get("daily_budget_usd"),
                 "monthly_budget_usd": k.get("monthly_budget_usd"),
                 "today_usd":        round(today_usd, 4),
@@ -444,3 +452,215 @@ async def list_team_employees(request: Request) -> APIResponse[list[dict]]:
             await redis.aclose()
         except Exception:  # noqa: BLE001
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 17.5 — Aegis for Teams Productization.
+#
+# /team/overview returns the four CIO/CISO/FinOps KPIs + a per-
+# department breakdown in a single payload so the Team page hero, the
+# Department View, and the Executive Summary tab all render from one
+# fetch. Audit_logs is the source of truth for request counts +
+# harmful-action counts (action='llm_proxy_call' with decision in
+# {allow,error,deny}); Redis carries today's spend (the durable monthly
+# total comes from summing audit metadata cost_usd at query time so
+# it survives a Redis flush).
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _bucket_department(value: str | None) -> str:
+    """Normalize NULL/empty department to 'Unassigned' for grouping."""
+    v = (value or "").strip()
+    return v if v else "Unassigned"
+
+
+@router.get("/team/overview")
+async def team_overview(request: Request) -> APIResponse[dict]:
+    """Single-fetch payload for the entire Team page hero + tabs.
+
+    Shape::
+
+        {
+          "kpis": {
+            "active_employees":              <int>,
+            "ai_requests_30d":               <int>,
+            "monthly_spend_usd":             <float>,
+            "harmful_actions_blocked_30d":   <int>,
+            "compliance_violations_prevented_30d": <int>,
+            "highest_risk_department":       <str | null>,
+          },
+          "departments": [
+            {
+              "name":            <str>,
+              "employees":       <int>,
+              "requests_30d":    <int>,
+              "spend_30d_usd":   <float>,
+              "harmful_blocked_30d":   <int>,
+              "compliance_enforced_30d": <int>,
+              "risk_score":      <float 0..1>,
+              "risk_label":      "Low" | "Moderate" | "Elevated" | "High",
+            },
+            …
+          ],
+          "trend_30d": [ {"day": "YYYY-MM-DD", "requests": int, "spend_usd": float}, … ]
+        }
+    """
+    tenant_id_str = (
+        request.headers.get("X-Tenant-ID")
+        or (getattr(request.state, "jwt_claims", {}) or {}).get("tenant_id", "")
+    )
+    if not tenant_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant context missing — please sign in again.",
+        )
+
+    # Employees ⇒ department + active count
+    keys = await _list_employee_keys_from_apisvc(request)
+    email_to_department: dict[str, str] = {}
+    department_employees: dict[str, set[str]] = {}
+    active_emails: set[str] = set()
+    for k in keys:
+        email = (k.get("subject_email") or "").strip().lower()
+        if not email:
+            continue
+        dept = _bucket_department(k.get("department"))
+        email_to_department[email] = dept
+        department_employees.setdefault(dept, set()).add(email)
+        if k.get("is_active", True):
+            active_emails.add(email)
+
+    # Audit-log roll-up — last 30 days, action='llm_proxy_call'.
+    # Source of truth for requests + spend + harmful counts (Redis is
+    # only the fast-path budget counter).
+    proxy_url = (
+        f"{settings.AUDIT_SERVICE_URL.rstrip('/')}"
+        "/logs/search"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                proxy_url,
+                params={
+                    "action": "llm_proxy_call",
+                    "days":   30,
+                    "limit":  10_000,
+                },
+                headers=internal_headers(request),
+            )
+        rows = (resp.json() if resp.status_code == 200 else {}).get("data") or []
+        if not isinstance(rows, list):
+            rows = rows.get("items", []) if isinstance(rows, dict) else []
+    except httpx.HTTPError:
+        rows = []
+
+    # Aggregate per-department + per-day.
+    from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
+
+    dept_requests:   dict[str, int]   = defaultdict(int)
+    dept_spend:      dict[str, float] = defaultdict(float)
+    dept_harmful:    dict[str, int]   = defaultdict(int)
+    dept_compliance: dict[str, int]   = defaultdict(int)
+    daily: dict[str, dict[str, float]] = defaultdict(lambda: {"requests": 0, "spend_usd": 0.0})
+
+    total_requests = 0
+    total_spend = 0.0
+    total_harmful = 0
+    total_compliance = 0
+
+    for r in rows:
+        # Defensive parse — audit rows can be either flat dicts or
+        # wrapped envelopes depending on which audit-service endpoint
+        # the proxy hits.
+        meta = r.get("metadata_json") or r.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                import json as _json
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        email = (meta.get("employee_email") or "").strip().lower()
+        if not email:
+            continue
+        dept = email_to_department.get(email, "Unassigned")
+        cost = float(meta.get("cost_usd") or 0)
+        decision = (r.get("decision") or "allow").lower()
+        is_harmful = decision in ("deny", "block", "error") or bool(meta.get("findings"))
+
+        dept_requests[dept] += 1
+        dept_spend[dept]    += cost
+        if is_harmful:
+            dept_harmful[dept] += 1
+            total_harmful += 1
+        if meta.get("findings"):
+            dept_compliance[dept] += 1
+            total_compliance += 1
+
+        total_requests += 1
+        total_spend    += cost
+
+        ts = r.get("created_at") or r.get("timestamp")
+        if ts:
+            day = str(ts)[:10]
+            daily[day]["requests"]  = float(daily[day]["requests"]) + 1
+            daily[day]["spend_usd"] = float(daily[day]["spend_usd"]) + cost
+
+    # Build the per-department rows.
+    def _risk_score(reqs: int, harmful: int) -> float:
+        # 0..1. Floor at 0.05 so a department with even one
+        # llm_proxy_call doesn't read as "no signal at all."
+        if reqs <= 0:
+            return 0.0
+        rate = harmful / reqs
+        return round(min(1.0, max(0.05, rate * 4)), 2)
+
+    def _risk_label(score: float) -> str:
+        if score >= 0.7: return "High"
+        if score >= 0.4: return "Elevated"
+        if score >= 0.15: return "Moderate"
+        return "Low"
+
+    departments: list[dict] = []
+    for dept, emails in department_employees.items():
+        reqs = dept_requests.get(dept, 0)
+        harmful = dept_harmful.get(dept, 0)
+        score = _risk_score(reqs, harmful)
+        departments.append({
+            "name":              dept,
+            "employees":         len(emails),
+            "requests_30d":      reqs,
+            "spend_30d_usd":     round(dept_spend.get(dept, 0.0), 4),
+            "harmful_blocked_30d":     harmful,
+            "compliance_enforced_30d": dept_compliance.get(dept, 0),
+            "risk_score":        score,
+            "risk_label":        _risk_label(score),
+        })
+    departments.sort(key=lambda d: (-d["risk_score"], -d["requests_30d"]))
+
+    highest_risk_dept = departments[0]["name"] if departments and departments[0]["risk_score"] > 0 else None
+
+    # 30-day trend, fill missing days with zero.
+    now = datetime.now(tz=timezone.utc)
+    trend = []
+    for i in range(29, -1, -1):
+        day = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        bucket = daily.get(day, {"requests": 0, "spend_usd": 0.0})
+        trend.append({
+            "day":       day,
+            "requests":  int(bucket["requests"]),
+            "spend_usd": round(float(bucket["spend_usd"]), 4),
+        })
+
+    return APIResponse(data={
+        "kpis": {
+            "active_employees":                      len(active_emails),
+            "ai_requests_30d":                       total_requests,
+            "monthly_spend_usd":                     round(total_spend, 4),
+            "harmful_actions_blocked_30d":           total_harmful,
+            "compliance_violations_prevented_30d":   total_compliance,
+            "highest_risk_department":               highest_risk_dept,
+        },
+        "departments": departments,
+        "trend_30d":   trend,
+    })

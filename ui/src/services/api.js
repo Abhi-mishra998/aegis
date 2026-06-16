@@ -1023,6 +1023,13 @@ export const teamService = {
   // their Redis-tracked spend.
   listEmployees: () => request('/team/employees'),
 
+  // Sprint 17.5 — overview rollup. Single-fetch payload powering the
+  // /team hero KPIs, the Department View tab, and the Executive tab.
+  // The audit_logs DB is the source of truth for 30-day spend +
+  // request counts; Redis only carries today's fast-path budget
+  // counter.
+  overview: () => request('/team/overview'),
+
   // Mint a new acp_emp_… virtual key for one employee. Returns the raw
   // key ONCE — the caller is responsible for displaying it to the
   // admin so they can hand it to the employee. After this response
