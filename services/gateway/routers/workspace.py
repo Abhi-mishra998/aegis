@@ -57,6 +57,25 @@ async def workspace_inventory(request: Request) -> Any:
     return passthrough(resp)
 
 
+@router.patch(
+    "/workspace/system-values",
+    dependencies=[Depends(verify_role(Role.OWNER))],
+)
+async def workspace_system_values(request: Request) -> Any:
+    """Sprint 8 — OWNER-only. Proxy → identity:/workspace/system-values."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    resp = await request.app.state.client.patch(
+        f"{_base()}/workspace/system-values",
+        headers=internal_headers(request),
+        json=body or {},
+        timeout=6.0,
+    )
+    return passthrough(resp)
+
+
 @router.post(
     "/workspace/exit-shadow-mode",
     dependencies=[Depends(verify_role(Role.OWNER))],

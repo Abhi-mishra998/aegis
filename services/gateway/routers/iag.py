@@ -19,16 +19,21 @@ and a `last_ingest_ts=0` so the caller can spot the gap.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from redis.asyncio import Redis
 
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
+from services.gateway.client import service_client
 from services.security.iag import graph as iag_graph
 from services.security.iag import store as iag_store
 from services.security.incidents import store as incident_store
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -40,6 +45,51 @@ def _tenant_id(request: Request) -> str:
     if not tid:
         raise HTTPException(status_code=401, detail="tenant_id missing on request")
     return str(tid)
+
+
+async def _dollar_estimate(
+    tenant_id_str: str, by_kind: dict[str, int] | None,
+) -> tuple[int, dict[str, int], dict[str, int]]:
+    """Sprint 8 — compute the Blast-Radius dollar estimate.
+
+    Reads the workspace's ``system_values`` map (kind → dollar weight)
+    via the gateway's TenantMetadataCache and multiplies each kind's
+    untouched-count by its weight. Best-effort: any cache hiccup
+    collapses to a $0 estimate, never raises.
+
+    Returns ``(total_dollars, by_kind_dollars, system_values_in_use)``.
+    """
+    try:
+        tenant_meta = await service_client.get_tenant_metadata(
+            uuid.UUID(tenant_id_str),
+        )
+    except Exception as exc:
+        logger.warning("dollar_estimate_tenant_meta_failed", error=str(exc))
+        return 0, {}, {}
+    raw = tenant_meta.get("system_values") or {}
+    if not isinstance(raw, dict):
+        return 0, {}, {}
+    system_values: dict[str, int] = {}
+    for k, v in raw.items():
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            continue
+        if iv > 0:
+            system_values[str(k).lower()] = iv
+
+    by_kind_dollars: dict[str, int] = {}
+    total = 0
+    for kind, count in (by_kind or {}).items():
+        weight = system_values.get(str(kind).lower(), 0)
+        try:
+            dollars = int(count) * int(weight)
+        except (TypeError, ValueError):
+            dollars = 0
+        if dollars > 0:
+            by_kind_dollars[kind] = dollars
+            total += dollars
+    return total, by_kind_dollars, system_values
 
 
 _TACTIC_NAMES: dict[str, str] = {
@@ -160,6 +210,13 @@ async def get_agent_iag(agent_id: str, request: Request) -> Any:
     last_ingest = await iag_store.get_last_ingest_ts(_redis, tenant_id)
     out = br.to_dict()
     out["last_ingest_ts"] = last_ingest
+    # Sprint 8 — dollar estimate from the workspace's system_values map.
+    dollar_total, by_kind_dollars, system_values = await _dollar_estimate(
+        tenant_id, out.get("by_kind") or {},
+    )
+    out["dollar_estimate"] = dollar_total
+    out["by_kind_dollars"] = by_kind_dollars
+    out["system_values_configured"] = bool(system_values)
     return out
 
 
@@ -216,4 +273,12 @@ async def get_blast_radius(incident_id: str, request: Request) -> Any:
     out = br.to_dict()
     out["last_ingest_ts"] = last_ingest
     out["participating_agents"] = agent_ids
+    # Sprint 8 — dollar estimate. Same helper as the per-agent endpoint;
+    # any cache hiccup collapses to $0 rather than failing the response.
+    dollar_total, by_kind_dollars, system_values = await _dollar_estimate(
+        tenant_id, out.get("by_kind") or {},
+    )
+    out["dollar_estimate"] = dollar_total
+    out["by_kind_dollars"] = by_kind_dollars
+    out["system_values_configured"] = bool(system_values)
     return out
