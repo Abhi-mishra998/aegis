@@ -279,12 +279,14 @@ export const workspaceService = {
   inventory: () => request("/workspace/inventory"),
 };
 
-// Sprint 5 — Identity & Access Graph + Blast Radius read API.
-// Surfaces the IAG endpoints that were built but never wired to the UI.
+// Sprint 5-7 — Identity & Access Graph + Blast Radius read API.
+// Surfaces the IAG endpoints that were built but never wired to the UI,
+// plus the Sprint 7 MITRE coverage grid that pulls from signal_registry.
 export const iagService = {
   getAgent: (agentId) => request(`/iag/agents/${encodeURIComponent(agentId)}`),
   getBlastRadius: (incidentId) =>
     request(`/iag/incidents/${encodeURIComponent(incidentId)}/blast-radius`),
+  getMitreCoverage: () => request("/iag/mitre-coverage"),
 };
 
 // Sprint 5 — Auto-Remediation. Read policy + ledger; force replay on demand.

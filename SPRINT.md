@@ -26,8 +26,8 @@ Translation layer between PRODUCT_PLAN.md (v2, locked) and ground-level work. On
 | 3 | 3.1 | Shadow Mode review surface + would_have_blocked middleware | ✅ DONE | commit e89a33b + 96c873c / ASG 4ca3b61d + 1e742e76 | `/workspace/me` 401 JSON; `/workspace/exit-shadow-mode` 401 JSON; nginx allow-list fixed; 117/117 tests; 12/12 healthy p95 40ms |
 | 4 | 3.2 | Dashboard landing (Agent Inventory hero) | ✅ DONE | commits 69c0794 + 037da84 / ASGs fdd95c15 + fe7c8c27 | Hotfix verified: new bundle hash served (DdWNCPBK), `/workspace/inventory` 401 JSON, `/dashboard` 200, "medium" tier in bundle, 124/124 tests, 12/12 healthy p95 34ms. Took 2 deploys — the first shipped a runtime bug in Dashboard.jsx that smoke probes missed. |
 | 5 | 3.4 | Incidents enriched (blast radius + remediation + forensics tabs) | ✅ DONE | commit 7815d7b / ASG 33c463f9 | All 4 orphan endpoints 401 JSON (`/iag/incidents/.../blast-radius`, `/remediation/policy`, `/remediation/incidents/...`, `/forensics/blast-radius/...`); bundle hash flipped to BDU7gfyT; "Blast Radius" + "Remediation" + "would_have_blocked" strings all present in bundle; 124/124 tests; 12/12 healthy p95 37ms |
-| 6 | 3 cleanup | UI consolidation: 49→15 pages, sidebar restructure | 🚧 IN-FLIGHT | committed locally | 124/124 tests; deploy pending; bundle dropped 1.72MB→1.58MB via tab lazy-load |
-| 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | ⏳ | — | — |
+| 6 | 3 cleanup | UI consolidation: 49→15 pages, sidebar restructure | ✅ DONE | commit 93fa230 / ASG 3fc8c8fd | 3 demo pages deleted, 3 tab routers live (`/policies`, `/agents/:id`, `/settings`), sidebar 3-tier (6/16/3+1), bundle dropped 1.72MB→1.58MB; new hash `oawEBs83`; "Policies" + "Shadow Review" + "Blast Radius" strings in bundle; 124/124 tests; 12/12 healthy p95 38ms |
+| 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | 🚧 IN-FLIGHT | committed locally | 129/129 tests; deploy pending |
 | 8 | 5 | Blast Radius dollar formula + workspace value tags | ⏳ | — | — |
 | 9 | 6 | Stripe billing wiring (model exists, wire it) | ⏳ | — | — |
 | 10 | 6 | Production hardening: CSP, security headers, audit-chain refresh | ⏳ | — | — |
