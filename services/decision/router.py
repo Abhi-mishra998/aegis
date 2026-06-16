@@ -24,7 +24,8 @@ router = APIRouter(prefix="/decision", tags=["decision"])
 # CONSTANTS
 # ---------------------------------------------------------------------------
 
-_KS_ALLOWED_ROLES = frozenset(["ADMIN", "SECURITY"])
+# Sprint 1 — OWNER + SECURITY_ANALYST added; legacy ADMIN/SECURITY still accepted.
+_KS_ALLOWED_ROLES = frozenset(["OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY"])
 _KILL_SWITCH_TTL = 86400 * 7  # 7 days
 
 

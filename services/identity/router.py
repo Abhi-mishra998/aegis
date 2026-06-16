@@ -178,8 +178,9 @@ async def create_user(
         token_svc = TokenService(redis)
         try:
             claims = await token_svc.verify(extract_bearer_token(authorization) or "")
-            if claims.get("role", "").upper() != UserRole.ADMIN.value:
-                raise HTTPException(status_code=403, detail="Admin role required")
+            # Sprint 1 — OWNER subsumes ADMIN for super-tenant CRUD.
+            if claims.get("role", "").upper() not in ("OWNER", "ADMIN"):
+                raise HTTPException(status_code=403, detail="OWNER or ADMIN role required")
         except Exception as err:
             raise HTTPException(status_code=401, detail="Invalid token") from err
 
@@ -494,8 +495,12 @@ async def revoke_all(
     try:
         claims = await token_svc.verify(extract_bearer_token(authorization) or "")
         role = claims.get("role", "").upper()
-        if role not in ("ADMIN", "SECURITY"):
-            raise HTTPException(status_code=403, detail="ADMIN or SECURITY role required")
+        # Sprint 1 — OWNER + SECURITY_ANALYST added; legacy ADMIN/SECURITY still accepted.
+        if role not in ("OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY"):
+            raise HTTPException(
+                status_code=403,
+                detail="OWNER, ADMIN, or SECURITY_ANALYST role required",
+            )
     except HTTPException:
         raise
     except Exception as err:

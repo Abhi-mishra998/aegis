@@ -521,7 +521,8 @@ async def execute_tool(
 # POLICY TEST (DRY-RUN against live OPA)
 # =========================
 
-_ALLOWED_ROLES: frozenset[str] = frozenset({"ADMIN", "SECURITY"})
+# Sprint 1 — OWNER + SECURITY_ANALYST added; legacy ADMIN/SECURITY still accepted.
+_ALLOWED_ROLES: frozenset[str] = frozenset({"OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY"})
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 
 
@@ -529,12 +530,12 @@ def _require_admin_or_security(
     x_acp_role: str | None = Header(default=None),
     _secret: str = Depends(verify_internal_secret),
 ) -> str:
-    """Require ADMIN or SECURITY role (injected by Gateway from validated JWT)."""
+    """Require OWNER, ADMIN, or SECURITY_ANALYST role (injected by Gateway from validated JWT)."""
     role = (x_acp_role or "").upper()
     if role not in _ALLOWED_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="ADMIN or SECURITY role required",
+            detail="OWNER, ADMIN, or SECURITY_ANALYST role required",
         )
     return role
 

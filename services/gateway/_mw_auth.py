@@ -201,25 +201,36 @@ class _AuthMixin:
                         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
                     # Active RBAC Mapping
-                    role = auth_data.get("role", "VIEWER")
+                    # Sprint 1 — Role enum extended (OWNER + SECURITY_ANALYST + DEVELOPER + READ_ONLY).
+                    # OWNER subsumes ADMIN; SECURITY_ANALYST subsumes legacy SECURITY;
+                    # DEVELOPER + READ_ONLY map to legacy AGENT/VIEWER for permission_map purposes.
+                    role = auth_data.get("role", "READ_ONLY")
                     permissions_map = {
-                        "ADMIN": ["*"],
-                        "SECURITY": ["kill_switch", "view_risk", "execute_agent"],
-                        "AUDITOR": ["view_risk", "view_audit"],
-                        "VIEWER": ["view_risk"],
-                        "agent": ["execute_agent"],
+                        "OWNER":            ["*"],
+                        "ADMIN":            ["*"],
+                        "SECURITY_ANALYST": ["kill_switch", "view_risk", "execute_agent"],
+                        "DEVELOPER":        ["execute_agent", "view_risk"],
+                        "READ_ONLY":        ["view_risk"],
+                        # Legacy role names kept so pre-Sprint-1 JWTs still resolve.
+                        "SECURITY":         ["kill_switch", "view_risk", "execute_agent"],
+                        "AUDITOR":          ["view_risk", "view_audit"],
+                        "VIEWER":           ["view_risk"],
+                        "agent":            ["execute_agent"],
                     }
                     request.state.permissions = permissions_map.get(role, [])
                     request.state.role = role
 
-                    # Write-path enforcement: mutations require ADMIN or SECURITY,
-                    # except agent-role tokens on /execute (controlled by OPA + Decision Engine).
+                    # Write-path enforcement: mutations require an admin-tier role.
+                    # Sprint 1 added OWNER (top tier) + renamed SECURITY → SECURITY_ANALYST;
+                    # both legacy + new names are accepted so existing JWTs keep working.
+                    # agent-role tokens are allowed only on /execute (controlled by OPA + Decision Engine).
+                    _write_roles = ("OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY")
                     if request.method not in ("GET", "HEAD", "OPTIONS"):
-                        if role not in ("ADMIN", "SECURITY"):
+                        if role not in _write_roles:
                             if not (is_execute_path and role == "agent"):
                                 raise HTTPException(
                                     status_code=403,
-                                    detail="Write operations require ADMIN or SECURITY role",
+                                    detail="Write operations require OWNER, ADMIN, or SECURITY_ANALYST role",
                                 )
 
                     # Enterprise JTI Atomic Burst Lock — tool executions only.
