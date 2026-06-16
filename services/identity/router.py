@@ -1133,13 +1133,16 @@ async def provision_from_clerk(
         unverified.get("org_id") or claims.get("org_id") or "",
     )
     if not clerk_org_id:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Clerk JWT carries no `org_id` claim — sign in to an "
-                "organization (or create one) before calling /auth/clerk/provision."
-            ),
-        )
+        # Sprint-1 follow-up: if the Clerk JWT carries no org claim,
+        # auto-create a personal workspace keyed on the Clerk user id
+        # instead of returning 409. The original behaviour forced
+        # individual-account users into a "create an org" dialog that
+        # most never completed — they'd just close the tab and the
+        # signup funnel dropped them. Personal workspaces are first-class:
+        # one user, one tenant, no org switcher, no team-management
+        # surface. Same upsert path as the real org flow so a later
+        # invitation to a multi-user org tier is a no-op upgrade.
+        clerk_org_id = f"personal_{clerk_user_id}"
 
     # Need org name + user email + role. Try the Clerk Backend API first
     # for the richest payload; fall back to claims-only if Clerk is down.
