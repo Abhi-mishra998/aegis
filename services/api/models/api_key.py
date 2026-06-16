@@ -33,8 +33,11 @@ class APIKey(Base, TenantMixin, IdMixin, TimestampMixin):
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    # The actual key hint or prefix for display
-    key_prefix: Mapped[str] = mapped_column(String(10), nullable=False)
+    # The actual key hint or prefix for display.
+    # Sprint 17.5 — widened to 16 chars so `acp_emp_…` employee virtual
+    # keys can use a meaningful 12-char prefix (acp_emp_ + 4 random)
+    # without overflowing. Legacy `acp_…` rows fit in the same column.
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # Hashed version of the full API key
     key_hash: Mapped[str] = mapped_column(
@@ -86,4 +89,12 @@ class APIKey(Base, TenantMixin, IdMixin, TimestampMixin):
     )
     monthly_budget_usd: Mapped[float | None] = mapped_column(
         Numeric(10, 2), nullable=True,
+    )
+
+    # Sprint 17.5 — Aegis for Teams Productization. Free-text department
+    # tag so /team Department View can aggregate spend + harmful actions
+    # by team (Engineering / Finance / Legal / Sales / Support / Custom).
+    # NULL = "Unassigned" bucket. Indexed for the per-department rollup.
+    department: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True,
     )

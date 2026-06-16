@@ -169,6 +169,10 @@ declare -A SSM_OVERLAY=(
     ["${SSM_PREFIX}/stripe/pro-price-id"]="STRIPE_PRO_PRICE_ID"
     ["${SSM_PREFIX}/stripe/enterprise-price-id"]="STRIPE_ENTERPRISE_PRICE_ID"
     ["${SSM_PREFIX}/stripe/webhook-secret"]="STRIPE_WEBHOOK_SECRET"
+    # Sprint 17 — Aegis for Teams: corporate Anthropic API key the
+    # /v1/messages proxy forwards to. Set in SSM as SecureString. Empty
+    # disables the proxy (router returns 503 with config message).
+    ["${SSM_PREFIX}/anthropic/upstream-key"]="UPSTREAM_ANTHROPIC_KEY"
 )
 {
     echo ""

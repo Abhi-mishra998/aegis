@@ -1,28 +1,64 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
+  Activity,
   AlertTriangle,
+  Building2,
   Check,
   Copy,
   DollarSign,
+  Eye,
   Loader2,
   Plus,
   RefreshCw,
   Shield,
+  ShieldCheck,
   Trash2,
+  TrendingUp,
   Users,
 } from 'lucide-react'
 import { teamService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import Button from '../components/Common/Button'
 import Card from '../components/Common/Card'
+import TabErrorBoundary from '../components/Common/TabErrorBoundary'
 
-/* ───────── helpers ─────────────────────────────────────────────────── */
+/* ───────── shared helpers ──────────────────────────────────────────── */
 
 function fmtUSD(n) {
   if (n == null) return '—'
   const v = Number(n) || 0
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`
-  return `$${v.toFixed(2)}`
+  if (v >= 1)    return `$${v.toFixed(2)}`
+  return `$${v.toFixed(4)}`
+}
+
+function fmtInt(n) {
+  if (n == null) return '—'
+  const v = Number(n) || 0
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}K`
+  return v.toLocaleString()
+}
+
+const SUGGESTED_DEPARTMENTS = ['Engineering', 'Finance', 'Legal', 'Sales', 'Support']
+
+const RISK_LABEL_STYLES = {
+  Low:      'text-green-400  bg-green-500/10  border-green-500/20',
+  Moderate: 'text-blue-400   bg-blue-500/10   border-blue-500/20',
+  Elevated: 'text-amber-400  bg-amber-500/10  border-amber-500/20',
+  High:     'text-red-400    bg-red-500/10    border-red-500/20',
+}
+
+function RiskLabel({ label, score, reason }) {
+  const style = RISK_LABEL_STYLES[label] || 'text-neutral-500 bg-white/[0.03] border-white/[0.06]'
+  return (
+    <span
+      className={`status-badge ${style}`}
+      title={reason || `Risk score ${(Number(score) || 0).toFixed(2)} (0–1 scale; >0.4 = Elevated, >0.7 = High)`}
+    >
+      {label || '—'}
+    </span>
+  )
 }
 
 function BudgetBar({ spent, budget }) {
@@ -33,7 +69,7 @@ function BudgetBar({ spent, budget }) {
   const color =
     pct >= 95 ? 'bg-red-500/70' : pct >= 70 ? 'bg-amber-400/70' : 'bg-green-500/70'
   return (
-    <div className="w-24 space-y-1">
+    <div className="w-28 space-y-1">
       <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
         <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
@@ -44,16 +80,32 @@ function BudgetBar({ spent, budget }) {
   )
 }
 
+function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon }) {
+  return (
+    <Card>
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-neutral-500">
+          {Icon && <Icon size={11} aria-hidden="true" />}
+          <span>{label}</span>
+        </div>
+        <div className={`text-3xl font-bold ${accent}`}>{value}</div>
+        {sublabel && <div className="text-[11px] text-neutral-500">{sublabel}</div>}
+      </div>
+    </Card>
+  )
+}
+
 /* ───────── Add-employee modal ───────────────────────────────────────── */
 
-function AddEmployeeModal({ onClose, onMinted }) {
+function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
+  const [department, setDepartment] = useState('')
   const [dailyBudget, setDailyBudget] = useState('')
   const [monthlyBudget, setMonthlyBudget] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [minted, setMinted] = useState(null) // { api_key, key_prefix, email, … }
+  const [minted, setMinted] = useState(null)
   const [copied, setCopied] = useState(false)
 
   const submit = async (e) => {
@@ -64,6 +116,7 @@ function AddEmployeeModal({ onClose, onMinted }) {
       const payload = {
         email: email.trim().toLowerCase(),
         name: name.trim() || undefined,
+        department: department.trim() || undefined,
         daily_budget_usd:   dailyBudget   === '' ? null : Number(dailyBudget),
         monthly_budget_usd: monthlyBudget === '' ? null : Number(monthlyBudget),
       }
@@ -87,6 +140,11 @@ function AddEmployeeModal({ onClose, onMinted }) {
       setTimeout(() => setCopied(false), 2000)
     } catch (_) {}
   }
+
+  const departmentOptions = useMemo(() => {
+    const set = new Set([...SUGGESTED_DEPARTMENTS, ...(knownDepartments || [])])
+    return Array.from(set).filter((d) => d && d !== 'Unassigned')
+  }, [knownDepartments])
 
   return (
     <div
@@ -127,17 +185,36 @@ function AddEmployeeModal({ onClose, onMinted }) {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="label-standard" htmlFor="emp-name">Display name (optional)</label>
-                <input
-                  id="emp-name"
-                  type="text"
-                  className="input-standard h-10"
-                  placeholder="Alice Liu"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="label-standard" htmlFor="emp-name">Display name</label>
+                  <input
+                    id="emp-name"
+                    type="text"
+                    className="input-standard h-10"
+                    placeholder="Alice Liu"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="label-standard" htmlFor="emp-dept">Department</label>
+                  <input
+                    id="emp-dept"
+                    list="emp-dept-list"
+                    type="text"
+                    className="input-standard h-10"
+                    placeholder="Engineering"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                  />
+                  <datalist id="emp-dept-list">
+                    {departmentOptions.map((d) => (<option key={d} value={d} />))}
+                  </datalist>
+                </div>
               </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="label-standard" htmlFor="emp-daily">Daily cap (USD)</label>
@@ -191,9 +268,9 @@ function AddEmployeeModal({ onClose, onMinted }) {
               </h2>
               <p className="text-xs text-neutral-500 mt-1">
                 Copy this key now — it cannot be shown again. Hand it to{' '}
-                <code className="text-white">{minted.subject_email || minted.email}</code> and tell them to
-                replace their <code>ANTHROPIC_API_KEY</code> + point the SDK at{' '}
-                <code>https://ha.aegisagent.in</code>.
+                <code className="text-white">{minted.subject_email || minted.email}</code>{' '}
+                and ask them to replace their <code>ANTHROPIC_API_KEY</code> + point the
+                SDK at <code>https://ha.aegisagent.in</code>.
               </p>
             </div>
 
@@ -221,13 +298,243 @@ function AddEmployeeModal({ onClose, onMinted }) {
   )
 }
 
+/* ───────── Tab: Members ─────────────────────────────────────────────── */
+
+function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke }) {
+  return (
+    <Card title="Members" icon={Users}>
+      {loading ? (
+        <div className="text-xs text-neutral-500 py-10 text-center">
+          <Loader2 size={20} className="animate-spin mx-auto mb-2" />
+          Loading team…
+        </div>
+      ) : employees.length === 0 ? (
+        <div className="text-xs text-neutral-500 py-10 text-center space-y-3">
+          <Users size={26} className="text-neutral-700 mx-auto" />
+          <div>No employees on Aegis yet.</div>
+          {isAdmin && (
+            <Button size="sm" onClick={onAdd}>
+              <Plus size={14} /> Add your first employee
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[10px] uppercase tracking-widest text-neutral-500">
+              <tr className="text-left border-b border-white/[0.05]">
+                <th className="py-2 pr-3">Employee</th>
+                <th className="py-2 pr-3">Department</th>
+                <th className="py-2 pr-3">Today</th>
+                <th className="py-2 pr-3">This month</th>
+                <th className="py-2 pr-3">Daily cap</th>
+                <th className="py-2 pr-3">Monthly cap</th>
+                {isAdmin && <th className="py-2 pr-2 text-right">Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {employees.map((e) => (
+                <tr key={e.key_id} className="border-b border-white/[0.04] last:border-b-0">
+                  <td className="py-3 pr-3">
+                    <div className="text-neutral-200 font-medium">{e.name || (e.email || '').split('@')[0]}</div>
+                    <div className="text-[10px] text-neutral-600">{e.email}</div>
+                  </td>
+                  <td className="py-3 pr-3 text-neutral-300">{e.department || <span className="text-neutral-600 italic">Unassigned</span>}</td>
+                  <td className="py-3 pr-3 font-mono text-neutral-200">
+                    <span className="inline-flex items-center gap-1">
+                      <DollarSign size={11} className="text-neutral-500" />
+                      {Number(e.today_usd).toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-3 font-mono text-neutral-200">
+                    <span className="inline-flex items-center gap-1">
+                      <DollarSign size={11} className="text-neutral-500" />
+                      {Number(e.month_usd).toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-3"><BudgetBar spent={e.today_usd} budget={e.daily_budget_usd} /></td>
+                  <td className="py-3 pr-3"><BudgetBar spent={e.month_usd} budget={e.monthly_budget_usd} /></td>
+                  {isAdmin && (
+                    <td className="py-3 pr-2 text-right">
+                      <button
+                        onClick={() => onRevoke(e.key_id, e.email)}
+                        aria-label={`Revoke ${e.email}`}
+                        className="inline-flex items-center gap-1 text-[10px] text-neutral-500 hover:text-red-400 px-2 py-1 rounded border border-transparent hover:border-red-500/20 hover:bg-red-500/[0.04]"
+                      >
+                        <Trash2 size={11} /> Revoke
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+/* ───────── Tab: Departments ─────────────────────────────────────────── */
+
+function DepartmentsTab({ departments, loading }) {
+  return (
+    <Card title="Department View" icon={Building2}>
+      {loading ? (
+        <div className="text-xs text-neutral-500 py-10 text-center">
+          <Loader2 size={20} className="animate-spin mx-auto mb-2" />
+          Aggregating…
+        </div>
+      ) : departments.length === 0 ? (
+        <div className="text-xs text-neutral-500 py-10 text-center space-y-2">
+          <Building2 size={26} className="text-neutral-700 mx-auto" />
+          <div>No department traffic yet.</div>
+          <div className="text-[11px] text-neutral-600 max-w-md mx-auto">
+            Tag employees with a department in the Add-employee modal and run any /v1/messages
+            calls — this view auto-rolls up by team.
+          </div>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[10px] uppercase tracking-widest text-neutral-500">
+              <tr className="text-left border-b border-white/[0.05]">
+                <th className="py-2 pr-3">Department</th>
+                <th className="py-2 pr-3">Employees</th>
+                <th className="py-2 pr-3">AI Requests (30d)</th>
+                <th className="py-2 pr-3">Spend (30d)</th>
+                <th className="py-2 pr-3">Harmful blocked</th>
+                <th className="py-2 pr-3">Compliance enforced</th>
+                <th className="py-2 pr-2">Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {departments.map((d) => (
+                <tr key={d.name} className="border-b border-white/[0.04] last:border-b-0">
+                  <td className="py-3 pr-3 text-neutral-200 font-medium">{d.name}</td>
+                  <td className="py-3 pr-3 text-neutral-300">{d.employees}</td>
+                  <td className="py-3 pr-3 font-mono text-neutral-200">{fmtInt(d.requests_30d)}</td>
+                  <td className="py-3 pr-3 font-mono text-neutral-200">{fmtUSD(d.spend_30d_usd)}</td>
+                  <td className="py-3 pr-3 font-mono text-neutral-200">{d.harmful_blocked_30d}</td>
+                  <td className="py-3 pr-3 font-mono text-neutral-200">{d.compliance_enforced_30d}</td>
+                  <td className="py-3 pr-2">
+                    <RiskLabel
+                      label={d.risk_label}
+                      score={d.risk_score}
+                      reason={
+                        d.risk_label === 'High' || d.risk_label === 'Elevated'
+                          ? `${d.harmful_blocked_30d} harmful action${d.harmful_blocked_30d === 1 ? '' : 's'} blocked out of ${d.requests_30d} requests this month.`
+                          : 'No high-risk activity observed in the last 30 days.'
+                      }
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+/* ───────── Tab: Executive ───────────────────────────────────────────── */
+
+function ExecutiveTab({ kpis, departments, loading }) {
+  const focusDept = departments.find((d) => d.risk_label === 'High' || d.risk_label === 'Elevated')
+  const totalDepts = departments.length
+  return (
+    <div className="space-y-4">
+      <Card title="Executive Summary" icon={ShieldCheck}>
+        {loading ? (
+          <div className="text-xs text-neutral-500 py-8 text-center">
+            <Loader2 size={20} className="animate-spin mx-auto mb-2" />
+            Building summary…
+          </div>
+        ) : (
+          <div className="space-y-4 text-sm text-neutral-300 leading-relaxed">
+            <p>
+              In the last 30 days, your organisation routed{' '}
+              <strong className="text-white">{fmtInt(kpis?.ai_requests_30d || 0)} AI requests</strong>{' '}
+              through Aegis across{' '}
+              <strong className="text-white">{kpis?.active_employees || 0}</strong> active employees in{' '}
+              <strong className="text-white">{totalDepts}</strong> department{totalDepts === 1 ? '' : 's'}.
+              Total spend reached <strong className="text-white">{fmtUSD(kpis?.monthly_spend_usd)}</strong>.
+            </p>
+            <p>
+              Aegis blocked{' '}
+              <strong className="text-white">{fmtInt(kpis?.harmful_actions_blocked_30d || 0)} harmful action{kpis?.harmful_actions_blocked_30d === 1 ? '' : 's'}</strong>{' '}
+              and enforced{' '}
+              <strong className="text-white">{fmtInt(kpis?.compliance_violations_prevented_30d || 0)} compliance control{kpis?.compliance_violations_prevented_30d === 1 ? '' : 's'}</strong>{' '}
+              over the same period.
+              {focusDept ? (
+                <>{' '}The highest-risk team this month is{' '}
+                <strong className="text-white">{focusDept.name}</strong>{' '}
+                ({focusDept.harmful_blocked_30d} harmful action{focusDept.harmful_blocked_30d === 1 ? '' : 's'} blocked out of{' '}
+                {focusDept.requests_30d} requests).</>
+              ) : (
+                <> No team currently exceeds the Elevated risk threshold.</>
+              )}
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+              <MetricTile label="Active employees" value={kpis?.active_employees || 0} icon={Users} />
+              <MetricTile label="AI requests / 30d" value={fmtInt(kpis?.ai_requests_30d || 0)} icon={Activity} />
+              <MetricTile label="Spend / 30d" value={fmtUSD(kpis?.monthly_spend_usd)} icon={DollarSign} />
+              <MetricTile
+                label="Harmful blocked"
+                value={fmtInt(kpis?.harmful_actions_blocked_30d || 0)}
+                accent={(kpis?.harmful_actions_blocked_30d || 0) > 0 ? 'text-amber-400' : 'text-white'}
+                icon={Shield}
+              />
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {departments.length > 0 && (
+        <Card title="Where attention is needed" icon={Eye}>
+          <ul className="space-y-2 text-xs">
+            {departments.slice(0, 5).map((d) => (
+              <li key={d.name} className="flex items-center justify-between gap-3 border-b border-white/[0.04] last:border-b-0 py-2">
+                <div className="flex items-center gap-3">
+                  <RiskLabel label={d.risk_label} score={d.risk_score} />
+                  <span className="text-neutral-200">{d.name}</span>
+                </div>
+                <span className="text-neutral-500">
+                  {d.requests_30d} requests · {fmtUSD(d.spend_30d_usd)} · {d.harmful_blocked_30d} blocked
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+    </div>
+  )
+}
+
 /* ───────── /team page ───────────────────────────────────────────────── */
+
+const TABS = [
+  { id: 'members',     label: 'Members',     icon: Users      },
+  { id: 'departments', label: 'Departments', icon: Building2  },
+  { id: 'executive',   label: 'Executive',   icon: ShieldCheck },
+]
+const DEFAULT_TAB = TABS[0].id
+const VALID_TAB_IDS = new Set(TABS.map((t) => t.id))
 
 export default function Team() {
   const { role } = useAuth() || {}
   const isAdmin = role === 'OWNER' || role === 'ADMIN'
 
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = useMemo(() => {
+    const p = searchParams.get('tab')
+    return p && VALID_TAB_IDS.has(p) ? p : DEFAULT_TAB
+  }, [searchParams])
+  const handleTabClick = (id) => setSearchParams({ tab: id }, { replace: true })
+
   const [employees, setEmployees] = useState([])
+  const [overview,  setOverview]  = useState(null)
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
   const [showAdd,   setShowAdd]   = useState(false)
@@ -235,11 +542,19 @@ export default function Team() {
   const load = useCallback(async () => {
     setLoading(true); setError('')
     try {
-      const resp = await teamService.listEmployees()
-      const rows = resp?.data || resp || []
-      setEmployees(Array.isArray(rows) ? rows : [])
-    } catch (err) {
-      setError(err?.message || 'Failed to load team.')
+      const [empResp, ovResp] = await Promise.allSettled([
+        teamService.listEmployees(),
+        teamService.overview(),
+      ])
+      if (empResp.status === 'fulfilled') {
+        const rows = empResp.value?.data || empResp.value || []
+        setEmployees(Array.isArray(rows) ? rows : [])
+      } else {
+        setError(empResp.reason?.message || 'Failed to load team.')
+      }
+      if (ovResp.status === 'fulfilled') {
+        setOverview(ovResp.value?.data || ovResp.value || null)
+      }
     } finally {
       setLoading(false)
     }
@@ -257,17 +572,45 @@ export default function Team() {
     }
   }
 
-  const total = employees.length
-  const todayTotal = employees.reduce((s, e) => s + (Number(e.today_usd) || 0), 0)
-  const monthTotal = employees.reduce((s, e) => s + (Number(e.month_usd) || 0), 0)
-  const overBudget = employees.filter(
-    (e) =>
-      (e.daily_budget_usd   != null && Number(e.today_usd) >= 0.95 * Number(e.daily_budget_usd)) ||
-      (e.monthly_budget_usd != null && Number(e.month_usd) >= 0.95 * Number(e.monthly_budget_usd)),
-  ).length
+  // Sprint 17.5 KPIs prefer the audit-log rollup (30-day window).
+  // Fall back to in-memory aggregates for first-render before /team/overview lands.
+  const kpis = useMemo(() => {
+    if (overview?.kpis) return overview.kpis
+    const todayTotal = employees.reduce((s, e) => s + (Number(e.today_usd) || 0), 0)
+    const monthTotal = employees.reduce((s, e) => s + (Number(e.month_usd) || 0), 0)
+    return {
+      active_employees:                      employees.filter((e) => e.is_active).length,
+      ai_requests_30d:                       0,
+      monthly_spend_usd:                     monthTotal || todayTotal,
+      harmful_actions_blocked_30d:           0,
+      compliance_violations_prevented_30d:   0,
+      highest_risk_department:               null,
+    }
+  }, [overview, employees])
+
+  const knownDepartments = useMemo(
+    () => Array.from(new Set(employees.map((e) => e.department).filter(Boolean))),
+    [employees],
+  )
+
+  const tabBody = (() => {
+    if (activeTab === 'departments') return <DepartmentsTab departments={overview?.departments || []} loading={loading} />
+    if (activeTab === 'executive')   return <ExecutiveTab kpis={kpis} departments={overview?.departments || []} loading={loading} />
+    return (
+      <MembersTab
+        employees={employees}
+        loading={loading}
+        isAdmin={isAdmin}
+        onRefresh={load}
+        onAdd={() => setShowAdd(true)}
+        onRevoke={revoke}
+      />
+    )
+  })()
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
@@ -275,8 +618,9 @@ export default function Team() {
           </h1>
           <p className="text-xs text-neutral-400 max-w-xl">
             Per-employee Claude usage routed through Aegis. Each employee uses an
-            <code className="mx-1 text-neutral-300">acp_emp_…</code>
-            virtual key — their corporate Anthropic key never leaves your workspace.
+            <code className="mx-1 text-neutral-300">acp_emp_…</code> virtual key — the
+            corporate Anthropic key never leaves your workspace, and every call lands in
+            the same cryptographic audit chain as your production agents.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -291,34 +635,29 @@ export default function Team() {
         </div>
       </div>
 
-      {/* Aggregate KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card>
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-widest text-neutral-500">Employees</div>
-            <div className="text-3xl font-bold text-white">{total}</div>
-          </div>
-        </Card>
-        <Card>
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-widest text-neutral-500">Spend today</div>
-            <div className="text-3xl font-bold text-white">{fmtUSD(todayTotal)}</div>
-          </div>
-        </Card>
-        <Card>
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-widest text-neutral-500">Spend this month</div>
-            <div className="text-3xl font-bold text-white">{fmtUSD(monthTotal)}</div>
-          </div>
-        </Card>
-        <Card>
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-widest text-neutral-500">≥95% of cap</div>
-            <div className={`text-3xl font-bold ${overBudget > 0 ? 'text-amber-400' : 'text-white'}`}>
-              {overBudget}
-            </div>
-          </div>
-        </Card>
+      {/* Hero KPIs */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <MetricTile label="Active employees"  value={kpis.active_employees}                          icon={Users} />
+        <MetricTile label="AI requests / 30d" value={fmtInt(kpis.ai_requests_30d)}                   icon={Activity} />
+        <MetricTile label="Monthly spend"     value={fmtUSD(kpis.monthly_spend_usd)}                 icon={DollarSign} />
+        <MetricTile
+          label="Harmful blocked"
+          value={fmtInt(kpis.harmful_actions_blocked_30d)}
+          accent={(kpis.harmful_actions_blocked_30d || 0) > 0 ? 'text-amber-400' : 'text-white'}
+          icon={Shield}
+        />
+        <MetricTile
+          label="Compliance enforced"
+          value={fmtInt(kpis.compliance_violations_prevented_30d)}
+          icon={ShieldCheck}
+        />
+        <MetricTile
+          label="Highest-risk team"
+          value={kpis.highest_risk_department || '—'}
+          sublabel={kpis.highest_risk_department ? 'review in the Departments tab' : 'no high-risk teams'}
+          accent={kpis.highest_risk_department ? 'text-amber-400' : 'text-white'}
+          icon={TrendingUp}
+        />
       </div>
 
       {error && (
@@ -330,91 +669,50 @@ export default function Team() {
         </div>
       )}
 
-      {/* Per-employee table */}
-      <Card title="Members" icon={Shield}>
-        {loading ? (
-          <div className="text-xs text-neutral-500 py-10 text-center">
-            <Loader2 size={20} className="animate-spin mx-auto mb-2" />
-            Loading team…
-          </div>
-        ) : employees.length === 0 ? (
-          <div className="text-xs text-neutral-500 py-10 text-center space-y-3">
-            <Users size={26} className="text-neutral-700 mx-auto" />
-            <div>No employees on Aegis yet.</div>
-            {isAdmin && (
-              <Button size="sm" onClick={() => setShowAdd(true)}>
-                <Plus size={14} /> Add your first employee
-              </Button>
-            )}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase tracking-widest text-neutral-500">
-                <tr className="text-left border-b border-white/[0.05]">
-                  <th className="py-2 pr-3">Employee</th>
-                  <th className="py-2 pr-3">Key</th>
-                  <th className="py-2 pr-3">Today</th>
-                  <th className="py-2 pr-3">This month</th>
-                  <th className="py-2 pr-3">Daily cap</th>
-                  <th className="py-2 pr-3">Monthly cap</th>
-                  {isAdmin && <th className="py-2 pr-2 text-right">Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {employees.map((e) => (
-                  <tr key={e.key_id} className="border-b border-white/[0.04] last:border-b-0">
-                    <td className="py-3 pr-3">
-                      <div className="text-neutral-200 font-medium">{e.name || e.email.split('@')[0]}</div>
-                      <div className="text-[10px] text-neutral-600">{e.email}</div>
-                    </td>
-                    <td className="py-3 pr-3 font-mono text-[10px] text-neutral-500">
-                      {e.key_prefix}…
-                    </td>
-                    <td className="py-3 pr-3 font-mono text-neutral-200">
-                      <span className="inline-flex items-center gap-1">
-                        <DollarSign size={11} className="text-neutral-500" />
-                        {Number(e.today_usd).toFixed(2)}
-                      </span>
-                    </td>
-                    <td className="py-3 pr-3 font-mono text-neutral-200">
-                      <span className="inline-flex items-center gap-1">
-                        <DollarSign size={11} className="text-neutral-500" />
-                        {Number(e.month_usd).toFixed(2)}
-                      </span>
-                    </td>
-                    <td className="py-3 pr-3"><BudgetBar spent={e.today_usd} budget={e.daily_budget_usd} /></td>
-                    <td className="py-3 pr-3"><BudgetBar spent={e.month_usd} budget={e.monthly_budget_usd} /></td>
-                    {isAdmin && (
-                      <td className="py-3 pr-2 text-right">
-                        <button
-                          onClick={() => revoke(e.key_id, e.email)}
-                          aria-label={`Revoke ${e.email}`}
-                          className="inline-flex items-center gap-1 text-[10px] text-neutral-500 hover:text-red-400 px-2 py-1 rounded border border-transparent hover:border-red-500/20 hover:bg-red-500/[0.04]"
-                        >
-                          <Trash2 size={11} /> Revoke
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      {/* Tab bar */}
+      <div className="flex gap-1 overflow-x-auto pb-1 border-b border-white/[0.06]" role="tablist">
+        {TABS.map(({ id, label, icon: Icon }) => {
+          const isActive = id === activeTab
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => handleTabClick(id)}
+              className={
+                'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
+                (isActive
+                  ? 'bg-white/[0.08] text-white border border-white/[0.1] border-b-transparent -mb-px'
+                  : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]')
+              }
+            >
+              <Icon size={13} aria-hidden="true" />
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
+      <TabErrorBoundary tabId={activeTab}>
+        {tabBody}
+      </TabErrorBoundary>
 
       <p className="text-[10px] text-neutral-700 leading-relaxed">
         Each employee replaces their <code className="text-neutral-500">ANTHROPIC_API_KEY</code> with
-        the minted <code className="text-neutral-500">acp_emp_…</code> virtual key, and points the
+        the minted <code className="text-neutral-500">acp_emp_…</code> virtual key and points the
         Anthropic SDK at <code className="text-neutral-500">https://ha.aegisagent.in</code> via the
         <code className="text-neutral-500"> base_url</code> parameter. From the SDK's perspective
-        nothing else changes — but every message lands in your audit chain, gets attributed back to
-        the employee, and counts toward their daily + monthly USD cap.
+        nothing else changes — but every message lands in your audit chain, gets attributed back
+        to the employee, and counts toward their daily + monthly USD cap.
       </p>
 
       {showAdd && (
-        <AddEmployeeModal onClose={() => setShowAdd(false)} onMinted={load} />
+        <AddEmployeeModal
+          onClose={() => setShowAdd(false)}
+          onMinted={load}
+          knownDepartments={knownDepartments}
+        />
       )}
     </div>
   )

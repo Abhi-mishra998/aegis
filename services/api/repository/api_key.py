@@ -51,17 +51,20 @@ class APIKeyRepository:
 
         Same hashing + persistence as a tenant key, but the row is tagged
         with ``subject_kind='employee'`` and carries the employee email +
-        budget caps. The gateway's /v1/messages proxy reads those fields
-        to attribute spend per-human and to refuse over-budget calls
-        before hitting upstream Anthropic.
+        department + budget caps. The gateway's /v1/messages proxy reads
+        those fields to attribute spend per-human + per-team and to
+        refuse over-budget calls before hitting upstream Anthropic.
         """
         raw_key = f"acp_emp_{secrets.token_urlsafe(32)}"
-        # acp_emp_ is 8 chars; first 12 give a useful display prefix
+        # `acp_emp_` is 8 chars; the first 12 give a useful display prefix
+        # (acp_emp_ + 4 random) that fits in the Sprint 17.5-widened
+        # VARCHAR(16) column.
         key_prefix = raw_key[:12]
         key_hash = self._hash_key(raw_key)
 
         email = payload.email.strip().lower()
         display_name = (payload.name or email.split("@", 1)[0])[:100]
+        department = (payload.department or "").strip()[:64] or None
 
         api_key = APIKey(
             tenant_id=tenant_id,
@@ -73,6 +76,7 @@ class APIKeyRepository:
             subject_email=email,
             daily_budget_usd=payload.daily_budget_usd,
             monthly_budget_usd=payload.monthly_budget_usd,
+            department=department,
         )
 
         self.db.add(api_key)

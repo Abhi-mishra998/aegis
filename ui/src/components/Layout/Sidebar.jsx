@@ -7,7 +7,7 @@ import {
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
   CreditCard, Radio, Bell, BookOpen,
   Workflow, MessagesSquare, Gauge, HeartPulse, DollarSign, Share2,
-  Beaker, EyeOff, Inbox,
+  Beaker, EyeOff, Inbox, Eye,
 } from 'lucide-react'
 import { authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
@@ -23,17 +23,34 @@ import AgentScopePicker from './AgentScopePicker'
 // Hotkeys mirror App.jsx's <GlobalShortcuts>. Items deleted in Sprint 6
 // (LiveDemo, Pricing, ExecutiveDashboard) are gone from every tier.
 
+// Sprint 17.5 — primary nav split into three named product modules so
+// a CIO opening Aegis for the first time can answer the four mandate
+// questions (who uses AI / what did it cost / what risks were stopped /
+// can we prove compliance) without reading documentation. Items keep
+// their original routes; only the visual grouping is new.
+//
+//   Observe  — telemetry surface (Dashboard, Team, Live Feed)
+//   Protect  — runtime enforcement (Agents, Incidents, Policies)
+//   Prove    — compliance + audit trail (Compliance)
+//
+// `kind: 'section'` rows render as a small uppercase header inside the
+// existing nav list, so the items beneath them keep working with
+// hotkeys + j/k cycle navigation.
 const primaryNav = [
+  { kind: 'section', label: 'Observe',     icon: Eye },
   { path: '/dashboard',       label: 'Dashboard',  icon: Gauge,         hint: 'G D' },
-  { path: '/agents',          label: 'Agents',     icon: Users,         hint: 'G A' },
-  // Sprint 17 — Aegis for Teams. Sits between Agents (production AI
-  // agents, SDK-on-endpoint) and Incidents so the operator can swing
-  // between "who's writing my agents" and "who's using my employees'
-  // Claude keys" without leaving the primary nav.
   { path: '/team',            label: 'Team',       icon: Users,         hint: 'G M' },
-  { path: '/incidents',       label: 'Incidents',  icon: AlertTriangle, hint: 'G I' },
   { path: '/live-feed',       label: 'Live Feed',  icon: Radio,         hint: 'G L' },
+
+  { kind: 'section', label: 'Protect',     icon: Shield },
+  { path: '/agents',          label: 'Agents',     icon: Bot,           hint: 'G A' },
+  { path: '/incidents',       label: 'Incidents',  icon: AlertTriangle, hint: 'G I' },
   { path: '/policies',        label: 'Policies',   icon: GitMerge,      hint: 'G P' },
+
+  { kind: 'section', label: 'Prove',       icon: ShieldCheck },
+  { path: '/compliance',      label: 'Compliance', icon: ShieldCheck,   hint: 'G C' },
+
+  { kind: 'section', label: 'Workspace',   icon: SettingsIcon },
   { path: '/settings',        label: 'Settings',   icon: SettingsIcon,  hint: 'G S' },
 ]
 
@@ -110,28 +127,48 @@ export default function Sidebar({ isOpen, onClose }) {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  const renderItem = (item) => (
-    <NavLink
-      key={item.path}
-      to={item.path}
-      onClick={onClose}
-      className={({ isActive }) =>
-        'group flex items-center gap-3 px-3 py-2 rounded-md text-xs transition-colors ' +
-        (isActive
-          ? 'bg-white/[0.07] text-white border border-white/[0.07]'
-          : 'text-neutral-400 hover:text-white hover:bg-white/[0.03]') +
-        (item.danger ? ' hover:border-red-500/40' : '')
-      }
-    >
-      <item.icon size={14} aria-hidden="true" />
-      <span className="flex-1 truncate">{item.label}</span>
-      {item.hint && (
-        <kbd className="text-[9px] uppercase tracking-widest text-neutral-600 font-mono">
-          {item.hint}
-        </kbd>
-      )}
-    </NavLink>
-  )
+  const renderItem = (item, idx) => {
+    // Sprint 17.5 — render the Observe / Protect / Prove / Workspace
+    // section header rows. They're not NavLinks (no route), just visual
+    // dividers with a tiny icon + uppercase label.
+    if (item.kind === 'section') {
+      return (
+        <div
+          key={`section-${item.label}-${idx}`}
+          className={
+            'flex items-center gap-2 px-3 pt-3 pb-1 text-[10px] uppercase tracking-widest text-neutral-500' +
+            // First section header is the top of the nav, no extra spacing needed.
+            (idx === 0 ? ' pt-0' : '')
+          }
+        >
+          {item.icon && <item.icon size={11} aria-hidden="true" />}
+          <span>{item.label}</span>
+        </div>
+      )
+    }
+    return (
+      <NavLink
+        key={item.path}
+        to={item.path}
+        onClick={onClose}
+        className={({ isActive }) =>
+          'group flex items-center gap-3 px-3 py-2 rounded-md text-xs transition-colors ' +
+          (isActive
+            ? 'bg-white/[0.07] text-white border border-white/[0.07]'
+            : 'text-neutral-400 hover:text-white hover:bg-white/[0.03]') +
+          (item.danger ? ' hover:border-red-500/40' : '')
+        }
+      >
+        <item.icon size={14} aria-hidden="true" />
+        <span className="flex-1 truncate">{item.label}</span>
+        {item.hint && (
+          <kbd className="text-[9px] uppercase tracking-widest text-neutral-600 font-mono">
+            {item.hint}
+          </kbd>
+        )}
+      </NavLink>
+    )
+  }
 
   return (
     <aside
