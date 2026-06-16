@@ -85,6 +85,11 @@ tar \
     --exclude='._*' \
     --exclude='infra/.env' \
     --exclude='infra/.env.local' \
+    --exclude='./.env' \
+    --exclude='./.env.local' \
+    --exclude='./.env.aws*' \
+    --exclude='ui/.env' \
+    --exclude='ui/.env.local' \
     --exclude='ui/playwright-report' \
     --exclude='ui/test-results' \
     --exclude='reports' \
@@ -104,9 +109,22 @@ for path in './Dockerfile' './infra/docker-compose.yml' './ui/Dockerfile' './ui/
 done
 echo "→ Sanity check passed (root Dockerfile + compose + ui/dist present)"
 
-# Post-tar safety: confirm no .env snuck in.
-if tar -tzf "$OUT" | grep -E '^./infra/\.env(\.local)?$' >/dev/null; then
-    echo "FAIL — bundle contains an infra/.env file; aborting upload" >&2
+# Post-tar safety: confirm no .env snuck in. Sprint 10 extends the
+# original infra/.env check to repo-root .env, .env.local, ui/.env,
+# ui/.env.local, and .env.aws* — every secret-bearing shape.
+LEAKED_ENV=$(tar -tzf "$OUT" | grep -E '\.env(\.|$)' | grep -E '^(\./)?(\.env|infra/\.env|ui/\.env|\.env\.aws)' || true)
+if [[ -n "$LEAKED_ENV" ]]; then
+    echo "FAIL — bundle contains secret-bearing env files; aborting upload" >&2
+    echo "$LEAKED_ENV" >&2
+    exit 1
+fi
+# Defensive: also confirm no Stripe/Clerk secret-key string leaked into
+# any text file (other than docs that intentionally illustrate them).
+SECRET_LEAK=$(tar -xOzf "$OUT" 2>/dev/null | grep -E '(sk_live_[A-Za-z0-9_-]{20,}|sk_test_[A-Za-z0-9_-]{20,}|whsec_[A-Za-z0-9+/]{20,})' | head -3 || true)
+if [[ -n "$SECRET_LEAK" ]]; then
+    echo "FAIL — bundle contains live-looking Stripe/Clerk secret strings; aborting upload" >&2
+    # Echoes a redacted hint, not the full secret.
+    echo "$SECRET_LEAK" | sed -E 's/(sk_live_|sk_test_|whsec_)[A-Za-z0-9+/_-]+/\1***REDACTED***/g' >&2
     exit 1
 fi
 
