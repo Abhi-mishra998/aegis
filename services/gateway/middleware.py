@@ -315,7 +315,21 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         deadline = start_time + _GLOBAL_SLA_BUDGET
         self._init_context(request, request_id, deadline)
 
-        if request.url.path in _SKIP_PATHS or request.url.path.startswith(_SKIP_PATH_PREFIXES):
+        # /auth/sso/* is mostly public (OAuth redirect dance with no
+        # Aegis token), but /auth/sso/config + /auth/sso/config/test are
+        # the tenant-scoped CRUD endpoints — they MUST stay behind auth
+        # so the gateway can stamp X-Tenant-ID + X-ACP-Role from the
+        # validated JWT. Skipping auth on them meant the SSO Settings
+        # tab in the UI got "Failed to load configuration" whenever the
+        # client didn't pre-populate X-Tenant-ID (the new login flow
+        # populates it via Clerk session sync, but during the bridge
+        # window the header is briefly missing and identity 400s).
+        _path = request.url.path
+        _prefix_skip = (
+            _path.startswith(_SKIP_PATH_PREFIXES)
+            and not _path.startswith("/auth/sso/config")
+        )
+        if _path in _SKIP_PATHS or _prefix_skip:
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
