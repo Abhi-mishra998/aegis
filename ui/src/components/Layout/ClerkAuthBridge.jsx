@@ -139,10 +139,16 @@ export default function ClerkAuthBridge() {
       // empty. Synchronously provision via /auth/clerk/provision before
       // we mark the session live; the endpoint is idempotent so a
       // late-arriving webhook is harmless.
-      if (!tenantId && token) {
+      //
+      // Called on EVERY sign-in (not just when tenantId is missing) — the
+      // gateway side of this endpoint also sets the acp_token httpOnly
+      // cookie that the SSE EventSource needs. Without that cookie the
+      // browser shows "Syncing" forever because EventSource can't attach
+      // the Authorization header.
+      if (token) {
         const provisioned = await clerkProvision(token);
         if (cancelled) return;
-        if (provisioned?.tenant_id) {
+        if (!tenantId && provisioned?.tenant_id) {
           tenantId = provisioned.tenant_id;
           if (provisioned.role) {
             role = normalizeRole(provisioned.role);
