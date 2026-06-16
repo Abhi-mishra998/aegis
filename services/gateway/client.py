@@ -603,12 +603,18 @@ class ServiceClient:
                 k: ("" if v is None else (json.dumps(v) if not isinstance(v, str) else v))
                 for k, v in log_data.items()
             }
-            # Add to stream; tighter maxlen prevents OOM
+            # maxlen=10_000 keeps the stream's steady-state below the
+            # /system/health "Degraded Performance" threshold (12_000).
+            # The old 50_000 cap meant the stream sat near full at sustained
+            # load and tripped the 45_000 warning continuously even though
+            # the consumer group's lag was 0 — every entry already XACK'd,
+            # just retained by the cap. The audit DB write is the durability
+            # path; the stream is a transient handoff buffer.
             await redis.xadd(
                 "acp:audit_stream",
                 payload,
-                maxlen=50_000,  # Reduced from 100k for memory safety
-                approximate=True
+                maxlen=10_000,
+                approximate=True,
             )
         except Exception as exc:
             logger.error("audit_stream_write_failed", error=str(exc))

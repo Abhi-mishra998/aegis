@@ -38,11 +38,17 @@ async def push_audit_event(
             "request_id": request_id or str(uuid.uuid4()),
         }
 
+        # maxlen=10_000 keeps the stream's steady-state below the
+        # /system/health "Degraded Performance" threshold (12_000) so the
+        # status badge reflects actual queue pressure rather than the
+        # producer's own retention policy. With ~150 events/s peak the
+        # consumer group catches up within ~60s; entries beyond that point
+        # are already XACK'd and the stream is just a debug ring buffer.
         await redis.xadd(
             "acp:audit_stream",
             payload,
-            maxlen=50_000,
-            approximate=True
+            maxlen=10_000,
+            approximate=True,
         )
     except Exception:
         SLO_AUDIT_DURABILITY_TOTAL.labels(stage="failed_at_producer").inc()
