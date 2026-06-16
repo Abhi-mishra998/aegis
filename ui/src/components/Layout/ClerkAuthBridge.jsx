@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useUser, useAuth as useClerkAuth, useOrganization } from '@clerk/react';
 import { useAuth as useAegisAuth } from '../../hooks/useAuth';
 import { setSessionMetadata, clearSessionMetadata } from '../../services/api';
@@ -189,37 +189,57 @@ export default function ClerkAuthBridge() {
     updateAuth,
   ]);
 
+  // Stable ref for the latest getToken — Clerk's hook returns a NEW
+  // function reference on most re-renders, which would cause every render
+  // to tear down the refresh interval below and re-arm it. The result was
+  // that no refresh ever fired between the 5s kick and the next re-render,
+  // so the cookie's Clerk JWT actually expired (60s TTL) → SSE 401 with
+  // "Clerk token has expired" → user saw session-expired overlay.
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
+
   // Periodic refresh — Clerk's default JWT lifetime is 60 seconds. Without
-  // this loop the localStorage acp_token_expiry counts down to zero,
-  // App.jsx fires session_expired, IncidentOverlay pops up, and the
-  // acp_token cookie that backs the SSE EventSource goes stale (SSE drops
-  // to "Disconnected — network error"). Refresh every 45s so we replace
-  // both the cookie and the expiry timestamp BEFORE the 60s window
-  // closes.
+  // this loop the cookie expires, SSE handshake 401s, App.jsx fires
+  // session_expired, and the IncidentOverlay pops up.
+  //
+  // Deps: ONLY the auth-presence booleans. With getToken behind a ref
+  // the effect arms exactly once per sign-in and tears down exactly once
+  // on sign-out — no per-render restarts.
+  //
+  // Strategy: poll every 10 seconds. Only refresh the cookie when the
+  // current JWT is < 25 seconds from expiry. That gives us:
+  //   - At most one Clerk getToken() call per 30 seconds of session
+  //     (well under dev-mode rate limits — what was blowing up the
+  //     Lighthouse/page LCP)
+  //   - Cookie always refreshed at least 25s before expiry, so the
+  //     SSE never sees an expired token at handshake.
   useEffect(() => {
     if (!userLoaded || !orgLoaded || !isSignedIn) return;
 
     let cancelled = false;
-    const REFRESH_INTERVAL_MS = 45_000;
+    let inFlight = false;
+    const POLL_INTERVAL_MS    = 10_000;
+    const REFRESH_AHEAD_MS    = 25_000;
 
     const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const token = await getToken({ template: 'aegis' }).catch(() => getToken());
+        const fetchToken = getTokenRef.current;
+        const token = await fetchToken({ template: 'aegis' })
+          .catch(() => fetchToken());
         if (cancelled || !token) return;
         // Re-call /auth/clerk/provision so the gateway re-issues the
         // acp_token cookie with the freshly-refreshed Clerk JWT.
-        // Idempotent — late-arriving Clerk webhook can't corrupt anything.
+        // Idempotent.
         await clerkProvision(token);
         if (cancelled) return;
-        // Push the new expiry into localStorage so App.jsx's session
-        // timer resets.
+        // Update the session-timer's expiry so App.jsx's 5s poll
+        // doesn't fire session_expired.
         const payload = decodeJwtPayload(token);
         const expiresIn = payload.exp
           ? Math.max(60, payload.exp - Math.floor(Date.now() / 1000))
           : 3600;
-        // setSessionMetadata writes acp_token_expiry = Date.now() + expires_in*1000.
-        // Only re-write the timestamp; preserve everything else that ClerkAuthBridge's
-        // primary effect already populated.
         const tenantId   = localStorage.getItem('tenant_id') || '';
         const userEmail  = localStorage.getItem('user_email') || '';
         const role       = localStorage.getItem('user_role') || '';
@@ -230,21 +250,34 @@ export default function ClerkAuthBridge() {
           role,
         });
       } catch (err) {
-        // Silent — Clerk's own session manager retries; we just don't want to
-        // crash the loop on a transient network blip.
+        // Silent — Clerk's own session manager retries.
+      } finally {
+        inFlight = false;
       }
     };
 
-    // Kick once after a short delay so the primary sign-in effect has
-    // already populated localStorage. Then run on a fixed interval.
-    const kick = setTimeout(refresh, 5_000);
-    const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
+    const tick = () => {
+      if (cancelled) return;
+      const expiryMs = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
+      const remaining = expiryMs - Date.now();
+      // First load: localStorage hasn't been populated yet (the primary
+      // sign-in effect hasn't completed). Refresh immediately so the
+      // gateway gets the cookie before any page mounts.
+      if (expiryMs === 0 || remaining < REFRESH_AHEAD_MS) {
+        refresh();
+      }
+    };
+
+    // Kick after 2s so the primary effect has had time to land its
+    // localStorage write. Then poll every 10s.
+    const kick = setTimeout(tick, 2_000);
+    const interval = setInterval(tick, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearTimeout(kick);
       clearInterval(interval);
     };
-  }, [userLoaded, orgLoaded, isSignedIn, getToken]);
+  }, [userLoaded, orgLoaded, isSignedIn]);
 
   return null;
 }
