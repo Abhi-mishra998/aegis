@@ -1,6 +1,6 @@
 import { emitAuthFailure } from "../lib/authEvents";
 import { parseRule, parseRuleList } from "../lib/schemas";
-import { attachClerkAuth, getClerkToken, hasClerkAuth } from "./clerkAuth";
+import { attachClerkAuth, getFreshClerkToken, hasClerkAuth } from "./clerkAuth";
 
 // In dev: empty string → relative URLs → Vite proxy routes to :8000 (same-origin, no CORS/cookie issues).
 // In production (Docker/k8s): set VITE_GATEWAY_URL=https://your-gateway or leave empty for nginx proxy.
@@ -147,17 +147,16 @@ const request = async (url, options = {}, retry = 1) => {
     });
 
     if (res.status === 401) {
-      // Clerk session race: the Clerk JWT lifetime is 60s, and the periodic
-      // refresh in ClerkAuthBridge runs every 10s. A tab waking from
-      // background or a request landing right at the 60s boundary can ship
-      // an expired Bearer that arrives a second before the next refresh
-      // tick. Before declaring the session dead and bouncing the user to
-      // /login, ask Clerk for a fresh token and replay the request ONCE.
-      // If that still 401s the session really is dead.
+      // Clerk session race: the Clerk JWT lifetime is 60s. Even with the
+      // exp-aware preflight in attachClerkAuth, requests can be in flight
+      // when the SDK rotates underneath them. Before declaring the session
+      // dead and bouncing the user to /login, ask Clerk to skip its
+      // in-memory cache, fetch a fresh JWT, and replay ONCE. If THAT also
+      // 401s, the session really is dead.
       const isClerkSession = hasClerkAuth();
       if (isClerkSession && !options._authRetried) {
         try {
-          const freshToken = await getClerkToken();
+          const freshToken = await getFreshClerkToken();
           if (freshToken) {
             const retryHeaders = {
               ...headers,
@@ -169,6 +168,10 @@ const request = async (url, options = {}, retry = 1) => {
               credentials: "include",
             });
             if (retryRes.status !== 401) {
+              // Quiet success — the first 401 is a Clerk-rotation artifact,
+              // not a real auth failure; the user's network panel still
+              // shows it, but the application path is OK so no console
+              // noise here.
               return await _handleResponse(retryRes, url);
             }
           }
@@ -176,6 +179,10 @@ const request = async (url, options = {}, retry = 1) => {
           console.warn("Clerk refresh-on-401 failed", refreshErr);
         }
       }
+      // Only log + emit auth_failure when the retry path also failed (or
+      // wasn't applicable). Logging on the first 401 of every Clerk-token-
+      // rotation moment flooded the console; users mistook the resolved
+      // requests for a permanent outage.
       console.error(`AUTHENTICATION_REQUIRED [401] ${url}`);
       clearSessionMetadata();
       if (window.location.pathname !== "/login") {

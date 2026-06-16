@@ -124,15 +124,19 @@ export default function ClerkAuthBridge() {
     // template in the Clerk dashboard yet, fall through to the default
     // session token — the gateway resolves the rest via the org→tenant
     // mapping the webhook receiver caches in Redis.
-    const fetchAegisToken = async () => {
+    //
+    // Accepts `options.skipCache` so api.js's retry-on-401 path can ask
+    // Clerk to bypass its in-memory cache and re-fetch from the network.
+    const fetchAegisToken = async (options) => {
       const get = getTokenRef.current;
+      const skipCache = Boolean(options && options.skipCache);
       try {
-        const token = await get({ template: 'aegis' });
+        const token = await get({ template: 'aegis', skipCache });
         if (token) return token;
       } catch (err) {
         // Template missing — fall through to default token.
       }
-      return get();
+      return get({ skipCache });
     };
     setClerkTokenGetter(fetchAegisToken);
 
@@ -257,16 +261,23 @@ export default function ClerkAuthBridge() {
     let cancelled = false;
     let inFlight = false;
     let consecutiveFailures = 0;
-    const POLL_INTERVAL_MS    = 10_000;
-    const REFRESH_AHEAD_MS    = 25_000;
+    // Poll every 5s and rotate the cookie whenever the current JWT has
+    // less than 40s left. Clerk's default JWT lifetime is 60s, so this
+    // gives us a >35s overlap between cookie rotations — the SSE
+    // EventSource never sees an already-expired Bearer at handshake.
+    const POLL_INTERVAL_MS    = 5_000;
+    const REFRESH_AHEAD_MS    = 40_000;
 
     const refresh = async () => {
       if (inFlight) return;
       inFlight = true;
       try {
         const fetchToken = getTokenRef.current;
-        const token = await fetchToken({ template: 'aegis' })
-          .catch(() => fetchToken());
+        // skipCache: force Clerk to hit the network so we don't re-mint
+        // the cookie with the same about-to-expire token the SDK has in
+        // its in-memory cache.
+        const token = await fetchToken({ template: 'aegis', skipCache: true })
+          .catch(() => fetchToken({ skipCache: true }));
         if (cancelled || !token) {
           if (!cancelled && !token) {
             consecutiveFailures += 1;
