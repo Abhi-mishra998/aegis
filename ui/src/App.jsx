@@ -159,15 +159,41 @@ function App() {
   const [helpOpen,    setHelpOpen]    = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  const updateAuth = (newAuth) => setAuth((prev) => ({ ...prev, ...newAuth }));
+  // BOTH callbacks MUST be stable — pages like Incidents.jsx put `addToast`
+  // in a useCallback dep, so an unstable reference would re-build their
+  // fetchAll on every render, re-arming setInterval + eventBus.on each
+  // time. That's how a transient 5xx turns into hundreds of stacked
+  // "Failed to load incidents" toasts within a few seconds.
+  const updateAuth = useCallback(
+    (newAuth) => setAuth((prev) => ({ ...prev, ...newAuth })),
+    [],
+  );
 
-  const addToast = (message, type = 'info') => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
+  const addToast = useCallback((message, type = 'info') => {
+    // crypto.randomUUID() (or a fallback) avoids Date.now() collisions
+    // when multiple toasts fire in the same millisecond — colliding IDs
+    // make React drop one or both via the duplicate-key bail-out.
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts((prev) => {
+      // De-dupe identical error messages within the current window so a
+      // poll loop hitting a transient 5xx doesn't paint 50 copies of the
+      // same error. Identical-text toast resets the dismissal timer
+      // rather than stacking.
+      const sameText = prev.findIndex(
+        (t) => t.message === message && t.type === type,
+      );
+      if (sameText >= 0) return prev;
+      return [...prev, { id, message, type }];
+    });
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5000);
-  };
+  }, []);
 
-  const removeToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  const removeToast = useCallback(
+    (id) => setToasts((prev) => prev.filter((t) => t.id !== id)),
+    [],
+  );
 
   // Called by AuthEventHandler when auth:failure fires
   const handleIncident = useCallback((detail) => {
@@ -213,9 +239,18 @@ function App() {
     return () => clearTimeout(timer);
   }, [auth.isAuthenticated]);
 
+  // Memoize the context value so consumers don't see a new object on every
+  // render. Without this, every consumer that puts an Auth-context-derived
+  // value in a useCallback/useEffect dep would re-bind every render even
+  // though the underlying values are unchanged.
+  const authContextValue = useMemo(
+    () => ({ ...auth, updateAuth, addToast }),
+    [auth, updateAuth, addToast],
+  );
+
   return (
     <ErrorBoundary>
-      <AuthContext.Provider value={{ ...auth, updateAuth, addToast }}>
+      <AuthContext.Provider value={authContextValue}>
         <AgentProvider>
           <BrowserRouter>
             {/* Wires auth event bus → incident overlay (needs Router context for useNavigate) */}
