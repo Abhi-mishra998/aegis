@@ -147,7 +147,11 @@ chmod 600 /opt/aegis/infra/.env
 # /billing/checkout-session → 500 (no STRIPE_SECRET_KEY), and Clerk RS256
 # JWTs are rejected by the LocalTokenValidator (no JWKS URL).
 # Same parameter map as scripts/ops/restore_prod_env_from_ssm.sh.
-SSM_PREFIX="/${NAME_PREFIX}"
+#
+# SSM prefix is hardcoded `/aegis-prodha` — that's where SecretsManager-
+# style operator params live. (The NAME_PREFIX `acp-prodha` is for AWS
+# resource naming and is a different namespace from SSM SecureString.)
+SSM_PREFIX="/aegis-prodha"
 ssm_pull() {
     aws --region "${REGION}" ssm get-parameter --name "$1" \
         --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || true
