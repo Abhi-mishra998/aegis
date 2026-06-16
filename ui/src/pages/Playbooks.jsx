@@ -106,11 +106,12 @@ function TriggerModal({ playbook, onClose, onTriggered }) {
 function RunsModal({ playbookId, onClose }) {
   const [runs,    setRuns]    = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     playbookService.getRuns(playbookId)
-      .then(r => setRuns(r?.data || r || []))
-      .catch(() => {})
+      .then(r => { setRuns(r?.data || r || []); setLoadError('') })
+      .catch(err => setLoadError(err?.message || 'Failed to load run history'))
       .finally(() => setLoading(false))
   }, [playbookId])
 
@@ -129,6 +130,11 @@ function RunsModal({ playbookId, onClose }) {
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <Loader2 className="animate-spin text-neutral-500" size={22} />
+          </div>
+        ) : loadError ? (
+          <div className="text-center py-10 px-4">
+            <p className="text-xs text-red-400">{loadError}</p>
+            <p className="text-[10px] text-neutral-600 mt-1">Could not reach the playbook service; try again in a moment.</p>
           </div>
         ) : runs.length === 0 ? (
           <div className="text-center py-12">
