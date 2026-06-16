@@ -112,6 +112,11 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/remediation",
     # Sprint 7 — Threat-Intel IOC + feed control API. Operator surface.
     "/threat-intel",
+    # Sprint 3 — Workspace identity (/workspace/me, /workspace/inventory,
+    # /workspace/system-values, /workspace/exit-shadow-mode). Operator
+    # CRUD surface for the post-Clerk-signup dashboard; NOT an agent
+    # tool-execution path, so it must bypass tool-name extraction.
+    "/workspace",
     "/metrics",
     "/risk",
     "/stream",
