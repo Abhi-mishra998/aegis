@@ -16,8 +16,9 @@ import Signup from './pages/Signup';
 import OnboardingWizard from './pages/OnboardingWizard';
 import ShadowModeReview from './pages/ShadowModeReview';
 import Dashboard from './pages/Dashboard';
+import Policies from './pages/Policies';
+import AgentSnapshot from './pages/AgentSnapshot';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
-import ExecutiveDashboard from './pages/ExecutiveDashboard';
 import Settings from './pages/Settings';
 import Agents from './pages/Agents';
 import KillSwitch from './pages/KillSwitch';
@@ -39,7 +40,6 @@ import Incidents from './pages/Incidents';
 import AttackSimulation from './pages/AttackSimulation';
 import AutoResponse from './pages/AutoResponse';
 import Compliance from './pages/Compliance';
-import Pricing from './pages/Pricing';
 import WebhookSettings from './pages/WebhookSettings';
 import AdminConsole from './pages/AdminConsole';
 import SiemSettings from './pages/SiemSettings';
@@ -70,8 +70,6 @@ import ShadowMode from './pages/ShadowMode';
 import PolicyPlayground from './pages/PolicyPlayground';
 // Days 70-90 — Approval Inbox (operator surface for ESCALATE actions)
 import ApprovalInbox from './pages/ApprovalInbox';
-// Client-pitch live demo — Groq agent through the Aegis pipeline
-import LiveDemo from './pages/LiveDemo';
 import Toast from './components/Common/Toast';
 
 // Auth state is based on session metadata (tenant_id + expiry), not the token itself.
@@ -252,22 +250,37 @@ function App() {
               {/* Sprint 3 — Decision Explorer + Session Explorer */}
               <Route path="/decision-explorer" element={<ProtectedRoute><DecisionExplorer /></ProtectedRoute>} />
               <Route path="/session-explorer"  element={<ProtectedRoute><SessionExplorer /></ProtectedRoute>} />
-              {/* Sprint 4 — Fleet dashboards + Agent FinOps + Topology */}
+              {/* Fleet dashboard (Sprint 4-era; kept for analyst use). */}
               <Route path="/fleet"             element={<ProtectedRoute><Fleet /></ProtectedRoute>} />
-              <Route path="/agent-health"      element={<ProtectedRoute><AgentHealth /></ProtectedRoute>} />
-              <Route path="/agent-cost"        element={<ProtectedRoute><AgentCost /></ProtectedRoute>} />
-              <Route path="/agent-topology"    element={<ProtectedRoute><AgentTopology /></ProtectedRoute>} />
-              {/* Sprint 5 — Attack Evaluation Suite */}
+              {/* Attack Evaluation Suite */}
               <Route path="/evaluation"        element={<ProtectedRoute><Evaluation /></ProtectedRoute>} />
-              {/* Sprint 6 — Shadow-mode policies */}
+              {/* Legacy shadow-mode analytics page (Sprint 3 review surface
+                  lives at /shadow-review). */}
               <Route path="/shadow-mode"       element={<ProtectedRoute><ShadowMode /></ProtectedRoute>} />
-              {/* Sprint 7 — Policy Playground */}
-              <Route path="/policy-playground" element={<ProtectedRoute><PolicyPlayground /></ProtectedRoute>} />
               {/* Approval Inbox — operator surface for ESCALATE actions */}
               <Route path="/approval-inbox"    element={<ProtectedRoute><ApprovalInbox /></ProtectedRoute>} />
-              {/* Live Groq-agent client demo */}
-              <Route path="/live-demo"         element={<ProtectedRoute><LiveDemo /></ProtectedRoute>} />
-              <Route path="/policy-builder"  element={<ProtectedRoute><PolicyBuilder /></ProtectedRoute>} />
+              {/* Sprint 6 — Demo-only pages deleted; redirect to the
+                  Phase-2 onboarding flow so external links don't 404. */}
+              <Route path="/live-demo" element={<Navigate to="/onboarding" replace />} />
+
+              {/* Sprint 6 — Policies tab router replaces the 5 individual
+                  policy pages. Legacy paths redirect with ?tab=… so
+                  analyst bookmarks keep working. */}
+              <Route path="/policies"         element={<ProtectedRoute><Policies /></ProtectedRoute>} />
+              <Route path="/policy-builder"   element={<Navigate to="/policies?tab=editor"     replace />} />
+              <Route path="/policy-sim"       element={<Navigate to="/policies?tab=simulator"  replace />} />
+              <Route path="/policy-playground" element={<Navigate to="/policies?tab=staging"    replace />} />
+              <Route path="/policy-analytics" element={<Navigate to="/policies?tab=analytics"  replace />} />
+              <Route path="/autonomy"         element={<Navigate to="/policies?tab=autonomy"   replace />} />
+
+              {/* Sprint 6 — AgentSnapshot replaces 4 per-agent pages. */}
+              <Route path="/agents/:id"           element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
+              <Route path="/agents/:id/profile"   element={<Navigate to="/agents/:id?tab=overview" replace />} />
+              <Route path="/agent-profile/:id"    element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
+              <Route path="/agent-health"         element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
+              <Route path="/agent-cost"           element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
+              <Route path="/agent-topology"       element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
+
               <Route path="/audit-logs"      element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
               <Route path="/incidents"       element={<ProtectedRoute><Incidents /></ProtectedRoute>} />
               <Route path="/settings"        element={<ProtectedRoute><Settings /></ProtectedRoute>} />
@@ -275,13 +288,14 @@ function App() {
               {/* Operations (secondary nav, collapsed by default) */}
               <Route path="/agents"          element={<ProtectedRoute><Agents /></ProtectedRoute>} />
               <Route path="/identity-graph"  element={<ProtectedRoute><IdentityGraph /></ProtectedRoute>} />
-              <Route path="/autonomy"        element={<ProtectedRoute><AutonomyContracts /></ProtectedRoute>} />
               <Route path="/forensics"       element={<ProtectedRoute><Forensics /></ProtectedRoute>} />
               <Route path="/playground"      element={<ProtectedRoute><AgentPlayground /></ProtectedRoute>} />
               <Route path="/auto-response"   element={<ProtectedRoute><AutoResponse /></ProtectedRoute>} />
               <Route path="/compliance"      element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
-              <Route path="/open-source"     element={<Pricing />} />
-              <Route path="/pricing"         element={<Pricing />} />
+              {/* Sprint 6 — Pricing/marketing pages out of the authenticated
+                  app per PRODUCT_PLAN §12.3. External links land on dashboard. */}
+              <Route path="/open-source" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/pricing"     element={<Navigate to="/dashboard" replace />} />
               <Route path="/attack-sim"      element={<ProtectedRoute><AttackSimulation /></ProtectedRoute>} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
 
@@ -296,20 +310,18 @@ function App() {
               <Route path="/webhook-settings" element={<ProtectedRoute><WebhookSettings /></ProtectedRoute>} />
               <Route path="/admin"           element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
               <Route path="/siem"            element={<ProtectedRoute><SiemSettings /></ProtectedRoute>} />
-              <Route path="/policy-analytics" element={<ProtectedRoute><PolicyAnalytics /></ProtectedRoute>} />
               <Route path="/scheduled-reports" element={<ProtectedRoute><ScheduledReports /></ProtectedRoute>} />
               <Route path="/threat-intel"     element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />
               <Route path="/quota"            element={<ProtectedRoute><QuotaManagement /></ProtectedRoute>} />
-              <Route path="/agents/:id/profile" element={<ProtectedRoute><AgentProfile /></ProtectedRoute>} />
               <Route path="/sso"              element={<ProtectedRoute><SsoSettings /></ProtectedRoute>} />
               <Route path="/notifications"    element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/live-feed"        element={<ProtectedRoute><LiveFeed /></ProtectedRoute>} />
-              <Route path="/policy-sim"       element={<ProtectedRoute><PolicySim /></ProtectedRoute>} />
               <Route path="/users"            element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
               <Route path="/playbooks"        element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
 
-              {/* Executive view — accessible by URL for buyer demos */}
-              <Route path="/executive-summary" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
+              {/* Sprint 6 — ExecutiveDashboard merged into /dashboard. */}
+              <Route path="/executive-summary" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/executive"         element={<Navigate to="/dashboard" replace />} />
 
               <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>

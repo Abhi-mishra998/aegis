@@ -5,63 +5,56 @@ import {
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
-  CreditCard, Radio, Bell, BookOpen, Github,
+  CreditCard, Radio, Bell, BookOpen,
   Workflow, MessagesSquare, Gauge, HeartPulse, DollarSign, Share2,
-  Beaker, EyeOff, Inbox, Sparkles,
+  Beaker, EyeOff, Inbox,
 } from 'lucide-react'
 import { authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
 import { useRole } from '../../hooks/useRole'
 import AgentScopePicker from './AgentScopePicker'
 
-// Primary nav — the 5 items every buyer should see first.
-// Anchored on the wedge: tamper-evident replay + runtime deny.
-// `hint` is the keyboard shortcut surfaced in the sidebar — kept in sync with
-// the bindings registered in App.jsx:<GlobalShortcuts>.
+// Sprint 6 — 3-tier nav per PRODUCT_PLAN §12.8.
+//
+//   Primary (6 items, always visible)
+//   Advanced (10 items, collapsed by default — analyst tools)
+//   Admin (4 items, OWNER/ADMIN only)
+//
+// Hotkeys mirror App.jsx's <GlobalShortcuts>. Items deleted in Sprint 6
+// (LiveDemo, Pricing, ExecutiveDashboard) are gone from every tier.
+
 const primaryNav = [
-  // Sprint 4 — Dashboard is the landing tile every owner sees first.
-  { path: '/dashboard',       label: 'Dashboard',       icon: Gauge,        hint: 'G D' },
-  { path: '/agents',          label: 'Agents',          icon: Users,        hint: 'G A' },
-  { path: '/incidents',       label: 'Incidents',       icon: AlertTriangle,hint: 'G I' },
-  { path: '/live-feed',       label: 'Live Feed',       icon: Radio,        hint: 'G L' },
-  { path: '/policy-builder',  label: 'Policies',        icon: GitMerge,     hint: 'G P' },
-  { path: '/shadow-review',   label: 'Shadow Review',   icon: ShieldCheck,  hint: 'G W' },
-  { path: '/settings',        label: 'Settings',        icon: SettingsIcon, hint: 'G S' },
+  { path: '/dashboard',       label: 'Dashboard',  icon: Gauge,         hint: 'G D' },
+  { path: '/agents',          label: 'Agents',     icon: Users,         hint: 'G A' },
+  { path: '/incidents',       label: 'Incidents',  icon: AlertTriangle, hint: 'G I' },
+  { path: '/live-feed',       label: 'Live Feed',  icon: Radio,         hint: 'G L' },
+  { path: '/policies',        label: 'Policies',   icon: GitMerge,      hint: 'G P' },
+  { path: '/settings',        label: 'Settings',   icon: SettingsIcon,  hint: 'G S' },
 ]
 
-// Secondary nav — power-user operations, collapsed by default.
-const operationsNav = [
-  // Sprint 4 — Flight Recorder demoted from primary to operations.
-  { path: '/flight-recorder', label: 'Flight Recorder',  icon: Film,        hint: 'G F' },
-  { path: '/audit-logs',      label: 'Audit Trail',      icon: BarChart2   },
-  { path: '/fleet',           label: 'Fleet',            icon: Gauge       },
-  // Sprint 3 — Decision + Session Explorer
-  { path: '/decision-explorer', label: 'Decision Explorer', icon: Workflow,        hint: 'G D' },
-  { path: '/session-explorer',  label: 'Session Explorer',  icon: MessagesSquare,  hint: 'G E' },
-  // Sprint 4 — Agent FinOps + topology
-  { path: '/agent-health',    label: 'Agent Health',     icon: HeartPulse  },
-  { path: '/agent-cost',      label: 'Agent FinOps',     icon: DollarSign  },
-  { path: '/agent-topology',  label: 'Agent Topology',   icon: Share2      },
-  // Sprint 5 — Attack Evaluation Suite
-  { path: '/evaluation',      label: 'Evaluation',       icon: Beaker      },
-  // Sprint 6 — Shadow Mode (legacy analytics)
-  { path: '/shadow-mode',     label: 'Shadow Mode',      icon: EyeOff      },
-  // Sprint 3 — Shadow Mode Review (owner-facing review feed for the
-  // 14-day default observe-only window every new workspace starts in).
-  { path: '/shadow-review',   label: 'Shadow Review',    icon: ShieldCheck },
-  // Sprint 7 — Policy Playground (replay history under a draft policy)
-  { path: '/policy-playground', label: 'Policy Replay',  icon: Beaker      },
-  { path: '/identity-graph',  label: 'Identity Graph',   icon: Network,    hint: 'G G' },
-  { path: '/autonomy',        label: 'Autonomy',         icon: ShieldCheck },
-  { path: '/approval-inbox',  label: 'Approval Inbox',   icon: Inbox       },
-  { path: '/forensics',       label: 'Forensics',        icon: FileText    },
-  { path: '/playground',      label: 'Agent Sandbox',    icon: Terminal    },
-  { path: '/live-feed',        label: 'Live Feed',         icon: Radio,      hint: 'G L' },
-  { path: '/playbooks',       label: 'Playbooks',         icon: BookOpen    },
-  { path: '/auto-response',   label: 'Auto Response',    icon: Bot         },
-  { path: '/compliance',      label: 'Compliance',       icon: Shield      },
-  { path: '/open-source',     label: 'Open Source',      icon: Github      },
-  { path: '/attack-sim',      label: 'Attack Sim',       icon: Crosshair   },
+const advancedNav = [
+  { path: '/audit-logs',        label: 'Audit Logs',       icon: BarChart2 },
+  { path: '/forensics',         label: 'Forensics',        icon: FileText  },
+  { path: '/observability',     label: 'Observability',    icon: Radio     },
+  { path: '/playground',        label: 'Agent Playground', icon: Terminal  },
+  { path: '/threat-intel',      label: 'Threat Intel',     icon: Crosshair },
+  { path: '/evaluation',        label: 'Evaluation',       icon: Beaker    },
+  { path: '/playbooks',         label: 'Playbooks',        icon: BookOpen  },
+  { path: '/auto-response',     label: 'Auto-Response',    icon: Bot       },
+  { path: '/identity-graph',    label: 'Identity Graph',   icon: Network,  hint: 'G G' },
+  { path: '/shadow-mode',       label: 'Shadow Mode',      icon: EyeOff    },
+  { path: '/shadow-review',     label: 'Shadow Review',    icon: ShieldCheck },
+  { path: '/flight-recorder',   label: 'Flight Recorder',  icon: Film,     hint: 'G F' },
+  { path: '/decision-explorer', label: 'Decision Explorer', icon: Workflow, hint: 'G E' },
+  { path: '/session-explorer',  label: 'Session Explorer', icon: MessagesSquare },
+  { path: '/approval-inbox',    label: 'Approval Inbox',   icon: Inbox     },
+  { path: '/fleet',             label: 'Fleet',            icon: HeartPulse },
+]
+
+const adminNav = [
+  { path: '/system-health', label: 'System Health', icon: HeartPulse },
+  { path: '/billing',       label: 'Billing',       icon: CreditCard },
+  { path: '/compliance',    label: 'Compliance',    icon: Shield     },
 ]
 
 const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power, danger: true }
@@ -70,7 +63,7 @@ export default function Sidebar({ isOpen, onClose }) {
   const location  = useLocation()
   const navigate  = useNavigate()
   const { updateAuth, isAuthenticated } = useAuth()
-  const { canViewKillSwitch } = useRole()
+  const { isAdmin, canViewKillSwitch } = useRole()
   const navRef    = useRef(null)
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -88,203 +81,139 @@ export default function Sidebar({ isOpen, onClose }) {
     return () => clearInterval(id)
   }, [fetchUnread])
 
-  // Auto-expand Operations group if user is on a secondary page
-  const onOpsPage = operationsNav.some((i) => location.pathname.startsWith(i.path))
-                  || (canViewKillSwitch && location.pathname.startsWith(killSwitchItem.path))
-  const [opsOpen, setOpsOpen] = useState(onOpsPage)
-  useEffect(() => { if (onOpsPage) setOpsOpen(true) }, [onOpsPage])
+  const advancedActive = advancedNav.some((i) => location.pathname.startsWith(i.path))
+  const [advancedOpen, setAdvancedOpen] = useState(advancedActive)
+  useEffect(() => { if (advancedActive) setAdvancedOpen(true) }, [advancedActive])
 
-  const ops = canViewKillSwitch ? [...operationsNav, killSwitchItem] : operationsNav
+  const admin = canViewKillSwitch ? [...adminNav, killSwitchItem] : adminNav
+  const adminActive = admin.some((i) => location.pathname.startsWith(i.path))
+  const [adminOpen, setAdminOpen] = useState(adminActive)
+  useEffect(() => { if (adminActive) setAdminOpen(true) }, [adminActive])
 
-  // Keyboard navigation inside sidebar
+  // Keyboard navigation inside sidebar — j/k cycles through visible items.
   useEffect(() => {
-    if (!isOpen) return
-    const handleKey = (e) => {
-      if (e.key !== 'Tab') return
-      const focusables = navRef.current?.querySelectorAll('a, button')
-      if (!focusables?.length) return
-      const first = focusables[0]
-      const last  = focusables[focusables.length - 1]
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault()
-        first.focus()
-      }
+    if (!navRef.current) return
+    const handler = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      const links = navRef.current.querySelectorAll('a[href]')
+      const idx = Array.from(links).findIndex((l) => l === document.activeElement)
+      if (e.key === 'j' && idx < links.length - 1) links[idx + 1]?.focus()
+      if (e.key === 'k' && idx > 0)                links[idx - 1]?.focus()
     }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [isOpen])
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
 
-  const handleLogout = async () => {
-    try { await authService.logout() } catch {}
-    updateAuth({ isAuthenticated: false, user: null, tenant_id: null, token: null })
-    navigate('/login')
-  }
-
-  const renderItem = (item) => {
-    const isActive = location.pathname === item.path ||
-      (item.path !== '/' && location.pathname.startsWith(item.path))
-    return (
-      <NavLink
-        key={item.path}
-        to={item.path}
-        onClick={() => window.innerWidth < 1024 && onClose()}
-        aria-current={isActive ? 'page' : undefined}
-        className={`
-          flex items-center gap-2.5 px-3 py-2.5 rounded-lg
-          text-xs font-medium transition-all duration-150 outline-none
-          focus-visible:ring-1 focus-visible:ring-white/30
-          ${isActive
-            ? item.danger
-              ? 'bg-red-500/15 text-red-400 border border-red-500/20'
-              : 'bg-white text-black shadow-sm'
-            : item.danger
-              ? 'text-neutral-500 hover:text-red-400 hover:bg-red-500/10 border border-transparent'
-              : 'text-neutral-500 hover:text-white hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06]'
-          }
-        `}
-        style={isActive && !item.danger ? { boxShadow: '0 1px 8px rgba(255,255,255,0.12)' } : undefined}
-      >
-        <item.icon size={15} className="shrink-0" aria-hidden="true" />
-        <span className="truncate flex-1">{item.label}</span>
-        {item.hint && (
-          <kbd
-            className={`
-              hidden lg:inline-flex items-center gap-0.5 shrink-0
-              px-1.5 py-0.5 rounded
-              text-[9px] font-mono font-semibold
-              ${isActive
-                ? 'bg-black/10 text-black/60'
-                : 'bg-white/[0.04] text-neutral-600 group-hover:text-neutral-400'}
-            `}
-            aria-hidden="true"
-          >
-            {item.hint}
-          </kbd>
-        )}
-      </NavLink>
-    )
-  }
+  const renderItem = (item) => (
+    <NavLink
+      key={item.path}
+      to={item.path}
+      onClick={onClose}
+      className={({ isActive }) =>
+        'group flex items-center gap-3 px-3 py-2 rounded-md text-xs transition-colors ' +
+        (isActive
+          ? 'bg-white/[0.07] text-white border border-white/[0.07]'
+          : 'text-neutral-400 hover:text-white hover:bg-white/[0.03]') +
+        (item.danger ? ' hover:border-red-500/40' : '')
+      }
+    >
+      <item.icon size={14} aria-hidden="true" />
+      <span className="flex-1 truncate">{item.label}</span>
+      {item.hint && (
+        <kbd className="text-[9px] uppercase tracking-widest text-neutral-600 font-mono">
+          {item.hint}
+        </kbd>
+      )}
+    </NavLink>
+  )
 
   return (
-    <>
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/75 lg:hidden z-40 backdrop-blur-sm transition-opacity"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      )}
-
-      {/*
-        z-index contract (must match Modal + MainLayout):
-          - mobile (drawer):  aside z-50 (above the z-40 backdrop), but
-                              still BELOW Modal because modals open in a
-                              portal at z-50 overlay / z-[60] content.
-          - desktop (static): z-30 — sits within the document flow so the
-                              navbar (z-40) overlays it. This prevents the
-                              sidebar from punching above modals or toasts.
-      */}
-      <aside
-        ref={navRef}
-        className={`
-          fixed inset-y-0 left-0 z-50
-          lg:static lg:z-30
-          w-64 flex flex-col
-          bg-[var(--bg-surface)]
-          border-r border-[var(--border-subtle)]
-          transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
-          motion-reduce:transition-none
-          ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-        `}
-        aria-label="Main navigation"
-      >
-        {/* Brand */}
-        <div className="h-14 px-5 flex items-center justify-between border-b border-[var(--border-subtle)] shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div
-              className="w-7 h-7 rounded-md bg-white flex items-center justify-center shrink-0"
-              style={{ boxShadow: '0 0 12px rgba(255,255,255,0.15)' }}
-            >
-              <Shield className="text-black" size={15} />
+    <aside
+      className={
+        'fixed inset-y-0 left-0 w-64 bg-[#040404] border-r border-white/[0.06] z-30 ' +
+        'transform transition-transform duration-200 lg:translate-x-0 lg:static ' +
+        (isOpen ? 'translate-x-0' : '-translate-x-full')
+      }
+      aria-label="Main navigation"
+    >
+      <div className="flex flex-col h-full">
+        <div className="px-4 py-4 flex items-center justify-between border-b border-white/[0.06]">
+          <NavLink to="/dashboard" onClick={onClose} className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-white text-black flex items-center justify-center">
+              <Shield size={14} aria-hidden="true" />
             </div>
-            <span className="text-xs font-bold tracking-tight text-white font-mono">AgentControl</span>
-          </div>
+            <span className="text-sm font-bold text-white tracking-tight">AgentControl</span>
+          </NavLink>
           <button
+            type="button"
             onClick={onClose}
+            className="lg:hidden text-neutral-400 hover:text-white"
             aria-label="Close navigation"
-            className="lg:hidden p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-white/[0.06] transition-colors"
           >
-            <X size={17} />
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
 
-        {/* Wedge tagline */}
-        <div className="px-5 py-3 border-b border-[var(--border-subtle)] shrink-0">
-          <p className="text-[10px] leading-snug text-neutral-500 font-mono">
-            Tamper-evident replay + runtime deny<br />for AI agents.
-          </p>
+        <div className="px-3 py-3 border-b border-white/[0.06]">
+          <AgentScopePicker />
         </div>
 
-        {/* Agent scope picker — shared with Topbar via AgentScopePicker */}
-        <div className="px-3 py-2.5 border-b border-[var(--border-subtle)] shrink-0">
-          <div className="flex items-center gap-2">
-            <Users size={11} className="text-neutral-500 shrink-0" aria-hidden="true" />
-            <span className="text-[10px] uppercase tracking-wider text-neutral-500 shrink-0">Scope:</span>
-            <AgentScopePicker variant="compact" />
-          </div>
-        </div>
-
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto" aria-label="Application pages">
+        <nav ref={navRef} className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
           {primaryNav.map(renderItem)}
 
-          <div className="pt-4 pb-1">
-            <button
-              type="button"
-              onClick={() => setOpsOpen((v) => !v)}
-              className="flex items-center gap-1.5 w-full px-3 py-1.5 text-[10px] uppercase tracking-wider text-neutral-600 hover:text-neutral-400 transition-colors"
-              aria-expanded={opsOpen}
-            >
-              {opsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-              <span>Operations</span>
-            </button>
-          </div>
-          {opsOpen && ops.map(renderItem)}
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            className="w-full mt-3 mb-1 px-3 py-1.5 flex items-center justify-between text-[10px] uppercase tracking-widest text-neutral-500 hover:text-neutral-300 transition-colors"
+          >
+            <span>Advanced</span>
+            {advancedOpen
+              ? <ChevronDown size={11} aria-hidden="true" />
+              : <ChevronRight size={11} aria-hidden="true" />}
+          </button>
+          {advancedOpen && advancedNav.map(renderItem)}
+
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => setAdminOpen((v) => !v)}
+                className="w-full mt-3 mb-1 px-3 py-1.5 flex items-center justify-between text-[10px] uppercase tracking-widest text-neutral-500 hover:text-neutral-300 transition-colors"
+              >
+                <span>Admin</span>
+                {adminOpen
+                  ? <ChevronDown size={11} aria-hidden="true" />
+                  : <ChevronRight size={11} aria-hidden="true" />}
+              </button>
+              {adminOpen && admin.map(renderItem)}
+            </>
+          )}
         </nav>
 
-        {/* Footer */}
-        <div className="px-3 py-4 border-t border-[var(--border-subtle)] space-y-1 shrink-0">
-          <button
-            onClick={() => { navigate('/notifications'); window.innerWidth < 1024 && onClose() }}
-            className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-white hover:bg-white/[0.05] transition-all duration-150"
-            aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
+        <div className="border-t border-white/[0.06] px-3 py-3 space-y-2">
+          <NavLink
+            to="/notifications"
+            onClick={onClose}
+            className="group flex items-center gap-3 px-3 py-2 rounded-md text-xs text-neutral-400 hover:text-white hover:bg-white/[0.03] transition-colors"
           >
-            <div className="relative shrink-0">
-              <Bell size={15} aria-hidden="true" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white text-black text-[9px] font-bold flex items-center justify-center leading-none">
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </span>
-              )}
-            </div>
-            <span>Notifications</span>
-          </button>
+            <Bell size={14} aria-hidden="true" />
+            <span className="flex-1 truncate">Notifications</span>
+            {unreadCount > 0 && (
+              <span className="bg-red-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </NavLink>
           <button
-            onClick={handleLogout}
-            className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-white hover:bg-red-500/10 transition-all duration-150"
+            type="button"
+            onClick={async () => { await authService.logout(); updateAuth({ isAuthenticated: false }); navigate('/login') }}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-xs text-neutral-400 hover:text-white hover:bg-white/[0.03] transition-colors"
           >
-            <LogOut size={15} className="shrink-0" aria-hidden="true" />
-            <span>Sign Out</span>
+            <LogOut size={14} aria-hidden="true" />
+            Sign out
           </button>
-          <div className="flex items-center gap-2.5 px-3 py-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" aria-hidden="true" />
-            <span className="text-xs text-neutral-600 font-mono">v4.4.0</span>
-          </div>
         </div>
-      </aside>
-    </>
+      </div>
+    </aside>
   )
 }
