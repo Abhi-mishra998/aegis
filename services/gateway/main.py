@@ -489,6 +489,12 @@ async def _v1_prefix_alias(request: Request, call_next):
 
 # Add security middleware
 app.add_middleware(SecurityMiddleware, redis=redis)  # type: ignore[arg-type]
+# Sprint 10 — Security headers wrap every response. Added AFTER
+# SecurityMiddleware so it sits outermost (Starlette: last-added runs first
+# on the request side, last on the response side — exactly where header
+# rewrites belong).
+from services.gateway.middleware import SecurityHeadersMiddleware  # noqa: E402
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Consolidated SDK Setup (logging, tracing, metrics, CORS, exception handlers, /health)
 setup_app(app, "gateway")
