@@ -73,10 +73,13 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 320M           # 512 → 320; identity is bursty but small RSS
+          # Sized for m6g.large host. Identity workload is wizard create,
+          # JWT mint, Clerk webhook + DB writes. Steady-state RSS=252M;
+          # 480M gives ~90% headroom for bursty wizard onboarding traffic.
+          memory: 480M
         reservations:
           cpus: "0.25"
-          memory: 96M
+          memory: 128M
 
   registry:
     depends_on: []
@@ -85,10 +88,13 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 336M           # measured RSS=252M, +30% headroom
+          # m6g.large sizing. Steady RSS=255M; lifted to 480M to cover
+          # wizard bursts (agent create + permissions whitelist + API key
+          # mint all in one POST) without ever hitting 75% headroom.
+          memory: 480M
         reservations:
           cpus: "0.10"
-          memory: 80M
+          memory: 96M
 
   policy:
     depends_on: []
@@ -97,11 +103,13 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 320M           # 384 → 320; OPA bundle layer is the heavy
-                                 # thing here, and that's a separate container
+          # m6g.large sizing. Steady RSS=240M; pattern catalog + scoring
+          # pipeline grows under concurrent /execute. 480M covers concurrent
+          # decision bursts comfortably.
+          memory: 480M
         reservations:
           cpus: "0.10"
-          memory: 96M
+          memory: 128M
 
   audit:
     depends_on: []
@@ -146,10 +154,14 @@ services:
       resources:
         limits:
           cpus: "0.75"
-          memory: 416M           # measured RSS=316M, +30% headroom
+          # m6g.large sizing. Behavior is the per-tenant rolling-baseline
+          # + 3σ burst detector — the working set grows with active tenant
+          # count. Live observed 96% on 416M = imminent OOM under any real
+          # traffic. 640M gives proper headroom on m6g.large host.
+          memory: 640M
         reservations:
           cpus: "0.20"
-          memory: 96M
+          memory: 128M
 
   usage:
     depends_on: []

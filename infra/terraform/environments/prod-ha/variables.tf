@@ -28,9 +28,9 @@ variable "ec2_key_name" {
 }
 
 variable "ec2_instance_type" {
-  description = "ASG node instance type."
+  description = "ASG node instance type. m6g.large (8 GB RAM) is the floor for real customer traffic — the 22-container stack needs ~5 GB RSS at idle and bursts higher under concurrent /execute load. m6g.medium (4 GB) is over-committed and OOM-kills hot services (behavior/identity/registry/policy) under any concurrent traffic."
   type        = string
-  default     = "m6g.medium"
+  default     = "m6g.large"
 }
 
 # 20-user testing infra sizing (revised 2026-06-13 per operator request).
