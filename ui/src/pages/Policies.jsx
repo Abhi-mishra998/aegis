@@ -1,5 +1,5 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   GitMerge,
@@ -7,6 +7,7 @@ import {
   Sparkles,
   Workflow,
 } from 'lucide-react';
+import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 const PolicyBuilder      = lazy(() => import('./PolicyBuilder'));
 const PolicySim          = lazy(() => import('./PolicySim'));
@@ -21,6 +22,8 @@ const TABS = [
   { id: 'analytics',  label: 'Analytics',   icon: Activity,   Component: PolicyAnalytics,   hint: 'Hit-rate, latency, deny-leaderboard per policy.' },
   { id: 'autonomy',   label: 'Autonomy',    icon: Workflow,   Component: AutonomyContracts, hint: 'Bounded-autonomy contracts that the gateway enforces.' },
 ];
+const DEFAULT_TAB_ID = TABS[0].id;
+const VALID_TAB_IDS = new Set(TABS.map((t) => t.id));
 
 /**
  * Sprint 6 — Policies tab router.
@@ -30,36 +33,30 @@ const TABS = [
  * `?tab=editor|simulator|staging|analytics|autonomy` so refreshes +
  * deep links Just Work.
  *
+ * Uses React Router 6's `useSearchParams` as the SINGLE source of truth
+ * for the active tab. An earlier implementation kept a useState mirror
+ * + two useEffects that pushed activeTab back into the URL via
+ * `navigate('?tab=…')`; unrelated background re-renders (Topbar poll,
+ * Sidebar poll, ClerkAuthBridge refresh) could land between the
+ * setState and the navigate, causing the child tab to unmount in the
+ * middle of its initial render — the user perceived this as "tabs
+ * blink one time, no content shows."
+ *
  * The 5 legacy routes (/policy-builder etc.) keep working — App.jsx
  * redirects them here with the matching ?tab=… so analyst bookmarks
  * don't 404.
  */
 export default function Policies() {
-  const { search } = useLocation();
-  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const initialTab = useMemo(() => {
-    const param = new URLSearchParams(search).get('tab');
-    return TABS.some((t) => t.id === param) ? param : TABS[0].id;
-  }, [search]);
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const activeTab = useMemo(() => {
+    const param = searchParams.get('tab');
+    return param && VALID_TAB_IDS.has(param) ? param : DEFAULT_TAB_ID;
+  }, [searchParams]);
 
-  // Keep URL in sync when the operator clicks a tab.
-  useEffect(() => {
-    const params = new URLSearchParams(search);
-    if (params.get('tab') !== activeTab) {
-      params.set('tab', activeTab);
-      navigate(`?${params.toString()}`, { replace: true });
-    }
-  }, [activeTab, search, navigate]);
-
-  // Mirror back when external nav changes the URL.
-  useEffect(() => {
-    const param = new URLSearchParams(search).get('tab');
-    if (param && param !== activeTab && TABS.some((t) => t.id === param)) {
-      setActiveTab(param);
-    }
-  }, [search, activeTab]);
+  const handleTabClick = (id) => {
+    setSearchParams({ tab: id }, { replace: true });
+  };
 
   const ActiveComponent = useMemo(() => {
     const tab = TABS.find((t) => t.id === activeTab) || TABS[0];
@@ -80,9 +77,10 @@ export default function Policies() {
           return (
             <button
               key={id}
+              type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setActiveTab(id)}
+              onClick={() => handleTabClick(id)}
               className={
                 'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
                 (isActive
@@ -97,13 +95,15 @@ export default function Policies() {
         })}
       </div>
 
-      <Suspense
-        fallback={
-          <div className="text-xs text-neutral-500 py-8 text-center">Loading {activeTab}…</div>
-        }
-      >
-        <ActiveComponent />
-      </Suspense>
+      <TabErrorBoundary tabId={activeTab}>
+        <Suspense
+          fallback={
+            <div className="text-xs text-neutral-500 py-8 text-center">Loading {activeTab}…</div>
+          }
+        >
+          <ActiveComponent />
+        </Suspense>
+      </TabErrorBoundary>
     </div>
   );
 }

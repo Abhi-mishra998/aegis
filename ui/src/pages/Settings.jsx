@@ -1,7 +1,6 @@
 import React, { Suspense, lazy, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle,
   Building,
   Calendar,
   Code2,
@@ -14,55 +13,7 @@ import {
   Webhook,
 } from 'lucide-react';
 import SystemValuesTab from '../components/settings/SystemValuesTab';
-
-// Inline error boundary scoped to a single Settings tab. Without this,
-// a render error in (say) WebhookSettings bubbles all the way to the
-// root ErrorBoundary, which renders a full-screen red overlay — the
-// user perceived the tab content as "blank" because the overlay covered
-// it. Catching at the tab level lets the rest of /settings stay usable
-// and surfaces a real error message instead of a silent blank.
-class TabErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error, errorInfo) {
-    // eslint-disable-next-line no-console
-    console.error('Settings tab render error', this.props.tabId, error, errorInfo);
-  }
-  componentDidUpdate(prevProps) {
-    // Reset on tab change so the user can try a different one.
-    if (prevProps.tabId !== this.props.tabId && this.state.hasError) {
-      // eslint-disable-next-line react/no-direct-mutation-state
-      this.setState({ hasError: false, error: null });
-    }
-  }
-  render() {
-    if (!this.state.hasError) return this.props.children;
-    return (
-      <div className="max-w-3xl mx-auto py-8">
-        <div className="flex items-start gap-3 p-4 rounded-xl border border-red-500/20 bg-red-500/[0.05]">
-          <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
-          <div className="space-y-1">
-            <div className="text-sm font-semibold text-red-300">
-              This tab failed to render.
-            </div>
-            <div className="text-xs text-red-300/80 font-mono break-words">
-              {this.state.error?.message || 'Unknown render error'}
-            </div>
-            <div className="text-[11px] text-neutral-500 mt-2">
-              Try a different tab from the bar above. If every tab fails the
-              same way, refresh the page — your session may have expired.
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-}
+import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 // Existing pages, lazy-imported so /settings?tab=workspace only pulls
 // the Workspace tab's chunk on initial render. Each tab's underlying
