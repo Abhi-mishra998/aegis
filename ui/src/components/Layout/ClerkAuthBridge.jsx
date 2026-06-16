@@ -189,5 +189,62 @@ export default function ClerkAuthBridge() {
     updateAuth,
   ]);
 
+  // Periodic refresh — Clerk's default JWT lifetime is 60 seconds. Without
+  // this loop the localStorage acp_token_expiry counts down to zero,
+  // App.jsx fires session_expired, IncidentOverlay pops up, and the
+  // acp_token cookie that backs the SSE EventSource goes stale (SSE drops
+  // to "Disconnected — network error"). Refresh every 45s so we replace
+  // both the cookie and the expiry timestamp BEFORE the 60s window
+  // closes.
+  useEffect(() => {
+    if (!userLoaded || !orgLoaded || !isSignedIn) return;
+
+    let cancelled = false;
+    const REFRESH_INTERVAL_MS = 45_000;
+
+    const refresh = async () => {
+      try {
+        const token = await getToken({ template: 'aegis' }).catch(() => getToken());
+        if (cancelled || !token) return;
+        // Re-call /auth/clerk/provision so the gateway re-issues the
+        // acp_token cookie with the freshly-refreshed Clerk JWT.
+        // Idempotent — late-arriving Clerk webhook can't corrupt anything.
+        await clerkProvision(token);
+        if (cancelled) return;
+        // Push the new expiry into localStorage so App.jsx's session
+        // timer resets.
+        const payload = decodeJwtPayload(token);
+        const expiresIn = payload.exp
+          ? Math.max(60, payload.exp - Math.floor(Date.now() / 1000))
+          : 3600;
+        // setSessionMetadata writes acp_token_expiry = Date.now() + expires_in*1000.
+        // Only re-write the timestamp; preserve everything else that ClerkAuthBridge's
+        // primary effect already populated.
+        const tenantId   = localStorage.getItem('tenant_id') || '';
+        const userEmail  = localStorage.getItem('user_email') || '';
+        const role       = localStorage.getItem('user_role') || '';
+        setSessionMetadata({
+          tenant_id:   tenantId,
+          expires_in:  expiresIn,
+          user_email:  userEmail,
+          role,
+        });
+      } catch (err) {
+        // Silent — Clerk's own session manager retries; we just don't want to
+        // crash the loop on a transient network blip.
+      }
+    };
+
+    // Kick once after a short delay so the primary sign-in effect has
+    // already populated localStorage. Then run on a fixed interval.
+    const kick = setTimeout(refresh, 5_000);
+    const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(kick);
+      clearInterval(interval);
+    };
+  }, [userLoaded, orgLoaded, isSignedIn, getToken]);
+
   return null;
 }
