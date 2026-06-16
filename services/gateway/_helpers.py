@@ -98,10 +98,16 @@ def internal_headers(request: Request | None = None) -> dict[str, str]:
 
     X-ACP-Role is injected from the JWT-validated request.state.role — never from
     the client header — to prevent privilege escalation via forged role claims.
+
+    Content-Type is forwarded because some proxies stream raw bytes to the
+    upstream service (e.g. /compliance/board-report uses content=body, not
+    json=body); without Content-Type the upstream FastAPI handler can't
+    decode the body into its pydantic model and raises a validation error
+    that surfaces as 500 (rather than the expected 200/4xx).
     """
     headers: dict[str, str] = {"X-Internal-Secret": settings.INTERNAL_SECRET}
     if request is not None:
-        for h in ("X-Tenant-ID", "X-Agent-ID", "Authorization", "X-Request-ID", "X-Trace-ID"):
+        for h in ("X-Tenant-ID", "X-Agent-ID", "Authorization", "X-Request-ID", "X-Trace-ID", "Content-Type"):
             val = request.headers.get(h)
             if val:
                 headers[h] = val
