@@ -4,8 +4,24 @@
 end-to-end against live prod (`https://ha.aegisagent.in`) by driving the
 Claude API (Anthropic) through `aegis-anthropic` SDK.
 
-**Verdict:** PROD-READY after 7 bugs found + fixed in this pass. All 7
-customer-journey scenarios pass with shadow-mode exited.
+**Verdict:** PROD-READY after 9 bugs found + fixed across two passes. All
+7 customer-journey scenarios pass with shadow-mode exited; SDKs live on
+PyPI; fleet upgraded to m6g.large with 3.8 GB free RAM per host.
+
+## Launch-readiness checklist (post pass-2)
+
+- ALB: `https://ha.aegisagent.in/health` → 200, ~250 ms p50
+- ASG: 2× **m6g.large** (was m6g.medium), 8 GB RAM/host, 3.8 GB available
+- Launch template version **8** (current default + ASG-pinned), embeds
+  the SSM CLERK/STRIPE overlay + Docker Hub login — every future fresh
+  instance self-heals on first boot, no manual SSM patch needed
+- PyPI: `pip install aegis-anthropic` / `aegis-openai` / `aegis-bedrock`
+  / `aegis-langchain` — all 4 live, customer-installable
+- SSM SecureStrings populated: `/aegis-prodha/clerk/*`,
+  `/aegis-prodha/stripe/*`, `/aegis-prodha/docker/{hub-user,hub-pat}`,
+  `/aegis-prodha/pypi/token`, `/aegis-prodha/aegis/auth-provider`
+- Capacity: hot services (behavior/identity/registry/policy) dropped
+  from 75-96% memory utilization to 49-62% under same workload
 
 ---
 
@@ -20,9 +36,13 @@ customer-journey scenarios pass with shadow-mode exited.
 | 5 | `/aevf/spec.md`, `/aevf/reference-bundle-2026-06.json` → 404 | `docs/AEVF/` never got mirrored into `ui/public/aevf/`, so vite never copied them to `ui/dist/aevf/` | `c365391` |
 | 6 | `PATCH /workspace/system-values`, `POST /workspace/exit-shadow-mode`, `POST /billing/checkout-session`, `POST /policy/upload`, `POST /kill-switch` → 403 "Write operations require ADMIN or SECURITY role" for every OWNER user | Sprint 1 Role-enum extension never touched the 5 hardcoded `("ADMIN", "SECURITY")` allow-lists in `_mw_auth.py`, `_helpers.py`, `identity/router.py`, `decision/router.py`, `policy/router.py` | `afc8dbc` |
 | 7 | `POST /agents/wizard` → 500 (`httpx.ConnectError: All connection attempts failed`) | `registry` container missing `API_SERVICE_URL`; `_mint_api_key()` POSTed to the `localhost:8005` default which doesn't resolve in-container | `bba0b27` |
+| 8 | All 22 containers fit in 4 GB m6g.medium with **89 MB free** at idle; `acp_behavior` at 96 % RSS — OOM-imminent under any concurrent traffic | host RAM over-committed; the 22 services were sized for measured idle peak + 30 % headroom, but real customer load pushed working set higher | `636b785` (instance type m6g.medium → m6g.large; identity/registry/policy/behavior memory bumps) |
+| 9 | LT v7 launched fresh instances with `/webhooks/clerk` → 503 (no CLERK_*) even after the §4b SSM overlay landed | `SSM_PREFIX` derived from `${NAME_PREFIX}` resolved to `/acp-prodha`, but SecureStrings live at `/aegis-prodha` | `dff2d05` (hardcode `SSM_PREFIX=/aegis-prodha`; LT v8) |
 
-All 7 fixes deployed live to both prod instances (`i-0312b5f7b3f60f812`
-and `i-00eb195964337d104`). Verified working through ALB.
+Fleet now: 2× **m6g.large** running LT v8 (was 2× m6g.medium running
+LT v5). ASG instance-refresh rolled the swap one-at-a-time with both
+ALB-healthy throughout. Customer-journey + adversarial QA re-run with
+fresh PyPI install verified all paths working.
 
 ---
 
