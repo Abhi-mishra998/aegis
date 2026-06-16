@@ -279,6 +279,30 @@ export const workspaceService = {
   inventory: () => request("/workspace/inventory"),
 };
 
+// Sprint 5 — Identity & Access Graph + Blast Radius read API.
+// Surfaces the IAG endpoints that were built but never wired to the UI.
+export const iagService = {
+  getAgent: (agentId) => request(`/iag/agents/${encodeURIComponent(agentId)}`),
+  getBlastRadius: (incidentId) =>
+    request(`/iag/incidents/${encodeURIComponent(incidentId)}/blast-radius`),
+};
+
+// Sprint 5 — Auto-Remediation. Read policy + ledger; force replay on demand.
+export const remediationService = {
+  getPolicy: () => request("/remediation/policy"),
+  getLedger: (incidentId) =>
+    request(`/remediation/incidents/${encodeURIComponent(incidentId)}`),
+  replay: (incidentId) =>
+    request(`/remediation/incidents/${encodeURIComponent(incidentId)}/replay`, {
+      method: "POST",
+    }),
+  dryRun: (body) =>
+    request("/remediation/dry-run", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+};
+
 // Helper to append agent_id to existing URLs.
 const _withAgent = (url, agentId) => {
   if (!agentId) return url;
