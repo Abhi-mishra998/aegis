@@ -458,6 +458,18 @@ export const billingService = {
   approveBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
   rejectBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
   getCostAttribution: (weeks = 4, agentId) => request(_withAgent(`/billing/cost-attribution?weeks=${weeks}`, agentId)),
+  // Sprint 9 — Stripe wiring.
+  getPlan: () => request("/billing/plan"),
+  createCheckoutSession: (tier) =>
+    request("/billing/checkout-session", {
+      method: "POST",
+      body: JSON.stringify({ tier }),
+    }),
+  createPortalSession: (customerId) =>
+    request("/billing/portal-session", {
+      method: "POST",
+      body: JSON.stringify({ customer_id: customerId }),
+    }),
 };
 
 export const playgroundService = {
