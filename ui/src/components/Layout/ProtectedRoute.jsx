@@ -19,13 +19,16 @@ const ProtectedRoute = ({ children }) => {
   const navigate = useNavigate();
   const verifiedRef = useRef(false);
 
-  // Bridge race: Clerk is signed in but ClerkAuthBridge has not yet written
-  // tenant_id to localStorage (the post-signin IIFE is mid-flight or the
-  // /auth/clerk/provision response is still in-flight). If we render the
-  // child page now, its first API call ships with no X-Tenant-ID and the
-  // gateway 401s — the user lands on an error-banner Dashboard. We hold
-  // the route in a "syncing" state until tenant_id arrives or Clerk is
-  // confirmed signed-out.
+  // Once we have successfully rendered the protected page at least once,
+  // never swap back to the "syncing" screen on subsequent state churn —
+  // background polls, SSE reconnects, Settings tab-switch query-string
+  // navigations all cause a re-render, and any of them could read
+  // `tenant_id` from localStorage during the brief window where some
+  // unrelated fetch's 401 handler had cleared it. The original behaviour
+  // unmounted the whole page on every such re-render, which the user
+  // experienced as Settings tabs "blink and after that no content".
+  const hasRenderedChildrenRef = useRef(false);
+
   const isClerkSyncing = clerkLoaded && clerkSignedIn && !tenantId;
   const isValid = (clerkLoaded && clerkSignedIn && !!tenantId) || legacyValid;
 
@@ -47,24 +50,34 @@ const ProtectedRoute = ({ children }) => {
       });
   }, [legacyValid, clerkSignedIn, navigate]);
 
-  // Wait for Clerk to load before deciding — prevents a flash redirect to
-  // /login during the first render of a signed-in Clerk session.
+  // Wait for Clerk to finish booting before deciding ANYTHING. Returning
+  // null while Clerk is loading is correct — Clerk's own hooks throw if
+  // we call them before isLoaded.
   if (!clerkLoaded && !legacyValid) {
     return <BridgeSyncingScreen label="Loading…" />;
   }
 
-  // Clerk says signed-in but the bridge has not finished syncing. Show a
-  // minimal loading screen instead of letting the protected page mount
-  // with an empty tenant_id (which would 401 the page's first fetch).
-  if (isClerkSyncing) {
+  // Bridge race: Clerk is signed in but tenant_id is still missing from
+  // localStorage. ONLY show the syncing screen if this is the FIRST render
+  // of this protected route — once we've handed off to MainLayout, never
+  // unmount it on a transient tenant_id read miss. Without the
+  // hasRenderedChildren gate, every Settings tab click that triggered a
+  // background re-render flashed the syncing screen, blanked the page,
+  // and looked broken.
+  if (isClerkSyncing && !hasRenderedChildrenRef.current) {
     return <BridgeSyncingScreen label="Setting up your workspace…" />;
   }
 
-  if (!isValid) {
+  if (!isValid && !hasRenderedChildrenRef.current) {
     clearSessionMetadata();
     return <Navigate to="/login" replace />;
   }
 
+  // If we already rendered children once and isValid flipped to false
+  // (e.g., real session expiry), the AuthEventHandler path is in flight —
+  // it will fire IncidentOverlay and navigate to /login. In the meantime
+  // we keep showing the page so the user doesn't lose state mid-flow.
+  hasRenderedChildrenRef.current = true;
   return <MainLayout>{children}</MainLayout>;
 };
 

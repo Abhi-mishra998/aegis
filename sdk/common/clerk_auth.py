@@ -285,7 +285,22 @@ class ClerkTokenValidator:
         """Reshape Clerk JWT claims into the payload contract auth.py emits."""
         clerk_user_id = payload.get("sub", "")
         tenant_id = payload.get("aegis_tenant_id") or ""
-        org_id = payload.get("aegis_org_id") or tenant_id
+        # SaaS strict invariant (`ck_users_org_tenant_match`): user.org_id ==
+        # user.tenant_id. The Clerk webhook used to write
+        # `aegis_org_id = Organization.id` into the org's public_metadata —
+        # a SEPARATE UUID from `aegis_tenant_id = Tenant.tenant_id`. Every
+        # write request from those existing Clerk JWTs would then 403 with
+        # "Org consistency violation during gateway write path" because the
+        # gateway invariant check compares org_id to tenant_id directly.
+        #
+        # The fix is two-sided:
+        #   1. webhooks_clerk.py now writes aegis_org_id = tenant.tenant_id
+        #      (so freshly-minted tokens carry matching values).
+        #   2. Here we coerce: for Clerk users, org_id IS tenant_id by
+        #      definition (single-tenant-per-org Sprint-1 model). A stale
+        #      aegis_org_id claim from a JWT minted before fix #1 must not
+        #      break the user's session.
+        org_id = tenant_id
         role = normalize_clerk_role(payload.get("aegis_role"))
         email = payload.get("email", "")
         exp = payload.get("exp", 0)
