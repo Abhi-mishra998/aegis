@@ -1071,7 +1071,10 @@ from services.identity.webhooks_clerk import (  # noqa: E402
 async def provision_from_clerk(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
-    authorization: Annotated[str, Header()],
+    # Sprint-QA fix: Optional so a missing header surfaces as 401
+    # (canonical auth failure) instead of 422 (FastAPI validation). The
+    # rest of the handler treats empty as "missing bearer" and raises 401.
+    authorization: Annotated[str | None, Header()] = None,
 ) -> APIResponse[dict]:
     """
     Auth: Clerk Bearer JWT (not an Aegis-issued token). The handler
@@ -1090,11 +1093,12 @@ async def provision_from_clerk(
           "provisioned": <bool, true if this call created new rows>
         }
     """
-    raw = extract_bearer_token(authorization) or ""
+    raw = extract_bearer_token(authorization or "") or ""
     if not raw:
         raise HTTPException(
             status_code=401,
             detail="Missing Authorization: Bearer header",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     validator = ClerkTokenValidator(redis_client=redis)
