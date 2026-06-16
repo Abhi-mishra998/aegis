@@ -141,7 +141,14 @@ async def _record_spend(
 # ─────────────────────────────────────────────────────────────────────
 
 
-@router.post("/v1/messages")
+# The route is mounted at `/messages` even though the customer's
+# Anthropic SDK calls `/v1/messages`. The gateway's `/v1/*` alias
+# middleware (services/gateway/main.py:479) strips the version prefix
+# before FastAPI routes the request, so the bare path is what the
+# router sees. Both `https://ha.aegisagent.in/v1/messages` (Anthropic
+# SDK convention) and `https://ha.aegisagent.in/messages` (bare form)
+# resolve here.
+@router.post("/messages")
 async def proxy_anthropic_messages(request: Request) -> Response:
     """Anthropic-compatible /v1/messages proxy with per-employee accounting.
 
