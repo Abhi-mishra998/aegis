@@ -12,6 +12,10 @@ import SkeletonLoader from '../components/Common/SkeletonLoader';
 import Modal from '../components/Common/Modal';
 import { incidentService, socService } from '../services/api';
 import { AgentContext } from '../context/AgentContext';
+// Sprint 5 — orphan-endpoint surfacing inside the incident detail modal.
+import BlastRadiusCard from '../components/incidents/BlastRadiusCard';
+import RemediationPanel from '../components/incidents/RemediationPanel';
+import ForensicsDrawer from '../components/incidents/ForensicsDrawer';
 
 async function _exportIncidentPdf(incidentId, incidentNumber) {
   const blob = await incidentService.exportPdf(incidentId)
@@ -214,6 +218,15 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
             </div>
           </div>
         )}
+
+        {/* Sprint 5 — Blast Radius + Remediation + Forensics panels.
+            Each loads independently and tolerates 404 / 409 gracefully so a
+            partially-instrumented incident never blanks the whole modal. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <BlastRadiusCard incidentId={incident.id} />
+          <RemediationPanel incidentId={incident.id} />
+        </div>
+        <ForensicsDrawer incident={incident} />
 
         {/* Timeline */}
         {incident.timeline?.length > 0 && (

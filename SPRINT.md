@@ -24,8 +24,8 @@ Translation layer between PRODUCT_PLAN.md (v2, locked) and ground-level work. On
 | 1 | 1 | Clerk self-serve signup + shadow mode + Role enum | ✅ DONE | commit 6b5b3a7 / ASG 21cd7092 | `/webhooks/clerk` 400 missing-svix; `/system/health` 12/12 |
 | 2 | 2 | Agent Onboarding Wizard (3-step, no LLM key) | ✅ DONE | commit 8c21e16 / ASG 29475f7d | `/agents/wizard` 401 (route live); `/onboarding` 200 (Vite dist served); 105/105 tests; 12/12 healthy p95 38ms |
 | 3 | 3.1 | Shadow Mode review surface + would_have_blocked middleware | ✅ DONE | commit e89a33b + 96c873c / ASG 4ca3b61d + 1e742e76 | `/workspace/me` 401 JSON; `/workspace/exit-shadow-mode` 401 JSON; nginx allow-list fixed; 117/117 tests; 12/12 healthy p95 40ms |
-| 4 | 3.2 | Dashboard landing (Agent Inventory hero) | 🚧 HOTFIX-IN-FLIGHT | commit 69c0794 + hotfix incoming | Initial deploy passed smoke probes but Dashboard.jsx had a runtime bug (filter callback referenced undefined `tier`) and 6 redirects still pointed at /flight-recorder. Hotfix landing now. |
-| 5 | 3.4 | Incidents enriched (blast radius + remediation + forensics tabs) | 🚧 NEXT | — | — |
+| 4 | 3.2 | Dashboard landing (Agent Inventory hero) | ✅ DONE | commits 69c0794 + 037da84 / ASGs fdd95c15 + fe7c8c27 | Hotfix verified: new bundle hash served (DdWNCPBK), `/workspace/inventory` 401 JSON, `/dashboard` 200, "medium" tier in bundle, 124/124 tests, 12/12 healthy p95 34ms. Took 2 deploys — the first shipped a runtime bug in Dashboard.jsx that smoke probes missed. |
+| 5 | 3.4 | Incidents enriched (blast radius + remediation + forensics tabs) | 🚧 IN-FLIGHT | committed locally | 124/124 tests; deploy pending |
 | 6 | 3 cleanup | UI consolidation: 49→15 pages, sidebar restructure | ⏳ | — | — |
 | 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | ⏳ | — | — |
 | 8 | 5 | Blast Radius dollar formula + workspace value tags | ⏳ | — | — |
