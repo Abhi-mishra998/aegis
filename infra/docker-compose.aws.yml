@@ -124,8 +124,10 @@ services:
           # serializes the full daily audit-chain to JSON. Under that
           # combined load RSS crossed 192M and the container OOM-cycled
           # 543 times in 24h. Measured peak ~290M during compliance
-          # bundle build; 320M gives ~10% headroom.
-          memory: 320M
+          # bundle build; 320M gave ~10% headroom but in practice idle
+          # RSS sits at ~232M (72% of cap), one bursty XREADGROUP batch
+          # away from OOM. Bumped to 512M for a comfortable buffer.
+          memory: 512M
         reservations:
           cpus: "0.10"
           memory: 64M

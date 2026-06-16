@@ -1053,8 +1053,15 @@ async def system_health(request: Request) -> dict[str, Any]:
 
     # Queue / latency pressure downgrades operational → degraded_performance
     # ONLY. It never escalates partial_outage or major_outage.
+    # Producer caps audit_stream at maxlen=10_000 (sdk/common/audit_stream.py
+    # + services/gateway/client.py). 12_000 gives a 20% headroom over the cap
+    # for approximate-trim slack so transient bursts don't flip the badge to
+    # "Degraded Performance" while consumers are still inside their normal
+    # 60-second catch-up window. The previous threshold of 45_000 was paired
+    # with a 50_000 cap — they fought each other and the badge sat red at
+    # any sustained load.
     queue_pressure = (
-        queues["audit_stream_length"] > 45_000
+        queues["audit_stream_length"] > 12_000
         or queues["billing_dlq_length"] > 100
         or queues["outbox_pending"] > 1_000
         or queues["outbox_failed"] > 0
