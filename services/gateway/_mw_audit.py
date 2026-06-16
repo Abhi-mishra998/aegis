@@ -353,6 +353,15 @@ class _AuditMixin:
 
         return response
 
+    # Sentinel values the gateway uses as in-memory placeholders BEFORE the
+    # request has reached the relevant extraction phase. They must never
+    # land in the audit DB as literal strings — the AuditLogs UI then shows
+    # rows of "tool: unknown" / "agent: 00000000…0000" which looks like
+    # the platform doesn't know what's happening. Coerce to None at the
+    # producer so downstream stores NULL and the UI renders an em-dash.
+    _SENTINEL_TOOLS = frozenset({"unknown", "unknown_tool", ""})
+    _NULL_UUID_STR  = "00000000-0000-0000-0000-000000000000"
+
     async def _log_audit(
         self,
         tenant_id: str,
@@ -365,14 +374,38 @@ class _AuditMixin:
         meta: dict[str, Any],
     ) -> None:
         ctx = structlog.contextvars.get_contextvars()
-        meta["actor"] = ctx.get("actor", "unknown")
+        actor = ctx.get("actor")
+        meta["actor"] = actor if actor and actor != "unknown" else ""
         meta["trace_id"] = ctx.get("trace_id", request_id)
+
+        # If the request never extracted a tool name (e.g. auth failed before
+        # the tool-name parse), categorise the row as a security-edge event
+        # instead of an execute_tool with a "tool: unknown" sticky. Common
+        # cases:
+        #   401 (Authentication required / Invalid token)   → action="auth_failure"
+        #   403 (Tenant mismatch / Org consistency / RBAC)  → action="forbidden"
+        #   429 (Rate-limited)                              → action="rate_limited"
+        # The original status code stays in metadata.status for forensics.
+        clean_tool = tool if tool and tool.lower() not in self._SENTINEL_TOOLS else None
+        if clean_tool is None and action == "execute_tool":
+            status = meta.get("status") if isinstance(meta, dict) else None
+            if status == 401:   action = "auth_failure"
+            elif status == 403: action = "forbidden"
+            elif status == 429: action = "rate_limited"
+            elif isinstance(status, int) and 400 <= status < 500:
+                action = "bad_request"
+
+        # Same treatment for the null-UUID agent sentinel — the row is
+        # attributable to the tenant but no agent is meaningful.
+        agent_str = str(agent_id)
+        if agent_str == self._NULL_UUID_STR:
+            agent_str = ""
 
         payload = {
             "tenant_id": tenant_id,
-            "agent_id": str(agent_id),
+            "agent_id": agent_str,
             "action": action,
-            "tool": tool,
+            "tool": clean_tool or "",
             "decision": decision,
             "reason": reason,
             "request_id": request_id,
