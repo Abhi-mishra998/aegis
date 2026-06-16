@@ -37,15 +37,14 @@ import httpx
 import structlog
 import uuid
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from sdk.common.audit_stream import push_audit_event
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
-from services.api.models.api_key import APIKey
 from services.gateway.anthropic_pricing import cost_usd
+from services.gateway.client import service_client
+from services.gateway._helpers import internal_headers
 
 logger = structlog.get_logger(__name__)
 
@@ -57,25 +56,11 @@ _UPSTREAM_TIMEOUT_S = 60.0
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Lightweight DB session for /v1/messages — the gateway doesn't own
-# the api_keys table (the api service does), but we need to read the
-# key row to authenticate. Keep the engine module-cached so we don't
-# pay a fresh connect on every request.
+# We do NOT hit the api_keys DB directly from the gateway — the gateway
+# DATABASE_URL points at acp_identity, not acp_api. Auth + listing go
+# through the api service's existing HTTP endpoints (validate +
+# /api-keys?subject_kind=employee) so the gateway stays a pure proxy.
 # ─────────────────────────────────────────────────────────────────────
-
-_api_db_engine = None
-_api_db_session: async_sessionmaker[AsyncSession] | None = None
-
-
-def _get_api_session() -> async_sessionmaker[AsyncSession]:
-    global _api_db_engine, _api_db_session
-    if _api_db_session is None:
-        url = settings.API_DATABASE_URL or settings.DATABASE_URL
-        _api_db_engine = create_async_engine(url, pool_pre_ping=True, pool_size=5)
-        _api_db_session = async_sessionmaker(
-            _api_db_engine, expire_on_commit=False, class_=AsyncSession,
-        )
-    return _api_db_session
 
 
 def _hash_key(raw_key: str) -> str:
@@ -178,52 +163,52 @@ async def proxy_anthropic_messages(request: Request) -> Response:
             detail="x-api-key must be an Aegis employee virtual key (acp_emp_…)",
         )
 
-    # 2. validate against api_keys table
-    session_factory = _get_api_session()
-    async with session_factory() as db:
-        stmt = (
-            select(APIKey)
-            .where(APIKey.key_hash == _hash_key(auth_key))
-            .where(APIKey.is_active.is_(True))
-            .where(APIKey.subject_kind == "employee")
-        )
-        result = await db.execute(stmt)
-        key_row = result.scalar_one_or_none()
-
-    if key_row is None:
+    # 2. validate via the api service's /api-keys/validate HTTP endpoint
+    # — same pattern the gateway uses everywhere else so it doesn't grow
+    # a second DB connection. Returns the row's dict shape (id, tenant_id,
+    # subject_kind, subject_email, daily_budget_usd, monthly_budget_usd, …).
+    key_data = await service_client.validate_api_key(auth_key)
+    if (
+        key_data is None
+        or not key_data.get("is_active", True)
+        or key_data.get("subject_kind") != "employee"
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid, revoked, or non-employee API key",
         )
-    if key_row.subject_email is None:
+
+    employee_email = key_data.get("subject_email") or ""
+    if not employee_email:
         # Defensive — should never happen for subject_kind='employee'
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Employee key row missing subject_email",
         )
 
-    tenant_id_str = str(key_row.tenant_id)
-    employee_email = key_row.subject_email
+    tenant_id_str = str(key_data.get("tenant_id") or "")
+    daily_budget_usd   = key_data.get("daily_budget_usd")
+    monthly_budget_usd = key_data.get("monthly_budget_usd")
 
     # 3. budget pre-check
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
         today_usd, month_usd = await _current_spend(redis, tenant_id_str, employee_email)
 
-        if key_row.daily_budget_usd is not None and today_usd >= float(key_row.daily_budget_usd):
+        if daily_budget_usd is not None and today_usd >= float(daily_budget_usd):
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail=(
                     f"Daily LLM budget reached for {employee_email}: "
-                    f"${today_usd:.2f} / ${float(key_row.daily_budget_usd):.2f}"
+                    f"${today_usd:.2f} / ${float(daily_budget_usd):.2f}"
                 ),
             )
-        if key_row.monthly_budget_usd is not None and month_usd >= float(key_row.monthly_budget_usd):
+        if monthly_budget_usd is not None and month_usd >= float(monthly_budget_usd):
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail=(
                     f"Monthly LLM budget reached for {employee_email}: "
-                    f"${month_usd:.2f} / ${float(key_row.monthly_budget_usd):.2f}"
+                    f"${month_usd:.2f} / ${float(monthly_budget_usd):.2f}"
                 ),
             )
 
@@ -399,41 +384,59 @@ async def list_team_employees(request: Request) -> APIResponse[list[dict]]:
             detail=f"Invalid tenant_id: {tenant_id_str!r}",
         )
 
-    # Load all employee keys for the tenant.
-    session_factory = _get_api_session()
-    async with session_factory() as db:
-        stmt = (
-            select(APIKey)
-            .where(APIKey.tenant_id == tenant_uuid)
-            .where(APIKey.subject_kind == "employee")
-            .order_by(APIKey.created_at.desc())
-        )
-        result = await db.execute(stmt)
-        keys = list(result.scalars().all())
+    # Load all employee keys for the tenant via the api service. Same
+    # pattern as the rest of the gateway — we never read the api_keys
+    # table directly because the gateway's own DATABASE_URL points at
+    # acp_identity, not acp_api.
+    url = f"{settings.API_SERVICE_URL.rstrip('/')}/api-keys"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(
+                url,
+                params={"subject_kind": "employee"},
+                headers=internal_headers(request),
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "team_employees_list_upstream_non_200",
+                status=resp.status_code,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not list employee keys from the api service.",
+            )
+        body = resp.json()
+        keys: list[dict] = body.get("data") or []
+    except httpx.HTTPError as exc:
+        logger.error("team_employees_list_upstream_error", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"api service unreachable: {type(exc).__name__}",
+        ) from exc
 
     # Join with Redis spend.
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
         rows: list[dict] = []
         for k in keys:
-            email = k.subject_email or ""
+            email = (k.get("subject_email") or "").strip()
             today_usd, month_usd = (0.0, 0.0)
             if email:
                 today_usd, month_usd = await _current_spend(
-                    redis, str(k.tenant_id), email,
+                    redis, str(k.get("tenant_id") or ""), email,
                 )
             rows.append({
-                "key_id":           str(k.id),
-                "key_prefix":       k.key_prefix,
+                "key_id":           k.get("id"),
+                "key_prefix":       k.get("key_prefix"),
                 "email":            email,
-                "name":             k.name,
-                "is_active":        bool(k.is_active),
-                "daily_budget_usd":   float(k.daily_budget_usd)   if k.daily_budget_usd   is not None else None,
-                "monthly_budget_usd": float(k.monthly_budget_usd) if k.monthly_budget_usd is not None else None,
+                "name":             k.get("name"),
+                "is_active":        bool(k.get("is_active", True)),
+                "daily_budget_usd":   k.get("daily_budget_usd"),
+                "monthly_budget_usd": k.get("monthly_budget_usd"),
                 "today_usd":        round(today_usd, 4),
                 "month_usd":        round(month_usd, 4),
-                "created_at":       k.created_at.isoformat() if k.created_at else None,
-                "last_used_at":     k.last_used_at.isoformat() if k.last_used_at else None,
+                "created_at":       k.get("created_at"),
+                "last_used_at":     k.get("last_used_at"),
             })
         return APIResponse(data=rows)
     finally:
