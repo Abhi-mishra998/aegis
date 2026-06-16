@@ -28,10 +28,12 @@ logger = structlog.get_logger(__name__)
 # ─────────────────────────────────────────────────────────────
 
 # Roles allowed to call any /admin/* GET that proxies tenant-list data.
-# Note: the gateway middleware (services/gateway/_mw_auth.py:163-168) already
-# blocks WRITE methods for non-(ADMIN|SECURITY); this set guards GETs that
-# would otherwise be readable by any authenticated VIEWER.
-_ADMIN_ROLES = frozenset(("ADMIN", "SECURITY"))
+# Sprint 1 added OWNER (top tier) + SECURITY_ANALYST (renamed from SECURITY);
+# both legacy + new names are accepted so existing JWTs keep working.
+# The gateway middleware (services/gateway/_mw_auth.py) already blocks WRITE
+# methods for non-admin-tier roles; this set guards GETs that would
+# otherwise be readable by any READ_ONLY/VIEWER user.
+_ADMIN_ROLES = frozenset(("OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY"))
 
 
 def require_admin_role(request: Request) -> None:
