@@ -55,6 +55,8 @@ import LiveFeed from './pages/LiveFeed';
 import PolicySim from './pages/PolicySim';
 import UserManagement from './pages/UserManagement';
 import Playbooks from './pages/Playbooks';
+// Sprint 17 — Aegis for Teams (per-employee LLM proxy + spend rollup)
+import Team from './pages/Team';
 // Sprint 3 — Decision Explorer + Session Explorer
 import DecisionExplorer from './pages/DecisionExplorer';
 import SessionExplorer from './pages/SessionExplorer';
@@ -372,6 +374,8 @@ function App() {
               <Route path="/live-feed"        element={<ProtectedRoute><LiveFeed /></ProtectedRoute>} />
               <Route path="/users"            element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
               <Route path="/playbooks"        element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
+              {/* Sprint 17 — Aegis for Teams: per-employee Claude usage + spend */}
+              <Route path="/team"             element={<ProtectedRoute><Team /></ProtectedRoute>} />
 
               {/* Sprint 6 — ExecutiveDashboard merged into /dashboard. */}
               <Route path="/executive-summary" element={<Navigate to="/dashboard" replace />} />

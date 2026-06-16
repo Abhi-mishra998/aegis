@@ -1,19 +1,307 @@
-# SPRINT.md — Aegis Sprint Roadmap (locked 2026-06-15)
+# SPRINT.md — Aegis Sprint Roadmap
 
-Translation layer between PRODUCT_PLAN.md (v2, locked) and ground-level work. One sprint = one shippable unit on `ha.aegisagent.in`. No sprint completes without:
+> **Phase A — Sprint 1-10 plumbing**: ✅ SHIPPED 2026-06-15 (table below).
+> **Phase B — Enterprise activation (Sprints 11-18)**: 🔴 OPEN as of 2026-06-16. This is what the product needs to actually sell.
+
+Translation layer between PRODUCT_PLAN.md and ground-level work. One sprint = one shippable unit on `ha.aegisagent.in`. No sprint completes without:
 
 1. Backend + UI + alembic (if schema touched) landed in one commit.
-2. Unit tests green (`python3 -m pytest tests/test_<sprint>*.py -q`).
-3. Bundle built via `scripts/ops/build_release_bundle.sh` + uploaded to S3.
+2. Unit tests green.
+3. Bundle built + uploaded to S3 via `scripts/ops/build_release_bundle.sh`.
 4. ASG instance refresh succeeded.
-5. Live smoke probes documented in this file under the sprint's "evidence" line.
+5. Live smoke probes cited in the table.
 
 > **Behavioural carry-over (from prior memory + founder rules)**
 > - Never push without explicit "push it" in the same turn.
 > - No Co-Authored-By: Claude on any commit.
 > - Never delete a backend service. UI consolidates, backend stays.
-> - Customer's LLM key never touches Aegis servers — SDK-on-endpoint only.
+> - Customer's LLM key never touches Aegis servers — SDK-on-endpoint stays the default.
+>   **Exception (Sprint 17 "Aegis for Teams")**: an explicit, opt-in LLM-proxy mode for employee-monitoring use cases. The SDK pattern is the moat for the production-AI-agent buyer; the proxy pattern is required for the IT-governance-of-employee-LLMs buyer. Both ship.
 > - `ACP_AUTH_PROVIDER=both` stays — legacy HS256 path keeps agent `/execute` working.
+
+---
+
+## 🚨 Brutal honest assessment — 2026-06-16
+
+Phase A delivered a **technically excellent runtime-security engine** (34 MITRE-mapped signals, cryptographic transparency log, 5-tier action model, blast-radius dollar math, zero security misses in the 30-scenario red team). It also delivered the **Sprint 1-11 stability fixes today**: Clerk signin race, tenant-mismatch reconciliation, audit-stream cap, SSO endpoint auth, tab-router blink, silent-failure handlers — all closed.
+
+What Phase A did **NOT** deliver, measured against the new mandate (mandate sections in **bold**):
+
+| Mandate section | Status | Real evidence |
+|---|---|---|
+| **A. Positioning** ("Runtime Security for AI Agents") | **PARTIAL** | `Login.jsx:60-65` says "AgentControl" + "Tamper-evident replay + runtime deny for AI agents". The category claim is buried in `PRODUCT_PLAN.md:135`, never reaches a visitor. |
+| **B. Landing / first 30 seconds** | **GAP** | `nginx.conf` redirects `/` → `/dashboard` or `/login`. No pre-auth marketing surface explains what Aegis does. Zero conversion funnel. |
+| **C. Dashboard mandate KPIs** (6 metrics) | **PARTIAL** | Current Dashboard surfaces Agents / High-risk / Wizard-provisioned / Shadow-mode. Mandate wants Protected Agents / Actions Evaluated / Allowed / Denied / Escalated / Active Findings. 0 of those 6 metrics match the mandate naming. |
+| **D. Wizard capability model** ("what can this agent do?") | **GAP** | `OnboardingWizard.jsx:37-41` ships abstract `low/medium/high risk`. Mandate wants capability checkboxes (Filesystem / Database / Infrastructure / Payments / Email / External APIs / Internal APIs) → auto-generated default policy. |
+| **E. Incident card 6 fields** | **PARTIAL** | Incidents show title + agent + tool + risk + explanation + status. **Policy ID, MITRE technique, recommended remediation are NOT on the card** — buried in detail drawer + Remediation panel. |
+| **F. Unified replay** | **PARTIAL** | DecisionExplorer Graph + Forensics Timeline + JSON exist as three separate views. No single "replay this request" UX that walks User Request → Agent Decision → Tool Request → Aegis Eval → Outcome. |
+| **G. Compliance mapping** (SOC2 / ISO27001 / NIST CSF beyond MITRE) | **GAP** | `services/security/signal_registry.py` only tags MITRE tactic+technique. `Compliance.jsx` lists EU_AI_ACT / NIST_AI_RMF / SOC2 frameworks but does NOT show signal→control mapping. |
+| **H. Business-value framing** | **GAP** | Every metric is technical (Threats Blocked, Avg Risk). Zero business-impact KPIs (records protected, escalations prevented, dollar-amount risk mitigated, compliance controls enforced). The blast-radius dollar formula shipped — never surfaced as a hero metric. |
+| **I. Employee-LLM monitoring** (the user's actual goal) | **GAP** | Current arch is SDK-on-endpoint. No `/v1/messages` Anthropic-compatible proxy. `llm_router.py:42-50` tracks cost per tenant-per-provider, not per **user**. No per-employee identity carry-through. The buyer who said "monitor my employees' Claude usage" has nothing to install. |
+
+**TLDR**: Aegis is a category-leading runtime-security engine **wrapped in a security-tool wrapper**. The buyer sees an empty login page, lands on a dashboard with abstract metrics, gets an onboarding wizard that asks "how risky is this agent?" (the wrong question), and has no way to answer "how many compliance violations did Aegis prevent for me this month?" — the question the renewal hinges on.
+
+---
+
+## 🥊 Competitive deltas — what shipped competitors show on their first screen
+
+(June 2026 web crawl. Sources at bottom.)
+
+| Competitor | One-line positioning | The hero feature Aegis must match |
+|---|---|---|
+| **Protect AI Layer** | *"Runtime Security for Tomorrow's AI"* + *"Stop AI threats instantly at runtime with deep visibility and control."* | Named modules: **Guardian** (scan) + **Recon** (red-team) + **Layer** (runtime). 27 turnkey policies mapped to NIST/MITRE/OWASP. |
+| **Wiz AI Application Protection** | *"AI Runtime Protection — detects prompt injection, rogue agents, malicious behavior"* + AI-BOM agentless inventory. | Real dashboard screenshots in marketing. Prioritized risk queue. Blue Agent investigation. |
+| **Lakera Guard** | *"The leading security platform to secure your AI future"* | Single `/v2/guard` API. <50ms guardrails. |
+| **Prompt Security** | *"SECURE YOUR AI. EVERYWHERE IT MATTERS."* | Employee AI-tools usage dashboard. MCP Gateway for agentic AI. IDE inline guardrails. |
+| **Credal** | *"The Control Plane for Enterprise Agents"* | **Agent Registry** + **Permission Mirroring** (sync from 50+ sources) + **Audit & Risk Monitor** with concrete examples ("GTM Agent accessed HR records", "96.2% policy compliance"). |
+| **Witness AI** | *"Approach AI with Certainty"* | Three named pillars: **Observe** / **Protect** / **Control**. Shadow-AI discovery. Conversation monitoring. |
+| **Portkey** | *"Production Stack for Gen AI Builders"* | Virtual Keys + per-user/per-team/per-key budgets. $180M managed spend. SOC2/ISO27001. Pricing public. |
+| **LiteLLM** | *"LLM Gateway (OpenAI Proxy) to manage authentication, loadbalancing, and spend tracking across 100+ LLMs"* | **Virtual keys + per-user / per-team budgets + metadata tags by department/feature/env.** This is what the employee-monitoring buyer wants. |
+| **Cloudflare AI Gateway** | *"Observe and control your AI applications"* | Analytics: requests/tokens/cost. Caching. Rate limiting. Free tier. |
+| **F5 AI Guardrails (was CalypsoAI)** | *"Secure AI systems and connected data — from pilot to production"* | Adversarial defense. Data leakage prevention. Agent privilege restrictions. |
+
+### Features EVERY competitor shows that Aegis is missing
+
+1. **Public marketing landing page** with hero claim, named products, dashboard screenshot.
+2. **Named product modules** (Layer/Guardian/Recon, Observe/Protect/Control). Aegis just has "Dashboard / Incidents / Wizard."
+3. **Compliance framework grid** (NIST + MITRE + OWASP + SOC2) as a *selling* feature, not a backend tag.
+4. **Concrete risk language in the UI** ("GTM Agent accessed HR records") — not abstract "execute_tool / deny / risk 0.87".
+5. **Shadow AI / AI inventory discovery** — Wiz, Witness, and Credal lead with this; Aegis requires manual agent registration.
+6. **(For the employee-governance buyer)** Per-user / per-team / per-API-key spend dashboards. LiteLLM + Portkey both ship this.
+
+### The ONE thing Aegis does that NONE of them do
+
+**Publicly-verifiable cryptographic transparency log.** Daily Merkle roots + ed25519 signed + anonymously fetchable from `s3://aegis-public-roots-…` + `pip install aegis-aevf` CLI that any auditor/regulator/customer can run to independently prove their audit history was not tampered with. Every competitor sells "audit trails" / "full logs" — Aegis is the only one where the trail is mathematically verifiable without trusting the vendor. **This is the moat. Phase B must not compromise it.**
+
+---
+
+## Phase B sprints — close the mandate gaps
+
+Each sprint maps 1-to-1 to a mandate gap above. Estimate columns assume one-day shippable units. DoD = ALL three of: backend live + UI live + smoke probe pasted under the sprint's evidence line.
+
+### Sprint 11 — Marketing landing (close Gap B)
+
+**Goal** Visitor at `https://ha.aegisagent.in/` sees value-prop BEFORE the login form. 30-second comprehension test: "what is this and who is it for?"
+
+**Files**
+- `ui/src/pages/Landing.jsx` (NEW) — hero: *"Runtime Security for AI Agents."* Sub-hero: *"Aegis sits between your AI agents and the tools they call. Every action is allowed, denied, or escalated — with a cryptographic receipt."*
+- Diagram component: `AI Agent → Aegis Runtime Protection → Tools & Infrastructure` with ALLOW/DENY/ESCALATE badges below.
+- 3 named modules section (mirror Protect AI Layer / Wiz pattern): **Protect** (runtime) · **Investigate** (incidents + replay) · **Prove** (cryptographic audit chain).
+- 3 live demo cards (NOT path traversal): "$25M wire transfer denied", "kubectl delete prod blocked", "GTM agent attempted HR exfiltration". Each card opens a 20-second replay.
+- `ui/src/App.jsx` — `/` → `<Landing />` if NOT signed in, `/dashboard` if signed in.
+- `nginx.conf` — remove the unconditional `/` → `/login` redirect.
+
+**DoD**
+- Unauthenticated `curl https://ha.aegisagent.in/` returns the Landing HTML, not a redirect.
+- Page renders in <2s LCP on mobile (Lighthouse).
+- "Get Aegis Free" CTA links to `/signup` (Clerk).
+
+**Estimate** 2 dev-days. Move fast — copy + iterate.
+
+---
+
+### Sprint 12 — Dashboard mandate KPIs + business-value framing (close Gaps C + H)
+
+**Goal** Replace abstract metrics with the mandate's 6 KPIs **plus** business-value rollups. Empty state shows onboarding guidance, not a blank box.
+
+**Files**
+- `services/registry/router.py` — extend `GET /workspace/inventory` to include the 6 mandate metrics over the last 7d/30d windows:
+  ```
+  protected_agents, actions_evaluated, allowed, denied, escalated, active_findings
+  ```
+- `services/audit/router.py` — `GET /audit/business-impact?days=30` — returns: `records_protected_estimate, escalations_prevented, compliance_controls_enforced, dollar_risk_mitigated` (last one uses the Sprint 8 system_values map).
+- `ui/src/pages/Dashboard.jsx` — replace current MetricTiles with:
+  - Row 1 (6 mandate metrics): Protected Agents / Actions Evaluated / Allowed / Denied / Escalated / Active Findings.
+  - Row 2 (business value): Sensitive records protected · High-risk actions blocked · Escalations prevented · Compliance controls enforced.
+  - Empty state (zero agents): big card with `Add your first agent →` + animated SDK snippet preview, never an empty grid.
+
+**DoD**
+- A workspace with zero agents shows the onboarding card, not "—" tiles.
+- A workspace with traffic shows all 6 mandate KPIs and 4 business-value KPIs.
+
+**Estimate** 3 dev-days.
+
+---
+
+### Sprint 13 — Capability-based wizard (close Gap D)
+
+**Goal** Wizard Step 2 asks *"what can this agent do?"* with capability checkboxes. The chosen capabilities auto-generate the default policy + the recommended tool whitelist.
+
+**Files**
+- `services/registry/wizard.py` — replace `risk_level: 'low'|'medium'|'high'` with `capabilities: list[Capability]` where `Capability ∈ {filesystem, database, infrastructure, payments, email, external_apis, internal_apis}`. Persist to `agents.metadata.capabilities`.
+- `services/policy/canonical.py` — `default_policy_for(capabilities)` → returns a Rego policy + a tool-whitelist + a risk-profile. Money-movement → wire hard-cap rules auto-enabled. Infrastructure → kubectl-delete-prod + terraform-destroy auto-denied.
+- `ui/src/pages/OnboardingWizard.jsx:37` — replace `RISK_LEVELS` with `CAPABILITIES` (7 checkboxes with icons). Below the checkboxes: a live "policies that will be enabled" preview that updates as the operator toggles.
+
+**DoD**
+- Selecting "Payments" + "Database" auto-enables wire-hard-cap, bulk-PII-egress, SQL-injection rules without operator policy expertise.
+- Wizard Step 2 never says "risk level".
+
+**Estimate** 3 dev-days. Wizard schema migration touches Sprint 2 contract.
+
+---
+
+### Sprint 14 — Incident card mandate fields (close Gap E)
+
+**Goal** Every incident row visibly shows: what / why / policy / risk / MITRE / remediation — directly on the card, not buried in a drawer.
+
+**Files**
+- `ui/src/pages/Incidents.jsx` — replace current card layout with a 6-field strip:
+  1. **What** — agent + tool + arguments excerpt.
+  2. **Why detected** — primary signal name (e.g. `bulk_pii_egress_dump`).
+  3. **Policy** — `policy_id` badge.
+  4. **Risk** — score + tier badge.
+  5. **MITRE** — `T<technique>` linked to ATT&CK page.
+  6. **Recommended remediation** — top action from `remediation_panel.actions[0]`, with one-click "Apply" button.
+- `services/security/incidents/storyline.py` — ensure `policy_id` + `mitre_technique` + `recommended_remediation` are denormalised onto the incident row so the card doesn't need a second fetch.
+
+**DoD**
+- Open `/incidents`, see all 6 fields without clicking. Click row → drawer opens with full forensics (preserved).
+
+**Estimate** 2 dev-days.
+
+---
+
+### Sprint 15 — Unified replay (close Gap F)
+
+**Goal** One screen, one URL: `Replay {request_id}` that walks the operator through `User Request → Agent Decision → Tool Request → Aegis Evaluation → Outcome` left-to-right, with the underlying graph + timeline + JSON tabs collapsed underneath.
+
+**Files**
+- `ui/src/pages/Replay.jsx` (NEW) — 5-stage horizontal stepper, each stage is a card with the relevant fields + a "see raw" link to existing DecisionExplorer / Forensics views.
+- `services/flight_recorder/router.py` — `GET /flight/replay/{request_id}` — returns the joined view (User+Agent+Tool+Decision+Outcome) in one payload so the page renders without 5 fetches.
+- `ui/src/pages/Incidents.jsx` — every incident row gets a "▶ Replay" button → `/replay/{request_id}`.
+
+**DoD**
+- A SOC analyst opens an incident and reaches a full replay in <5 seconds, no documentation reading required.
+- Existing DecisionExplorer + Forensics pages stay reachable from the replay (no surface deleted).
+
+**Estimate** 3 dev-days.
+
+---
+
+### Sprint 16 — Compliance framework mapping (close Gap G)
+
+**Goal** Every Aegis signal carries SOC2 control IDs + ISO 27001 control IDs + NIST CSF subcategory IDs **in addition** to MITRE. Compliance page renders the mapping as a heatmap.
+
+**Files**
+- `services/security/signal_registry.py` — extend `@dataclass SignalDefinition` with `soc2: list[str]`, `iso27001: list[str]`, `nist_csf: list[str]`. Backfill all 34 signals.
+- `services/audit/compliance.py` — new endpoint `GET /compliance/coverage?framework=SOC2` returns per-control coverage % (control → signals → enforcement count).
+- `ui/src/pages/Compliance.jsx` — replace evidence list with a 4-tab heatmap: SOC2 / ISO27001 / NIST CSF / MITRE ATT&CK. Each tab shows control × coverage % + a "show signals" expand.
+- `ui/src/pages/Incidents.jsx` — incident card gets a compliance-tag badge ("SOC2 CC6.1 enforced").
+
+**DoD**
+- Buyer's CISO can open `/compliance` and answer "which SOC2 controls is Aegis enforcing for us today?" without engineering help.
+
+**Estimate** 4 dev-days. Backfill is the bulk.
+
+---
+
+### Sprint 17 — **Aegis for Teams** (close Gap I — the user's actual goal)
+
+**Goal** Enterprise gives Claude API keys to N employees. Each employee points the Anthropic SDK at `https://ha.aegisagent.in/v1/messages` instead of `api.anthropic.com`. Aegis becomes the LLM gateway: enforces the same runtime security rules, AND surfaces per-employee token burn, API hits, and harmful actions — under one workspace.
+
+This is **NOT** a replacement for SDK-on-endpoint. Both ship. Customer chooses the topology that matches their threat model.
+
+**Files**
+- Backend
+  - `services/gateway/main.py` — new endpoint `POST /v1/messages` (Anthropic-compatible: same schema as `api.anthropic.com/v1/messages`). Proxies upstream to Anthropic. Auth via per-employee virtual key (`acp_emp_…`).
+  - `services/api/router.py` — extend `/api-keys` to mint **employee virtual keys** with claims: `tenant_id`, `employee_id`, `email`, `daily_budget_usd`, `monthly_budget_usd`. RBAC: OWNER/ADMIN can mint, employee receives by email.
+  - `services/usage/router.py` — `POST /usage/llm-spend` records: `tenant_id`, `employee_id`, `model`, `input_tokens`, `output_tokens`, `cost_usd`, `was_blocked`, `findings`. Aggregates per employee per day.
+  - `services/gateway/inference_proxy.py` — pre-call: lookup employee → check budget → run the same signal registry on the prompt body (already does this for tool calls; extend to message content). Post-call: meter tokens, persist spend.
+  - alembic: `employees` table (tenant_id, email, virtual_key_hash, daily_budget_usd, monthly_budget_usd, is_active).
+- Frontend
+  - `ui/src/pages/Team.jsx` (NEW) — list of employees + monthly spend + actions evaluated + harmful actions blocked. CSV export.
+  - `ui/src/pages/TeamMember.jsx` (NEW) — per-employee drill-down: token burn over time, top models, top prompts, incidents involving this employee.
+  - `ui/src/pages/Settings.jsx` — new tab **Aegis for Teams** with the proxy endpoint URL + per-employee key minting UI.
+
+**DoD**
+- An admin mints `acp_emp_…` keys for 3 employees. Each employee replaces their `ANTHROPIC_API_KEY` env var with the virtual key and changes the base URL to `https://ha.aegisagent.in`. Their Anthropic SDK works unchanged.
+- `/team` page shows per-employee spend (tokens + USD), per-employee actions evaluated, per-employee harmful-action count, monthly budget bar.
+- Employee tries a prompt that would exfiltrate secrets → request blocked + incident created tagged with employee_id + email.
+- The same signal registry, MITRE tagging, transparency log, and compliance mapping work in proxy mode without changes.
+
+**Smoke probes**
+```
+curl -X POST https://ha.aegisagent.in/v1/messages \
+  -H "x-api-key: acp_emp_…" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{"model":"claude-haiku-4-5","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}'
+# expect 200 with Anthropic response body
+curl https://ha.aegisagent.in/team
+# expect 200 + per-employee table
+```
+
+**Estimate** 8 dev-days. This is the strategic centerpiece of Phase B. **Two new buyer personas unlock**: the IT-governance buyer (CIO/CISO who wants visibility into employee LLM usage) and the FinOps buyer (Finance lead who wants per-employee LLM cost attribution).
+
+---
+
+### Sprint 18 — Positioning sweep (close Gap A)
+
+**Goal** Every visible Aegis surface — Login, Signup, Dashboard, Email templates, docs — uses the single category claim **"Runtime Security for AI Agents."**
+
+**Files**
+- `ui/src/pages/Login.jsx:60-65` — replace "AgentControl" + sub-tagline with hero: **"Runtime Security for AI Agents."** Sub: *"Sign in to your protection console."*
+- `ui/src/pages/Signup.jsx:60-67` — same hero. Sub: *"Protect every AI-agent action with allow/deny/escalate decisions and a cryptographic audit trail."*
+- `ui/src/pages/Landing.jsx` — primary hero (already in Sprint 11).
+- `README.md` — top line.
+- `docs/intro/*.md` (GitBook) — section headers.
+- Clerk webhook → welcome email — first paragraph.
+- Browser title bar — `<title>Aegis — Runtime Security for AI Agents</title>`.
+
+**DoD**
+- Open any surface as a stranger. The first words you see are the category claim. Six visible surfaces ship together in one PR so there's no inconsistency window.
+
+**Estimate** 1 dev-day. Pure copy + grep.
+
+---
+
+## Phase B critical path (suggested order)
+
+```
+Sprint 18 (positioning sweep — 1d)           ← fastest credibility win, gates marketing
+   │
+   ├─→ Sprint 11 (marketing landing — 2d)    ← gates inbound conversion
+   │
+   ├─→ Sprint 12 (dashboard KPIs — 3d)       ← gates first-impression after signup
+   │
+   ├─→ Sprint 13 (capability wizard — 3d)    ← gates time-to-first-protected-agent
+   │
+   ├─→ Sprint 14 (incident card 6 fields — 2d)
+   │
+   ├─→ Sprint 15 (unified replay — 3d)       ← gates SOC analyst trust
+   │
+   ├─→ Sprint 16 (compliance grid — 4d)      ← gates CISO renewal conversation
+   │
+   └─→ Sprint 17 (Aegis for Teams — 8d)      ← NEW REVENUE LINE: employee LLM governance
+```
+
+**Total estimate: ~26 dev-days for full Phase B.** Single dev can ship in 5-6 weeks, paired team in 3.
+
+---
+
+## What we DO NOT change in Phase B (moat preservation)
+
+1. **The cryptographic transparency log.** ed25519 + Merkle + public S3 + `aegis-aevf` CLI. Nobody else has this. Don't water it down.
+2. **The signal registry's MITRE precision.** 34 signals with tactic+technique+score. Sprint 16 ADDS SOC2/ISO/NIST tags; it does not replace MITRE.
+3. **The SDK-on-endpoint architecture.** Sprint 17 adds proxy mode as a SECOND topology; the customer chooses. We don't deprecate SDKs.
+4. **Shadow mode default.** 14-day observe window stays. Sprint 11 marketing copy must emphasize this — it's the trust builder for the buyer who doesn't want a new SaaS blocking production day 1.
+5. **27 backend services.** Founder hard rule. UI consolidates, backend stays.
+
+---
+
+## Sources used in the competitive analysis (2026-06-16 crawl)
+
+- Protect AI Layer — protectai.com/layer
+- Wiz AI Application Protection — wiz.io/solutions/ai-spm, wiz.io/blog/introducing-wiz-ai-app
+- Lakera Guard — lakera.ai
+- Prompt Security — prompt.security/solutions/agentic-ai-security-and-governance
+- Credal — credal.ai
+- Witness AI — witness.ai
+- Portkey — portkey.ai
+- LiteLLM — litellm.ai, docs.litellm.ai/docs/proxy/cost_tracking
+- Cloudflare AI Gateway — developers.cloudflare.com/ai-gateway
+- F5 AI Guardrails (was CalypsoAI) — f5.com/products/ai-guardrails
+
+---
 
 ---
 
