@@ -219,12 +219,20 @@ function App() {
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
-  // Proactive client-side expiry timer
+  // Proactive client-side expiry timer.
+  //
+  // Polls every 5s rather than arming a one-shot setTimeout. The reason:
+  // ClerkAuthBridge runs a 45-second background refresh that extends
+  // acp_token_expiry forward (Clerk's default JWT is 60s — the refresh
+  // moves the expiry past the next refresh). A one-shot setTimeout
+  // captured the original 60s expiry on mount and fired the
+  // session_expired incident even though the cookie + JWT were freshly
+  // refreshed underneath it, which made the dashboard "blink" with the
+  // overlay every minute. Polling re-reads the value each tick so the
+  // refresh wins the race.
   useEffect(() => {
-    const expiry    = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
-    const remaining = expiry - Date.now();
-    if (remaining <= 0) return;
-    const timer = setTimeout(() => {
+    if (!auth.isAuthenticated) return;
+    const fireExpired = () => {
       clearSessionMetadata();
       setAuth({ isAuthenticated: false, user: null, tenant_id: null, token: null });
       setIncident({
@@ -235,8 +243,17 @@ function App() {
         statusCode:  null,
         timestamp:   new Date().toISOString(),
       });
-    }, remaining);
-    return () => clearTimeout(timer);
+    };
+    const tick = () => {
+      const expiry = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
+      if (expiry > 0 && Date.now() >= expiry) {
+        fireExpired();
+      }
+    };
+    // Immediate check + every 5s
+    tick();
+    const interval = setInterval(tick, 5_000);
+    return () => clearInterval(interval);
   }, [auth.isAuthenticated]);
 
   // Memoize the context value so consumers don't see a new object on every
