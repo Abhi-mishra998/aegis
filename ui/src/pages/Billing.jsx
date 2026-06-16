@@ -36,6 +36,8 @@ import {
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
 import SkeletonLoader from '../components/Common/SkeletonLoader';
+// Sprint 9 — Stripe Plan & Upgrade card.
+import PlanCard from '../components/billing/PlanCard';
 
 /* ── Helpers ───────────────────────────────────────────────────────────────── */
 const fmt$ = (val) =>
@@ -398,6 +400,11 @@ export default function Billing() {
   return (
     <div className="space-y-8 animate-fade-in max-w-[1400px] mx-auto">
 
+      {/* Sprint 9 — Plan & Upgrade card lives above the existing
+          ROI analytics so the upgrade CTA is the first thing the
+          buyer/owner sees on this page. */}
+      <PlanCard />
+
       {/* ── Page header ── */}
       <div className="page-header">
         <div className="space-y-1">
@@ -409,7 +416,7 @@ export default function Billing() {
               </span>
             )}
           </div>
-          <p className="text-xs text-neutral-500">ROI analytics, cost intelligence and invoice ledger</p>
+          <p className="text-xs text-neutral-500">Plan, ROI analytics, cost intelligence and invoice ledger</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {lastUpdated && (

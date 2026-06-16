@@ -28,8 +28,8 @@ Translation layer between PRODUCT_PLAN.md (v2, locked) and ground-level work. On
 | 5 | 3.4 | Incidents enriched (blast radius + remediation + forensics tabs) | ✅ DONE | commit 7815d7b / ASG 33c463f9 | All 4 orphan endpoints 401 JSON (`/iag/incidents/.../blast-radius`, `/remediation/policy`, `/remediation/incidents/...`, `/forensics/blast-radius/...`); bundle hash flipped to BDU7gfyT; "Blast Radius" + "Remediation" + "would_have_blocked" strings all present in bundle; 124/124 tests; 12/12 healthy p95 37ms |
 | 6 | 3 cleanup | UI consolidation: 49→15 pages, sidebar restructure | ✅ DONE | commit 93fa230 / ASG 3fc8c8fd | 3 demo pages deleted, 3 tab routers live (`/policies`, `/agents/:id`, `/settings`), sidebar 3-tier (6/16/3+1), bundle dropped 1.72MB→1.58MB; new hash `oawEBs83`; "Policies" + "Shadow Review" + "Blast Radius" strings in bundle; 124/124 tests; 12/12 healthy p95 38ms |
 | 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | ✅ DONE | commit 13cd686 / ASG 2fa88480 | `/iag/mitre-coverage` 401 JSON; `/threat-graph` 200; new bundle `CIZz3R6h`; "Threat Graph"/"IAG graph"/reactflow in bundle; 129/129 tests; 12/12 healthy p95 53ms |
-| 8 | 5 | Blast Radius dollar formula + workspace value tags | 🚧 IN-FLIGHT | committed locally | 137/137 tests; deploy pending |
-| 9 | 6 | Stripe billing wiring (model exists, wire it) | ⏳ | — | — |
+| 8 | 5 | Blast Radius dollar formula + workspace value tags | ✅ DONE | commit c557613 / ASG 8f5e56ea | `/workspace/system-values` 401 JSON; `/settings?tab=system-values` 200; new bundle `oOcZd_7I`; "Could have reached" + "System Values" strings in bundle; alembic `a7b8c9d0e1f2` head; 137/137 tests; 12/12 healthy p95 40ms |
+| 9 | 6 | Stripe billing wiring (model exists, wire it) | 🚧 IN-FLIGHT | committed locally | 144/144 tests; deploy pending. Stripe API keys NOT set on prod yet — endpoints will 503 cleanly until ops sets STRIPE_SECRET_KEY + STRIPE_PRO_PRICE_ID + STRIPE_ENTERPRISE_PRICE_ID via SSM. |
 | 10 | 6 | Production hardening: CSP, security headers, audit-chain refresh | ⏳ | — | — |
 
 Phase 4 (3 pilots) is calendar work, not code — outside this file's scope.

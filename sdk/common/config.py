@@ -331,6 +331,38 @@ class ACPSettings(BaseSettings):
         description="JWKS cache TTL in seconds. Clerk rotates keys infrequently; a 1h cache balances safety and load.",
     )
 
+    # ─────────────────────────────────────────────────────────────
+    # 💳 Stripe billing (Sprint 9)
+    # ─────────────────────────────────────────────────────────────
+    # The webhook handler in services/gateway/routers/stripe_webhook.py
+    # already reads STRIPE_WEBHOOK_SECRET directly from os.environ; the
+    # checkout + portal endpoints added in Sprint 9 read these values
+    # via settings so the surface is one source of truth.
+    STRIPE_SECRET_KEY: str = Field(
+        default="",
+        description="Stripe secret key (sk_test_... or sk_live_...). Endpoints 503 when empty.",
+    )
+    STRIPE_PRO_PRICE_ID: str = Field(
+        default="",
+        description="Stripe Price ID for the Pro tier checkout flow.",
+    )
+    STRIPE_ENTERPRISE_PRICE_ID: str = Field(
+        default="",
+        description="Stripe Price ID for the Enterprise tier checkout flow.",
+    )
+    STRIPE_CHECKOUT_SUCCESS_URL: str = Field(
+        default="https://ha.aegisagent.in/billing?upgrade=success",
+        description="Where Stripe Checkout redirects on success.",
+    )
+    STRIPE_CHECKOUT_CANCEL_URL: str = Field(
+        default="https://ha.aegisagent.in/billing?upgrade=canceled",
+        description="Where Stripe Checkout redirects on cancel.",
+    )
+    STRIPE_PORTAL_RETURN_URL: str = Field(
+        default="https://ha.aegisagent.in/billing",
+        description="Where the Stripe Customer Portal redirects after a session.",
+    )
+
     @field_validator("ACP_AUTH_PROVIDER")
     @classmethod
     def _allowed_auth_provider(cls, v: str) -> str:
