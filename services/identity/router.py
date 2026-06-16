@@ -678,6 +678,11 @@ async def get_tenant_metadata(
             tenant.shadow_mode_until.isoformat()
             if tenant.shadow_mode_until is not None else None
         ),
+        # Sprint 8 — per-resource-kind dollar weights for the
+        # Blast-Radius dollar formula. The gateway's TenantMetadataCache
+        # forwards this verbatim; the IAG router reads it to compute
+        # dollar_estimate on every blast-radius response.
+        "system_values":        dict(tenant.system_values or {}),
     }
 
 
@@ -906,6 +911,112 @@ async def workspace_exit_shadow_mode(
         "tenant_id":         str(tenant.tenant_id),
         "shadow_mode_until": tenant.shadow_mode_until.isoformat(),
         "previous_until":    previous.isoformat() if previous else None,
+    }
+
+
+@router.patch(
+    "/workspace/system-values",
+    summary="OWNER-only — set per-resource-kind dollar weights for blast-radius",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def patch_system_values(
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+    x_acp_role: Annotated[str | None, Header(alias="X-ACP-Role")] = None,
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
+) -> dict:
+    """
+    Merge the provided dict into ``tenants.system_values``. Keys are
+    resource kinds (e.g. ``table``, ``api``, ``secret``); values are
+    integer dollar weights. Negative values are rejected; zero clears a
+    kind from the rollup.
+
+    Sample body::
+
+        { "table": 50000, "api": 100000, "secret": 25000 }
+
+    The gateway's TenantMetadataCache is busted so the next
+    ``/iag/.../blast-radius`` response picks up the new weights.
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    if _canonical_role(x_acp_role) != "OWNER":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the workspace OWNER can update system values",
+        )
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    normalized: dict[str, int] = {}
+    for key, value in body.items():
+        if not isinstance(key, str) or not key.strip():
+            raise HTTPException(
+                status_code=400, detail=f"Invalid kind name: {key!r}",
+            )
+        try:
+            weight = int(value)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Weight for {key!r} must be an integer (got {value!r})",
+            )
+        if weight < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Weight for {key!r} must be ≥0 (got {weight})",
+            )
+        normalized[key.strip().lower()] = weight
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Merge — caller can drop a kind by sending it as 0 (or omit it to
+    # leave it alone). PATCH semantics, not PUT.
+    current = dict(tenant.system_values or {})
+    for k, v in normalized.items():
+        if v == 0:
+            current.pop(k, None)
+        else:
+            current[k] = v
+    tenant.system_values = current
+    await db.commit()
+
+    # Bust the TenantMetadataCache so /iag picks up new weights immediately.
+    try:
+        await redis.delete(f"acp:tenant:meta:{tenant_uuid}")
+    except Exception as exc:
+        logger.warning("tenant_meta_cache_bust_failed_system_values", error=str(exc))
+
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_uuid,
+            agent_id=None,
+            action="workspace_system_values_update",
+            metadata={
+                "actor":           x_acp_actor or "unknown",
+                "applied":         normalized,
+                "new_state":       current,
+            },
+        )
+    except Exception as exc:
+        logger.warning("system_values_audit_failed", error=str(exc))
+
+    return {
+        "status":        "ok",
+        "tenant_id":     str(tenant.tenant_id),
+        "system_values": current,
+        "applied":       normalized,
     }
 
 

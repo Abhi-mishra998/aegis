@@ -188,6 +188,21 @@ class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
         server_default=text("now() + interval '14 days'"),
     )
 
+    # Sprint 8 — Per-resource-kind dollar weights for the Blast-Radius
+    # dollar formula. Operator-set via PATCH /workspace/system-values
+    # (OWNER role). Defaults to `{}` — pre-Sprint-8 tenants then surface
+    # a zero dollar_estimate and the BlastRadiusCard falls back to the
+    # criticality_score pill.
+    #
+    # Example shape: {"table": 50000, "api": 100000, "secret": 25000}.
+    from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402,PLC0415
+    system_values: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
+
 
 class AgentCredential(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Stores hashed secrets + status for agent authentication."""

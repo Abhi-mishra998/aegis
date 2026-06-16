@@ -271,12 +271,19 @@ export const api = {
   getSSOProviders: () => request("/auth/sso/providers").catch(() => ({ providers: [] })),
 };
 
-// Sprint 3-4 — Workspace surface (shadow mode + inventory + future settings).
+// Sprint 3-8 — Workspace surface (shadow mode + inventory + system values).
 export const workspaceService = {
   me: () => request("/workspace/me"),
   exitShadowMode: () =>
     request("/workspace/exit-shadow-mode", { method: "POST" }),
   inventory: () => request("/workspace/inventory"),
+  // Sprint 8 — OWNER-only. Merge dollar weights per resource kind. Sending
+  // a key with value 0 removes that kind from the map.
+  updateSystemValues: (values) =>
+    request("/workspace/system-values", {
+      method: "PATCH",
+      body: JSON.stringify(values || {}),
+    }),
 };
 
 // Sprint 5-7 — Identity & Access Graph + Blast Radius read API.

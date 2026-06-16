@@ -5,12 +5,14 @@ import {
   Calendar,
   Code2,
   Database,
+  DollarSign,
   Gauge,
   Key,
   Settings as SettingsIcon,
   Users,
   Webhook,
 } from 'lucide-react';
+import SystemValuesTab from '../components/settings/SystemValuesTab';
 
 // Existing pages, lazy-imported so /settings?tab=workspace only pulls
 // the Workspace tab's chunk on initial render. Each tab's underlying
@@ -50,8 +52,9 @@ function WorkspaceTab() {
 }
 
 const TABS = [
-  { id: 'workspace',  label: 'Workspace',   icon: Building,     Component: WorkspaceTab,    legacy: '/settings' },
-  { id: 'team',       label: 'Team',        icon: Users,        Component: UserManagement,  legacy: '/users' },
+  { id: 'workspace',     label: 'Workspace',     icon: Building,     Component: WorkspaceTab,    legacy: '/settings' },
+  { id: 'system-values', label: 'System Values', icon: DollarSign,   Component: SystemValuesTab, legacy: '/settings?tab=system-values' },
+  { id: 'team',          label: 'Team',          icon: Users,        Component: UserManagement,  legacy: '/users' },
   { id: 'roles',      label: 'Roles',       icon: SettingsIcon, Component: RBAC,            legacy: '/rbac' },
   { id: 'sso',        label: 'SSO',         icon: Key,          Component: SsoSettings,     legacy: '/sso' },
   { id: 'api-keys',   label: 'API Keys',    icon: Code2,        Component: DeveloperPanel,  legacy: '/developer' },
@@ -96,7 +99,7 @@ export default function Settings() {
       <div className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight text-white">Settings</h1>
         <p className="text-xs text-neutral-400">
-          Workspace · Team · Roles · SSO · API Keys · Webhooks · SIEM · Reports · Quota
+          Workspace · System Values · Team · Roles · SSO · API Keys · Webhooks · SIEM · Reports · Quota
         </p>
       </div>
 

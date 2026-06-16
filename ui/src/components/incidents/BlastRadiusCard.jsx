@@ -32,6 +32,51 @@ function CriticalityPill({ score }) {
   );
 }
 
+function formatDollars(value) {
+  const n = Number(value) || 0;
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000)     return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)         return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${n}`;
+}
+
+/** Sprint 8 — Blast-radius dollar headline. */
+function DollarHeadline({ dollarEstimate, systemValuesConfigured, byKindDollars }) {
+  if (!systemValuesConfigured) {
+    return (
+      <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[10px] text-neutral-500 leading-snug">
+        Set per-resource-kind dollar weights in{' '}
+        <a href="/settings?tab=system-values" className="text-white hover:underline">
+          Settings → System Values
+        </a>{' '}
+        to see a $ blast-radius headline here.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-red-500/20 bg-red-500/[0.06] p-3 space-y-1">
+      <div className="text-[10px] uppercase tracking-widest text-red-400/80">
+        Could have reached
+      </div>
+      <div className="text-2xl font-bold text-white">
+        {formatDollars(dollarEstimate)}
+      </div>
+      {byKindDollars && Object.keys(byKindDollars).length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {Object.entries(byKindDollars).map(([kind, dollars]) => (
+            <span
+              key={kind}
+              className="inline-flex items-center gap-1 text-[10px] font-mono text-red-200 bg-red-500/[0.08] border border-red-500/20 rounded px-1.5 py-0.5"
+            >
+              {kind}: {formatDollars(dollars)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResourceList({ items, emptyLabel, limit = 8 }) {
   if (!items || items.length === 0) {
     return <p className="text-[11px] text-neutral-600 italic">{emptyLabel}</p>;
@@ -112,6 +157,14 @@ export default function BlastRadiusCard({ incidentId }) {
         </div>
       ) : data ? (
         <div className="space-y-3">
+          {/* Sprint 8 — Dollar headline (only renders when system_values is configured). */}
+          {(data.dollar_estimate > 0 || data.system_values_configured) && (
+            <DollarHeadline
+              dollarEstimate={data.dollar_estimate || 0}
+              systemValuesConfigured={!!data.system_values_configured}
+              byKindDollars={data.by_kind_dollars || {}}
+            />
+          )}
           <div className="flex items-center gap-3 flex-wrap">
             <CriticalityPill score={data.criticality_score} />
             <div className="text-[10px] text-neutral-500">
