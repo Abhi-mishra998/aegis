@@ -1,5 +1,5 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate, useParams, Link } from 'react-router-dom';
+import React, { Suspense, lazy, useMemo } from 'react';
+import { useSearchParams, useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
   DollarSign,
@@ -8,6 +8,7 @@ import {
   Share2,
   User,
 } from 'lucide-react';
+import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 const AgentProfile  = lazy(() => import('./AgentProfile'));
 const AgentHealth   = lazy(() => import('./AgentHealth'));
@@ -20,6 +21,8 @@ const TABS = [
   { id: 'cost',     label: 'Cost',     icon: DollarSign,  Component: AgentCost     },
   { id: 'topology', label: 'Topology', icon: Share2,      Component: AgentTopology },
 ];
+const DEFAULT_TAB_ID = TABS[0].id;
+const VALID_TAB_IDS = new Set(TABS.map((t) => t.id));
 
 /**
  * Sprint 6 — AgentSnapshot tab router.
@@ -29,32 +32,25 @@ const TABS = [
  * as tabs. URL state lives in `?tab=…`. The bare path
  * /agents/:id/profile is preserved as a redirect from App.jsx so
  * analyst bookmarks keep working.
+ *
+ * URL via React Router 6's useSearchParams is the single source of
+ * truth — see Settings.jsx / Policies.jsx for the same pattern. The
+ * previous useState mirror + navigate('?tab=…') sequence could let an
+ * unrelated background re-render unmount the child tab mid-render,
+ * which users perceived as "tabs blink one time, no content shows."
  */
 export default function AgentSnapshot() {
   const { id } = useParams();
-  const { search } = useLocation();
-  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const initialTab = useMemo(() => {
-    const param = new URLSearchParams(search).get('tab');
-    return TABS.some((t) => t.id === param) ? param : TABS[0].id;
-  }, [search]);
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const activeTab = useMemo(() => {
+    const param = searchParams.get('tab');
+    return param && VALID_TAB_IDS.has(param) ? param : DEFAULT_TAB_ID;
+  }, [searchParams]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(search);
-    if (params.get('tab') !== activeTab) {
-      params.set('tab', activeTab);
-      navigate(`?${params.toString()}`, { replace: true });
-    }
-  }, [activeTab, search, navigate]);
-
-  useEffect(() => {
-    const param = new URLSearchParams(search).get('tab');
-    if (param && param !== activeTab && TABS.some((t) => t.id === param)) {
-      setActiveTab(param);
-    }
-  }, [search, activeTab]);
+  const handleTabClick = (tabId) => {
+    setSearchParams({ tab: tabId }, { replace: true });
+  };
 
   const ActiveComponent = useMemo(() => {
     const tab = TABS.find((t) => t.id === activeTab) || TABS[0];
@@ -88,9 +84,10 @@ export default function AgentSnapshot() {
           return (
             <button
               key={tabId}
+              type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setActiveTab(tabId)}
+              onClick={() => handleTabClick(tabId)}
               className={
                 'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
                 (isActive
@@ -105,13 +102,15 @@ export default function AgentSnapshot() {
         })}
       </div>
 
-      <Suspense
-        fallback={
-          <div className="text-xs text-neutral-500 py-8 text-center">Loading {activeTab}…</div>
-        }
-      >
-        <ActiveComponent />
-      </Suspense>
+      <TabErrorBoundary tabId={activeTab}>
+        <Suspense
+          fallback={
+            <div className="text-xs text-neutral-500 py-8 text-center">Loading {activeTab}…</div>
+          }
+        >
+          <ActiveComponent />
+        </Suspense>
+      </TabErrorBoundary>
     </div>
   );
 }

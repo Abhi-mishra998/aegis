@@ -89,8 +89,13 @@ export default function AutonomyContracts() {
   const disable = (id) => setDisableTarget(id)
 
   const confirmDisable = async () => {
-    await autonomyService.disableContract(disableTarget)
-    await fetchAll()
+    try {
+      await autonomyService.disableContract(disableTarget)
+      addToast('Contract disabled', 'success')
+      await fetchAll()
+    } catch (e) {
+      addToast(e?.message || 'Failed to disable contract', 'error')
+    }
   }
 
   return (

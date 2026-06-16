@@ -85,12 +85,17 @@ function SessionDetail({ detail }) {
       </div>
     )
   }
+  // Defensive: the backend can legitimately return a session row with no
+  // timelines materialised yet (the consumer worker hasn't caught up).
+  // Without the fallback, `detail.timelines.length` and `.map()` both
+  // TypeError the whole page off-screen.
+  const timelines = Array.isArray(detail.timelines) ? detail.timelines : []
   return (
     <div className="p-4">
       <h2 className="text-sm font-semibold text-neutral-200 mb-3">
         {detail.session_id}
         <span className="ml-2 text-xs text-neutral-500">
-          {detail.timelines.length} decision{detail.timelines.length === 1 ? '' : 's'}
+          {timelines.length} decision{timelines.length === 1 ? '' : 's'}
         </span>
       </h2>
 
@@ -105,7 +110,7 @@ function SessionDetail({ detail }) {
       </div>
 
       <ol className="space-y-1">
-        {detail.timelines.map((t, idx) => {
+        {timelines.map((t, idx) => {
           const [fg, bg] = riskBadge(t.final_risk)
           return (
             <li key={t.id} className="flex items-center gap-2 px-2 py-1 border-b border-neutral-800">

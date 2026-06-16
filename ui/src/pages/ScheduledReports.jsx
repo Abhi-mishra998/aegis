@@ -283,19 +283,32 @@ export default function ScheduledReports() {
   useEffect(() => { load() }, [load])
 
   const handleCreate = async (data) => {
-    await scheduledReportsService.create(data)
-    await load()
-    showToast('Report scheduled.')
+    try {
+      await scheduledReportsService.create(data)
+      await load()
+      showToast('Report scheduled.')
+    } catch (e) {
+      showToast(e?.message || 'Failed to schedule report.')
+    }
   }
 
   const handleToggle = async (report) => {
-    await scheduledReportsService.update(report.id, { is_active: !report.is_active })
-    await load()
+    try {
+      await scheduledReportsService.update(report.id, { is_active: !report.is_active })
+      await load()
+    } catch (e) {
+      showToast(e?.message || 'Failed to update report.')
+    }
   }
 
   const handleDelete = async (id) => {
-    await scheduledReportsService.remove(id)
-    await load()
+    try {
+      await scheduledReportsService.remove(id)
+      await load()
+      showToast('Report deleted.')
+    } catch (e) {
+      showToast(e?.message || 'Failed to delete report.')
+    }
   }
 
   const handleRunNow = async (id) => {
