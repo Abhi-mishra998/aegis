@@ -1,5 +1,5 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Building,
@@ -77,9 +77,8 @@ const ScheduledReports = lazy(() => import('./ScheduledReports'));
 const QuotaManagement  = lazy(() => import('./QuotaManagement'));
 
 /**
- * Sprint 6 — Workspace tab. New, lightweight; will grow as Phase 6
- * (Stripe + residency) lands. For now it surfaces the same workspace
- * summary the Dashboard uses, plus a deep-link to Shadow Review.
+ * Workspace tab — pure JSX, no API calls. Surfaces the same summary the
+ * Dashboard uses and offers a deep-link to Shadow Review.
  */
 function WorkspaceTab() {
   return (
@@ -102,42 +101,45 @@ function WorkspaceTab() {
 }
 
 const TABS = [
-  { id: 'workspace',     label: 'Workspace',     icon: Building,     Component: WorkspaceTab,    legacy: '/settings' },
-  { id: 'system-values', label: 'System Values', icon: DollarSign,   Component: SystemValuesTab, legacy: '/settings?tab=system-values' },
-  { id: 'team',          label: 'Team',          icon: Users,        Component: UserManagement,  legacy: '/users' },
-  { id: 'roles',      label: 'Roles',       icon: SettingsIcon, Component: RBAC,            legacy: '/rbac' },
-  { id: 'sso',        label: 'SSO',         icon: Key,          Component: SsoSettings,     legacy: '/sso' },
-  { id: 'api-keys',   label: 'API Keys',    icon: Code2,        Component: DeveloperPanel,  legacy: '/developer' },
-  { id: 'webhooks',   label: 'Webhooks',    icon: Webhook,      Component: WebhookSettings, legacy: '/webhook-settings' },
-  { id: 'siem',       label: 'SIEM',        icon: Database,     Component: SiemSettings,    legacy: '/siem' },
-  { id: 'reports',    label: 'Reports',     icon: Calendar,     Component: ScheduledReports, legacy: '/scheduled-reports' },
-  { id: 'quota',      label: 'Quota',       icon: Gauge,        Component: QuotaManagement, legacy: '/quota' },
+  { id: 'workspace',     label: 'Workspace',     icon: Building,     Component: WorkspaceTab },
+  { id: 'system-values', label: 'System Values', icon: DollarSign,   Component: SystemValuesTab },
+  { id: 'team',          label: 'Team',          icon: Users,        Component: UserManagement },
+  { id: 'roles',         label: 'Roles',         icon: SettingsIcon, Component: RBAC },
+  { id: 'sso',           label: 'SSO',           icon: Key,          Component: SsoSettings },
+  { id: 'api-keys',      label: 'API Keys',      icon: Code2,        Component: DeveloperPanel },
+  { id: 'webhooks',      label: 'Webhooks',      icon: Webhook,      Component: WebhookSettings },
+  { id: 'siem',          label: 'SIEM',          icon: Database,     Component: SiemSettings },
+  { id: 'reports',       label: 'Reports',       icon: Calendar,     Component: ScheduledReports },
+  { id: 'quota',         label: 'Quota',         icon: Gauge,        Component: QuotaManagement },
 ];
+const DEFAULT_TAB_ID = TABS[0].id;
+const VALID_TAB_IDS = new Set(TABS.map((t) => t.id));
 
 export default function Settings() {
-  const { search } = useLocation();
-  const navigate = useNavigate();
+  // Use React Router 6's `useSearchParams` so the URL is the SOLE source of
+  // truth for the active tab. Previously we kept a useState mirror + two
+  // useEffects to push it back into the URL via `navigate('?tab=...')`. The
+  // mirror created a tab-click → setState → re-render → navigate → re-render
+  // sequence where, on some renders, an unrelated state churn caused the
+  // child tab component to remount before the navigate landed — which the
+  // user perceived as "tabs blink one time, no content shows."
+  //
+  // useSearchParams eliminates the mirror entirely: click handler sets the
+  // URL, React Router re-renders with the new query, derived activeTab
+  // matches, child component renders. One render path, no race.
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const initialTab = useMemo(() => {
-    const param = new URLSearchParams(search).get('tab');
-    return TABS.some((t) => t.id === param) ? param : TABS[0].id;
-  }, [search]);
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const activeTab = useMemo(() => {
+    const param = searchParams.get('tab');
+    return param && VALID_TAB_IDS.has(param) ? param : DEFAULT_TAB_ID;
+  }, [searchParams]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(search);
-    if (params.get('tab') !== activeTab) {
-      params.set('tab', activeTab);
-      navigate(`?${params.toString()}`, { replace: true });
-    }
-  }, [activeTab, search, navigate]);
-
-  useEffect(() => {
-    const param = new URLSearchParams(search).get('tab');
-    if (param && param !== activeTab && TABS.some((t) => t.id === param)) {
-      setActiveTab(param);
-    }
-  }, [search, activeTab]);
+  const handleTabClick = (id) => {
+    // replace: true keeps the back-button behavior tied to navigation INTO
+    // /settings, not between tabs. Tab switches feel like in-place edits,
+    // not new history entries.
+    setSearchParams({ tab: id }, { replace: true });
+  };
 
   const ActiveComponent = useMemo(() => {
     const tab = TABS.find((t) => t.id === activeTab) || TABS[0];
@@ -159,9 +161,10 @@ export default function Settings() {
           return (
             <button
               key={id}
+              type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setActiveTab(id)}
+              onClick={() => handleTabClick(id)}
               className={
                 'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
                 (isActive
