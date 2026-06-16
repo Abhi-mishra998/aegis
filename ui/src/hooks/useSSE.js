@@ -161,8 +161,13 @@ export function useSSE({
         setLastError('network')
       } else if (sessionLooksValid) {
         setLastError('network')
-      } else if (getCurrentToken() || localStorage.getItem("tenant_id")) {
+      } else if (localStorage.getItem("tenant_id")) {
         // Session metadata present but expiry past → really expired.
+        // (Was previously `getCurrentToken() || localStorage…` but
+        // getCurrentToken was never imported — it threw a ReferenceError
+        // in every SSE failure, swallowing the actual onError handler
+        // and leaving the badge stuck on "Disconnected — network error"
+        // with no reconnect path.)
         setLastError('auth_expired')
       } else {
         setLastError('network')
