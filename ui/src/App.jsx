@@ -161,10 +161,14 @@ function App() {
 
   const updateAuth = (newAuth) => setAuth((prev) => ({ ...prev, ...newAuth }));
 
-  const addToast = (message, type = 'info') => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5000);
+  const addToast = (message, type = 'info', options = {}) => {
+    // Sequential ID so two toasts fired in the same ms (e.g. burst from SSE
+    // delta + backfill) don't collide on Date.now() and silently overwrite
+    // each other in the rendered list.
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const ttl = typeof options.ttl === 'number' ? options.ttl : 5000;
+    setToasts((prev) => [...prev, { id, message, type, ttl, action: options.action }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), ttl);
   };
 
   const removeToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -342,7 +346,13 @@ function App() {
         >
           {toasts.map((toast) => (
             <div key={toast.id} className="pointer-events-auto">
-              <Toast message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
+              <Toast
+                message={toast.message}
+                type={toast.type}
+                ttl={toast.ttl}
+                action={toast.action}
+                onClose={() => removeToast(toast.id)}
+              />
             </div>
           ))}
         </div>
