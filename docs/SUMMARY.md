@@ -65,6 +65,7 @@
 * Operations
   * [Agents](ui/operations/agents.md)
   * [Identity Graph](ui/operations/identity-graph.md)
+  * [Threat Graph](ui/operations/threat-graph.md)
   * [Autonomy](ui/operations/autonomy.md)
   * [Forensics](ui/operations/forensics.md)
   * [Playground](ui/operations/playground.md)
