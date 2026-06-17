@@ -102,6 +102,11 @@ _SKIP_PATH_PREFIXES = (
     # /v1/messages. Skip-list lets the request through middleware so
     # the handler can dual-auth (employee key OR JWT).
     "/v1/approvals",
+    # Sprint 21 — Slack approval callback links carry an HMAC
+    # signature in the query string instead of a JWT. The handler
+    # verifies the signature itself before touching autonomy-svc.
+    "/slack/approve/",
+    "/slack/reject/",
 )
 
 # Management paths: require auth + rate-limiting, but bypass the agent

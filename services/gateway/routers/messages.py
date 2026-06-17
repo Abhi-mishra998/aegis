@@ -47,6 +47,7 @@ from services.gateway.client import service_client
 from services.gateway._helpers import internal_headers
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
+from services.gateway import slack_approvals
 
 logger = structlog.get_logger(__name__)
 
@@ -55,6 +56,69 @@ router = APIRouter(tags=["llm-proxy"])
 _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION_DEFAULT = "2023-06-01"
 _UPSTREAM_TIMEOUT_S = 60.0
+# Sprint 21 — the public-facing base URL the Slack callback links point
+# at. Comes from settings.PUBLIC_BASE_URL when set, otherwise falls back
+# to the well-known prod-ha hostname.
+_PUBLIC_BASE_URL = getattr(settings, "PUBLIC_BASE_URL", "") or "https://ha.aegisagent.in"
+
+
+async def _fetch_tenant_slack_config(
+    request: Request, tenant_id: str,
+) -> tuple[str | None, str | None]:
+    """Return ``(webhook_url, signing_secret)`` for the tenant, or
+    ``(None, None)`` if Slack approvals aren't configured.
+    Identity-svc owns the canonical row; we go through the
+    ``/workspace/me`` shape so we don't open a second DB connection
+    from the gateway."""
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.get(
+                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/slack-config",
+                headers=internal_headers(request),
+            )
+        if resp.status_code != 200:
+            return (None, None)
+        body = resp.json() or {}
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, dict):
+            return (None, None)
+        return (data.get("webhook_url") or None, data.get("signing_secret") or None)
+    except httpx.HTTPError as exc:
+        logger.warning("slack_config_fetch_failed", error=str(exc))
+        return (None, None)
+
+
+async def _post_slack_card(
+    *,
+    webhook_url: str,
+    secret: str,
+    tenant_id: str,
+    approval_id: str,
+    approver_role: str,
+    matched_pattern: str,
+    employee_email: str,
+    prompt_excerpt: str,
+) -> None:
+    """Fire the Slack webhook. Best-effort — failures NEVER fail the
+    /v1/messages response. The audit row + Approval Inbox already give
+    the operator a non-Slack path."""
+    try:
+        from datetime import datetime, timezone
+        card = slack_approvals.build_slack_card(
+            base_url=_PUBLIC_BASE_URL,
+            tenant_id=tenant_id,
+            secret=secret,
+            approval_id=approval_id,
+            approver_role=approver_role,
+            matched_pattern=matched_pattern,
+            employee_email=employee_email,
+            prompt_excerpt=prompt_excerpt,
+            requested_at_iso=datetime.now(tz=timezone.utc).isoformat(),
+        )
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            await client.post(webhook_url, json=card)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("slack_card_post_failed", error=str(exc))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -408,6 +472,27 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                 },
                 request_id=approval_id,
             )
+
+            # Sprint 21 — if the tenant has Slack approvals configured,
+            # fire the webhook card with HMAC-signed Approve / Reject
+            # links. Best-effort; the in-app Inbox is unaffected.
+            slack_url, slack_secret = await _fetch_tenant_slack_config(
+                request, tenant_id_str,
+            )
+            slack_notified = False
+            if slack_url and slack_secret:
+                await _post_slack_card(
+                    webhook_url=slack_url,
+                    secret=slack_secret,
+                    tenant_id=tenant_id_str,
+                    approval_id=approval_id,
+                    approver_role=esc_pattern.approver_role,
+                    matched_pattern=esc_pattern.id,
+                    employee_email=employee_email,
+                    prompt_excerpt=scan_text[:240],
+                )
+                slack_notified = True
+
             import json as _json
             return Response(
                 content=_json.dumps({
@@ -417,6 +502,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                     "approval_id":     approval_id,
                     "reason":          esc_pattern.label,
                     "inbox_url":       "/approval-inbox",
+                    "slack_notified":  slack_notified,
                 }),
                 status_code=status.HTTP_202_ACCEPTED,
                 media_type="application/json",
@@ -1541,3 +1627,162 @@ async def approval_status(approval_id: str, request: Request) -> APIResponse[dic
             detail=f"No approval with id {approval_id!r}",
         )
     return APIResponse(data=record)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 21 — Slack approve / reject callbacks.
+#
+# Each escalation card posted to the tenant's Slack carries two URLs
+# of the form ``/slack/<decision>/<approval_id>?exp=…&sig=…&tenant_id=…``.
+# When the CFO clicks one, Slack opens the link in a normal browser
+# (no Slack app install needed). The handler verifies the HMAC, calls
+# /autonomy/overrides exactly like the in-app inbox button, and
+# returns a tiny standalone HTML page.
+#
+# Auth is the signature itself — no JWT — so the surface must be
+# skip-listed in the gateway middleware (the path doesn't start with
+# /v1, but middleware._SKIP_PATH_PREFIXES is a tuple of prefixes).
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def _slack_decide(
+    request: Request,
+    approval_id: str,
+    decision: str,           # 'approve' or 'reject'
+) -> Response:
+    qs = dict(request.query_params)
+    tenant_id_str = qs.get("tenant_id") or ""
+    sig = qs.get("sig") or ""
+    try:
+        exp = int(qs.get("exp") or "0")
+    except (TypeError, ValueError):
+        exp = 0
+
+    if not tenant_id_str:
+        return Response(
+            content=slack_approvals.render_result_html(
+                decision, approval_id, ok=False, reason="missing tenant",
+            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="text/html; charset=utf-8",
+        )
+
+    # Pin tenant on request.state so internal_headers picks it up for
+    # the audit-svc + autonomy-svc fan-out (same trick as /v1/messages).
+    try:
+        request.state.tenant_id = tenant_id_str
+    except Exception:  # noqa: BLE001
+        pass
+
+    _, secret = await _fetch_tenant_slack_config(request, tenant_id_str)
+    if not secret:
+        return Response(
+            content=slack_approvals.render_result_html(
+                decision, approval_id, ok=False,
+                reason="Slack approvals not configured for this workspace",
+            ),
+            status_code=status.HTTP_403_FORBIDDEN,
+            media_type="text/html; charset=utf-8",
+        )
+
+    ok = slack_approvals.verify_sig(
+        approval_id=approval_id,
+        decision=decision,
+        tenant_id=tenant_id_str,
+        exp=exp,
+        secret=secret,
+        sig=sig,
+    )
+    if not ok:
+        return Response(
+            content=slack_approvals.render_result_html(
+                decision, approval_id, ok=False,
+                reason="Signature invalid or link expired",
+            ),
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            media_type="text/html; charset=utf-8",
+        )
+
+    # Look up the approval and bail early if it's already been actioned
+    # (idempotent — clicking the link twice should be safe).
+    record = await _lookup_approval(request, tenant_id_str, approval_id)
+    if record is None:
+        return Response(
+            content=slack_approvals.render_result_html(
+                decision, approval_id, ok=False, reason="approval not found",
+            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            media_type="text/html; charset=utf-8",
+        )
+    if record.get("status") in ("approved", "rejected"):
+        # Show success either way — the operator's click was honoured
+        # earlier; nothing changes.
+        return Response(
+            content=slack_approvals.render_result_html(
+                record["status"][:-1], approval_id, ok=True,
+            ),
+            status_code=status.HTTP_200_OK,
+            media_type="text/html; charset=utf-8",
+        )
+
+    # Land the override the same way the in-app inbox does.
+    event_type = "approval" if decision == "approve" else "override"
+    reason_str = (
+        f"Slack {decision} by {record.get('approver_role') or 'operator'}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            ov_resp = await client.post(
+                f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/overrides",
+                json={
+                    "actor":       "slack-callback",
+                    "actor_role":  record.get("approver_role") or "approver",
+                    "event_type":  event_type,
+                    "target_kind": "request",
+                    "target_id":   approval_id,
+                    "request_id":  approval_id,
+                    "reason":      reason_str,
+                    "metadata":    {"via": "slack", "decision": decision},
+                },
+                headers=internal_headers(request),
+            )
+        if ov_resp.status_code >= 400:
+            logger.warning(
+                "slack_override_post_failed",
+                status=ov_resp.status_code,
+                body=ov_resp.text[:200],
+            )
+            return Response(
+                content=slack_approvals.render_result_html(
+                    decision, approval_id, ok=False,
+                    reason="autonomy service refused the override",
+                ),
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                media_type="text/html; charset=utf-8",
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("slack_override_post_error", error=str(exc))
+        return Response(
+            content=slack_approvals.render_result_html(
+                decision, approval_id, ok=False,
+                reason="autonomy service unreachable",
+            ),
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            media_type="text/html; charset=utf-8",
+        )
+
+    return Response(
+        content=slack_approvals.render_result_html(decision, approval_id, ok=True),
+        status_code=status.HTTP_200_OK,
+        media_type="text/html; charset=utf-8",
+    )
+
+
+@router.get("/slack/approve/{approval_id}")
+async def slack_approve(approval_id: str, request: Request) -> Response:
+    return await _slack_decide(request, approval_id, "approve")
+
+
+@router.get("/slack/reject/{approval_id}")
+async def slack_reject(approval_id: str, request: Request) -> Response:
+    return await _slack_decide(request, approval_id, "reject")

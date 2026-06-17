@@ -203,6 +203,20 @@ class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
         default=dict,
     )
 
+    # Sprint 21 — Slack approvals. When set, the /v1/messages escalation
+    # path posts a block-kit card to `slack_webhook_url` with two
+    # HMAC-signed links (Approve / Reject). The link callbacks hit
+    # /slack/approve/{id} + /slack/reject/{id}, verify the signature
+    # against `slack_approval_secret`, then land an
+    # `human_override_events` row exactly like the in-app inbox
+    # button would. NULL on both columns disables the feature.
+    slack_webhook_url: Mapped[str | None] = mapped_column(
+        String(512), nullable=True,
+    )
+    slack_approval_secret: Mapped[str | None] = mapped_column(
+        String(128), nullable=True,
+    )
+
 
 class AgentCredential(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Stores hashed secrets + status for agent authentication."""

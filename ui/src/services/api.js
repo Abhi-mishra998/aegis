@@ -360,6 +360,15 @@ export const workspaceService = {
       method: "PATCH",
       body: JSON.stringify(values || {}),
     }),
+  // Sprint 21 — Slack approvals config. The GET surface returns
+  // {webhook_url, configured} (the signing secret is stripped by the
+  // gateway). The PUT body is {webhook_url, rotate_secret?}.
+  getSlackConfig: () => request("/workspace/slack-config"),
+  setSlackConfig: (body) =>
+    request("/workspace/slack-config", {
+      method: "PUT",
+      body: JSON.stringify(body || {}),
+    }),
 };
 
 

@@ -1101,6 +1101,133 @@ async def patch_system_values(
 
 
 # =============================================================================
+# Sprint 21 — Slack approvals: per-tenant webhook + signing secret.
+# =============================================================================
+
+
+@router.get(
+    "/workspace/slack-config",
+    summary="Internal — return tenant's Slack approvals config (webhook + signing secret)",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def get_slack_config(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> dict:
+    """Returns the Slack approvals config so the gateway can post
+    cards + verify signed callbacks.
+
+    The signing_secret is included in the response: this endpoint is
+    behind ``verify_internal_secret`` (only reachable from the gateway
+    over the service mesh, never from the browser).
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return {
+        "status": "ok",
+        "data": {
+            "webhook_url":     tenant.slack_webhook_url or "",
+            "signing_secret":  tenant.slack_approval_secret or "",
+            "configured":      bool(tenant.slack_webhook_url and tenant.slack_approval_secret),
+        },
+    }
+
+
+@router.put(
+    "/workspace/slack-config",
+    summary="OWNER/ADMIN — set the Slack incoming-webhook URL for approval cards",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def put_slack_config(
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+    x_acp_role: Annotated[str | None, Header(alias="X-ACP-Role")] = None,
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
+) -> dict:
+    """Body: ``{"webhook_url": "https://hooks.slack.com/services/…"}``.
+
+    On first set the signing secret is auto-generated (32 random
+    bytes). To rotate the secret, send ``{"rotate_secret": true}``
+    alongside (or instead of) a webhook_url change. To disable Slack
+    approvals entirely, send ``{"webhook_url": ""}`` — the secret is
+    cleared as well.
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    if _canonical_role(x_acp_role) not in ("OWNER", "ADMIN"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only OWNER / ADMIN can change Slack approvals config",
+        )
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Apply edits.
+    if "webhook_url" in body:
+        url = (body.get("webhook_url") or "").strip()
+        if url and not url.startswith("https://hooks.slack.com/"):
+            raise HTTPException(
+                status_code=400,
+                detail="webhook_url must be a Slack incoming webhook (https://hooks.slack.com/…)",
+            )
+        tenant.slack_webhook_url = url or None
+        if not url:
+            # Disable also clears the secret.
+            tenant.slack_approval_secret = None
+
+    rotate = bool(body.get("rotate_secret"))
+    if tenant.slack_webhook_url and (not tenant.slack_approval_secret or rotate):
+        import secrets as _secrets
+        tenant.slack_approval_secret = _secrets.token_urlsafe(32)
+
+    await db.commit()
+
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_uuid,
+            agent_id=None,
+            action="workspace_slack_config_update",
+            metadata={
+                "actor":       x_acp_actor or "",
+                "configured":  bool(tenant.slack_webhook_url and tenant.slack_approval_secret),
+                "rotated":     rotate,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("slack_config_audit_failed", error=str(exc))
+
+    return {
+        "status": "ok",
+        "data": {
+            "configured": bool(tenant.slack_webhook_url and tenant.slack_approval_secret),
+            "webhook_url": tenant.slack_webhook_url or "",
+        },
+    }
+
+
+# =============================================================================
 # Clerk synchronous provision — closes the signup → first-request race.
 # =============================================================================
 #

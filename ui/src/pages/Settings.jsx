@@ -8,11 +8,13 @@ import {
   DollarSign,
   Gauge,
   Key,
+  MessagesSquare,
   Settings as SettingsIcon,
   Users,
   Webhook,
 } from 'lucide-react';
 import SystemValuesTab from '../components/settings/SystemValuesTab';
+import SlackApprovalsTab from '../components/settings/SlackApprovalsTab';
 import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 // Existing pages, lazy-imported so /settings?tab=workspace only pulls
@@ -59,6 +61,7 @@ const TABS = [
   { id: 'sso',           label: 'SSO',           icon: Key,          Component: SsoSettings },
   { id: 'api-keys',      label: 'API Keys',      icon: Code2,        Component: DeveloperPanel },
   { id: 'webhooks',      label: 'Webhooks',      icon: Webhook,      Component: WebhookSettings },
+  { id: 'slack',         label: 'Slack approvals', icon: MessagesSquare, Component: SlackApprovalsTab },
   { id: 'siem',          label: 'SIEM',          icon: Database,     Component: SiemSettings },
   { id: 'reports',       label: 'Reports',       icon: Calendar,     Component: ScheduledReports },
   { id: 'quota',         label: 'Quota',         icon: Gauge,        Component: QuotaManagement },
