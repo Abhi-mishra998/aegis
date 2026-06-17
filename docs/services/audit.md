@@ -121,12 +121,25 @@ Production deployments partition `audit_logs` by month on `created_at`. The part
 
 ## Security controls
 
-- **Append-only by contract.** Application code uses `INSERT` only. There is no `UPDATE` on `audit_logs` in the codebase. Operators with raw Postgres access can technically rewrite rows; the chain detects it.
+- **Append-only at the database.** Alembic revision `3a519b48a6f2_audit_log_append_only_trigger` installs a Postgres `INSTEAD OF UPDATE` and `INSTEAD OF DELETE` trigger on `audit_logs`. Any `UPDATE` or `DELETE` — including from a Postgres superuser with raw connection access — aborts with `RaiseError: audit_logs is append-only; UPDATE is forbidden` (and the matching DELETE message). This is the database-level companion to the application-layer "INSERT only" discipline and to the prev-hash chain: the chain *detects* tampering after the fact; the trigger *prevents* the most common tampering primitive (`UPDATE audit_logs SET reason='hacked' WHERE id=…`) at the point of write. The legitimate write path uses the outbox worker's parameterised INSERT, which the trigger does not intercept. Verification probe: see `testing.md` ("Migration applied. Verify the trigger fires"). Together with the daily Merkle root and the S3 receipt mirror, this is the three-layer defence-in-depth on audit integrity.
 - **Ed25519 signing.** Each row's `event_hash` is signed with a per-day key. Verification works against the current key plus all rows in `transparency_historical_keys`.
 - **Prev-hash chain.** Tampering with row N requires also rewriting rows N+1, N+2, … to maintain the chain. Tampering with the daily root requires the root key. Tampering with all archived daily roots is impossible (customers and external observers hold them).
 - **Per-tenant scope.** Every query and every chain check is scoped by `tenant_id`. Cross-tenant reads from this service are not allowed.
 - **Notes are append-only.** `audit_notes` rows can be inserted but not updated or deleted via the API. Audit-of-the-audit.
 - **PDF exports are signed.** Generated PDFs include the audit-chain hashes for the rows they cover so the recipient can verify the export later.
+
+## Findings on deny rows — canonical signal id per row
+
+Every deny row now carries `metadata.findings = [<canonical_signal_id>]` — the signal id from `services/security/signal_registry.py` (see the authoritative list in [Audit Signal Reference](audit-signal-reference.md)). This holds whether the deny was emitted by the slow-path canonical engine, the fast-path policy short-circuit, or the gateway's pre-policy hard-deny chain (path traversal, SQL injection, k8s production destruction, etc.).
+
+Two cascading fixes landed to make this invariant hold end-to-end:
+
+- `services/gateway/_mw_audit.py:382` (`_log_audit`) now auto-injects `findings=[reason]` into `metadata_json` when the caller did not set it explicitly. Before this fix, pre-policy hard-denies wrote the `reason` field at the top level but left `metadata.findings = None`, so the aggregator query `jsonb_array_elements_text(metadata_json->'findings')` (used by `/audit/logs/agent-findings/{id}`, `/audit/top-findings`, `/audit/finding-breakdown`, and the Threat Graph) returned nothing for those rows. The MITRE coverage matrix was empty for every blocked agent.
+- `services/gateway/middleware.py:679` (the path-traversal hard-deny) now passes the canonical signal id — one of `system_sensitive_path`, `cloud_credential_path`, `ssh_credential_path`, or `path_traversal_detected` — as the `reason` argument to `_log_audit` (and via that into `metadata.findings`), instead of the generic string `"path_traversal_detected"` for every match. The SQL-injection and k8s-destructive hard-denies were already correct; path-traversal is now aligned with them.
+
+Net effect: per-agent MITRE coverage on the Threat Graph populates from real deny traffic instead of waiting for an LLM-pipeline allow row to drop a finding into `metadata`. The aggregator query — `WHERE jsonb_typeof(metadata_json->'findings') = 'array'` over `audit_logs` — finds every blocked row, not just the canonical-engine ones.
+
+The set of canonical signal ids the gateway and the policy engine may emit is closed: it is exactly the registry in [Audit Signal Reference](audit-signal-reference.md). Any new signal added to the registry automatically gets aggregator coverage and a Threat Graph row.
 
 ## Metrics
 
@@ -222,6 +235,8 @@ curl -sS -X POST https://ha.aegisagent.in/audit/logs/$AUDIT_ID/notes \
 | `/decision-trend` returns 500 | The `func.date_trunc("day", AuditLog.timestamp)` parameter-collision pattern; bind to one variable | Memory: `docs_parity_audit_2026_05_15` |
 | Receipt missing from S3 | Best-effort S3 upload failed; the row is still in Postgres | Re-run `scripts/maintenance/rebuild_s3_receipts.py` for the missing ID |
 | Chain violation alert in Slack | The verifier ran on a cron and found a gap | Open `docs/runbooks/audit_chain_violation.md` |
+| `RaiseError: audit_logs is append-only; UPDATE is forbidden` | A path tried to `UPDATE` or `DELETE` an `audit_logs` row — the trigger from `3a519b48a6f2` blocked it | This is the expected behaviour. If the caller was the audit service itself, an in-place mutation snuck into a writer code path; remove it. New columns should be added by an Alembic migration, not by mutating existing rows. |
+| `/audit/agent-findings/{id}` returns an empty bucket for an agent with known denies | Either no denies in the window, OR a deny-emitter wrote `metadata.findings = None` (pre-fix behaviour) | Re-deny one tool call against the agent and re-check. Pre-2026-06-17 rows from path-traversal denies are immutable and stay empty; new rows will populate. |
 
 ## Production considerations
 
@@ -312,6 +327,7 @@ end-to-end evidence path.
 
 ## Next
 
+- [Audit Signal Reference](audit-signal-reference.md) — the closed set of canonical signal ids surfaced on every deny row's `metadata.findings`
 - [Cryptographic Audit Chain](../security/crypto-audit-chain.md) — the signing math and verification algorithm
 - [AEVF Overview](../AEVF/README.md) — the open standard auditors verify against
 - [Evidence Export Adapters](../integrations/evidence-export.md) — every channel the audit chain exits through

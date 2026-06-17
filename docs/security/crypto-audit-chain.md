@@ -21,6 +21,8 @@ Three properties that together let a third party trust the audit log without tru
 
 Together: the audit chain proves that the sequence of recorded decisions is the same sequence that was actually written, with cryptographic precision.
 
+> **Three-layer defence on audit integrity.** The crypto chain described on this page is the third layer of a deliberately-redundant stack. Layer 1 is a Postgres `INSTEAD OF UPDATE/DELETE` trigger on `audit_logs` (Alembic revision `3a519b48a6f2`) that aborts any mutation with `RaiseError: audit_logs is append-only` — even from a Postgres superuser — so the cheapest tamper primitive (`UPDATE audit_logs SET …`) is impossible at the point of write. Layer 2 is the prev-hash chain and daily Merkle root described below, which makes any tamper that *did* get through Layer 1 mathematically detectable. Layer 3 is the S3 receipt mirror (`s3://acp-receipts-prod/{tenant_id}/{audit_id}.json`) plus the public daily-root archive at `s3://aegis-public-roots-…`, which means even a Postgres-wide rewrite is detectable by anyone who archived an earlier root. See [Audit service §Security controls](../services/audit.md#security-controls) for the trigger and [Audit Signal Reference](../services/audit-signal-reference.md) for what each `metadata.findings` entry on a deny row means.
+
 ## The data shape
 
 Source: `services/audit/signer.py` (top docstring) and `services/audit/models.py::AuditLog`.
