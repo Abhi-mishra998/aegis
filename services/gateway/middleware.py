@@ -676,8 +676,14 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                                     )
                                     await self._log_audit(
                                         t_id_str, agent_id, "execute_tool", tool_name, "block",
-                                        "path_traversal_detected", request_id,
-                                        {"blocked_field": _k, "blocked_path": _v[:100]},
+                                        # Use the canonical signal id (one of
+                                        # system_sensitive_path / cloud_credential_path /
+                                        # ssh_credential_path / path_traversal_detected)
+                                        # so /logs/agent-findings + the IAG MITRE coverage
+                                        # endpoint can roll this row up by tactic.
+                                        _pre_finding, request_id,
+                                        {"blocked_field": _k, "blocked_path": _v[:100],
+                                         "policy_id":     _pre_policy_id},
                                     )
                                     await self._emit_groq_event(
                                         event_id=request_id, tenant_id=t_id_str,
