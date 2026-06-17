@@ -188,24 +188,24 @@ export default function NotificationCenter() {
                           "{alert.data.reason}"
                         </p>
                       )}
-                      <div className="flex items-center gap-2 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-[var(--border-subtle)]">
                         <button
                           onClick={() => handleDrillDown(alert)}
-                          className="text-[10px] text-neutral-400 hover:text-white flex items-center gap-1 transition-colors"
+                          className="text-[10px] text-neutral-300 hover:text-white flex items-center gap-1 px-1.5 py-0.5 rounded border border-white/[0.06] hover:border-white/[0.16] hover:bg-white/[0.04] transition-colors"
                           aria-label="Drill down to forensics"
                         >
                           Investigate <ChevronRight size={10} />
                         </button>
                         <button
                           onClick={() => acknowledge(alert.id)}
-                          className="text-[10px] text-neutral-600 hover:text-green-400 flex items-center gap-1 transition-colors"
+                          className="text-[10px] text-neutral-400 hover:text-green-400 flex items-center gap-1 px-1.5 py-0.5 rounded border border-white/[0.06] hover:border-green-400/30 hover:bg-green-400/[0.04] transition-colors"
                           aria-label="Acknowledge notification"
                         >
                           <Check size={10} /> Ack
                         </button>
                         <button
                           onClick={() => dismiss(alert.id)}
-                          className="text-[10px] text-neutral-600 hover:text-red-400 flex items-center gap-1 transition-colors"
+                          className="ml-auto text-[10px] text-neutral-500 hover:text-red-400 flex items-center gap-1 px-1.5 py-0.5 rounded border border-white/[0.06] hover:border-red-400/30 hover:bg-red-400/[0.04] transition-colors"
                           aria-label="Dismiss notification"
                         >
                           <X size={10} />
