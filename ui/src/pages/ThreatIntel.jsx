@@ -2,9 +2,26 @@ import React, { useEffect, useState, useCallback } from 'react'
 import {
   Shield, Search, Globe, Wifi, AlertTriangle,
   CheckCircle2, XCircle, Loader2, RefreshCw, Info,
-  Activity, Lock, FlaskConical,
+  Activity, Lock, FlaskConical, Plus, Trash2, Database, Rss,
 } from 'lucide-react'
 import { threatIntelService } from '../services/api'
+import { useAuth } from '../hooks/useAuth'
+import DataTable from '../components/Common/DataTable'
+import Modal from '../components/Common/Modal'
+import Button from '../components/Common/Button'
+
+const IOC_KINDS = [
+  'exfil_host', 'c2_domain', 'offshore_token',
+  'destructive_shell', 'malicious_path', 'privilege_token',
+]
+const IOC_SEVERITIES = ['low', 'medium', 'high', 'critical']
+
+const SEVERITY_BADGE = {
+  critical: 'bg-red-500/10 text-red-400 border-red-500/20',
+  high:     'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  medium:   'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+  low:      'bg-neutral-500/10 text-neutral-400 border-neutral-500/20',
+}
 
 function ScoreBadge({ score }) {
   const s = Number(score) || 0
@@ -102,13 +119,104 @@ function KpiTile({ icon: Icon, label, value, accent }) {
   )
 }
 
+function IocCreateModal({ isOpen, onClose, onCreated }) {
+  const { addToast } = useAuth()
+  const [kind, setKind]         = useState(IOC_KINDS[0])
+  const [value, setValue]       = useState('')
+  const [severity, setSeverity] = useState('high')
+  const [saving, setSaving]     = useState(false)
+
+  const reset = () => { setKind(IOC_KINDS[0]); setValue(''); setSeverity('high') }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!value.trim()) return
+    setSaving(true)
+    try {
+      await threatIntelService.createIoc({ kind, value: value.trim(), severity })
+      addToast('IOC added', 'success')
+      reset()
+      onCreated?.()
+      onClose?.()
+    } catch (err) {
+      addToast(err?.message || 'Failed to add IOC', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Add IOC"
+      description="Tenant-scoped indicator of compromise. Substring match for most kinds; destructive_shell takes a Python regex."
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="primary" size="sm" onClick={handleSubmit} loading={saving} disabled={!value.trim()}>Add IOC</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Kind</label>
+          <select
+            value={kind}
+            onChange={e => setKind(e.target.value)}
+            className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+          >
+            {IOC_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">
+            Value {kind === 'destructive_shell' && <span className="text-amber-400">(regex)</span>}
+          </label>
+          <input
+            type="text"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            placeholder={kind === 'destructive_shell' ? 'rm\\s+-rf\\s+/' : 'evil-host.com'}
+            className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm font-mono text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Severity</label>
+          <select
+            value={severity}
+            onChange={e => setSeverity(e.target.value)}
+            className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+          >
+            {IOC_SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 export default function ThreatIntel() {
+  const { addToast } = useAuth()
   const [query, setQuery]     = useState('')
   const [mode, setMode]       = useState('ip')
   const [loading, setLoading] = useState(false)
   const [result, setResult]   = useState(null)
   const [summary, setSummary] = useState(null)
   const [history, setHistory] = useState([])
+
+  // IOC management state
+  const [iocs, setIocs]               = useState([])
+  const [iocsLoading, setIocsLoading] = useState(false)
+  const [showIocModal, setShowIocModal] = useState(false)
+
+  // Feed status state
+  const [feeds, setFeeds]             = useState([])
+  const [lastRefreshTs, setLastRefreshTs] = useState(null)
+  const [feedsLoading, setFeedsLoading]   = useState(false)
+  const [refreshing, setRefreshing]   = useState(false)
 
   const loadSummary = useCallback(async () => {
     try {
@@ -117,7 +225,66 @@ export default function ThreatIntel() {
     } catch {}
   }, [])
 
+  const loadIocs = useCallback(async () => {
+    setIocsLoading(true)
+    try {
+      const res = await threatIntelService.listIocs({ limit: 200 })
+      const payload = res?.data || res
+      setIocs(payload?.items || [])
+    } catch (err) {
+      addToast(err?.message || 'Failed to load IOCs', 'error')
+    } finally {
+      setIocsLoading(false)
+    }
+  }, [addToast])
+
+  const loadFeeds = useCallback(async () => {
+    setFeedsLoading(true)
+    try {
+      const res = await threatIntelService.listFeeds()
+      const payload = res?.data || res
+      const items = payload?.feeds || []
+      // feeds may be { name: { url, enabled, ... } } object or array
+      const list = Array.isArray(items)
+        ? items
+        : Object.entries(items).map(([name, cfg]) => ({ name, ...(cfg || {}) }))
+      setFeeds(list)
+      setLastRefreshTs(payload?.last_refresh_ts ?? null)
+    } catch (err) {
+      addToast(err?.message || 'Failed to load feeds', 'error')
+    } finally {
+      setFeedsLoading(false)
+    }
+  }, [addToast])
+
+  const handleDeleteIoc = async (row) => {
+    if (!row?.id) return
+    try {
+      await threatIntelService.deleteIoc(row.id)
+      addToast('IOC removed', 'info')
+      loadIocs()
+    } catch (err) {
+      addToast(err?.message || 'Failed to delete IOC', 'error')
+    }
+  }
+
+  const handleRefreshFeeds = async () => {
+    setRefreshing(true)
+    try {
+      await threatIntelService.refresh()
+      addToast('Feed refresh triggered', 'success')
+      loadFeeds()
+      loadSummary()
+    } catch (err) {
+      addToast(err?.message || 'Refresh failed', 'error')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => { loadSummary() }, [loadSummary])
+  useEffect(() => { loadIocs() }, [loadIocs])
+  useEffect(() => { loadFeeds() }, [loadFeeds])
 
   const isIp = (v) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v.trim())
 
@@ -287,6 +454,109 @@ export default function ThreatIntel() {
         </div>
       )}
 
+      {/* IOC Management */}
+      <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
+          <h2 className="text-sm font-medium text-white flex items-center gap-2">
+            <Database size={13} className="text-neutral-500" /> IOC Management
+            <span className="text-[10px] font-mono text-neutral-600 ml-2">{iocs.length}</span>
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={loadIocs}
+              disabled={iocsLoading}
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[var(--border-subtle)] text-neutral-400 hover:text-white hover:border-white/20 disabled:opacity-40"
+            >
+              <RefreshCw size={11} className={iocsLoading ? 'animate-spin' : ''} /> Refresh
+            </button>
+            <button
+              onClick={() => setShowIocModal(true)}
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-white text-black hover:bg-neutral-200"
+            >
+              <Plus size={11} /> Add IOC
+            </button>
+          </div>
+        </div>
+        <DataTable
+          columns={[
+            { key: 'kind',     label: 'Kind',     width: 140, render: (v) => <span className="text-[11px] font-mono text-neutral-300">{v ?? '—'}</span> },
+            { key: 'value',    label: 'Value',    render: (v) => <span className="text-[11px] font-mono text-white truncate block max-w-md">{v ?? '—'}</span> },
+            { key: 'severity', label: 'Severity', width: 100, render: (v) => (
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${SEVERITY_BADGE[v] || SEVERITY_BADGE.low}`}>
+                {v ?? '—'}
+              </span>
+            )},
+            { key: 'source',   label: 'Source',   width: 120, render: (v) => <span className="text-[11px] text-neutral-400">{v ?? '—'}</span> },
+            { key: 'id',       label: '',         width: 60, render: (_v, row) => (
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteIoc(row) }}
+                aria-label="Delete IOC"
+                className="p-1 rounded text-neutral-500 hover:text-red-400 hover:bg-red-500/10"
+              >
+                <Trash2 size={12} />
+              </button>
+            )},
+          ]}
+          data={iocs}
+          isLoading={iocsLoading}
+          emptyMessage="No IOCs configured — add one or refresh feeds to seed defaults."
+        />
+      </div>
+
+      {/* Feed Status */}
+      <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
+          <h2 className="text-sm font-medium text-white flex items-center gap-2">
+            <Rss size={13} className="text-neutral-500" /> Feed Status
+            {lastRefreshTs && (
+              <span className="text-[10px] font-mono text-neutral-600 ml-2">
+                Last refresh: {new Date(Number(lastRefreshTs) * 1000).toLocaleString()}
+              </span>
+            )}
+          </h2>
+          <button
+            onClick={handleRefreshFeeds}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-white text-black hover:bg-neutral-200 disabled:opacity-40"
+          >
+            {refreshing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            Refresh feeds
+          </button>
+        </div>
+        {feedsLoading ? (
+          <div className="p-6 text-center text-xs text-neutral-600">
+            <Loader2 size={14} className="animate-spin inline mr-2" /> Loading feeds…
+          </div>
+        ) : feeds.length === 0 ? (
+          <p className="px-4 py-6 text-xs text-neutral-600 text-center">No feeds configured.</p>
+        ) : (
+          <div className="divide-y divide-[var(--border-subtle)]">
+            {feeds.map((f) => (
+              <div key={f.name} className="px-4 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-white">{f.name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                      f.enabled
+                        ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                        : 'bg-neutral-500/10 text-neutral-500 border-neutral-500/20'
+                    }`}>
+                      {f.enabled ? 'enabled' : 'disabled'}
+                    </span>
+                  </div>
+                  {f.url && (
+                    <div className="text-[10px] text-neutral-600 font-mono truncate mt-0.5">{f.url}</div>
+                  )}
+                </div>
+                <div className="text-[10px] text-neutral-600 shrink-0">
+                  every {f.refresh_seconds ? `${f.refresh_seconds}s` : '—'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Config note */}
       <div className="p-4 bg-white/[0.02] border border-[var(--border-subtle)] rounded-xl text-xs text-neutral-500 leading-relaxed">
         <div className="flex items-start gap-2">
@@ -299,6 +569,12 @@ export default function ThreatIntel() {
           </div>
         </div>
       </div>
+
+      <IocCreateModal
+        isOpen={showIocModal}
+        onClose={() => setShowIocModal(false)}
+        onCreated={loadIocs}
+      />
     </div>
   )
 }
