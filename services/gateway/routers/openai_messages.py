@@ -42,6 +42,7 @@ from services.gateway._helpers import internal_headers
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
 from services.gateway import slack_approvals
+from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
 
@@ -175,6 +176,25 @@ async def _lookup_approval(
         "reason":          reason,
         "prompt_excerpt":  meta.get("prompt_excerpt"),
     }
+
+
+async def _fetch_enabled_policy_packs(
+    request: Request, tenant_id: str,
+) -> list[str]:
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.get(
+                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/policy-packs",
+                headers=internal_headers(request),
+            )
+        if resp.status_code != 200:
+            return []
+        body = resp.json() or {}
+        data = body.get("data") if isinstance(body, dict) else None
+        return list((data or {}).get("enabled") or [])
+    except httpx.HTTPError as exc:
+        logger.warning("policy_packs_fetch_failed", error=str(exc))
+        return []
 
 
 async def _fetch_tenant_slack_config(
@@ -415,8 +435,24 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                 },
             )
 
-        # Escalation scan
-        esc_pattern = None if replay_approved else escalation_patterns.scan(scan_text)
+        # Base + pack-aware escalation scan.
+        esc_pattern = None
+        matched_pack_id: str | None = None
+        matched_pack_controls: list[str] = []
+        if not replay_approved:
+            esc_pattern = escalation_patterns.scan(scan_text)
+            if esc_pattern is None:
+                enabled_packs = await _fetch_enabled_policy_packs(
+                    request, tenant_id_str,
+                )
+                pack_hit = policy_packs.scan_for_pack_escalation(
+                    scan_text, enabled_packs,
+                )
+                if pack_hit is not None:
+                    esc_pattern, matched_pack_id = pack_hit
+                    pack = policy_packs.get(matched_pack_id)
+                    if pack is not None:
+                        matched_pack_controls = list(pack.framework_controls)
         if esc_pattern is not None:
             approval_id = (
                 request.headers.get("X-Request-ID") or str(uuid.uuid4())
@@ -441,6 +477,8 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                     "risk_score":       65.0,
                     "approver_role":    esc_pattern.approver_role,
                     "matched_pattern":  esc_pattern.id,
+                    "policy_pack":      matched_pack_id,
+                    "framework_controls": matched_pack_controls,
                     "prompt_excerpt":   scan_text[:240],
                     "upstream_provider": "openai",
                 },

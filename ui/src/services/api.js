@@ -369,6 +369,15 @@ export const workspaceService = {
       method: "PUT",
       body: JSON.stringify(body || {}),
     }),
+
+  // Sprint 23 — Compliance Policy Packs.
+  policyPacksCatalog: () => request("/policy-packs/catalog"),
+  getPolicyPacks: () => request("/workspace/policy-packs"),
+  setPolicyPacks: (body) =>
+    request("/workspace/policy-packs", {
+      method: "PUT",
+      body: JSON.stringify(body || {}),
+    }),
 };
 
 

@@ -127,6 +127,45 @@ async def workspace_slack_config_put(request: Request) -> Any:
     return passthrough(resp)
 
 
+# Sprint 23 — Policy Packs (SOC2 / PCI / HIPAA / Finance / DevOps).
+@router.get("/policy-packs/catalog")
+async def policy_packs_catalog(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/policy-packs/catalog",
+        headers=internal_headers(request),
+        timeout=6.0,
+    )
+    return passthrough(resp)
+
+
+@router.get("/workspace/policy-packs")
+async def workspace_policy_packs_get(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_base()}/workspace/policy-packs",
+        headers=internal_headers(request),
+        timeout=6.0,
+    )
+    return passthrough(resp)
+
+
+@router.put(
+    "/workspace/policy-packs",
+    dependencies=[Depends(verify_role(Role.ADMIN))],
+)
+async def workspace_policy_packs_put(request: Request) -> Any:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    resp = await request.app.state.client.put(
+        f"{_base()}/workspace/policy-packs",
+        headers=internal_headers(request),
+        json=body or {},
+        timeout=6.0,
+    )
+    return passthrough(resp)
+
+
 @router.post(
     "/workspace/exit-shadow-mode",
     dependencies=[Depends(verify_role(Role.OWNER))],
