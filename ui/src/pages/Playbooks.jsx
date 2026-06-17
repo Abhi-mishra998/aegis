@@ -137,9 +137,13 @@ function RunsModal({ playbookId, onClose }) {
             <p className="text-[10px] text-neutral-600 mt-1">Could not reach the playbook service; try again in a moment.</p>
           </div>
         ) : runs.length === 0 ? (
-          <div className="text-center py-12">
+          <div className="text-center py-12 px-4 space-y-2">
             <History size={24} className="text-neutral-700 mx-auto mb-3" />
             <p className="text-sm text-neutral-500">No runs yet.</p>
+            <p className="text-xs text-neutral-600 max-w-xs mx-auto">
+              Install a playbook from the Templates tab or trigger one manually
+              to populate this history.
+            </p>
           </div>
         ) : (
           <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
