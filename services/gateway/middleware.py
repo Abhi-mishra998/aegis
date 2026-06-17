@@ -94,7 +94,15 @@ _SKIP_PATHS = frozenset(
 # The router does its own validation against the api_keys table + the
 # subject_kind='employee' constraint, so the path is NOT actually public
 # even though it's skip-listed.
-_SKIP_PATH_PREFIXES = ("/auth/sso/", "/v1/messages")
+_SKIP_PATH_PREFIXES = (
+    "/auth/sso/",
+    "/v1/messages",
+    # Sprint 20 — SDK approval poll uses x-api-key (acp_emp_…); the
+    # handler does its own key validation + tenant scoping, same as
+    # /v1/messages. Skip-list lets the request through middleware so
+    # the handler can dual-auth (employee key OR JWT).
+    "/v1/approvals",
+)
 
 # Management paths: require auth + rate-limiting, but bypass the agent
 # tool-execution security pipeline (OPA policy + Decision Engine).

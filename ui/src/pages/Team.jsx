@@ -572,6 +572,15 @@ export default function Team() {
 
   useEffect(() => { load() }, [load])
 
+  // Sprint 20 UX pass — refresh the team view every 30s so a CIO
+  // watching the page sees per-employee spend tick up as their
+  // engineers fire prompts. /team/employees + /team/overview are
+  // cheap GETs (single audit-aggregate + a single api-keys list).
+  useEffect(() => {
+    const id = setInterval(() => { load() }, 30_000)
+    return () => clearInterval(id)
+  }, [load])
+
   const revoke = async (keyId, email) => {
     if (!window.confirm(`Revoke ${email}'s Aegis key? Their Anthropic SDK calls will start failing immediately.`)) return
     try {

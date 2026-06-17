@@ -29,8 +29,16 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.0.1"
-__all__ = ["AegisAnthropic", "AegisClient", "__version__"]
+__version__ = "1.1.0"
+__all__ = [
+    "AegisAnthropic",
+    "AegisAnthropicProxy",
+    "AegisApprovalPending",
+    "AegisApprovalRejected",
+    "AegisApprovalTimeout",
+    "AegisClient",
+    "__version__",
+]
 
 
 class AegisClient:
@@ -242,3 +250,252 @@ class AegisAnthropic:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._claude, name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 20 — Path B (Anthropic-compatible /v1/messages proxy).
+#
+# The Path A wrapper above sits in the agent process and gates tool calls
+# locally. Path B sits in front of Anthropic itself: the developer just
+# replaces base_url with https://ha.aegisagent.in/v1 and Aegis becomes
+# the gateway. Today Aegis returns HTTP 202 with a pending_approval body
+# when a prompt matches an escalation pattern (wire transfer, k8s prod
+# destruction, etc.). The official Anthropic SDK doesn't know about 202
+# — it'll raise an error. So this wrapper handles the polling + replay
+# transparently:
+#
+#   client = AegisAnthropicProxy(employee_key="acp_emp_…")
+#   resp = client.messages.create(model="claude-haiku-4-5", ...)
+#
+# If the prompt is safe → 1 HTTP round-trip, normal response.
+# If the prompt escalates → wrapper polls /approvals/{id}/status with
+# backoff, then on approve replays with X-Aegis-Approval-ID and returns
+# the final 200. On reject → AegisApprovalRejected. On timeout →
+# AegisApprovalTimeout.
+#
+# The wrapper is intentionally tiny: it speaks raw HTTP rather than the
+# Anthropic SDK's RPC stack so a customer can use it without the
+# anthropic package installed. If they DO want the SDK's pydantic
+# types, set return_raw=False and we hand back a Message instance.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class AegisApprovalPending(Exception):
+    """Raised only when poll_until_decided=False and the loop returns mid-flight."""
+    def __init__(self, approval_id: str, approver_role: str, matched_pattern: str) -> None:
+        super().__init__(
+            f"Aegis is awaiting {approver_role} approval (approval_id={approval_id}, "
+            f"matched_pattern={matched_pattern})",
+        )
+        self.approval_id = approval_id
+        self.approver_role = approver_role
+        self.matched_pattern = matched_pattern
+
+
+class AegisApprovalRejected(Exception):
+    """The operator denied the escalation. Look at .reason for the operator's note."""
+    def __init__(self, approval_id: str, reason: str | None) -> None:
+        super().__init__(f"Aegis rejected approval {approval_id}: {reason or '<no reason>'}")
+        self.approval_id = approval_id
+        self.reason = reason
+
+
+class AegisApprovalTimeout(Exception):
+    """The poll loop hit the deadline before the approval resolved."""
+    def __init__(self, approval_id: str, waited_s: float) -> None:
+        super().__init__(
+            f"Aegis approval {approval_id} not resolved after {waited_s:.1f}s — still pending",
+        )
+        self.approval_id = approval_id
+        self.waited_s = waited_s
+
+
+class _ProxyMessages:
+    """Anthropic-compatible messages.create on top of /v1/messages."""
+
+    def __init__(self, parent: "AegisAnthropicProxy") -> None:
+        self._p = parent
+
+    def create(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: list[dict[str, Any]],
+        approval_id: str | None = None,
+        poll_until_decided: bool = True,
+        approval_timeout_s: float | None = None,
+        approval_poll_interval_s: float | None = None,
+        **extra: Any,
+    ) -> Any:
+        """Create a message. Returns the Anthropic response body (dict).
+
+        On escalation:
+          - poll_until_decided=True  (default): block until the operator
+            approves or rejects, then return the final Anthropic body
+            (or raise AegisApprovalRejected / AegisApprovalTimeout).
+          - poll_until_decided=False: raise AegisApprovalPending so the
+            caller can integrate with their own queue / webhook.
+
+        Pass approval_id explicitly to short-circuit a previously
+        approved replay (useful when your code remembered the id and
+        wants to re-fire without waiting for the operator round-trip).
+        """
+        body: dict[str, Any] = {
+            "model":      model,
+            "max_tokens": max_tokens,
+            "messages":   messages,
+        }
+        body.update({k: v for k, v in extra.items() if v is not None})
+
+        headers = {
+            "x-api-key":         self._p._employee_key,
+            "anthropic-version": self._p._anthropic_version,
+            "Content-Type":      "application/json",
+        }
+        if approval_id:
+            headers["X-Aegis-Approval-ID"] = approval_id
+
+        import time as _time
+        deadline = (
+            _time.monotonic() + (approval_timeout_s or self._p._approval_timeout_s)
+            if poll_until_decided else None
+        )
+        interval = approval_poll_interval_s or self._p._approval_poll_interval_s
+
+        with httpx.Client(timeout=self._p._timeout_s) as c:
+            while True:
+                resp = c.post(self._p._messages_url, headers=headers, json=body)
+                if resp.status_code == 200:
+                    return resp.json()
+
+                if resp.status_code == 202:
+                    payload = resp.json()
+                    aid = payload.get("approval_id") or approval_id or ""
+                    if not poll_until_decided:
+                        raise AegisApprovalPending(
+                            approval_id=aid,
+                            approver_role=payload.get("approver_role") or "",
+                            matched_pattern=payload.get("matched_pattern") or "",
+                        )
+                    # Poll, then replay.
+                    self._p._poll_until_decided(c, aid, deadline, interval)
+                    headers["X-Aegis-Approval-ID"] = aid
+                    continue
+
+                if resp.status_code == 403:
+                    detail = resp.json()
+                    # Two flavors: prompt_blocked (deny-path) and
+                    # approval_rejected (operator denial on replay).
+                    err = ((detail.get("detail") if isinstance(detail.get("detail"), dict)
+                            else None) or detail)
+                    err_code = err.get("error") if isinstance(err, dict) else None
+                    if err_code == "approval_rejected":
+                        raise AegisApprovalRejected(
+                            approval_id=approval_id or "",
+                            reason=(err.get("reason") if isinstance(err, dict) else None),
+                        )
+                    # Otherwise it's a hard policy block — bubble up so
+                    # the caller sees the same Anthropic-like error.
+                    resp.raise_for_status()
+
+                resp.raise_for_status()
+
+
+class AegisAnthropicProxy:
+    """Path B wrapper — Aegis-fronted Anthropic /v1/messages.
+
+    Constructor:
+        client = AegisAnthropicProxy(
+            employee_key="acp_emp_…",                       # or set AEGIS_EMPLOYEE_KEY
+            gateway_url="https://ha.aegisagent.in",         # or AEGIS_URL
+            anthropic_version="2023-06-01",
+            timeout_s=60.0,
+            approval_timeout_s=300.0,
+            approval_poll_interval_s=3.0,
+        )
+
+    Usage:
+        resp = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=200,
+            messages=[{"role": "user", "content": "…"}],
+        )
+
+    The 202 → poll → replay loop is transparent. If you want to handle
+    pending approvals yourself, pass poll_until_decided=False.
+    """
+
+    def __init__(
+        self,
+        employee_key: str | None = None,
+        gateway_url: str | None = None,
+        anthropic_version: str = "2023-06-01",
+        timeout_s: float = 60.0,
+        approval_timeout_s: float = 300.0,
+        approval_poll_interval_s: float = 3.0,
+    ) -> None:
+        ek = employee_key or os.environ.get("AEGIS_EMPLOYEE_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        if not ek or not ek.startswith("acp_emp_"):
+            raise ValueError(
+                "employee_key must be an Aegis virtual key (acp_emp_…). "
+                "Mint one in the Aegis Team page → Add employee.",
+            )
+        self._employee_key = ek
+        base = (
+            gateway_url
+            or os.environ.get("AEGIS_URL")
+            or "https://ha.aegisagent.in"
+        ).rstrip("/")
+        self._messages_url = f"{base}/v1/messages"
+        # /v1/approvals is in the gateway middleware skip-list so the
+        # SDK's x-api-key auth works without a Bearer JWT. The
+        # /v1/* alias strips the prefix before routing, so the same
+        # handler (dual-auth) serves both /v1/approvals/* (SDK) and
+        # /approvals/* (operator inbox).
+        self._approvals_base = f"{base}/v1/approvals"
+        self._anthropic_version = anthropic_version
+        self._timeout_s = timeout_s
+        self._approval_timeout_s = approval_timeout_s
+        self._approval_poll_interval_s = approval_poll_interval_s
+        self.messages = _ProxyMessages(self)
+
+    def get_approval_status(self, approval_id: str) -> dict[str, Any]:
+        """Read the current state of an approval. Returns the data envelope."""
+        with httpx.Client(timeout=self._timeout_s) as c:
+            resp = c.get(
+                f"{self._approvals_base}/{approval_id}/status",
+                headers={"x-api-key": self._employee_key},
+            )
+            resp.raise_for_status()
+            body = resp.json() or {}
+            return body.get("data") or {}
+
+    def _poll_until_decided(
+        self,
+        client: httpx.Client,
+        approval_id: str,
+        deadline: float | None,
+        interval: float,
+    ) -> None:
+        import time as _time
+        while True:
+            status = client.get(
+                f"{self._approvals_base}/{approval_id}/status",
+                headers={"x-api-key": self._employee_key},
+            )
+            status.raise_for_status()
+            data = (status.json() or {}).get("data") or {}
+            state = (data.get("status") or "").lower()
+            if state == "approved":
+                return
+            if state == "rejected":
+                raise AegisApprovalRejected(
+                    approval_id=approval_id,
+                    reason=data.get("reason"),
+                )
+            # pending — sleep, check deadline.
+            if deadline is not None and _time.monotonic() >= deadline:
+                waited = self._approval_timeout_s
+                raise AegisApprovalTimeout(approval_id, waited)
+            _time.sleep(interval)

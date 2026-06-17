@@ -1476,13 +1476,54 @@ async def _lookup_approval(
 
 @router.get("/approvals/{approval_id}/status")
 async def approval_status(approval_id: str, request: Request) -> APIResponse[dict]:
-    """Public-facing approval status lookup for the SDK + Approval Inbox.
+    """Approval status lookup — dual-auth (JWT operator OR employee SDK key).
 
-    Caller is the tenant that originally received the 202 from
-    /v1/messages. Cross-tenant lookups return 404 — the audit + autonomy
-    queries are tenant-scoped automatically by the internal-secret
-    header.
+    Operator path: Authorization: Bearer <Clerk JWT> — tenant comes
+    from the JWT's aegis_tenant_id claim (stamped by the gateway
+    middleware before this handler runs).
+
+    SDK path: x-api-key: acp_emp_… — the same employee virtual key the
+    SDK sent to /v1/messages. We validate it the same way, then refuse
+    if the approval doesn't belong to that employee. The middleware
+    skip-list lets /v1/approvals through without JWT, so when the path
+    arrives here via the /v1/* alias prefix-strip we still match this
+    handler.
     """
+    auth_key = request.headers.get("x-api-key") or ""
+    if auth_key.startswith("acp_emp_"):
+        # SDK / employee-key path.
+        key_data = await service_client.validate_api_key(auth_key)
+        if (
+            key_data is None
+            or not key_data.get("is_active", True)
+            or key_data.get("subject_kind") != "employee"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid, revoked, or non-employee API key",
+            )
+        tenant_id_str = str(key_data.get("tenant_id") or "")
+        employee_email = (key_data.get("subject_email") or "").strip().lower()
+        try:
+            request.state.tenant_id = tenant_id_str
+        except Exception:  # noqa: BLE001
+            pass
+
+        record = await _lookup_approval(request, tenant_id_str, approval_id.strip())
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No approval with id {approval_id!r}",
+            )
+        if (record.get("employee_email") or "").lower() != employee_email:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Approval does not belong to this employee",
+            )
+        return APIResponse(data=record)
+
+    # JWT / operator path — the gateway middleware already validated
+    # the token and stamped X-Tenant-ID before this handler ran.
     tenant_id_str = (
         request.headers.get("X-Tenant-ID")
         or (getattr(request.state, "jwt_claims", {}) or {}).get("tenant_id", "")
