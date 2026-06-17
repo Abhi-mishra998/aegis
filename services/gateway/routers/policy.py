@@ -126,11 +126,40 @@ async def test_policy_proxy(request: Request) -> Any:
 
 @router.post("/policy/upload", tags=["policy"])
 async def upload_policy_proxy(request: Request) -> Any:
-    """Proxy → Policy service — save a named Rego policy (ADMIN/SECURITY only)."""
+    """Proxy → Policy service — save a named Rego policy (ADMIN/SECURITY only).
+
+    On a successful upload we INCR ``acp:tenant:policy_version:{tenant_id}``.
+    The X-Aegis-Approval-ID replay path in ``proxy_helpers.lookup_approval``
+    rejects any approval whose recorded policy_version doesn't match the
+    current value — closing the policy-drift replay attack documented in
+    testing.md.
+    """
     body = await request.json()
     resp = await request.app.state.client.post(
         f"{_policy_base()}/policy/upload",
         json=body,
         headers=internal_headers(request),
     )
+    if 200 <= resp.status_code < 300:
+        try:
+            tenant_id_str = (
+                getattr(request.state, "tenant_id", None)
+                or request.headers.get("X-Tenant-ID", "")
+            )
+            if tenant_id_str:
+                from sdk.common.redis import get_redis_client
+                from sdk.common.config import settings as _settings
+                r = get_redis_client(_settings.REDIS_URL, decode_responses=True)
+                try:
+                    await r.incr(f"acp:tenant:policy_version:{tenant_id_str}")
+                finally:
+                    try:
+                        await r.aclose()
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            # Version-bump failure leaves the SDK on the previous version —
+            # operator just needs to re-upload to surface the new policy on
+            # replay. Better than failing the whole upload.
+            pass
     return passthrough(resp)
