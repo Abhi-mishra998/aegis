@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from sdk.common.background import safe_bg as _safe_bg
 from services.gateway.inference_proxy import OutputFilter, inference_proxy
+from services.gateway._helpers import publish_event
 
 logger = structlog.get_logger(__name__)
 
@@ -177,6 +178,34 @@ class _ResponseMixin:
                 _deny_reason = (reason or policy_id or "") or ""
                 asyncio.create_task(_safe_bg(
                     self._record_runaway_failure(str(t_id), str(a_id), str(tool), _deny_reason)
+                ))
+
+            # Real-time UI feed — pre-policy hard-denies (path traversal,
+            # SQL injection, dangerous code, PII exfil) AND main-pipeline
+            # denies + autonomy refusals all route through this single
+            # chokepoint. Publishing here means the Live Feed shows the
+            # block within ~100 ms of the operator/agent attempt — the
+            # round-2 SSE coverage that the `policy_decision` event
+            # promises to operators.
+            if t_id and t_id != "unknown":
+                _sse_tool = ctx.get("tool") or "unknown_tool"
+                _sse_payload = {
+                    "decision":   "deny",
+                    "request_id": ctx.get("request_id"),
+                    "agent_id":   str(a_id) if a_id and a_id != "unknown" else None,
+                    "tool":       str(_sse_tool),
+                    "status_code": status_code,
+                }
+                if findings:
+                    _sse_payload["findings"] = list(findings)[:5]
+                if reason:
+                    _sse_payload["reason"] = reason
+                if policy_id:
+                    _sse_payload["policy_id"] = policy_id
+                if risk_score is not None:
+                    _sse_payload["risk_score"] = int(risk_score)
+                asyncio.create_task(_safe_bg(
+                    publish_event(self.redis, str(t_id), "policy_decision", _sse_payload)
                 ))
 
         # 2026-06-15 — surface findings + raw reason in body so buyer SDKs

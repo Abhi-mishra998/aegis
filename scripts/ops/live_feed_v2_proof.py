@@ -275,14 +275,48 @@ async def scenario_A_approval_resolved(jwt: str) -> dict:
 
 
 async def scenario_B_policy_decision_deny(jwt: str) -> dict:
-    """Fire a /execute call that hits the deny chokepoint (kubectl
-    delete prod with no approval cert) while a subscriber listens for
-    policy_decision with decision=deny.
+    """Fire a /execute call that hits the deny chokepoint while a subscriber
+    listens for policy_decision with decision=deny.
+
+    The harness:
+      1. Registers a fresh agent in this tenant via POST /agents (gateway
+         requires a known-agent UUID; /execute returns 403
+         "Unknown agent — not registered in this tenant" otherwise).
+      2. Fires /execute with a path-traversal payload (/etc/passwd) — the
+         pre-policy block fires a 403 + decision=deny through the single
+         _deny chokepoint in services/gateway/_mw_response.py, which is
+         where the policy_decision SSE publish lives.
+      3. Cleans up the agent at the end so reruns don't accumulate test
+         agents.
     """
     name = "B policy_decision deny"
+    agent_id: str | None = None
     try:
-        request_id = f"livefeedv2-deny-{uuid.uuid4().hex[:8]}"
+        # 1. Register a transient agent so the /execute path doesn't 403
+        #    at the agent-validation stage.
+        async with httpx.AsyncClient(
+            timeout=15,
+            headers={"Authorization": f"Bearer {jwt}",
+                     "Content-Type": "application/json"},
+        ) as c:
+            reg = await c.post(
+                f"{GW}/agents",
+                json={
+                    "name": f"livefeedv2-deny-{uuid.uuid4().hex[:6]}",
+                    "description": "Transient harness agent for SSE policy_decision probe",
+                    "provider": "anthropic",
+                    "model":    "claude-haiku-4-5",
+                },
+            )
+            if reg.status_code >= 400:
+                return {"name": name, "pass": False,
+                        "reason": f"agent registration failed: HTTP {reg.status_code} {reg.text[:200]}"}
+            agent_id = (reg.json().get("data") or {}).get("id")
+            if not agent_id:
+                return {"name": name, "pass": False,
+                        "reason": "agent registration returned no id"}
 
+        # 2. Open SSE subscriber and wait for it to handshake.
         ready = asyncio.Event()
         listener = asyncio.create_task(
             wait_for_event(
@@ -295,23 +329,15 @@ async def scenario_B_policy_decision_deny(jwt: str) -> dict:
         )
         await ready.wait()
 
-        # /execute with a destructive k8s action that the canonical rule
-        # set hard-denies (OPS-K8S-001 in MEMORY: kubectl delete prod
-        # BLOCKED). The minimal shape mirrors examples/agent.py.
+        # 3. Fire a path-traversal /execute call — this hits the pre-policy
+        #    block in middleware.py (SEC-PATH-001) which routes through
+        #    `_deny()` and publishes the policy_decision SSE event.
         body = {
-            "agent_id":   "livefeedv2-agent",
-            "request_id": request_id,
-            "action":     "execute_tool",
-            "tool":       "kubectl",
+            "agent_id": agent_id,
+            "action":   "execute_tool",
+            "tool":     "read_file",
             "arguments": {
-                "verb": "delete",
-                "namespace": "prod",
-                "resource":  "deployment",
-                "name":      "checkout-service",
-            },
-            "context": {
-                "environment": "production",
-                "harness": "live_feed_v2_proof",
+                "path": "/etc/passwd",
             },
         }
         async with httpx.AsyncClient(timeout=20) as c:
@@ -326,12 +352,11 @@ async def scenario_B_policy_decision_deny(jwt: str) -> dict:
 
         found, latency_s, evt = await listener
 
-        # Body shape: 200 with decision=deny in payload, OR 403 — both
-        # are acceptable. We care that the SSE event fired.
         return {
             "name": name, "pass": bool(found),
-            "latency_s": latency_s, "request_id": request_id,
+            "latency_s": latency_s,
             "execute_status": r.status_code,
+            "agent_id": agent_id,
             "evt": evt if found else None,
             "reason": None if found else
                       f"no policy_decision deny in 8 s (execute={r.status_code})",
@@ -339,6 +364,17 @@ async def scenario_B_policy_decision_deny(jwt: str) -> dict:
     except Exception as exc:
         return {"name": name, "pass": False,
                 "reason": f"exception: {type(exc).__name__}: {exc}"}
+    finally:
+        # 4. Best-effort cleanup so reruns don't accumulate test agents.
+        if agent_id:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=10,
+                    headers={"Authorization": f"Bearer {jwt}"},
+                ) as c:
+                    await c.delete(f"{GW}/agents/{agent_id}")
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────
