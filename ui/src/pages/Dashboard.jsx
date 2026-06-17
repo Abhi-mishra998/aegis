@@ -53,16 +53,32 @@ const RISK_TIER_META = {
   critical: { label: 'Critical', color: 'text-red-400',    bg: 'bg-red-500/[0.07]'    },
 };
 
-function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon, tooltip }) {
+function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon, tooltip, cta, pulseDot }) {
   return (
     <Card>
-      <div className="space-y-1" title={tooltip || undefined}>
+      <div className="relative space-y-1" title={tooltip || undefined}>
+        {pulseDot && (
+          <span
+            aria-hidden="true"
+            className="absolute -top-1 -right-1 flex h-2.5 w-2.5"
+          >
+            <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75 animate-ping" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400 animate-pulse" />
+          </span>
+        )}
         <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-neutral-500">
           {Icon && <Icon size={11} aria-hidden="true" />}
           <span>{label}</span>
         </div>
         <div className={`text-3xl font-bold ${accent}`}>{value}</div>
         {sublabel && <div className="text-[11px] text-neutral-500">{sublabel}</div>}
+        {cta && (
+          <div className="pt-2">
+            <span className="inline-flex items-center rounded-md bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-300 ring-1 ring-inset ring-amber-500/30 hover:bg-amber-500/25 transition-colors">
+              {cta}
+            </span>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -325,6 +341,8 @@ export default function Dashboard() {
               }
               accent={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
               tooltip="Decisions sent to a human reviewer. Sub-label splits the total into pending (waiting on a human), approved (CFO/CISO/etc said yes), rejected (operator denied). Click to open the Approval Inbox."
+              pulseDot={(overview?.escalation_breakdown?.pending ?? 0) > 0}
+              cta={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'Review →' : undefined}
             />
           </Link>
           <MetricTile
