@@ -48,7 +48,6 @@ import PolicyAnalytics from './pages/PolicyAnalytics';
 import ScheduledReports from './pages/ScheduledReports';
 import ThreatIntel from './pages/ThreatIntel';
 import QuotaManagement from './pages/QuotaManagement';
-import AgentProfile from './pages/AgentProfile';
 import SsoSettings from './pages/SsoSettings';
 import Notifications from './pages/Notifications';
 import LiveFeed from './pages/LiveFeed';
@@ -60,9 +59,6 @@ import DecisionExplorer from './pages/DecisionExplorer';
 import SessionExplorer from './pages/SessionExplorer';
 // Sprint 4 — Fleet dashboards + Agent FinOps + Topology
 import Fleet from './pages/Fleet';
-import AgentHealth from './pages/AgentHealth';
-import AgentCost from './pages/AgentCost';
-import AgentTopology from './pages/AgentTopology';
 // Sprint 5 — Attack Evaluation Suite
 import Evaluation from './pages/Evaluation';
 // Sprint 6 — Shadow-mode policies + online evaluation
