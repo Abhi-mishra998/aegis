@@ -17,6 +17,19 @@ route:
   receiver: slack
 
   routes:
+    # Page-tier alerts (e.g. ChainViolationImmediate): zero group_wait,
+    # routes straight to the critical receiver (Slack #aegis-critical +
+    # PagerDuty). repeat_interval kept short so the page keeps firing
+    # until acknowledged. TODO: PagerDuty service routing key must be
+    # populated operator-side via /etc/alertmanager/pagerduty_routing_key.
+    - matchers:
+        - severity = "page"
+      receiver: critical
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 30m
+      continue: true
+
     # Critical alerts: page via PagerDuty AND Slack; short repeat window.
     - matchers:
         - severity = "critical"

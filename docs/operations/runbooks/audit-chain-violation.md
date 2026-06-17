@@ -2,19 +2,45 @@
 
 ## Alert
 
-`ChainViolationImmediate` — fires when `acp_audit_chain_violations_total > 0`. Alert evaluation interval `for: 0m` (page immediately).
+`ChainViolationImmediate` — fires when `acp_audit_chain_violations_total > 0`. Alert evaluation interval `for: 0m` (page immediately). Severity label `page`; alertmanager routes this through the `critical` receiver to PagerDuty + Slack `#aegis-critical` with `group_wait: 0s`.
 
 ## Severity
 
 **P0.** A chain violation means the append-only audit log has been tampered with, OR a code bug broke hash chaining. Stop all writes immediately and investigate.
 
+## Oncall + paging
+
+| Channel | Where |
+|---|---|
+| PagerDuty | `aegis-platform` service (routing key under `/etc/alertmanager/pagerduty_routing_key` on each ASG host) |
+| Slack | `#aegis-critical` (immediate), `#aegis-incidents` (status updates) |
+| Security lead | Page via PagerDuty escalation policy `aegis-security-oncall` |
+| Status page | `https://aegisagent.in/status` — operator-side update required, no automation |
+
+## Dashboards
+
+- **Grafana → ACP Trust Layers** (`acp-trust-layers`) → first panel "Chain integrity (violations — must stay at 0)". Tunnel: `ssh -L 3000:localhost:3000 ubuntu@<ec2-ip>` then `http://localhost:3000/d/acp-trust-layers`.
+- **Grafana → ACP Queues** (`acp-queues`) → "Audit stream — length + dropped" and "Audit DLQ oldest-age" panels.
+
+## Normal-occurrence carve-out (append-only trigger)
+
+The audit-logs table has a Postgres trigger that raises `audit_logs is append-only` on any `UPDATE` or `DELETE`. Seeing that error in the audit-service logs is **not necessarily a security incident** — it is the trigger doing its job. Common benign causes:
+
+- An auditor or operator running a forensic `SELECT ... FOR UPDATE` (the lock attempt counts as a write under PostgreSQL's MVCC pre-check on some driver paths).
+- A misconfigured analytics tool issuing `UPDATE` against the wrong schema.
+- A development connection that wandered into the prod database; the row is still safe — the trigger refused the change.
+
+A trigger fire by itself does NOT increment `acp_audit_chain_violations_total`. The metric only ticks when the chain integrity verifier finds a hash mismatch. Treat trigger logs as auditing telemetry, not as paging signal — but DO investigate who made the attempt, because they almost certainly do not need that access.
+
+The page-level event is `acp_audit_chain_violations_total > 0`. That means the cryptographic chain itself is broken; the trigger has either been bypassed or a row was hashed under the wrong parent. Follow the rest of this runbook.
+
 ## Triage in 5 minutes
 
 ### 1. Confirm the violation
 
-```bash
-SSH to either EC2 host; from there:
+SSH to either EC2 host. From there:
 
+```bash
 # Verify via API
 curl -sS http://localhost:8000/audit/logs/verify \
   -H "Authorization: Bearer $(.venv/bin/acp auth-token)" \
@@ -69,21 +95,21 @@ docker stop acp_audit
 # the Redis stream; the outbox drains when audit is restarted.
 ```
 
-**Do NOT delete rows.** Deletion destroys forensic evidence and is irreversible.
+**Do NOT delete rows.** Deletion destroys forensic evidence and is irreversible. (And the append-only trigger will refuse — see the carve-out above.)
 
 **Do NOT roll back the database.** The current state, even with the violation, is the record of what happened. Investigators need it.
 
 ### 5. Notify
 
-- Page the on-call security lead.
-- Post the alert to the incident channel.
+- Page the on-call security lead (PagerDuty escalation `aegis-security-oncall`).
+- Post the alert to `#aegis-critical`; cross-post the triage thread to `#aegis-incidents`.
 - Open an incident ticket with the violation details.
 
 ## Root causes, in frequency order
 
 1. **Bug in hash computation.** A recent deploy changed `sdk/common/audit_hash.py` or `services/audit/writer.py`. Check the last 24 hours of deploys.
-2. **Clock skew.** `prev_hash` from a different row due to row reordering during concurrent inserts. The chain lock should prevent this; verify `acp:audit_chain_lock:{tenant_id}` was honored.
-3. **Direct database write.** A non-application connection wrote to `audit_logs`. Check `pg_stat_activity` for non-application connections. Common culprits: a debugging psql session, a misconfigured backup tool.
+2. **Clock skew / chain-lock failure.** `prev_hash` from a different row due to row reordering during concurrent inserts. The chain lock should prevent this; verify `acp:audit_chain_lock:{tenant_id}` was honored.
+3. **Direct database write that bypassed the trigger.** A superuser connection wrote to `audit_logs`. Check `pg_stat_activity` for non-application connections. Common culprits: a debugging psql session, a misconfigured backup tool. The append-only trigger should block these; if rows landed anyway someone has `BYPASSRLS` or owns the table.
 4. **Storage bit flip.** Extremely rare; Postgres checksums should catch it. Run `pg_dump --verify` on the affected table.
 5. **Malicious tampering.** Unlikely but the most severe case. Inspect the audit row's content vs. the S3 receipt for the same audit_id — if they differ, the Postgres row was modified after upload.
 
@@ -115,6 +141,7 @@ If a non-application connection wrote rows:
 3. Add a chain marker row: `action="chain_repaired"` describing the incident.
 4. Recompute the chain from the marker forward.
 5. The rows written by the unauthorized connection are now part of the chain but are flagged in `metadata_json.chain_repair_reference`.
+6. Revoke the role that bypassed the trigger.
 
 ### Malicious tampering
 
@@ -188,3 +215,4 @@ A P0 incident is not the time to read theory.
 - [Cryptographic Audit Chain](../../security/crypto-audit-chain.md) — the underlying math
 - [Audit service](../../services/audit.md) — the implementation
 - [Key Rotation](../key-rotation.md) — related to chain integrity
+- [Observability](../observability.md) — alert routing and dashboard map
