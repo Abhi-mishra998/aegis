@@ -46,6 +46,7 @@ from services.gateway.anthropic_pricing import cost_usd
 from services.gateway.client import service_client
 from services.gateway._helpers import internal_headers
 from services.gateway.inference_proxy import InjectionDetector
+from services.gateway import escalation_patterns
 
 logger = structlog.get_logger(__name__)
 
@@ -301,6 +302,62 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                     "findings": scan_result.flags or ["prompt_injection"],
                     "risk_score": scan_result.risk_score,
                 },
+            )
+
+        # 5c. high-risk-but-not-deny patterns — escalate to a human
+        # approver instead of forwarding to Anthropic. Sprint 19.
+        # The audit row tagged decision='escalate' shows up in the
+        # Approval Inbox; the operator approves/rejects with a reason
+        # via POST /autonomy/overrides, which lands in
+        # human_override_events and ticks the Sprint 12 dashboard's
+        # `escalations_prevented` KPI.
+        esc_pattern = escalation_patterns.scan(scan_text)
+        if esc_pattern is not None:
+            # The approval_id we hand back is the request_id — the
+            # Approval Inbox already uses request_id as the resolution
+            # key (ApprovalInbox.jsx:73-82). Generate one ourselves if
+            # the caller's SDK didn't send X-Request-ID so the operator
+            # always has a stable handle.
+            approval_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+            await push_audit_event(
+                redis=redis,
+                tenant_id=tenant_id_str,
+                agent_id=None,
+                action="llm_proxy_call",
+                tool="anthropic_messages",
+                decision="escalate",
+                reason=esc_pattern.label,
+                metadata={
+                    "employee_email":   employee_email,
+                    "model":            model,
+                    "input_tokens":     0,
+                    "output_tokens":    0,
+                    "cost_usd":         0.0,
+                    "status_code":      202,
+                    "latency_ms":       0,
+                    "anthropic_version": anthropic_version,
+                    "findings":         [f"Escalation:{esc_pattern.id}"],
+                    "risk_score":       65.0,
+                    "approver_role":    esc_pattern.approver_role,
+                    "matched_pattern":  esc_pattern.id,
+                    # Surface a short, non-PII excerpt so the operator
+                    # can read the inbox card without expanding it.
+                    "prompt_excerpt":   scan_text[:240],
+                },
+                request_id=approval_id,
+            )
+            import json as _json
+            return Response(
+                content=_json.dumps({
+                    "status":          "pending_approval",
+                    "approver_role":   esc_pattern.approver_role,
+                    "matched_pattern": esc_pattern.id,
+                    "approval_id":     approval_id,
+                    "reason":          esc_pattern.label,
+                    "inbox_url":       "/approval-inbox",
+                }),
+                status_code=status.HTTP_202_ACCEPTED,
+                media_type="application/json",
             )
 
         # 6. forward to api.anthropic.com

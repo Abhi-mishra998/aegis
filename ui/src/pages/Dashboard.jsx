@@ -294,14 +294,20 @@ export default function Dashboard() {
             accent={(overview?.mandate_kpis?.denied ?? 0) > 0 ? 'text-red-400' : 'text-white'}
             tooltip="Decisions returned deny / block / kill — Aegis refused the action before it ran."
           />
-          <MetricTile
-            icon={AlertTriangle}
-            label="Escalated"
-            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.escalated)}
-            sublabel="Awaiting human"
-            accent={(overview?.mandate_kpis?.escalated ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-            tooltip="Decisions sent to the Approval Inbox for a human reviewer."
-          />
+          <Link to="/approval-inbox" className="contents">
+            <MetricTile
+              icon={AlertTriangle}
+              label="Escalated"
+              value={loading ? '—' : fmtInt(overview?.mandate_kpis?.escalated)}
+              sublabel={
+                (overview?.mandate_kpis?.escalated ?? 0) > 0
+                  ? 'Open Approval Inbox →'
+                  : 'Awaiting human'
+              }
+              accent={(overview?.mandate_kpis?.escalated ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+              tooltip="Decisions sent to the Approval Inbox for a human reviewer. Click to open the inbox."
+            />
+          </Link>
           <MetricTile
             icon={Target}
             label="Active findings"
