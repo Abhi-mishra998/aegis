@@ -1030,6 +1030,12 @@ export const teamService = {
   // counter.
   overview: () => request('/team/overview'),
 
+  // Sprint 17.6 — per-employee drill-down. Single fetch returns the
+  // employee record, both budget bars, a 30-day spend trend, and the
+  // last 25 audit rows for the /team/<email> detail page.
+  profile: (email) =>
+    request(`/team/employees/${encodeURIComponent(email)}/profile`),
+
   // Mint a new acp_emp_… virtual key for one employee. Returns the raw
   // key ONCE — the caller is responsible for displaying it to the
   // admin so they can hand it to the employee. After this response

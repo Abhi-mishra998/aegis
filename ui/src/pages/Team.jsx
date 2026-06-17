@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
@@ -336,8 +336,18 @@ function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke })
               {employees.map((e) => (
                 <tr key={e.key_id} className="border-b border-white/[0.04] last:border-b-0">
                   <td className="py-3 pr-3">
-                    <div className="text-neutral-200 font-medium">{e.name || (e.email || '').split('@')[0]}</div>
-                    <div className="text-[10px] text-neutral-600">{e.email}</div>
+                    <Link
+                      to={`/team/${encodeURIComponent(e.email)}`}
+                      className="block group"
+                      title="Open employee profile"
+                    >
+                      <div className="text-neutral-200 font-medium group-hover:text-white group-hover:underline">
+                        {e.name || (e.email || '').split('@')[0]}
+                      </div>
+                      <div className="text-[10px] text-neutral-600 group-hover:text-neutral-400">
+                        {e.email}
+                      </div>
+                    </Link>
                   </td>
                   <td className="py-3 pr-3 text-neutral-300">{e.department || <span className="text-neutral-600 italic">Unassigned</span>}</td>
                   <td className="py-3 pr-3 font-mono text-neutral-200">
