@@ -45,6 +45,16 @@ const MAX_EVENTS         = 200
 const THROUGHPUT_BUCKETS = 12
 const THROUGHPUT_BUCKET_MS = 5_000
 
+// Types listed under each scope must exist in EVENT_META above — anything
+// else gets silently dropped by the visibility filter.
+const SCOPES = {
+  all:      { label: 'All',              types: ALL_TYPES },
+  decisions:{ label: 'Decisions',        types: ['policy_decision', 'tool_executed'] },
+  risk:     { label: 'Risk',             types: ['risk_updated', 'behavior_flagged'] },
+  security: { label: 'Security Signals', types: ['alert', 'kill_switch'] },
+  system:   { label: 'System',           types: ['agent_changed', 'insight_generated'] },
+}
+
 function timeAgo(ts) {
   const diff = Date.now() - ts
   if (diff < 60_000)    return `${Math.floor(diff / 1000)}s`
@@ -293,6 +303,9 @@ export default function LiveFeed() {
   const [filterTypes,     setFilterTypes]     = useState(new Set())
   const [filterEmployees, setFilterEmployees] = useState(new Set())
   const [filterModels,    setFilterModels]    = useState(new Set())
+  // Scope intersects with filterTypes — picking a scope narrows which event
+  // types are reachable; per-type chips still toggle within that scope.
+  const [scope, setScope] = useState('all')
   const [backfillLoading, setBackfillLoading] = useState(true)
   const pausedRef     = useRef(false)
   const addToastRef   = useRef(addToast)
@@ -478,17 +491,18 @@ export default function LiveFeed() {
     }
   }, [events])
 
+  const scopeTypes = SCOPES[scope]?.types || ALL_TYPES
+  const scopeSet   = useMemo(() => new Set(scopeTypes), [scopeTypes])
+
   const visible = useMemo(() => {
-    if (filterTypes.size === 0 && filterEmployees.size === 0 && filterModels.size === 0) {
-      return events
-    }
     return events.filter((e) => {
+      if (!scopeSet.has(e.type)) return false
       if (filterTypes.size > 0 && !filterTypes.has(e.type)) return false
       if (filterEmployees.size > 0 && !filterEmployees.has(e.data?.employee_email)) return false
       if (filterModels.size > 0 && !filterModels.has(e.data?.model)) return false
       return true
     })
-  }, [events, filterTypes, filterEmployees, filterModels])
+  }, [events, scopeSet, filterTypes, filterEmployees, filterModels])
 
   const toggleSet = (setter) => (value) => {
     setter((prev) => {
@@ -620,7 +634,36 @@ export default function LiveFeed() {
         })}
       </div>
 
-      {/* Filters — by type */}
+      {/* Scope — coarse perspective. Replaces the dedicated Observability
+          + SecurityDashboard pages, which showed these views with different framing. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] uppercase tracking-widest text-neutral-600 mr-1">Scope:</span>
+        {Object.entries(SCOPES).map(([id, def]) => {
+          const active = scope === id
+          return (
+            <button
+              key={id}
+              onClick={() => {
+                if (active) return
+                setScope(id)
+                // Drop per-type chips that fall outside the new scope so the
+                // filter strip doesn't lie about what's visible.
+                setFilterTypes((prev) => {
+                  if (prev.size === 0) return prev
+                  const allowed = new Set(def.types)
+                  const next = new Set([...prev].filter((t) => allowed.has(t)))
+                  return next.size === prev.size ? prev : next
+                })
+              }}
+              className={`text-[10px] px-2.5 py-1 rounded-lg border transition-all ${active ? 'border-white/20 bg-white/[0.07] text-white' : 'border-[var(--border-subtle)] text-neutral-500 hover:text-white'}`}
+            >
+              {def.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Filters — by type (intersected with scope), employee, model */}
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <Filter size={12} className="text-neutral-600" aria-hidden="true" />
@@ -632,7 +675,7 @@ export default function LiveFeed() {
           >
             All types
           </FilterChip>
-          {ALL_TYPES.map((t) => {
+          {scopeTypes.map((t) => {
             const meta = EVENT_META[t]
             const active = filterTypes.has(t)
             return (
