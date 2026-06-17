@@ -50,6 +50,20 @@ async def get_redis() -> AsyncGenerator[Redis, None]:
         await r.aclose()
 
 
+async def _check_rate(redis: Redis, key: str, limit: int, window: int = 60) -> None:
+    """Per-tenant DOS ceiling on state-mutating routes (token-bucket-lite)."""
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, window)
+    if count > limit:
+        ttl = await redis.ttl(key)
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(max(1, ttl))},
+        )
+
+
 @router.post(
     "",
     response_model=APIResponse[AuditLogResponse],
@@ -61,6 +75,11 @@ async def create_log(
     payload: AuditLogCreate,
 ) -> APIResponse[AuditLogResponse]:
     """Internal log injection endpoint."""
+    await _check_rate(
+        redis,
+        f"acp:ratelimit:audit:logs_create:{payload.tenant_id}",
+        limit=600,
+    )
     log_entry = await AuditWriter.log(db, redis, payload)
 
     # C-1 fix: log_entry is None when it was a duplicate — return 409
@@ -928,9 +947,15 @@ async def add_audit_note(
     audit_id: str,
     payload: _NoteCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
     """Append an analyst note to an audit log entry."""
+    await _check_rate(
+        redis,
+        f"acp:ratelimit:audit:notes_create:{tenant_id}",
+        limit=600,
+    )
     try:
         audit_uuid = uuid.UUID(audit_id)
     except ValueError:
