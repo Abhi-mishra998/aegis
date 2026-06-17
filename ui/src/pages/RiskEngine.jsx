@@ -551,9 +551,10 @@ export default function RiskEngine() {
                   <button
                     onClick={() => navigate(`/forensics?agent=${t.agent_id}`)}
                     aria-label={`View forensics for agent ${t.agent_id?.slice(0, 8)}`}
-                    className="p-1.5 rounded text-neutral-600 hover:text-white hover:bg-white/[0.05] transition-colors opacity-0 group-hover:opacity-100"
+                    className="flex items-center gap-1 px-2 py-1 rounded border border-white/[0.06] text-[10px] text-neutral-500 hover:text-white hover:border-white/[0.15] hover:bg-white/[0.05] transition-colors"
                   >
-                    <ExternalLink size={12} aria-hidden="true" />
+                    <ExternalLink size={11} aria-hidden="true" />
+                    <span>Forensics</span>
                   </button>
                 </div>
               ))}
