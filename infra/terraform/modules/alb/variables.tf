@@ -27,8 +27,16 @@ variable "target_port" {
 }
 
 variable "health_check_path" {
-  type    = string
-  default = "/health"
+  description = <<-EOT
+    Target-group health-check path.
+
+    U13: must be `/healthz`, which the UI nginx proxies to gateway:8000/health
+    with a tight 2s timeout. The previous default `/health` was a STATIC nginx
+    200, so a dead gateway behind a healthy nginx stayed registered and the
+    ALB kept sending live traffic to a dead backend.
+  EOT
+  type        = string
+  default     = "/healthz"
 }
 
 variable "certificate_arn" {

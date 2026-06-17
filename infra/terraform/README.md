@@ -95,7 +95,7 @@ EC2 public IP via a CloudFront distribution instead. See
 | Public subnets | `subnet-00ce70dbbbe9602f1` (1a), `subnet-0b808f72efc46dff2` (1b) |
 | Private subnets | `subnet-01baf8689d58a521d` (1a), `subnet-0a32990f24a17d8a2` (1b) |
 | ALB | `acp-alb` (DNS: `acp-alb-357872136.ap-south-1.elb.amazonaws.com`) |
-| Target group | `acp-ui-tg` (port 5173, /health) |
+| Target group | `acp-ui-tg` (port 5173, /healthz — U13: proxies to gateway:8000/health, 2s timeout) |
 | EC2 | 2× `acp-server-prod` (t3.2xlarge), 1 per AZ |
 | RDS | `acp-postgres-prod` (db.t3.micro, Multi-AZ, gp3, postgres 15.18) |
 | Redis | `acp-redis-prod` (cache.t3.micro, single node, redis 7.1) |
