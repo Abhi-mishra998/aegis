@@ -112,6 +112,8 @@
 * [Cryptographic Audit Chain](security/crypto-audit-chain.md)
 * [Detection Pipeline](security/detection-pipeline.md)
 * [JWT Authentication](security/jwt-auth.md)
+* [Clerk Authentication](security/clerk-setup.md)
+* [API Keys](security/api-keys.md)
 * [Mesh Authentication](security/mesh-auth.md)
 * [RBAC Roles](security/rbac-roles.md)
 * [Kill Switch](security/kill-switch.md)
