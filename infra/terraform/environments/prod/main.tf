@@ -222,14 +222,17 @@ module "acm" {
 # ALB — matches live acp-alb
 # ──────────────────────────────────────────────────────────────────────
 module "alb" {
-  source              = "../../modules/alb"
-  name_prefix         = local.name_prefix
-  alb_name            = "acp-alb"
-  vpc_id              = module.network.vpc_id
-  subnet_ids          = module.network.public_subnet_ids
-  security_group_ids  = [module.security_groups.alb_sg_id]
-  target_port         = 5173
-  health_check_path   = "/health"
+  source             = "../../modules/alb"
+  name_prefix        = local.name_prefix
+  alb_name           = "acp-alb"
+  vpc_id             = module.network.vpc_id
+  subnet_ids         = module.network.public_subnet_ids
+  security_group_ids = [module.security_groups.alb_sg_id]
+  target_port        = 5173
+  # U13 — `/healthz` nginx-proxies to gateway:8000/health (2s timeout).
+  # Previously `/health` was a static nginx 200, so a dead gateway behind
+  # a healthy nginx stayed registered and got live traffic.
+  health_check_path   = "/healthz"
   certificate_arn     = module.acm.validated_certificate_arn
   target_instance_ids = module.compute.instance_ids
   access_logs_bucket  = "" # currently disabled on live ALB; flip to bucket id when ready

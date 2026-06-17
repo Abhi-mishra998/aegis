@@ -1,5 +1,10 @@
 # Internet-facing ALB with HTTPS listener + HTTP→HTTPS redirect.
-# Target group health checks the application's /health endpoint.
+#
+# Target group health checks the UI nginx's `/healthz` route, which proxies
+# to gateway:8000/health with a 2s upstream timeout (see ui/nginx.conf).
+# U13 — the previous default `/health` was a STATIC nginx 200, so a dead
+# gateway behind a healthy nginx kept the instance registered and the ALB
+# routed live traffic to a dead backend.
 
 resource "aws_lb" "this" {
   name               = var.alb_name
@@ -33,6 +38,11 @@ resource "aws_lb_target_group" "this" {
   vpc_id      = var.vpc_id
   target_type = "instance"
 
+  # U13 — health check probes `/healthz` (default) which nginx proxies to
+  # gateway:8000/health with a 2s upstream timeout. timeout=5 gives the
+  # round trip ~3s of headroom over the nginx-upstream cap, and
+  # unhealthy_threshold=3 with interval=15 means a dead gateway is
+  # deregistered in ~45s (3 consecutive failed checks).
   health_check {
     path                = var.health_check_path
     interval            = 15
