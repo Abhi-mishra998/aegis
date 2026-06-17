@@ -1678,6 +1678,33 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 except Exception as _sx:
                     logger.warning("storyline_record_step_failed", error=str(_sx))
 
+                # U2 2026-06-17 — SSE notify LiveFeed on the deny/kill/escalate
+                # chokepoint. Mirrors the allow-path `tool_executed` publish in
+                # gateway/main.py (lines ~1308-1325) so the dashboard surfaces
+                # blocked invocations in real time, not just allowed ones. The
+                # audit row was just written (above via _log_decision); this
+                # is the live-channel companion. Best-effort: any failure here
+                # MUST NOT affect the response to the agent.
+                try:
+                    asyncio.create_task(_safe_bg(publish_event(
+                        self.redis,
+                        t_id_str,
+                        "policy_decision",
+                        {
+                            "decision":   action,
+                            "request_id": request_id,
+                            "agent_id":   str(agent_id),
+                            "tool":       tool_name,
+                            "risk":       float(getattr(decision, "risk", 0.0) or 0.0),
+                            "findings":   list(response_findings or [])[:5],
+                            "reasons":    list(reasons or [])[:5],
+                            "policy_id":  _resp_policy_id or None,
+                        },
+                        agent_id=str(agent_id),
+                    )))
+                except Exception:
+                    pass
+
                 _flight_final["decision"] = action
                 _flight_final["risk"]     = float(getattr(decision, "risk", 0.0) or 0.0)
                 _flight_final["status"]   = "failed"
