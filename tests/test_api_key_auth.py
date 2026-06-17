@@ -191,6 +191,10 @@ async def test_api_key_cache_hit_skips_service_call():
     mixin = _AuthMixin.__new__(_AuthMixin)
     mixin.redis = AsyncMock()
     mixin.redis.get = AsyncMock(side_effect=lambda k: json.dumps(KEY_DATA) if k == cache_key else None)
+    # U1 — _validate_api_key_cached now consults the revocation set; for an
+    # active cached key the lookup must return False (not the AsyncMock
+    # default truthy stub).
+    mixin.redis.sismember = AsyncMock(return_value=False)
 
     with patch("services.gateway._mw_auth.service_client") as mock_sc:
         mock_sc.validate_api_key = AsyncMock()
