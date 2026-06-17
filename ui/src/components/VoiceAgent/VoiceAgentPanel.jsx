@@ -11,6 +11,7 @@ import {
 import { Track } from 'livekit-client'
 
 import AnimatedOrb, { STATE_COLORS } from './AnimatedOrb'
+import { voiceService, parseApiError } from '../../services/api'
 
 /**
  * Killer voice-agent panel. Full-viewport dim overlay, centered animated
@@ -29,24 +30,15 @@ export default function VoiceAgentPanel({ open, onClose }) {
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
 
-  // Fetch credentials lazily — only on first open.
+  // Fetch credentials lazily — only on first open. Uses voiceService so the
+  // Clerk Bearer header is attached the same way every other API call does;
+  // a raw fetch() here previously left the gateway unable to identify the
+  // user when only the Clerk session (not the legacy cookie) was active.
   const fetchCreds = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/voice/token', { credentials: 'include' })
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '')
-        throw new Error(
-          res.status === 401
-            ? 'sign in first'
-            : res.status === 503
-              ? 'voice agent not configured on the gateway'
-              : `gateway returned ${res.status}: ${txt.slice(0, 120)}`,
-        )
-      }
-      const body = await res.json()
-      const data = body.data || body
+      const data = await voiceService.getToken()
       if (!data?.token || !data?.url) {
         throw new Error('gateway returned no token')
       }
@@ -60,7 +52,11 @@ export default function VoiceAgentPanel({ open, onClose }) {
         sessionMaxSeconds: data.session_max_seconds || 1800,
       })
     } catch (e) {
-      setError(e.message || String(e))
+      if (e?._status === 503) {
+        setError('voice agent not configured on the gateway')
+      } else {
+        setError(parseApiError(e, 'voice agent is unavailable'))
+      }
     } finally {
       setLoading(false)
     }
