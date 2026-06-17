@@ -168,18 +168,25 @@ async def validate_api_key(request: Request) -> Any:
 
 @router.delete("/api-keys/{key_id}", tags=["API Keys"])
 async def revoke_api_key(key_id: str, request: Request) -> Any:
-    """Proxy → API service revoke key. Publishes key_revoked SSE event.
+    """Proxy → API service revoke key.
 
-    Security operators need real-time visibility into key revocations
-    because the tenant's threat surface just changed — a revoked
-    virtual key may be in active use by an exiting employee or
-    compromised agent.
+    Two follow-up side-effects on a successful revoke:
+
+    1. SSE ``key_revoked`` event — security operators need real-time
+       visibility into revocations because the tenant's threat surface
+       just changed (exiting employee, compromised agent).
+    2. ``acp:apikey:revoked`` Redis set update — the gateway's api-key
+       auth cache (``acp:apikey:valid:<sha256>``, 60s TTL) cannot keep
+       a revoked key alive until the next cache miss; the auth path
+       SISMEMBER-checks this set on every request (see
+       ``services/gateway/_mw_auth.py::_validate_api_key_cached``).
     """
     resp = await request.app.state.client.delete(
         f"{_api_base()}/api-keys/{key_id}",
         headers=internal_headers(request),
     )
-    if resp.status_code in (200, 204):
+    if 200 <= resp.status_code < 300:
+        # 1. SSE fan-out for the Live Feed.
         try:
             tenant_id_str = (
                 getattr(request.state, "tenant_id", None)
@@ -199,5 +206,17 @@ async def revoke_api_key(key_id: str, request: Request) -> Any:
                     },
                 )
         except Exception:
+            pass
+        # 2. Cache-invalidation index for the api-key auth path.
+        try:
+            redis = getattr(request.app.state, "redis", None)
+            if redis is not None:
+                await redis.sadd("acp:apikey:revoked", str(key_id))
+        except Exception:
+            # If the index update fails the api-svc has still flipped
+            # is_active=False — on the next cache miss the api-svc
+            # filter at services/api/repository/api_key.py::get_by_hash
+            # will return None and the gateway will 401. The window is
+            # bounded by the 60-second cache TTL even without the index.
             pass
     return passthrough(resp)
