@@ -174,25 +174,29 @@ function App() {
     [],
   );
 
-  const addToast = useCallback((message, type = 'info') => {
+  const addToast = useCallback((message, type = 'info', options = {}) => {
     // crypto.randomUUID() (or a fallback) avoids Date.now() collisions
     // when multiple toasts fire in the same millisecond — colliding IDs
     // make React drop one or both via the duplicate-key bail-out.
     const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const ttl = typeof options.ttl === 'number' ? options.ttl : 5000;
     setToasts((prev) => {
       // De-dupe identical error messages within the current window so a
       // poll loop hitting a transient 5xx doesn't paint 50 copies of the
       // same error. Identical-text toast resets the dismissal timer
-      // rather than stacking.
-      const sameText = prev.findIndex(
-        (t) => t.message === message && t.type === type,
-      );
-      if (sameText >= 0) return prev;
-      return [...prev, { id, message, type }];
+      // rather than stacking. Actionable toasts (carrying an `action`)
+      // bypass the de-dupe — operators need to see each escalation.
+      if (!options.action) {
+        const sameText = prev.findIndex(
+          (t) => t.message === message && t.type === type,
+        );
+        if (sameText >= 0) return prev;
+      }
+      return [...prev, { id, message, type, ttl, action: options.action }];
     });
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5000);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), ttl);
   }, []);
 
   const removeToast = useCallback(
@@ -411,7 +415,13 @@ function App() {
         >
           {toasts.map((toast) => (
             <div key={toast.id} className="pointer-events-auto">
-              <Toast message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
+              <Toast
+                message={toast.message}
+                type={toast.type}
+                ttl={toast.ttl}
+                action={toast.action}
+                onClose={() => removeToast(toast.id)}
+              />
             </div>
           ))}
         </div>
