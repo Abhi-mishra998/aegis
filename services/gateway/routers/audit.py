@@ -172,6 +172,17 @@ async def audit_heatmap(request: Request) -> Any:
     return await trust_proxy(settings.AUDIT_SERVICE_URL, "/logs/heatmap", request)
 
 
+# Sprint 16 — pack-enforcement evidence for the /compliance page.
+@router.get("/audit/logs/pack-enforcement", tags=["audit"])
+async def audit_pack_enforcement(request: Request) -> Any:
+    """Proxy → Audit service pack-enforcement rollup. Returns the
+    per-control hit counts for every enabled compliance pack so the
+    /compliance UI can badge each control with real evidence."""
+    qs = request.url.query
+    path = "/logs/pack-enforcement" + (f"?{qs}" if qs else "")
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, path, request)
+
+
 # ── Integrity + per-row endpoints ─────────────────────────────────────────
 
 @router.get("/audit/logs/verify", tags=["audit"])

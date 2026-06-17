@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Shield, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw } from 'lucide-react'
+import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
-import { complianceService } from '../services/api'
+import { auditService, complianceService } from '../services/api'
 
 const FRAMEWORKS = [
   {
@@ -43,6 +44,12 @@ export default function Compliance() {
   const [evidence,    setEvidence]    = useState({})
   const [loading,     setLoading]     = useState({})
   const [error,       setError]       = useState('')
+  // Sprint 16 — Pack enforcement rollup. Pulled from
+  // /audit/logs/pack-enforcement; rendered above the framework PDF
+  // cards so the CISO sees real control-by-control evidence before
+  // they touch the export button.
+  const [packEvidence, setPackEvidence] = useState(null)
+  const [packsLoading, setPacksLoading] = useState(true)
 
   const loadEvidence = async (fw) => {
     setLoading(prev => ({ ...prev, [fw]: true }))
@@ -62,6 +69,22 @@ export default function Compliance() {
   useEffect(() => {
     FRAMEWORKS.forEach(f => loadEvidence(f.id))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sprint 16 — fetch pack enforcement rollup.
+  const loadPackEvidence = React.useCallback(async () => {
+    setPacksLoading(true)
+    try {
+      const resp = await auditService.getPackEnforcement(30)
+      setPackEvidence(resp?.data || resp || null)
+    } catch (err) {
+      // Don't surface the error — pack-enforcement is supplementary
+      // information; the rest of the page must keep working.
+      setPackEvidence(null)
+    } finally {
+      setPacksLoading(false)
+    }
+  }, [])
+  useEffect(() => { loadPackEvidence() }, [loadPackEvidence])
 
   const handleExportPdf = async (fw) => {
     setDownloading(prev => ({ ...prev, [fw]: true }))
@@ -125,6 +148,107 @@ export default function Compliance() {
             <RefreshCw size={12} aria-hidden="true" /> Refresh
           </button>
         </div>
+      </Card>
+
+      {/* Sprint 16 — Pack enforcement evidence. Sits above the PDF
+          cards so the CISO sees real control-by-control numbers before
+          they touch the export button. */}
+      <Card title="Pack Enforcement — last 30 days" icon={ShieldCheck}>
+        {packsLoading ? (
+          <div className="text-xs text-neutral-500 py-6 text-center">
+            <RefreshCw size={14} className="inline animate-spin mr-2" />
+            Loading evidence…
+          </div>
+        ) : (!packEvidence || (packEvidence.packs || []).length === 0) ? (
+          <div className="text-xs text-neutral-500 py-6 text-center space-y-2">
+            <ShieldCheck size={22} className="mx-auto text-neutral-700" />
+            <div>No pack-tagged escalations in the last 30 days.</div>
+            <div className="text-[10px] text-neutral-600 max-w-md mx-auto">
+              Enable one or more Compliance Policy Packs in{' '}
+              <Link to="/settings?tab=policy-packs" className="underline hover:text-white">
+                Settings → Policy packs
+              </Link>{' '}
+              to start producing per-control evidence here.
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="text-[11px] text-neutral-500 leading-snug max-w-2xl">
+              Every row below is a real audit log entry from this workspace.
+              Each control's hit count is the number of times Aegis routed an
+              agent action to an approver because that control would have been
+              violated otherwise. Click a pack row to expand the per-control
+              breakdown.
+            </div>
+            {(packEvidence.packs || []).map((pack) => (
+              <details
+                key={pack.pack_id}
+                className="group rounded-xl border border-white/[0.07] bg-[#0a0a0a] open:bg-white/[0.02]"
+              >
+                <summary className="cursor-pointer list-none p-3 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-md bg-white/[0.05] flex items-center justify-center text-neutral-200">
+                    <Shield size={14} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">{pack.pack_id} Pack</span>
+                      <span className="status-badge text-green-400 bg-green-500/10 border-green-500/20">
+                        {pack.total} escalation{pack.total === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-neutral-500 mt-0.5">
+                      {pack.controls.length} control{pack.controls.length === 1 ? '' : 's'} touched
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-neutral-500 group-open:rotate-90 transition-transform">▶</span>
+                </summary>
+                <div className="p-3 pt-0 space-y-2">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-[10px] uppercase tracking-widest text-neutral-500">
+                        <tr className="text-left border-b border-white/[0.05]">
+                          <th className="py-2 pr-3">Control</th>
+                          <th className="py-2 pr-3 text-right">Hits</th>
+                          <th className="py-2 pr-2">Recent examples</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pack.controls.map((c) => (
+                          <tr key={c.id} className="border-b border-white/[0.04] last:border-b-0 align-top">
+                            <td className="py-2 pr-3">
+                              <span className="inline-flex items-center gap-1 text-[11px] text-neutral-200 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] font-mono">
+                                {c.id}
+                              </span>
+                            </td>
+                            <td className="py-2 pr-3 text-right text-neutral-200 font-mono">{c.hits}</td>
+                            <td className="py-2 pr-2 space-y-1">
+                              {(c.recent || []).map((r, i) => (
+                                <div key={i} className="text-[10px] text-neutral-500 leading-snug">
+                                  <span className="text-neutral-400 font-mono">{r.matched_pattern}</span>
+                                  {' · '}
+                                  <span className="text-neutral-400">{r.approver_role}</span>
+                                  {r.employee_email && (
+                                    <>
+                                      {' · '}
+                                      <span className="text-neutral-600">{r.employee_email}</span>
+                                    </>
+                                  )}
+                                  <div className="text-[10px] text-neutral-700 font-mono">
+                                    {r.ts ? new Date(r.ts).toLocaleString() : '—'}
+                                  </div>
+                                </div>
+                              ))}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
       </Card>
 
       {error && (

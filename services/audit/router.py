@@ -266,6 +266,118 @@ async def risk_top_threats(
     return APIResponse(data=agents)
 
 
+@router.get("/pack-enforcement", response_model=APIResponse[dict])
+async def pack_enforcement(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days: int = Query(30, ge=1, le=90),
+) -> APIResponse[dict]:
+    """Sprint 16 — pack enforcement evidence for the /compliance page.
+
+    Joins llm_proxy_call escalations where ``metadata.policy_pack`` is
+    set (Sprint 23 stamping) and rolls them up by pack + framework
+    control. The CISO can read each control's hit count + 3 recent
+    examples without a CSV export.
+
+    Output shape::
+
+        {
+          "window_days": 30,
+          "packs": [
+            {
+              "pack_id":          "PCI",
+              "total":            47,
+              "controls": [
+                {
+                  "id":     "PCI:3.2",
+                  "hits":   47,
+                  "recent": [
+                    {"ts": "...", "approver_role": "CISO", "matched_pattern": "pci_pan_read", "employee_email": "..."},
+                    …
+                  ]
+                },
+                …
+              ]
+            },
+            …
+          ]
+        }
+    """
+    import datetime as _dt
+    start = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+
+    # Postgres JSONB extraction — metadata_json is JSON not JSONB on
+    # some deployments, so cast for the ->> operator.
+    pack_expr = sa.cast(AuditLog.metadata_json, PG_JSONB)["policy_pack"].astext
+
+    base_q = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= start)
+        .where(AuditLog.decision == "escalate")
+        .where(pack_expr.isnot(None))
+        .where(pack_expr != "")
+        .order_by(AuditLog.timestamp.desc())
+        .limit(2000)
+    )
+    rows = (await db.execute(base_q)).scalars().all()
+
+    # Aggregate in Python — at 2000 rows max this stays cheap and
+    # avoids juggling JSONB array unnest in SQL.
+    import json as _json
+    by_pack: dict[str, dict] = {}
+    for r in rows:
+        meta = r.metadata_json
+        if isinstance(meta, str):
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        if not isinstance(meta, dict):
+            continue
+        pid = (meta.get("policy_pack") or "").strip()
+        if not pid:
+            continue
+        controls = meta.get("framework_controls") or []
+        if not isinstance(controls, list):
+            controls = []
+        pack_entry = by_pack.setdefault(pid, {"total": 0, "controls": {}})
+        pack_entry["total"] += 1
+        example = {
+            "ts":               r.timestamp.isoformat() if r.timestamp else "",
+            "approver_role":    meta.get("approver_role") or "",
+            "matched_pattern":  meta.get("matched_pattern") or "",
+            "employee_email":   meta.get("employee_email") or "",
+        }
+        for cid in controls:
+            cid_s = str(cid).strip()
+            if not cid_s:
+                continue
+            ctrl = pack_entry["controls"].setdefault(
+                cid_s, {"hits": 0, "recent": []},
+            )
+            ctrl["hits"] += 1
+            if len(ctrl["recent"]) < 3:
+                ctrl["recent"].append(example)
+
+    out_packs: list[dict] = []
+    for pid, info in by_pack.items():
+        out_packs.append({
+            "pack_id":  pid,
+            "total":    info["total"],
+            "controls": sorted(
+                [
+                    {"id": cid, "hits": v["hits"], "recent": v["recent"]}
+                    for cid, v in info["controls"].items()
+                ],
+                key=lambda c: (-c["hits"], c["id"]),
+            ),
+        })
+    out_packs.sort(key=lambda p: (-p["total"], p["pack_id"]))
+
+    return APIResponse(data={"window_days": days, "packs": out_packs})
+
+
 @router.get("/aggregate", response_model=APIResponse[dict])
 async def aggregate_logs(
     db: Annotated[AsyncSession, Depends(get_db)],
