@@ -44,6 +44,7 @@ Some entry points live in the topbar rather than the sidebar:
 | Identity Graph | `/identity-graph` | G G | identity_graph | [Identity Graph](operations/identity-graph.md) |
 | Threat Graph | `/threat-graph` | G T | gateway (IAG) | [Threat Graph](operations/threat-graph.md) |
 | Autonomy | `/autonomy` | — | autonomy | [Autonomy](operations/autonomy.md) |
+| Approval Inbox | `/approval-inbox` | — | audit + autonomy + gateway (SSE) | [Approval Inbox](operations/approval-inbox.md) |
 | Forensics | `/forensics` | — | forensics | [Forensics](operations/forensics.md) |
 | Playground | `/playground` | — | gateway + decision + registry | [Playground](operations/playground.md) |
 | Live Feed | `/live-feed` | G L | gateway (SSE) + audit | [Live Feed](operations/live-feed.md) |
