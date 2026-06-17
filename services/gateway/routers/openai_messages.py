@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import Any
 
 import httpx
 import structlog
@@ -39,6 +40,7 @@ from services.gateway.client import service_client
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
 from services.gateway import proxy_helpers
+from services.gateway._helpers import publish_event
 from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
@@ -294,6 +296,24 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                 },
                 request_id=approval_id,
             )
+            # Real-time UI feed: mirror messages.py — surface OpenAI-proxy
+            # escalations on the per-tenant SSE channel so /events/stream
+            # consumers update without a poll.
+            try:
+                await publish_event(
+                    redis, tenant_id_str, "llm_proxy_escalate",
+                    {
+                        "approval_id":     approval_id,
+                        "approver_role":   esc_pattern.approver_role,
+                        "matched_pattern": esc_pattern.id,
+                        "policy_pack":     matched_pack_id,
+                        "employee_email":  employee_email,
+                        "model":           model,
+                        "upstream":        "openai",
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
             slack_url, slack_secret = await proxy_helpers.fetch_tenant_slack_config(
                 request, tenant_id_str,
             )
@@ -356,6 +376,27 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                 )
         except httpx.HTTPError as exc:
             logger.error("openai_upstream_failed", error=str(exc))
+            # Surface transport failures on the LiveFeed too — operators
+            # need to see OpenAI-unreachable bursts the same way they see
+            # throttle bursts. Best-effort; never blocks the 502.
+            try:
+                await publish_event(
+                    redis, tenant_id_str, "llm_proxy_call",
+                    {
+                        "decision":       "rejected",
+                        "status_code":    502,
+                        "model":          model,
+                        "employee_email": employee_email,
+                        "input_tokens":   0,
+                        "output_tokens":  0,
+                        "cost_usd":       0.0,
+                        "latency_ms":     int((time.monotonic() - t0) * 1000),
+                        "reject_reason":  "client_aborted",
+                        "upstream":       "openai",
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"OpenAI upstream unreachable: {type(exc).__name__}",
@@ -401,6 +442,51 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("openai_proxy_audit_failed", error=str(exc))
+
+        # Real-time UI feed — same channel as the Claude proxy so the
+        # Dashboard ticker fires regardless of upstream provider.
+        #
+        # Decision tags mirror messages.py:
+        #   - "allow"    → 2xx success
+        #   - "rejected" → 401/403/429 (upstream key dead, operator
+        #                  block, OpenAI rate-limit). Operators want
+        #                  this on the LiveFeed during a throttle burst.
+        #   - "error"    → 5xx / anything else
+        _status_code = upstream_resp.status_code
+        if 200 <= _status_code < 300:
+            _sse_decision: str = "allow"
+            _reject_reason: str | None = None
+        elif _status_code == 401:
+            _sse_decision = "rejected"
+            _reject_reason = "upstream_401"
+        elif _status_code == 403:
+            _sse_decision = "rejected"
+            _reject_reason = "upstream_403"
+        elif _status_code == 429:
+            _sse_decision = "rejected"
+            _reject_reason = "upstream_429"
+        else:
+            _sse_decision = "error"
+            _reject_reason = None
+        _sse_payload: dict[str, Any] = {
+            "decision":        _sse_decision,
+            "model":           model,
+            "employee_email":  employee_email,
+            "input_tokens":    usage_input,
+            "output_tokens":   usage_output,
+            "cost_usd":        call_cost,
+            "status_code":     _status_code,
+            "latency_ms":      int(latency_ms),
+            "upstream":        "openai",
+        }
+        if _reject_reason is not None:
+            _sse_payload["reject_reason"] = _reject_reason
+        try:
+            await publish_event(
+                redis, tenant_id_str, "llm_proxy_call", _sse_payload,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 9. passthrough
         return Response(
