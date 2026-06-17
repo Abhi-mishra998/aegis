@@ -12,4 +12,11 @@ Auth is by long-lived Aegis API key (see services/api/router/api_key.py).
 The server forwards every tool call through the live gateway, so the
 same multi-tenant guardrails (rate limits, JWT scope, policy enforce,
 audit logging) apply automatically.
+
+MCP Server — library module, NOT an HTTP service.
+
+This package is imported by other services and run via `python -m
+services.mcp_server` as a stdio MCP server. It does not run an HTTP
+server, has no Dockerfile, and is not started by docker-compose. Do
+not add `main.py` here.
 """
