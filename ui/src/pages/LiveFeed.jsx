@@ -22,6 +22,16 @@ const EVENT_META = {
 const ALL_TYPES = Object.keys(EVENT_META)
 const MAX_EVENTS = 200
 
+// Types listed under each scope must exist in EVENT_META above — anything
+// else gets silently dropped by the visibility filter.
+const SCOPES = {
+  all:      { label: 'All',              types: ALL_TYPES },
+  decisions:{ label: 'Decisions',        types: ['policy_decision', 'tool_executed'] },
+  risk:     { label: 'Risk',             types: ['risk_updated', 'behavior_flagged'] },
+  security: { label: 'Security Signals', types: ['alert', 'kill_switch'] },
+  system:   { label: 'System',           types: ['agent_changed', 'insight_generated'] },
+}
+
 function timeAgo(ts) {
   const diff = Date.now() - ts
   if (diff < 60_000) return `${Math.floor(diff / 1000)}s`
@@ -112,6 +122,7 @@ export default function LiveFeed() {
   const [events, setEvents] = useState([])
   const [paused, setPaused] = useState(false)
   const [filterTypes, setFilterTypes] = useState(new Set())
+  const [scope, setScope] = useState('all')
   const [backfillLoading, setBackfillLoading] = useState(true)
   const pausedRef = useRef(false)
 
@@ -210,9 +221,13 @@ export default function LiveFeed() {
     agentId: selectedAgentId || undefined,
   })
 
-  const visible = filterTypes.size > 0
-    ? events.filter((e) => filterTypes.has(e.type))
-    : events
+  const scopeTypes = SCOPES[scope]?.types || ALL_TYPES
+  const scopeSet   = useMemo(() => new Set(scopeTypes), [scopeTypes])
+  const visible = events.filter((e) => {
+    if (!scopeSet.has(e.type)) return false
+    if (filterTypes.size > 0 && !filterTypes.has(e.type)) return false
+    return true
+  })
 
   const toggleFilter = (type) => {
     setFilterTypes((prev) => {
@@ -305,7 +320,36 @@ export default function LiveFeed() {
         })}
       </div>
 
-      {/* Filters */}
+      {/* Scope — coarse perspective. Replaces the dedicated Observability
+          + SecurityDashboard pages, which showed these views with different framing. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] uppercase tracking-widest text-neutral-600 mr-1">Scope:</span>
+        {Object.entries(SCOPES).map(([id, def]) => {
+          const active = scope === id
+          return (
+            <button
+              key={id}
+              onClick={() => {
+                if (active) return
+                setScope(id)
+                // Drop per-type chips that fall outside the new scope so the
+                // filter strip doesn't lie about what's visible.
+                setFilterTypes((prev) => {
+                  if (prev.size === 0) return prev
+                  const allowed = new Set(def.types)
+                  const next = new Set([...prev].filter((t) => allowed.has(t)))
+                  return next.size === prev.size ? prev : next
+                })
+              }}
+              className={`text-[10px] px-2.5 py-1 rounded-lg border transition-all ${active ? 'border-white/20 bg-white/[0.07] text-white' : 'border-[var(--border-subtle)] text-neutral-500 hover:text-white'}`}
+            >
+              {def.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Per-type filter chips, restricted to the active scope. */}
       <div className="flex items-center gap-2 flex-wrap">
         <Filter size={12} className="text-neutral-600" aria-hidden="true" />
         <button
@@ -314,7 +358,7 @@ export default function LiveFeed() {
         >
           All types
         </button>
-        {ALL_TYPES.map((t) => {
+        {scopeTypes.map((t) => {
           const meta = EVENT_META[t]
           const active = filterTypes.has(t)
           return (

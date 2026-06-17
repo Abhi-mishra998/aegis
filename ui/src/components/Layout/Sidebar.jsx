@@ -35,7 +35,6 @@ const primaryNav = [
 const advancedNav = [
   { path: '/audit-logs',        label: 'Audit Logs',       icon: BarChart2 },
   { path: '/forensics',         label: 'Forensics',        icon: FileText  },
-  { path: '/observability',     label: 'Observability',    icon: Radio     },
   { path: '/playground',        label: 'Agent Playground', icon: Terminal  },
   { path: '/threat-intel',      label: 'Threat Intel',     icon: Crosshair },
   { path: '/evaluation',        label: 'Evaluation',       icon: Beaker    },

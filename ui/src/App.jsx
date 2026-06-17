@@ -26,11 +26,9 @@ import KillSwitch from './pages/KillSwitch';
 import Forensics from './pages/Forensics';
 import AuditLogs from './pages/AuditLogs';
 import Billing from './pages/Billing';
-import SecurityDashboard from './pages/SecurityDashboard';
 import RiskEngine from './pages/RiskEngine';
 import AgentPlayground from './pages/AgentPlayground';
 import DeveloperPanel from './pages/DeveloperPanel';
-import Observability from './pages/Observability';
 import SystemHealth from './pages/SystemHealth';
 import IdentityGraph from './pages/IdentityGraph';
 import FlightRecorder from './pages/FlightRecorder';
@@ -303,9 +301,12 @@ function App() {
 
               {/* Admin / surfaced via Settings hub (hidden from sidebar) */}
               <Route path="/rbac"            element={<ProtectedRoute><RBAC /></ProtectedRoute>} />
-              <Route path="/security"        element={<ProtectedRoute><SecurityDashboard /></ProtectedRoute>} />
+              {/* Observability + SecurityDashboard consolidated into LiveFeed
+                  scope filter. External bookmarks / command palette entries
+                  redirect so deep links keep working. */}
+              <Route path="/security"        element={<Navigate to="/live-feed" replace />} />
+              <Route path="/observability"   element={<Navigate to="/live-feed" replace />} />
               <Route path="/system-health"   element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
-              <Route path="/observability"   element={<ProtectedRoute><Observability /></ProtectedRoute>} />
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />
               <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
               <Route path="/risk"            element={<ProtectedRoute><RiskEngine /></ProtectedRoute>} />
