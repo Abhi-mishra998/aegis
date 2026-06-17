@@ -887,6 +887,45 @@ export const notificationService = {
   getCount:    ()            => request('/notifications/count'),
 };
 
+// U10 — Sidebar pending-approval badge.
+//
+// Mirrors the queue logic in pages/ApprovalInbox.jsx: pull `decision=escalate`
+// audit rows in the window, subtract request_ids already actioned in
+// human_override_events, count the remainder. No `/dashboard/overview`
+// endpoint exists, so we reuse the two endpoints ApprovalInbox already hits.
+// Returns { unread: N } so the Sidebar caller can accept either
+// `res.unread` or `res.data.unread` via `(res?.data?.unread ?? res?.unread ?? 0)`,
+// the same shape notificationService.getCount produces server-side.
+export const approvalService = {
+  getPendingCount: async () => {
+    try {
+      const escResp = await auditService.searchLogs({ decision: 'escalate', limit: 200 });
+      const escData = escResp?.data ?? escResp;
+      const escItems = Array.isArray(escData) ? escData : (escData?.items || []);
+
+      const ovrResp = await autonomyService.listOverrides({ minutes: 43200, limit: 500 });
+      const ovrData = ovrResp?.data ?? ovrResp;
+      const ovrItems = Array.isArray(ovrData) ? ovrData : [];
+
+      const resolved = new Set();
+      for (const o of ovrItems) {
+        if (!o?.request_id) continue;
+        if (o.event_type === 'approval' || o.event_type === 'override') {
+          resolved.add(o.request_id);
+        }
+      }
+
+      let pending = 0;
+      for (const r of escItems) {
+        if (r?.request_id && !resolved.has(r.request_id)) pending += 1;
+      }
+      return { unread: pending };
+    } catch {
+      return { unread: 0 };
+    }
+  },
+};
+
 export const ssoService = {
   getConfig:    ()     => request('/auth/sso/config'),
   saveConfig:   (data) => request('/auth/sso/config', { method: 'POST', body: JSON.stringify(data) }),

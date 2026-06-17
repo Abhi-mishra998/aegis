@@ -9,7 +9,7 @@ import {
   Workflow, MessagesSquare, Gauge, HeartPulse, DollarSign, Share2,
   Beaker, EyeOff, Inbox,
 } from 'lucide-react'
-import { authService, notificationService } from '../../services/api'
+import { approvalService, authService, notificationService } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
 import { useRole } from '../../hooks/useRole'
 import AgentScopePicker from './AgentScopePicker'
@@ -67,6 +67,7 @@ export default function Sidebar({ isOpen, onClose }) {
   const { isAdmin, canViewKillSwitch } = useRole()
   const navRef    = useRef(null)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [pendingApprovals, setPendingApprovals] = useState(0)
 
   const fetchUnread = useCallback(async () => {
     if (!isAuthenticated) return
@@ -76,11 +77,25 @@ export default function Sidebar({ isOpen, onClose }) {
     } catch {}
   }, [isAuthenticated])
 
+  const fetchPendingApprovals = useCallback(async () => {
+    if (!isAuthenticated) return
+    try {
+      const res = await approvalService.getPendingCount()
+      setPendingApprovals((res?.data?.unread ?? res?.unread ?? 0))
+    } catch {}
+  }, [isAuthenticated])
+
   useEffect(() => {
     fetchUnread()
     const id = setInterval(fetchUnread, 60_000)
     return () => clearInterval(id)
   }, [fetchUnread])
+
+  useEffect(() => {
+    fetchPendingApprovals()
+    const id = setInterval(fetchPendingApprovals, 30_000)
+    return () => clearInterval(id)
+  }, [fetchPendingApprovals])
 
   const advancedActive = advancedNav.some((i) => location.pathname.startsWith(i.path))
   const [advancedOpen, setAdvancedOpen] = useState(advancedActive)
@@ -105,28 +120,39 @@ export default function Sidebar({ isOpen, onClose }) {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  const renderItem = (item) => (
-    <NavLink
-      key={item.path}
-      to={item.path}
-      onClick={onClose}
-      className={({ isActive }) =>
-        'group flex items-center gap-3 px-3 py-2 rounded-md text-xs transition-colors ' +
-        (isActive
-          ? 'bg-white/[0.07] text-white border border-white/[0.07]'
-          : 'text-neutral-400 hover:text-white hover:bg-white/[0.03]') +
-        (item.danger ? ' hover:border-red-500/40' : '')
-      }
-    >
-      <item.icon size={14} aria-hidden="true" />
-      <span className="flex-1 truncate">{item.label}</span>
-      {item.hint && (
-        <kbd className="text-[9px] uppercase tracking-widest text-neutral-600 font-mono">
-          {item.hint}
-        </kbd>
-      )}
-    </NavLink>
-  )
+  const renderItem = (item) => {
+    const showApprovalBadge = item.path === '/approval-inbox' && pendingApprovals > 0
+    return (
+      <NavLink
+        key={item.path}
+        to={item.path}
+        onClick={onClose}
+        className={({ isActive }) =>
+          'group flex items-center gap-3 px-3 py-2 rounded-md text-xs transition-colors ' +
+          (isActive
+            ? 'bg-white/[0.07] text-white border border-white/[0.07]'
+            : 'text-neutral-400 hover:text-white hover:bg-white/[0.03]') +
+          (item.danger ? ' hover:border-red-500/40' : '')
+        }
+      >
+        <item.icon size={14} aria-hidden="true" />
+        <span className="flex-1 truncate">{item.label}</span>
+        {showApprovalBadge && (
+          <span
+            className="bg-amber-500 text-black text-[9px] font-bold rounded-full px-1.5 py-0.5"
+            aria-label={`${pendingApprovals} pending approvals`}
+          >
+            {pendingApprovals > 9 ? '9+' : pendingApprovals}
+          </span>
+        )}
+        {item.hint && (
+          <kbd className="text-[9px] uppercase tracking-widest text-neutral-600 font-mono">
+            {item.hint}
+          </kbd>
+        )}
+      </NavLink>
+    )
+  }
 
   return (
     <aside
