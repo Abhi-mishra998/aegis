@@ -240,13 +240,25 @@ async def get_agent(agent_id: str, request: Request) -> Any:
 
 @router.patch("/agents/{agent_id}", tags=["agents"])
 async def update_agent(agent_id: str, request: Request) -> Any:
-    """Proxy → Registry update agent."""
+    """Proxy → Registry update agent. Publishes ``agent_changed`` SSE event."""
     body = await request.json()
     resp = await request.app.state.client.patch(
         f"{_base()}/agents/{agent_id}",
         json=body,
         headers=internal_headers(request),
     )
+    # Fan out an agent_changed event so the Fleet UI + LiveFeed reflect
+    # the mutation in real time. Only emit on success to avoid lying
+    # about a PATCH that the registry rejected.
+    if resp.status_code in (200, 204):
+        tenant_id_str = request.headers.get("X-Tenant-ID", "")
+        if tenant_id_str:
+            changed_fields = sorted(body.keys()) if isinstance(body, dict) else []
+            await publish_event(
+                _redis, tenant_id_str, "agent_changed",
+                {"agent_id": agent_id, "changed_fields": changed_fields},
+                agent_id=agent_id,
+            )
     return passthrough(resp)
 
 
