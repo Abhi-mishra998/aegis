@@ -21,9 +21,11 @@ route:
     # similar integrity failures where the prom rule sets `severity: page`
     # with for:0m. Must hit a real pager. Reuses the `critical` receiver
     # today (Slack #aegis-critical + PagerDuty) so the alert is never lost
-    # in the void. Coordinator will wire a dedicated PagerDuty service.
-    # TODO: switch to pagerduty_configs with a dedicated routing key for
-    # severity=page (separate escalation policy from severity=critical).
+    # in the void. repeat_interval kept short so the page keeps firing
+    # until acknowledged.
+    # TODO: switch to dedicated pagerduty_configs / routing key, populated
+    # operator-side via /etc/alertmanager/pagerduty_routing_key, with a
+    # separate escalation policy from severity=critical.
     - matchers:
         - severity = "page"
       receiver: critical
