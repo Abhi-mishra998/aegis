@@ -30,18 +30,31 @@ const SiemSettings     = lazy(() => import('./SiemSettings'));
 const ScheduledReports = lazy(() => import('./ScheduledReports'));
 const QuotaManagement  = lazy(() => import('./QuotaManagement'));
 
+// Visual grouping only — the `?tab=<id>` URL contract is unchanged.
+const GROUP = {
+  IDENTITY:     'identity',
+  INTEGRATIONS: 'integrations',
+  WORKSPACE:    'workspace',
+};
+const GROUP_LABELS = {
+  [GROUP.IDENTITY]:     'Access & Identity',
+  [GROUP.INTEGRATIONS]: 'Integrations',
+  [GROUP.WORKSPACE]:    'Workspace',
+};
+const GROUP_ORDER = [GROUP.IDENTITY, GROUP.INTEGRATIONS, GROUP.WORKSPACE];
+
 const TABS = [
-  { id: 'system-values', label: 'System Values',   icon: DollarSign,     Component: SystemValuesTab },
-  { id: 'team',          label: 'Team',            icon: Users,          Component: UserManagement },
-  { id: 'roles',         label: 'Roles',           icon: SettingsIcon,   Component: RBAC },
-  { id: 'sso',           label: 'SSO',             icon: Key,            Component: SsoSettings },
-  { id: 'api-keys',      label: 'API Keys',        icon: Code2,          Component: DeveloperPanel },
-  { id: 'webhooks',      label: 'Webhooks',        icon: Webhook,        Component: WebhookSettings },
-  { id: 'slack',         label: 'Slack approvals', icon: MessagesSquare, Component: SlackApprovalsTab },
-  { id: 'policy-packs',  label: 'Policy packs',    icon: ShieldCheck,    Component: PolicyPacksTab },
-  { id: 'siem',          label: 'SIEM',            icon: Database,       Component: SiemSettings },
-  { id: 'reports',       label: 'Reports',         icon: Calendar,       Component: ScheduledReports },
-  { id: 'quota',         label: 'Quota',           icon: Gauge,          Component: QuotaManagement },
+  { id: 'team',          label: 'Team',            icon: Users,          Component: UserManagement,   group: GROUP.IDENTITY },
+  { id: 'roles',         label: 'Roles',           icon: SettingsIcon,   Component: RBAC,             group: GROUP.IDENTITY },
+  { id: 'sso',           label: 'SSO',             icon: Key,            Component: SsoSettings,      group: GROUP.IDENTITY },
+  { id: 'api-keys',      label: 'API Keys',        icon: Code2,          Component: DeveloperPanel,   group: GROUP.IDENTITY },
+  { id: 'siem',          label: 'SIEM',            icon: Database,       Component: SiemSettings,     group: GROUP.INTEGRATIONS },
+  { id: 'webhooks',      label: 'Webhooks',        icon: Webhook,        Component: WebhookSettings,  group: GROUP.INTEGRATIONS },
+  { id: 'slack',         label: 'Slack approvals', icon: MessagesSquare, Component: SlackApprovalsTab, group: GROUP.INTEGRATIONS },
+  { id: 'system-values', label: 'System Values',   icon: DollarSign,     Component: SystemValuesTab,  group: GROUP.WORKSPACE },
+  { id: 'policy-packs',  label: 'Policy packs',    icon: ShieldCheck,    Component: PolicyPacksTab,   group: GROUP.WORKSPACE },
+  { id: 'quota',         label: 'Quota',           icon: Gauge,          Component: QuotaManagement,  group: GROUP.WORKSPACE },
+  { id: 'reports',       label: 'Reports',         icon: Calendar,       Component: ScheduledReports, group: GROUP.WORKSPACE },
 ];
 const DEFAULT_TAB_ID = TABS[0].id;
 const VALID_TAB_IDS = new Set(TABS.map((t) => t.id));
@@ -77,37 +90,57 @@ export default function Settings() {
     return tab.Component;
   }, [activeTab]);
 
+  const renderTabButton = ({ id, label, icon: Icon }) => {
+    const isActive = id === activeTab;
+    return (
+      <button
+        key={id}
+        role="tab"
+        aria-selected={isActive}
+        onClick={() => handleTabClick(id)}
+        className={
+          'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
+          (isActive
+            ? 'bg-white/[0.08] text-white border border-white/[0.1] border-b-transparent -mb-px'
+            : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]')
+        }
+      >
+        <Icon size={13} aria-hidden="true" />
+        {label}
+      </button>
+    );
+  };
+
+  const sections = GROUP_ORDER.map((g) => ({
+    key: g,
+    label: GROUP_LABELS[g],
+    tabs: TABS.filter((t) => t.group === g),
+  }));
+
   return (
     <div className="space-y-5">
       <div className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight text-white">Settings</h1>
         <p className="text-xs text-neutral-400">
-          System Values · Team · Roles · SSO · API Keys · Webhooks · SIEM · Reports · Quota
+          Access &amp; Identity · Integrations · Workspace
         </p>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto pb-1 border-b border-white/[0.06]" role="tablist">
-        {TABS.map(({ id, label, icon: Icon }) => {
-          const isActive = id === activeTab;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => handleTabClick(id)}
-              className={
-                'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
-                (isActive
-                  ? 'bg-white/[0.08] text-white border border-white/[0.1] border-b-transparent -mb-px'
-                  : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]')
-              }
-            >
-              <Icon size={13} aria-hidden="true" />
+      <div
+        className="flex flex-wrap items-end gap-x-4 gap-y-2 pb-1 border-b border-white/[0.06]"
+        role="tablist"
+        aria-label="Settings sections"
+      >
+        {sections.map(({ key, label, tabs }) => (
+          <div key={key} className="flex flex-col gap-0.5">
+            <div className="text-[10px] uppercase tracking-wider text-neutral-500 px-1">
               {label}
-            </button>
-          );
-        })}
+            </div>
+            <div className="flex gap-1" role="group" aria-label={label}>
+              {tabs.map(renderTabButton)}
+            </div>
+          </div>
+        ))}
       </div>
 
       <TabErrorBoundary tabId={activeTab}>
