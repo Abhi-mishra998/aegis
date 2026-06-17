@@ -125,6 +125,65 @@ delta vs baseline:
 30-day rollup is live, not cached. Visible in the Aegis UI immediately
 post-run.
 
+### I. SSE `approval_resolved` on operator approve/reject &nbsp; ⏳ PENDING coordinator verification
+```
+Trigger:  POST /v1/messages with WIRE_PROMPT → 202 (approval_id captured)
+          POST /autonomy/overrides {event_type:"approval", target_id:approval_id}
+Listen:   /events/stream filter type=="approval_resolved", match.approval_id == captured id
+Expect:   event arrives within 5 s of the override POST
+Result:   PENDING coordinator verification — to be run on prod-ha after merging all 13 units
+Harness:  scripts/ops/live_feed_v2_proof.py — scenario A
+```
+**Why this matters**: the Approval Inbox and the Dashboard "Live · N
+events" ticker need to update the second a CFO/CISO/SRE_LEAD clicks
+Approve or Reject. Until this round, the only signal an operator UI had
+was a poll of `/autonomy/overrides` or `/audit/logs/search?decision=escalate`
+— which had to wait the next polling interval. With `approval_resolved`,
+the inbox row clears, the dashboard tick increments, and any other
+operator who had the row open sees it disappear, all within the SSE
+fan-out latency (sub-second on the per-tenant Redis channel).
+
+Worker U13 (this unit) cannot deploy to prod-ha. The harness is checked
+in at `scripts/ops/live_feed_v2_proof.py` so the coordinator can run it
+once the publish-site unit lands and the gateway is redeployed.
+
+### J. SSE `policy_decision` on /execute deny chokepoint &nbsp; ⏳ PENDING coordinator verification
+```
+Trigger:  POST /execute {tool:"kubectl", verb:"delete", namespace:"prod"}
+Listen:   /events/stream filter type=="policy_decision", match.decision == "deny"
+Expect:   event arrives within 5 s of the /execute POST
+Result:   PENDING coordinator verification — to be run on prod-ha after merging all 13 units
+Harness:  scripts/ops/live_feed_v2_proof.py — scenario B
+```
+Companion to the allow-path `tool_executed` SSE publish in
+`services/gateway/main.py` (lines ~1308-1325). The publish site landed
+in commit `a54129d` — `services/gateway/middleware.py` adds a
+best-effort `publish_event(... "policy_decision" ...)` at the
+deny/kill/escalate chokepoint, mirroring the same fields the audit row
+already carries: `decision`, `request_id`, `agent_id`, `tool`, `risk`,
+`findings[:5]`, `reasons[:5]`, `policy_id`. The Live Feed UI now shows
+blocked invocations in real time, not just allowed ones — closing the
+"silent deny" gap where operators only saw allow-path traffic.
+
+### K. SSE `key_revoked` on DELETE /api-keys/{id} &nbsp; ⏳ PENDING coordinator verification
+```
+Trigger:  POST /api-keys/employees → captures key_id
+          DELETE /api-keys/{key_id}
+Listen:   /events/stream filter type=="key_revoked", match.key_id == captured id
+Expect:   event arrives within 5 s of the DELETE
+Result:   PENDING coordinator verification — to be run on prod-ha after merging all 13 units
+Harness:  scripts/ops/live_feed_v2_proof.py — scenario C
+```
+Security operators need real-time visibility into key revocations
+because the tenant's threat surface just changed — a revoked virtual key
+may belong to an exiting employee or a compromised agent. The publish
+site landed in commit `be041eb` — `services/gateway/routers/users.py`
+emits `publish_event(... "key_revoked" {key_id, revoker_email,
+subject_kind, revoked_at})` whenever the DELETE proxy succeeds
+(`status_code in (200, 204)`). The Live Feed now shows the revocation
+the moment it lands, so a second operator watching the dashboard sees
+the surface shrink without needing to refresh.
+
 ## Latency table
 
 | path | p50 | p95 | p99 | notes |
@@ -144,6 +203,9 @@ post-run.
 | Slack webhook (if tenant configured `slack_webhook_url`) | `proxy_helpers.post_slack_card` with HMAC | n/a — this tenant did not have Slack configured |
 | Approval Inbox UI row | reads `/audit/logs/search?decision=escalate` | ✅ row present (1 row in scenario E) |
 | Browser bell badge | `NotificationCenter.jsx` polls + listens to SSE | will tick on the new `llm_proxy_escalate` event |
+| Operator approve/reject | SSE `approval_resolved` to per-tenant channel | ⏳ pending coordinator verification (scenario I) |
+| /execute deny chokepoint | SSE `policy_decision` (decision=deny) | ⏳ pending coordinator verification (scenario J) |
+| Virtual-key revocation | SSE `key_revoked` to per-tenant channel | ⏳ pending coordinator verification (scenario K) |
 
 ## What works (end-to-end, verified live)
 
@@ -225,6 +287,33 @@ Every prompt fired → matching SSE event delivered to the subscriber in
 1–2 seconds, with the right decision pill + matched pattern. That's what
 the operator now sees in `/live-feed`.
 
+## Live Feed v2 proof — three new event types (pending)
+
+Three new SSE event types ship this round: `approval_resolved`,
+`policy_decision` (decision=deny), and `key_revoked`. The companion
+harness lives at `scripts/ops/live_feed_v2_proof.py`. It mints a fresh
+Clerk JWT + virtual keys per scenario, opens a subscriber to
+`/events/stream`, fires each trigger, and asserts the matching event
+arrives within 8 seconds. Cleans up the key at the end.
+
+```bash
+python3 scripts/ops/live_feed_v2_proof.py
+```
+
+Expected output once the coordinator deploys to prod-ha:
+
+```
+  [PASS] A approval_resolved  latency=<n>s
+  [PASS] B policy_decision deny  latency=<n>s
+  [PASS] C key_revoked  latency=<n>s
+  === 3/3 scenarios PASS ===
+```
+
+Worker U13 cannot deploy to prod-ha, so scenarios I/J/K are marked
+`⏳ PENDING coordinator verification` above. The coordinator will run
+`live_feed_v2_proof.py` after merging all 13 units and the next ASG
+refresh.
+
 ## Reproduce this run
 
 ```bash
@@ -232,6 +321,7 @@ the operator now sees in `/live-feed`.
 # 2. Set UPSTREAM_ANTHROPIC_KEY in SSM at /aegis-prodha/anthropic/upstream-key
 # 3. Run:
 python3 /tmp/live_prodha_test.py        # results → /tmp/live_prodha_test.json
+python3 scripts/ops/live_feed_v2_proof.py   # three new SSE event types
 ```
 
 Script lives at `/tmp/live_prodha_test.py`. It mints the employee key,
