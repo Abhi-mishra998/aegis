@@ -350,22 +350,33 @@ async def refresh_iag_from_audit(
     # Pull recent audit rows via the search endpoint.
     from services.gateway._helpers import internal_headers
     headers = internal_headers(request)
+    # Audit /search caps limit at 100; page through up to 10 pages so
+    # we cover the last ~1000 rows of tool activity. The IAG cache is
+    # then rebuilt from this snapshot.
     rows: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.post(
-                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
-                json={"limit": 500},
-                headers=headers,
-            )
-        if r.status_code != 200:
-            raise HTTPException(
-                status_code=502,
-                detail=f"audit search failed: HTTP {r.status_code}",
-            )
-        body = r.json() or {}
-        data = body.get("data") or {}
-        rows = data.get("items") or []
+            for page in range(10):
+                r = await client.post(
+                    f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
+                    json={"limit": 100, "offset": page * 100},
+                    headers=headers,
+                )
+                if r.status_code != 200:
+                    if page == 0:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"audit search failed: HTTP {r.status_code}",
+                        )
+                    break
+                body = r.json() or {}
+                data = body.get("data") or {}
+                page_rows = data.get("items") or []
+                if not page_rows:
+                    break
+                rows.extend(page_rows)
+                if len(page_rows) < 100:
+                    break
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"audit unreachable: {exc!r}") from exc
 
@@ -437,10 +448,12 @@ async def _touched_tools_for_agent(
     """
     from services.gateway._helpers import internal_headers
     try:
+        # Audit caps limit at 100; the recent surface for one agent fits
+        # easily in a single page for any realistic tenant.
         async with httpx.AsyncClient(timeout=6.0) as client:
             r = await client.post(
                 f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
-                json={"search": agent_id, "limit": 200},
+                json={"agent_id": agent_id, "limit": 100},
                 headers=internal_headers(request),
             )
         if r.status_code != 200:
