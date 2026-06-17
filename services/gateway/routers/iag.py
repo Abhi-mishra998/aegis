@@ -277,13 +277,187 @@ async def get_mitre_coverage(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Synthesise the IAG cache from real audit-log activity.
+#
+# The Sprint 5 ingestion framework (services/security/iag/ingestion.py)
+# expected a Postgres adapter wired to `acp_identity.user_roles` plus a
+# scheduled job — neither was deployed, so the cache stayed permanently
+# empty in prod. As a result every operator hitting /threat-graph saw
+# "No accessible resources recorded for this agent yet — run some
+# traffic" even after they HAD run traffic.
+#
+# This endpoint closes that gap operationally:
+#   • walks the audit log for the tenant (last `days` window)
+#   • per (agent, tool, decision) triple → synthesises one resource node
+#     (kind=tool) and tags sensitivity from a small reasoned map
+#   • promotes each tool to "touched" so the IAG graph shows solid
+#     edges for tools the agent has actually used + dashed edges for
+#     the rest of the resources its peers have ever called
+#   • stamps `last_ingest_ts` so the staleness banner clears
+#
+# Operator can call this from the Threat Graph page (button "Refresh
+# graph") or it can be wired into a cron — it's idempotent and cheap.
+# ─────────────────────────────────────────────────────────────────────
+
+_TOOL_SENSITIVITY = {
+    # Money + customer PII surfaces.
+    "financial.wire_transfer":  "high",
+    "billing":                  "high",
+    "stripe":                   "high",
+    "send_email":               "high",
+    # Infra mutators.
+    "kubectl":                  "high",
+    "terraform":                "high",
+    "aws.iam":                  "high",
+    # Storage / data.
+    "sql_query":                "medium",
+    "read_file":                "medium",
+    "write_file":               "medium",
+    "s3":                       "medium",
+    # Low-risk read-only.
+    "search_web":               "low",
+    "health_check":             "low",
+    "noop":                     "low",
+}
+
+
+def _tool_sensitivity(tool: str) -> str:
+    tl = (tool or "").lower()
+    if tl in _TOOL_SENSITIVITY:
+        return _TOOL_SENSITIVITY[tl]
+    if any(w in tl for w in ("delete", "drop", "wire", "billing", "payment", "secret", "credential")):
+        return "high"
+    if any(w in tl for w in ("read", "write", "query", "fetch", "save")):
+        return "medium"
+    return "low"
+
+
+@router.post("/iag/refresh", tags=["IAG"])
+async def refresh_iag_from_audit(
+    request: Request,
+    days: int = Query(7, ge=1, le=90),
+) -> Any:
+    """Synthesise the IAG cache from audit-log activity.
+
+    Walks audit_logs for the tenant in the last `days` window, builds
+    (agent → tool) edges, and writes them through the Sprint 5 store
+    keys so /iag/agents/{id} starts returning real data immediately.
+
+    Returns counts so the operator sees what landed.
+    """
+    tenant_id = _tenant_id(request)
+    # Pull recent audit rows via the search endpoint.
+    from services.gateway._helpers import internal_headers
+    headers = internal_headers(request)
+    rows: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
+                json={"limit": 500},
+                headers=headers,
+            )
+        if r.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"audit search failed: HTTP {r.status_code}",
+            )
+        body = r.json() or {}
+        data = body.get("data") or {}
+        rows = data.get("items") or []
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"audit unreachable: {exc!r}") from exc
+
+    # Build the edge set: agent_id → tool (treated as the resource).
+    agent_tools: dict[str, set[str]] = {}
+    for row in rows:
+        a = (row.get("agent_id") or "").strip()
+        t = (row.get("tool") or "").strip()
+        if not a or not t or a == "00000000-0000-0000-0000-000000000000":
+            continue
+        agent_tools.setdefault(a, set()).add(t)
+
+    if not agent_tools:
+        # Nothing to ingest — but still stamp `last_ingest_ts` so the UI
+        # stops saying "ingestion never ran" and instead just shows the
+        # honest empty state.
+        await iag_store.stamp_ingestion_done(_redis, tenant_id)
+        return {
+            "agents_seen":      0,
+            "resources_synth":  0,
+            "edges":            0,
+            "last_ingest_ts":   await iag_store.get_last_ingest_ts(_redis, tenant_id),
+            "tenant_id":        tenant_id,
+        }
+
+    # Single synthetic role per agent — the Sprint 5 cache model needs
+    # the role hop, but for runtime-derived graphs the role layer is
+    # uninteresting. Naming them by agent_id makes them easy to scrub.
+    edge_count = 0
+    all_resources: set[str] = set()
+    for agent_id, tools in agent_tools.items():
+        role_id = f"runtime:{agent_id}"
+        perm_id = f"runtime-perm:{agent_id}"
+        await iag_store.upsert_agent_roles(_redis, tenant_id, agent_id, {role_id})
+        await iag_store.upsert_role_perms(_redis, tenant_id, role_id, {perm_id})
+        await iag_store.upsert_perm_resources(_redis, tenant_id, perm_id, tools)
+        for tool in tools:
+            meta = iag_graph.ResourceMeta(
+                resource_id=tool,
+                kind=iag_graph.KIND_TABLE,  # closest available bucket
+                label=tool,
+                sensitivity=_tool_sensitivity(tool),
+            )
+            await iag_store.upsert_resource_meta(_redis, tenant_id, meta)
+            all_resources.add(tool)
+            edge_count += 1
+
+    await iag_store.stamp_ingestion_done(_redis, tenant_id)
+
+    return {
+        "agents_seen":     len(agent_tools),
+        "resources_synth": len(all_resources),
+        "edges":           edge_count,
+        "last_ingest_ts":  await iag_store.get_last_ingest_ts(_redis, tenant_id),
+        "tenant_id":       tenant_id,
+        "days":            days,
+    }
+
+
+async def _touched_tools_for_agent(
+    request: Request, agent_id: str, days: int = 7,
+) -> set[str]:
+    """Pull the distinct set of tools an agent used in the last `days`.
+
+    Surfaced into the BlastRadius `touched_resources` slice so the UI
+    renders the agent's actual tool surface as SOLID and the rest of
+    its reachable-but-untouched permissions as DASHED — matching the
+    enterprise expectation the ThreatGraph page promises.
+    """
+    from services.gateway._helpers import internal_headers
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.post(
+                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
+                json={"search": agent_id, "limit": 200},
+                headers=internal_headers(request),
+            )
+        if r.status_code != 200:
+            return set()
+        items = (r.json().get("data") or {}).get("items") or []
+        return {(it.get("tool") or "").strip() for it in items if it.get("tool")}
+    except httpx.HTTPError:
+        return set()
+
+
 @router.get("/iag/agents/{agent_id}", tags=["IAG"])
 async def get_agent_iag(agent_id: str, request: Request) -> Any:
     """Accessible-resources view for one agent.
 
-    Returns the BlastRadius shape with `touched_resources=[]` — i.e. every
-    accessible resource is in the `untouched` slice. Useful for "what
-    could this agent ever reach?" baselining outside an incident.
+    Now returns ``touched_resources`` populated from the audit log for
+    the last 7 days so the ThreatGraph page shows the canonical
+    SOLID = touched / DASHED = reachable-but-untouched contrast.
     """
     tenant_id = _tenant_id(request)
     if not agent_id:
@@ -291,10 +465,11 @@ async def get_agent_iag(agent_id: str, request: Request) -> Any:
     agent_roles, role_perms, perm_resources, resource_meta = await iag_store.load_graph(
         _redis, tenant_id, agent_id,
     )
+    touched = await _touched_tools_for_agent(request, agent_id, days=7)
     br = iag_graph.compute_blast_radius(
         agent_id=agent_id,
         incident_id="",
-        touched_resources=set(),
+        touched_resources=touched,
         agent_roles=agent_roles,
         role_perms=role_perms,
         perm_resources=perm_resources,
