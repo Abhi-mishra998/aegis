@@ -13,6 +13,20 @@ NOT addressed by those.
 
 ---
 
+## ✅ CL-4 Basic-tier rpm_limit fallback misconfigured for LLM proxy workload
+
+**Severity:** MEDIUM (functional, not security). Confirmed throughput throttle in production.
+**Discovered:** 2026-06-17 brutal-audit live load test.
+**Fixed:** commit `d9f0da3`.
+
+- **Root cause:** `services/identity/router.py:_TIER_RPM_DEFAULTS["basic"] = 60` predates Sprint 3.2. The Sprint 3.2 token bucket (50 RPS + 100 burst) was added in parallel without removing the legacy 60-second window, so the latter became the bottleneck for the new `/v1/messages` + `/v1/chat/completions` LLM-proxy workload that fires many prompts in succession from a single employee. Visible as 429 at ~1 RPS sustained on the basic tier despite the documented 50 RPS quota.
+- **Live evidence (pre-fix):** `target=5rps × 5s → ok=20% codes={200:5, 429:20}` · `target=10rps × 5s → ok=0% codes={429:50}`.
+- **Fix:** Bumped tier defaults to match (slightly exceed) the Sprint 3.2 per-second token-bucket capacity so the legacy window is a safety net not the bottleneck. basic: 60→3000 · pro: 300→6000 · enterprise: 1000→12000. Existing tenants with explicit non-zero `tenant.rpm_limit` unaffected.
+- **Post-fix live evidence:** `/tenant/quota` reports `rpm_limit: 3000`. OpenAI proxy burst (UPSTREAM_OPENAI_KEY unset → 503 short-circuit, exercises full Aegis gating minus upstream forward) at **59 RPS sustained, p95=712ms, p99=767ms, zero 429s**. The Anthropic proxy's residual 429s come from the corporate test-tier Anthropic key's own 5 RPM org cap, not from Aegis.
+- **Cache-bust runbook** added to the commit message — tier-default changes need `acp:tenant:meta:<uuid>` purge.
+
+---
+
 ## ✅ CL-3 Cross-tenant leak via X-Tenant-ID forge on skip-listed paths
 
 **Severity:** HIGH. Confirmed cross-tenant data leak in production traffic.
