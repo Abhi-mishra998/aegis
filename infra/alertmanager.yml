@@ -17,7 +17,18 @@ route:
   receiver: slack
 
   routes:
-    # Critical alerts: page via PagerDuty AND Slack; short repeat window.
+    # Page alerts: highest urgency — separate PagerDuty routing key maps to a
+    # higher escalation policy (e.g. wakes the on-call SRE immediately).
+    # group_wait/repeat_interval are tight so noise is intentional here.
+    - matchers:
+        - severity = "page"
+      receiver: page
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+      continue: true
+
+    # Critical alerts: PagerDuty (standard routing key) + Slack; short repeat window.
     - matchers:
         - severity = "critical"
       receiver: critical
@@ -52,6 +63,22 @@ receivers:
           {{ end }}
     pagerduty_configs:
       - routing_key_file: /etc/alertmanager/pagerduty_routing_key
+        send_resolved: true
+        severity: critical
+        description: '{{ .CommonAnnotations.summary }}'
+
+  - name: page
+    slack_configs:
+      - channel: '#aegis-page'
+        send_resolved: true
+        title: 'PAGE: {{ .CommonAnnotations.summary }}'
+        text: |-
+          *Service:* {{ .CommonLabels.service }}
+          {{ range .Alerts }}
+          • {{ .Annotations.description }}
+          {{ end }}
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/pagerduty_routing_key_page
         send_resolved: true
         severity: critical
         description: '{{ .CommonAnnotations.summary }}'
