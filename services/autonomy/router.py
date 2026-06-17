@@ -392,7 +392,72 @@ async def add_override(
     )
     db.add(ev)
     await db.commit()
+
+    # Emit `approval_resolved` on the per-tenant pubsub channel so the
+    # LiveFeed + pending-approvals inbox reflect the human action in
+    # real time. Uses the same channel naming as
+    # services/gateway/_helpers.publish_event so the gateway's SSE
+    # fan-out picks it up. Fire-and-forget — a Redis stall here must
+    # not roll back the override the DB already accepted.
+    asyncio.create_task(_safe_bg(_publish_approval_resolved(
+        tenant_id=str(tenant_id),
+        agent_id=str(payload.target_id) if payload.target_kind == "agent" else None,
+        event_type=payload.event_type,
+        target_kind=payload.target_kind,
+        target_id=str(payload.target_id),
+        request_id=payload.request_id,
+        actor=actor,
+        actor_role=actor_role,
+        reason=payload.reason,
+    )))
     return APIResponse(data=OverrideOut.model_validate(ev))
+
+
+async def _publish_approval_resolved(
+    *,
+    tenant_id: str,
+    agent_id: str | None,
+    event_type: str,
+    target_kind: str,
+    target_id: str,
+    request_id: str | None,
+    actor: str | None,
+    actor_role: str | None,
+    reason: str | None,
+) -> None:
+    """Publish an ``approval_resolved`` SSE event mirroring the channel
+    convention used by services/gateway/_helpers.publish_event."""
+    import json as _json
+    import time as _time
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = _Redis.from_url(_REDIS_URL, decode_responses=False)
+    payload = _json.dumps({
+        "type": "approval_resolved",
+        "data": {
+            "event_type":  event_type,
+            "target_kind": target_kind,
+            "target_id":   target_id,
+            "agent_id":    agent_id,
+            "request_id":  request_id,
+            "actor":       actor,
+            "actor_role":  actor_role,
+            "reason":      reason,
+        },
+        "ts": int(_time.time()),
+    })
+    try:
+        await _redis_client.publish(f"acp:events:{tenant_id}", payload)
+    except Exception as exc:
+        _logger.warning("approval_resolved_publish_failed", error=str(exc))
+    if agent_id:
+        try:
+            await _redis_client.publish(f"acp:events:{tenant_id}:{agent_id}", payload)
+        except Exception as exc:
+            _logger.warning(
+                "approval_resolved_publish_agent_channel_failed",
+                error=str(exc), agent_id=agent_id,
+            )
 
 
 # ---------------------------------------------------------------------------

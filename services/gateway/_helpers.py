@@ -8,6 +8,65 @@ introducing a load-time cycle.
 The functions exported here MUST NOT depend on app.state or any FastAPI
 lifespan-mutated state — they take all they need from `request` and module-level
 settings. This is what makes them safe to use from any route module.
+
+──────────────────────────────────────────────────────────────────────────────
+Canonical SSE event registry (UI source of truth: ui/src/pages/LiveFeed.jsx
+EVENT_META). All 17 names — and their emitters — are documented below.
+Adding a new event type is a UI ↔ gateway contract change: bump EVENT_META
+AND wire the publisher here in the same PR.
+
+  1.  ``llm_proxy_call``        — emitted from services/gateway/middleware.py
+      :``_run_inference_proxy`` when the per-request inference proxy admits
+      a call (post-decision, pre-dispatch).
+  2.  ``llm_proxy_escalate``    — emitted from services/gateway/middleware.py
+      :``_run_inference_proxy`` when the inference proxy blocks
+      (injection / risk-score / tool-guard).
+  3.  ``approval_required``     — emitted from services/gateway/middleware.py
+      autonomy ladder when ``check_autonomy_contract`` returns
+      ``requires_approval``.
+  4.  ``approval_resolved``     — emitted from services/autonomy/router.py
+      :``add_override`` (POST /autonomy/overrides) when an admin approves /
+      rejects a pending action.
+  5.  ``risk_updated``          — emitted from services/gateway/main.py
+      gateway proxy on /execute when the per-call risk crosses 0.5.
+  6.  ``tool_executed``         — emitted from services/gateway/main.py
+      gateway proxy on /execute success path.
+  7.  ``policy_decision``       — emitted from
+      services/gateway/routers/policy.py:``_maybe_publish_policy_event`` on
+      every non-trivial /policy/* outcome (deny / escalate / approval).
+  8.  ``alert``                 — reserved UI fallback for unknown event
+      types. Not emitted directly by the backend; LiveFeed renders any
+      unrecognised SSE message as ``alert`` (see LiveFeed.jsx:186).
+  9.  ``agent_changed``         — emitted from
+      services/gateway/routers/agents.py:``update_agent`` on PATCH
+      /agents/{id} success.
+  10. ``agent_created``         — emitted from
+      services/gateway/routers/agents.py:``create_agent`` and
+      ``wizard_create_agent`` on agent creation.
+  11. ``agent_deleted``         — emitted from
+      services/gateway/routers/agents.py:``delete_agent`` on DELETE
+      /agents/{id} success.
+  12. ``incident_updated``      — emitted from
+      services/gateway/routers/incidents.py on PATCH /incidents/{id}
+      success.
+  13. ``insight_generated``     — emitted from services/insight/worker.py
+      after the Groq narrative engine writes a fresh insight row.
+  14. ``behavior_flagged``      — emitted from services/gateway/middleware.py
+      once the behavior baseline + canonical evaluation surfaces non-empty
+      findings (deviation, attack-chain match, anomaly).
+  15. ``would_have_blocked``    — emitted from services/gateway/middleware.py
+      shadow-mode downgrade branch when policy DENY/ESCALATE is observed
+      but suppressed during the 14-day observe window.
+  16. ``quota_warning``         — emitted from
+      services/gateway/routers/tenant.py:``get_tenant_quota`` when the
+      tenant's monthly request cap crosses 80% (idempotent per
+      tenant + calendar month).
+  17. ``kill_switch``           — emitted from
+      services/gateway/routers/decision.py:``toggle_kill_switch`` and
+      ``disengage_kill_switch`` on tenant kill-switch flip.
+
+Publishing is best-effort and per-tenant — see :func:`publish_event` for the
+channel naming + failure semantics.
 """
 from __future__ import annotations
 
