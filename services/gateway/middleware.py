@@ -128,6 +128,9 @@ _MANAGEMENT_PATH_PREFIXES = (
     # The `/v1/messages` LLM proxy is skip-listed separately because it
     # uses x-api-key auth; `/team` paths use the standard JWT.
     "/team",
+    # Sprint 12 — mandate-KPI rollup for the post-login Dashboard hero.
+    # Read-only management surface, audit-log fan-out under the hood.
+    "/dashboard",
     "/metrics",
     "/risk",
     "/stream",
