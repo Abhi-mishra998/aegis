@@ -2,11 +2,23 @@
 
 ## Alert
 
-`RateLimitSpike` — fires when per-IP authentication failure counters or per-tenant rate-limit reject counts exceed normal levels.
+`RateLimitSpike` (`AuthFailureSpike` family) — fires when per-IP authentication failure counters or per-tenant rate-limit reject counts exceed normal levels. Severity `warning`; alertmanager routes to Slack `#aegis-alerts`.
 
 ## Severity
 
 **P2.** A spike is usually not an emergency — the rate limiter is doing its job. The alert exists so an operator can confirm "is this a real attack or an integration bug."
+
+## Oncall + paging
+
+| Channel | Where |
+|---|---|
+| Slack | `#aegis-alerts` |
+| PagerDuty | Not paged unless escalation to `severity=critical` |
+
+## Dashboards
+
+- **Grafana → ACP Platform SLO** (`acp-platform-slo`) → "Rate-limited (per tenant, by limit_type)" panel.
+- **Grafana → ACP Tenant Activity** (`acp-tenant-activity`) → "Per-tenant rate-limited" + "Inference cost blocked".
 
 ## Triage in 5 minutes
 
@@ -42,7 +54,7 @@ The platform's per-IP fail counter (`acp:auth_fail:{ip}` with 5-minute TTL) alre
 
 ```bash
 # Add the IP to the Redis-backed deny list
-redis-cli set "acp:ip_block:203.0.113.42" "credential_stuffing_2026_05_29" EX 86400
+redis-cli set "acp:ip_block:203.0.113.42" "credential_stuffing_2026_06_17" EX 86400
 
 # The auth path in services/gateway/_mw_auth.py reads this and returns 403
 # without invoking the rest of the pipeline.
@@ -80,7 +92,7 @@ The new cap takes effect immediately for the next request.
 For a permanent raise, set the value via the API:
 
 ```bash
-curl -sS -X PATCH https://ha.aegisagent.in/agents/$AGENT_ID \
+curl -sS -X PATCH https://aegisagent.in/agents/$AGENT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT" \
   -H "Content-Type: application/json" \
@@ -92,7 +104,7 @@ curl -sS -X PATCH https://ha.aegisagent.in/agents/$AGENT_ID \
 If many tenants are hitting 429s simultaneously, the platform is at capacity:
 
 1. Check Settings → System Health for any degraded services.
-2. Check Grafana → Queues dashboard for stream backlog.
+2. Check Grafana → ACP Queues dashboard for stream backlog.
 3. Check `acp_gateway_inflight_requests` — if approaching the configured limit, the gateway is shedding.
 
 Mitigation options, in order:
@@ -135,3 +147,4 @@ Multiple IPs hitting the auth endpoint. Treat as a coordinated attack:
 - [Gateway service](../../services/gateway.md) — the rate-limit implementation
 - [Quota Management UI](../../ui/settings/quota-management.md) — operator surface for tenant caps
 - [Kill Switch runbook](kill-switch-engaged.md) — the bigger lever
+- [Observability](../observability.md) — alert routing and dashboards

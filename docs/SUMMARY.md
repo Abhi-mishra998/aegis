@@ -125,11 +125,10 @@
 * [Tenant Data Requests](operations/tenant-data-requests.md)
 * [Observability](operations/observability.md)
 * Runbooks
-  * [Audit Chain Violation](runbooks/audit_chain_violation.md)
-  * [Key Rotation](runbooks/key_rotation.md)
-  * [Restore Drill](runbooks/restore_drill.md)
-  * [Tenant Data Request](runbooks/tenant_data_request.md)
-  * [Disaster Recovery](runbooks/dr.md)
+  * [Audit Chain Violation](operations/runbooks/audit-chain-violation.md)
+  * [Kill Switch Engaged](operations/runbooks/kill-switch-engaged.md)
+  * [Rate Limit Spike](operations/runbooks/rate-limit-spike.md)
+  * [Anthropic Key Rotation](operations/runbooks/anthropic-key-rotation.md)
 
 ## API
 

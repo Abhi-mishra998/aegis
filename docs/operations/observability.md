@@ -17,7 +17,7 @@ All four run alongside the application services on each EC2. They do not partici
 
 ## Reaching them
 
-The observability stack is not exposed publicly. Access is via SSH port-forward:
+The observability stack is not exposed publicly via `https://aegisagent.in`. Access is via SSH port-forward to either ASG host:
 
 ```bash
 ssh -i <path-to-your-ec2-key.pem> ubuntu@<ec2-ip> \
@@ -29,71 +29,114 @@ ssh -i <path-to-your-ec2-key.pem> ubuntu@<ec2-ip> \
 
 Then browse to `localhost:3000` (etc.) on the laptop.
 
+Every service exposes `/metrics` via `prometheus_fastapi_instrumentator`. Prometheus scrape interval is 15 seconds across the static-config target list.
+
 ## Dashboards
 
-Four built-in Grafana dashboards under `infra/grafana-dashboards/`:
+Five built-in Grafana dashboards under `infra/grafana-dashboards/`. Import them via Grafana → Dashboards → Import → paste JSON. They are operator-only; customer-facing tiles live in the Aegis UI.
 
-### `platform_slo.json` — Platform SLO
+### `acp-platform-slo.json` — Platform SLO
 
-The most-used dashboard. Top-of-page tiles:
+The most-used dashboard. Tracks the SLOs operators are paged on:
 
-- p50 / p95 / p99 gateway latency.
-- Decisions per second (allow + deny + escalate).
-- Audit outbox depth and age.
-- Service availability per service.
+- `/execute` p50 / p95 / p99 latency.
+- Request rate (req/s by status).
+- Error rate as a percent of total.
+- Rate-limited requests per tenant by limit_type.
+- Decision-pipeline behavior-consult p95 / p99.
 
-Per-service rows show the same stats per microservice. Anyone debugging a slow request opens this first.
+Anyone debugging a slow request opens this first.
 
-### `trust_layers.json` — Trust Layers
+### `acp-trust-layers.json` — Trust Layers
 
-Per-stage breakdown of the gateway pipeline:
+Chain-integrity and trust-pipeline health. The most consequential tiles:
 
-- Stage 0–10 latency histograms.
-- Per-stage deny counts.
-- Behavior-firewall consult result distribution.
-- Per-stage skipped invocations.
+- **Chain integrity violations** — must stay at 0. Any non-zero value pages.
+- Reconciliation gap (`audit ↔ usage`) per tenant.
+- Behavior firewall consult outcome distribution.
+- Transparency-root seal lag (seconds since the last successful seal).
+- Transparency roots committed (cumulative).
+- Flight-timeline close lag (`open_total − closed_total`).
+- Behavior consult skipped / timeout / error rates.
 
-Operators tuning a specific stage open this.
+Open this after any `ChainViolationImmediate` page.
 
-### `tenant_activity.json` — Tenant Activity
+### `acp-tenant-activity.json` — Tenant Activity
 
-Per-tenant aggregates:
+Per-tenant aggregates with a tenant template variable:
 
-- Decisions per minute per tenant.
-- Per-tenant latency.
-- Per-tenant cost spend.
-- Per-tenant cap utilization.
+- Per-tenant request rate.
+- Per-tenant rate-limited by limit_type.
+- Per-tenant daily inference $ used.
+- Inference-cost-blocked by scope (tenant vs. agent).
+- Per-tenant monthly-quota 80% warning fires.
 
-Useful when a customer reports a problem — drill to the specific tenant.
+Useful when a customer reports a problem — pick the tenant, drill.
 
-### `queues.json` — Queues
+### `acp-queues.json` — Queues
 
 Backpressure indicators:
 
-- `acp:audit_events` stream depth.
-- `acp:groq_events` stream depth.
-- `pending_usage_events` table depth.
-- DLQ sizes.
-- Per-worker consumer-group lag.
+- `acp:audit_events` stream length + dropped/s.
+- Audit DLQ + Billing DLQ oldest-age.
+- Outbox pending count + oldest-pending age per outbox.
+- Insight / Groq queue depth + oldest age.
+- Flight Recorder leaked timelines (in_progress > 60s).
+- Reconciliation outbox-age per tenant.
 
 When the platform feels slow, queues are usually the cause.
 
+### `acp-operations.json` — Operations
+
+Cross-service request / outbox / billing operational view:
+
+- Request throughput by service.
+- p95 latency per service.
+- Outbox depth (pending vs. poison).
+- Audit stream length + drop rate.
+- Billing pipeline events + outbox processed/retry.
+- Behavior fail-closed rate.
+- `/status` (gateway_internal) vs. `/system/health` (end_to_end) p95 / p99.
+
 ## Alerts
 
-Source: `infra/prometheus/alert.rules.yml`.
+Source: `infra/prometheus-rules.yml`.
+
+Alertmanager (`infra/alertmanager.yml`) routes by severity label:
+
+| Severity label | Receiver | group_wait | repeat_interval | Channels |
+|---|---|---|---|---|
+| `page` | `critical` | **0s** (no grouping delay) | 30m | Slack `#aegis-critical` + PagerDuty |
+| `critical` | `critical` | 10s | 30m | Slack `#aegis-critical` + PagerDuty |
+| `warning` (default fallthrough) | `slack` | 30s | 4h | Slack `#aegis-alerts` |
+
+The `severity=page` route is reserved for alerts that must wake an operator immediately. Today only **`ChainViolationImmediate`** carries that label — audit-chain corruption is the one condition for which a 30-second group wait is too long. The route fires the moment the metric crosses the threshold (`for: 0m`) and repeats until acknowledged.
 
 | Alert | Severity | Trigger | Runbook |
 |---|---|---|---|
-| `ChainViolationImmediate` | P0 | `acp_audit_chain_violations_total > 0` | [audit-chain-violation](runbooks/audit-chain-violation.md) |
-| `AuditOutboxStuck` | P1 | `acp_audit_outbox_oldest_age_seconds > 300` for 5m | [audit-chain-violation](runbooks/audit-chain-violation.md) |
-| `GatewayLatencyHigh` | P2 | gateway p95 > 500ms for 10m | n/a |
-| `KillSwitchEngaged` | P1 (informational) | kill-switch state changes | [kill-switch-engaged](runbooks/kill-switch-engaged.md) |
-| `RateLimitSpike` | P2 | `acp:auth_fail:*` counters elevated | [rate-limit-spike](runbooks/rate-limit-spike.md) |
-| `BillingReconcileGap` | P1 | `acp_reconcile_audit_without_usage > 0` for 10m | n/a |
-| `CircuitBreakerOpen` | P1 | `acp_gateway_circuit_breaker_open == 1` for 5m | n/a |
-| `BehaviorServiceDegraded` | P2 | behavior consult error rate > 10% for 10m | n/a |
+| `ChainViolationImmediate` | **page** | `acp_audit_chain_violations_total > 0` (`for: 0m`) | [audit-chain-violation](runbooks/audit-chain-violation.md) |
+| `ServiceUnavailable` | critical | `up{job="acp-services"} == 0` for 2m | n/a |
+| `OutboxPoisonGrowing` | critical | `increase(acp_outbox_poison_total[5m]) > 0` | n/a |
+| `ReconciliationAuditWithoutUsage` | critical | `acp_reconcile_audit_without_usage > 0` for 5m | n/a |
+| `ReconciliationUsageWithoutAudit` | critical | `acp_reconcile_usage_without_audit > 0` for 5m | n/a |
+| `ReconciliationGapSustained` | critical | Either reconciliation gap unresolved for 15m | n/a |
+| `OutboxOldestPendingAgeHigh` | critical | `acp_outbox_oldest_pending_age_seconds > 60` for 5m | n/a |
+| `AuditDLQGrowing` | critical | `acp_audit_dlq_oldest_age_seconds > 60` for 5m | n/a |
+| `BillingDLQGrowing` | critical | `acp_billing_dlq_oldest_age_seconds > 60` for 5m | n/a |
+| `BillingDLQNonZero` | warning | `acp_audit_stream_length > 45000` for 5m | n/a |
+| `BehaviorFailClosedSustained` | warning | fail-closed rate > 5% for 3m | n/a |
+| `P95LatencyBudgetBreach` | warning | p95 latency > 400ms for 5m | n/a |
+| `AuthFailureSpike` | warning | duplicate-drops rate elevated | [rate-limit-spike](runbooks/rate-limit-spike.md) |
+| `InsightQueueAgeHigh` | warning | `acp_insight_queue_oldest_age_seconds > 60` for 5m | n/a |
+| `FlightTimelineLeak` | warning | `acp_flight_timeline_in_progress_count > 10` for 5m | n/a |
+| `InferenceCostCapBlocking` | warning | `rate(acp_inference_cost_blocked_total[5m]) > 0` for 5m | n/a |
+| `HighMTTR` | warning | `acp_incident_mttr_seconds > 3600` for 5m | n/a |
+| `DailyBudgetWarning` | warning | `acp_tenant_daily_cost_usd > 5` | n/a |
+| `HighIncidentRate` | warning | `>10` new incidents per hour | n/a |
 
-The runbook column points at the operator response.
+The runbook column points at the operator response — only the highest-impact alerts have dedicated runbooks. Everything else is investigated via Grafana + audit-log search.
+
+PagerDuty wiring is operator-side: drop the service routing key into `/etc/alertmanager/pagerduty_routing_key` on each ASG host. Without it the page route still posts to Slack but PagerDuty delivery silently no-ops.
 
 ## Tracing
 
@@ -188,4 +231,7 @@ A few things to verify periodically:
 - [Gateway service](../services/gateway.md) — most-instrumented service
 - [Audit service](../services/audit.md) — owns the chain-integrity metrics
 - [SIEM Forwarders](siem-forwarders.md) — Splunk / Datadog / Elastic / Sentinel / Chronicle with AEVF back-reference
-- [Audit Chain Violation runbook](runbooks/audit-chain-violation.md) — the alert that matters most
+- [Audit Chain Violation runbook](runbooks/audit-chain-violation.md) — the page-tier alert
+- [Kill Switch Engaged runbook](runbooks/kill-switch-engaged.md) — when a tenant is intentionally halted
+- [Rate Limit Spike runbook](runbooks/rate-limit-spike.md) — when 429s or auth-fails surge
+- [Anthropic Key Rotation runbook](runbooks/anthropic-key-rotation.md) — rotating `ANTHROPIC_API_KEY` for the gateway LLM router
