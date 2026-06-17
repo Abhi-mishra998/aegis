@@ -388,7 +388,17 @@ export const iagService = {
   getAgent: (agentId) => request(`/iag/agents/${encodeURIComponent(agentId)}`),
   getBlastRadius: (incidentId) =>
     request(`/iag/incidents/${encodeURIComponent(incidentId)}/blast-radius`),
-  getMitreCoverage: () => request("/iag/mitre-coverage"),
+  // When agentId is passed the matrix shows per-agent touched
+  // (solid) vs reachable-but-untouched (dimmed/dashed) tactics for
+  // the window. Without it the page shows the full registry, no
+  // touched flags — useful as a coverage overview.
+  getMitreCoverage: (agentId, days = 7) => {
+    const params = new URLSearchParams();
+    if (agentId) params.set("agent_id", agentId);
+    if (days)    params.set("days", String(days));
+    const qs = params.toString();
+    return request(`/iag/mitre-coverage${qs ? `?${qs}` : ""}`);
+  },
 };
 
 // Sprint 5 — Auto-Remediation. Read policy + ledger; force replay on demand.

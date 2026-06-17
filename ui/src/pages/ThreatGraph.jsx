@@ -266,7 +266,7 @@ export default function ThreatGraph() {
           </Card>
         </div>
         <div className="xl:col-span-2">
-          <MitreCoverageGrid compact />
+          <MitreCoverageGrid compact agentId={selectedAgentId} days={7} />
         </div>
       </div>
     </div>

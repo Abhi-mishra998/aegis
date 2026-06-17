@@ -22,8 +22,9 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from redis.asyncio import Redis
 
 from sdk.common.config import settings
@@ -108,29 +109,95 @@ _TACTIC_NAMES: dict[str, str] = {
 }
 
 
+async def _touched_signals_for_agent(
+    request: Request,
+    agent_id: str,
+    days: int,
+) -> set[str]:
+    """Return the set of canonical finding/signal IDs the given agent
+    actually fired in the past ``days``.
+
+    Cross-references audit_logs.metadata_json->findings via the audit
+    aggregator's existing `/logs/agent-findings/{agent_id}` endpoint.
+    Best-effort: any audit hiccup collapses to an empty set so the
+    UI degrades to "no touched coverage" instead of erroring out.
+    """
+    from services.gateway._helpers import internal_headers
+    url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/agent-findings/{agent_id}"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(
+                url, params={"days": days, "limit": 200},
+                headers=internal_headers(request),
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "mitre_touched_lookup_failed",
+                agent_id=agent_id, status=resp.status_code,
+            )
+            return set()
+        body = resp.json() or {}
+        data = body.get("data") or {}
+        items = data.get("findings") or data.get("items") or []
+        return {(it.get("finding") or "").strip() for it in items if it.get("finding")}
+    except httpx.HTTPError as exc:
+        logger.warning("mitre_touched_lookup_error", error=str(exc))
+        return set()
+
+
 @router.get("/iag/mitre-coverage", tags=["IAG"])
-async def get_mitre_coverage(request: Request) -> Any:
+async def get_mitre_coverage(
+    request: Request,
+    agent_id: str | None = Query(
+        None,
+        description=(
+            "Optional. When provided, every signal/technique/tactic in the "
+            "response is annotated with `touched: true|false` indicating "
+            "whether the agent fired that finding in the last `days` window. "
+            "Without it, the matrix shows full coverage (touched=false everywhere)."
+        ),
+    ),
+    days: int = Query(7, ge=1, le=90, description="Touched-window in days. Default 7."),
+) -> Any:
     """Sprint 7 — MITRE ATT&CK coverage matrix.
 
-    Returns the 34 SignalDefinition entries grouped by tactic →
-    technique → list of signals. The frontend's MitreCoverageGrid
-    renders the result as a 12-tactic heatmap; cell colour comes from
-    the max severity within that technique's signals.
+    Returns the SignalDefinition registry grouped by
+    tactic → technique → list of signals. The frontend's
+    MitreCoverageGrid renders one column per tactic, one cell per
+    technique. Cell colour comes from the max severity within that
+    technique's signals.
 
-    No DB call: the registry is module-level and immutable after
-    import. Endpoint is JWT-gated by the gateway middleware, so we
-    only enforce ``tenant_id`` is present (so the response can carry
-    audit metadata if the caller is curious).
+    When ``agent_id`` is supplied, the response is enriched with:
+      * ``touched: bool`` on each signal — fired in the window or not
+      * ``touched_count`` + ``signal_count`` on each technique
+      * ``touched_techniques`` + ``technique_count`` + ``touched_signals``
+        + ``signal_count`` on each tactic
+      * ``touched_tactics`` + ``touched_techniques_total`` +
+        ``touched_signals_total`` on the top-level payload
+      * ``agent_id`` + ``days`` echoed so the UI can label the window.
+
+    This is the data the ThreatGraph page needs to show "solid =
+    actually-touched, dimmed/dashed = reachable-but-untouched" on the
+    coverage grid — matching the blast-radius graph's solid/dashed
+    convention.
     """
     _ = _tenant_id(request)  # enforces JWT but result not used
 
     from services.security import signal_registry as _sr
+
+    # When agent_id is supplied, look up the set of signal IDs fired in
+    # the window. Empty set ⇒ everything is "untouched" which is also
+    # the correct first-paint state.
+    touched_set: set[str] = set()
+    if agent_id:
+        touched_set = await _touched_signals_for_agent(request, agent_id, days)
 
     by_tactic: dict[str, dict[str, Any]] = {}
     for sig in _sr.all_signals():
         tactic_id = sig.mitre_tactic
         technique_id = sig.mitre_technique_id
         technique_name = sig.mitre_technique[len(technique_id) + 1:] if " " in sig.mitre_technique else sig.mitre_technique
+        sig_touched = sig.id in touched_set
 
         if tactic_id not in by_tactic:
             by_tactic[tactic_id] = {
@@ -146,6 +213,8 @@ async def get_mitre_coverage(request: Request) -> Any:
                 "signals":        [],
                 "max_severity":   "",
                 "max_score":      0,
+                "touched":        False,
+                "touched_count":  0,
             }
         techniques[technique_id]["signals"].append(
             {
@@ -154,8 +223,12 @@ async def get_mitre_coverage(request: Request) -> Any:
                 "default_score":    sig.default_score,
                 "default_response": sig.default_response,
                 "description":      sig.description,
+                "touched":          sig_touched,
             },
         )
+        if sig_touched:
+            techniques[technique_id]["touched"] = True
+            techniques[technique_id]["touched_count"] += 1
         if sig.default_score > techniques[technique_id]["max_score"]:
             techniques[technique_id]["max_score"] = sig.default_score
             techniques[technique_id]["max_severity"] = (
@@ -164,23 +237,43 @@ async def get_mitre_coverage(request: Request) -> Any:
 
     # Collapse technique dicts to lists for stable iteration order.
     tactics = []
+    touched_tactics_total = 0
+    touched_techniques_total = 0
+    touched_signals_total = 0
     for tactic_id in sorted(by_tactic.keys()):
         block = by_tactic[tactic_id]
         techniques_list = sorted(block["techniques"].values(), key=lambda t: t["technique_id"])
+        signal_count = sum(len(t["signals"]) for t in techniques_list)
+        tactic_touched_signals = sum(t["touched_count"] for t in techniques_list)
+        tactic_touched_techniques = sum(1 for t in techniques_list if t["touched"])
+        tactic_touched = tactic_touched_signals > 0
+        if tactic_touched:
+            touched_tactics_total += 1
+        touched_techniques_total += tactic_touched_techniques
+        touched_signals_total += tactic_touched_signals
         tactics.append(
             {
-                "tactic_id":      tactic_id,
-                "tactic_name":    block["tactic_name"],
-                "technique_count": len(techniques_list),
-                "signal_count":   sum(len(t["signals"]) for t in techniques_list),
-                "techniques":     techniques_list,
+                "tactic_id":          tactic_id,
+                "tactic_name":        block["tactic_name"],
+                "technique_count":    len(techniques_list),
+                "signal_count":       signal_count,
+                "touched":            tactic_touched,
+                "touched_techniques": tactic_touched_techniques,
+                "touched_signals":    tactic_touched_signals,
+                "techniques":         techniques_list,
             },
         )
 
     return {
-        "tactics":     tactics,
-        "signal_total": sum(t["signal_count"] for t in tactics),
-        "tactic_total": len(tactics),
+        "tactics":                  tactics,
+        "signal_total":             sum(t["signal_count"] for t in tactics),
+        "tactic_total":             len(tactics),
+        # Per-agent enrichment.
+        "agent_id":                 agent_id,
+        "days":                     days,
+        "touched_tactics":          touched_tactics_total,
+        "touched_techniques_total": touched_techniques_total,
+        "touched_signals_total":    touched_signals_total,
     }
 
 
