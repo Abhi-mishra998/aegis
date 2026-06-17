@@ -86,6 +86,15 @@ class ACPSettings(BaseSettings):
             "Aegis-for-Teams proxy. Empty disables the proxy."
         ),
     )
+    # Sprint 22 — corporate OpenAI key used by the
+    # /v1/chat/completions Aegis-for-Teams proxy.
+    UPSTREAM_OPENAI_KEY: str = Field(
+        default="",
+        description=(
+            "Corporate OpenAI API key used by the /v1/chat/completions "
+            "Aegis-for-Teams proxy. Empty disables the proxy."
+        ),
+    )
 
     # Sprint 17 — separate URL for the api-service database (where
     # api_keys lives). Falls back to DATABASE_URL when unset so legacy

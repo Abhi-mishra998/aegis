@@ -97,6 +97,11 @@ _SKIP_PATHS = frozenset(
 _SKIP_PATH_PREFIXES = (
     "/auth/sso/",
     "/v1/messages",
+    # Sprint 22 — OpenAI-compatible /v1/chat/completions proxy. Same
+    # auth model as /v1/messages: x-api-key (or Authorization: Bearer)
+    # carrying an acp_emp_ employee virtual key, validated by the
+    # handler against the api-svc.
+    "/v1/chat/completions",
     # Sprint 20 — SDK approval poll uses x-api-key (acp_emp_…); the
     # handler does its own key validation + tenant scoping, same as
     # /v1/messages. Skip-list lets the request through middleware so
