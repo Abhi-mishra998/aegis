@@ -29,8 +29,16 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.0.1"
-__all__ = ["AegisOpenAI", "AegisClient", "__version__"]
+__version__ = "1.1.0"
+__all__ = [
+    "AegisOpenAI",
+    "AegisOpenAIProxy",
+    "AegisApprovalPending",
+    "AegisApprovalRejected",
+    "AegisApprovalTimeout",
+    "AegisClient",
+    "__version__",
+]
 
 
 class AegisClient:
@@ -224,3 +232,209 @@ class AegisOpenAI:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._openai, name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 22 — Path B (OpenAI-compatible /v1/chat/completions proxy).
+#
+# Mirror of AegisAnthropicProxy: the developer hits .chat.completions.create(...)
+# and gets the final 200 body back. If Aegis returns 202, the wrapper polls
+# /v1/approvals/{id}/status and replays with X-Aegis-Approval-ID once approved.
+# Rejection raises AegisApprovalRejected; timeout raises AegisApprovalTimeout.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class AegisApprovalPending(Exception):
+    """Raised only when poll_until_decided=False and the loop returns mid-flight."""
+    def __init__(self, approval_id: str, approver_role: str, matched_pattern: str) -> None:
+        super().__init__(
+            f"Aegis is awaiting {approver_role} approval (approval_id={approval_id}, "
+            f"matched_pattern={matched_pattern})",
+        )
+        self.approval_id = approval_id
+        self.approver_role = approver_role
+        self.matched_pattern = matched_pattern
+
+
+class AegisApprovalRejected(Exception):
+    def __init__(self, approval_id: str, reason: str | None) -> None:
+        super().__init__(f"Aegis rejected approval {approval_id}: {reason or '<no reason>'}")
+        self.approval_id = approval_id
+        self.reason = reason
+
+
+class AegisApprovalTimeout(Exception):
+    def __init__(self, approval_id: str, waited_s: float) -> None:
+        super().__init__(
+            f"Aegis approval {approval_id} not resolved after {waited_s:.1f}s — still pending",
+        )
+        self.approval_id = approval_id
+        self.waited_s = waited_s
+
+
+class _ProxyChatCompletions:
+    def __init__(self, parent: "AegisOpenAIProxy") -> None:
+        self._p = parent
+
+    def create(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        approval_id: str | None = None,
+        poll_until_decided: bool = True,
+        approval_timeout_s: float | None = None,
+        approval_poll_interval_s: float | None = None,
+        **extra: Any,
+    ) -> Any:
+        body: dict[str, Any] = {"model": model, "messages": messages}
+        body.update({k: v for k, v in extra.items() if v is not None})
+
+        # OpenAI SDK auth convention is Authorization: Bearer …; the
+        # Aegis proxy also accepts x-api-key for parity. We send both
+        # so the wrapper still works if the customer fronts another
+        # proxy that strips Authorization headers.
+        headers = {
+            "Authorization": f"Bearer {self._p._employee_key}",
+            "x-api-key":     self._p._employee_key,
+            "Content-Type":  "application/json",
+        }
+        if approval_id:
+            headers["X-Aegis-Approval-ID"] = approval_id
+
+        import time as _time
+        deadline = (
+            _time.monotonic() + (approval_timeout_s or self._p._approval_timeout_s)
+            if poll_until_decided else None
+        )
+        interval = approval_poll_interval_s or self._p._approval_poll_interval_s
+
+        with httpx.Client(timeout=self._p._timeout_s) as c:
+            while True:
+                resp = c.post(self._p._chat_url, headers=headers, json=body)
+                if resp.status_code == 200:
+                    return resp.json()
+                if resp.status_code == 202:
+                    payload = resp.json()
+                    aid = payload.get("approval_id") or approval_id or ""
+                    if not poll_until_decided:
+                        raise AegisApprovalPending(
+                            approval_id=aid,
+                            approver_role=payload.get("approver_role") or "",
+                            matched_pattern=payload.get("matched_pattern") or "",
+                        )
+                    self._p._poll_until_decided(c, aid, deadline, interval)
+                    headers["X-Aegis-Approval-ID"] = aid
+                    continue
+                if resp.status_code == 403:
+                    detail = resp.json()
+                    err = ((detail.get("detail") if isinstance(detail.get("detail"), dict)
+                            else None) or detail)
+                    err_code = err.get("error") if isinstance(err, dict) else None
+                    if err_code == "approval_rejected":
+                        raise AegisApprovalRejected(
+                            approval_id=approval_id or "",
+                            reason=(err.get("reason") if isinstance(err, dict) else None),
+                        )
+                    resp.raise_for_status()
+                resp.raise_for_status()
+
+
+class _ProxyChat:
+    """Mirrors the openai.OpenAI().chat namespace."""
+    def __init__(self, parent: "AegisOpenAIProxy") -> None:
+        self.completions = _ProxyChatCompletions(parent)
+
+
+class AegisOpenAIProxy:
+    """Path B wrapper — Aegis-fronted OpenAI /v1/chat/completions.
+
+    Constructor:
+        client = AegisOpenAIProxy(
+            employee_key="acp_emp_…",                       # or AEGIS_EMPLOYEE_KEY
+            gateway_url="https://ha.aegisagent.in",         # or AEGIS_URL
+            timeout_s=60.0,
+            approval_timeout_s=300.0,
+            approval_poll_interval_s=3.0,
+        )
+
+    Usage:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "…"}],
+        )
+
+    The 202 → poll → replay loop is transparent. Pass
+    poll_until_decided=False to handle pending approvals yourself.
+    """
+    def __init__(
+        self,
+        employee_key: str | None = None,
+        gateway_url: str | None = None,
+        timeout_s: float = 60.0,
+        approval_timeout_s: float = 300.0,
+        approval_poll_interval_s: float = 3.0,
+    ) -> None:
+        ek = (
+            employee_key
+            or os.environ.get("AEGIS_EMPLOYEE_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
+        if not ek or not ek.startswith("acp_emp_"):
+            raise ValueError(
+                "employee_key must be an Aegis virtual key (acp_emp_…). "
+                "Mint one in the Aegis Team page → Add employee.",
+            )
+        self._employee_key = ek
+        base = (
+            gateway_url
+            or os.environ.get("AEGIS_URL")
+            or "https://ha.aegisagent.in"
+        ).rstrip("/")
+        self._chat_url = f"{base}/v1/chat/completions"
+        # /v1/approvals is skip-listed at the gateway middleware so the
+        # x-api-key auth works without a Clerk JWT.
+        self._approvals_base = f"{base}/v1/approvals"
+        self._timeout_s = timeout_s
+        self._approval_timeout_s = approval_timeout_s
+        self._approval_poll_interval_s = approval_poll_interval_s
+        self.chat = _ProxyChat(self)
+
+    def get_approval_status(self, approval_id: str) -> dict[str, Any]:
+        with httpx.Client(timeout=self._timeout_s) as c:
+            resp = c.get(
+                f"{self._approvals_base}/{approval_id}/status",
+                headers={"x-api-key": self._employee_key},
+            )
+            resp.raise_for_status()
+            body = resp.json() or {}
+            return body.get("data") or {}
+
+    def _poll_until_decided(
+        self,
+        client: httpx.Client,
+        approval_id: str,
+        deadline: float | None,
+        interval: float,
+    ) -> None:
+        import time as _time
+        while True:
+            status = client.get(
+                f"{self._approvals_base}/{approval_id}/status",
+                headers={"x-api-key": self._employee_key},
+            )
+            status.raise_for_status()
+            data = (status.json() or {}).get("data") or {}
+            state = (data.get("status") or "").lower()
+            if state == "approved":
+                return
+            if state == "rejected":
+                raise AegisApprovalRejected(
+                    approval_id=approval_id,
+                    reason=data.get("reason"),
+                )
+            if deadline is not None and _time.monotonic() >= deadline:
+                raise AegisApprovalTimeout(
+                    approval_id, self._approval_timeout_s,
+                )
+            _time.sleep(interval)
