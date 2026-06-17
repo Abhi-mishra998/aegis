@@ -1,7 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Building,
   Calendar,
   Code2,
   Database,
@@ -14,9 +13,9 @@ import {
 } from 'lucide-react';
 import SystemValuesTab from '../components/settings/SystemValuesTab';
 
-// Existing pages, lazy-imported so /settings?tab=workspace only pulls
-// the Workspace tab's chunk on initial render. Each tab's underlying
-// page is still reachable at its legacy URL for analyst bookmarks.
+// Existing pages, lazy-imported so each tab only pulls its chunk on
+// activation. Each tab's underlying page is still reachable at its
+// legacy URL for analyst bookmarks.
 const UserManagement   = lazy(() => import('./UserManagement'));
 const RBAC             = lazy(() => import('./RBAC'));
 const SsoSettings      = lazy(() => import('./SsoSettings'));
@@ -26,33 +25,7 @@ const SiemSettings     = lazy(() => import('./SiemSettings'));
 const ScheduledReports = lazy(() => import('./ScheduledReports'));
 const QuotaManagement  = lazy(() => import('./QuotaManagement'));
 
-/**
- * Sprint 6 — Workspace tab. New, lightweight; will grow as Phase 6
- * (Stripe + residency) lands. For now it surfaces the same workspace
- * summary the Dashboard uses, plus a deep-link to Shadow Review.
- */
-function WorkspaceTab() {
-  return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 space-y-2">
-        <div className="text-xs font-bold text-white">Workspace</div>
-        <p className="text-[11px] text-neutral-400 leading-snug max-w-xl">
-          Top-level workspace settings live here. Plan + residency + audit-chain
-          configuration arrive in Phase 6. For now, jump to specific surfaces
-          via the tabs above.
-        </p>
-        <div className="text-[10px] text-neutral-600 mt-1">
-          Tip: the legacy <code>/settings</code> URL still serves this page; each
-          sub-page is also reachable at its original path (e.g. <code>/users</code>,
-          <code>/rbac</code>, <code>/sso</code>).
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const TABS = [
-  { id: 'workspace',     label: 'Workspace',     icon: Building,     Component: WorkspaceTab,    legacy: '/settings' },
   { id: 'system-values', label: 'System Values', icon: DollarSign,   Component: SystemValuesTab, legacy: '/settings?tab=system-values' },
   { id: 'team',          label: 'Team',          icon: Users,        Component: UserManagement,  legacy: '/users' },
   { id: 'roles',      label: 'Roles',       icon: SettingsIcon, Component: RBAC,            legacy: '/rbac' },
@@ -99,7 +72,7 @@ export default function Settings() {
       <div className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight text-white">Settings</h1>
         <p className="text-xs text-neutral-400">
-          Workspace · System Values · Team · Roles · SSO · API Keys · Webhooks · SIEM · Reports · Quota
+          System Values · Team · Roles · SSO · API Keys · Webhooks · SIEM · Reports · Quota
         </p>
       </div>
 
