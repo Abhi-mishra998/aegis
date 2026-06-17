@@ -348,6 +348,12 @@ async def proxy_anthropic_messages(request: Request) -> Response:
             # the caller's SDK didn't send X-Request-ID so the operator
             # always has a stable handle.
             approval_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+            # U6 — stamp the tenant's current policy_version so the SDK
+            # replay path can reject this approval if the policy is bumped
+            # between escalation and approval.
+            esc_policy_version = await proxy_helpers.get_current_policy_version(
+                tenant_id_str,
+            )
             await push_audit_event(
                 redis=redis,
                 tenant_id=tenant_id_str,
@@ -376,6 +382,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                     "policy_pack":      matched_pack_id,
                     "framework_controls": matched_pack_controls,
                     "prompt_excerpt":   scan_text[:240],
+                    "policy_version":   esc_policy_version,
                 },
                 request_id=approval_id,
             )

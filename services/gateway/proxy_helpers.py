@@ -86,10 +86,73 @@ async def record_spend(redis: Any, tenant_id: str, email: str, cost: float) -> N
 # ─────────────────────────────────────────────────────────────────────
 
 
+# U6 — replay-window hardening.
+#
+# An approved X-Aegis-Approval-ID is a one-shot ticket that bypasses the
+# normal deny + escalate scan. Without bounds, a 7-day-old approval can
+# be replayed AFTER an operator tightens the matching policy — the old
+# decision overrides the new rule. Enterprise security teams flag this
+# as policy-drift exploitation.
+#
+# Two layered gates close the gap:
+#   1. APPROVAL_REPLAY_TTL_S — the approval is only replayable for 5
+#      minutes after the operator decided it. After that the SDK gets
+#      a fresh deny/escalate scan even if the record is still in the
+#      audit log.
+#   2. policy_version Redis key — every policy upload INCRs
+#      acp:tenant:policy_version:{tenant_id}. The replay path compares
+#      the version the approval was decided under against the current
+#      version. Mismatch → fall through.
+#
+# Both checks fail CLOSED — Redis outage means no shortcut, the SDK
+# runs the full deny + escalate scan. That's strictly more conservative
+# than silent replay.
+APPROVAL_REPLAY_TTL_S = 300  # 5 minutes
+
+
+def _parse_iso(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        from datetime import datetime
+        # Postgres iso strings sometimes lack the Z; the +00:00 form parses fine.
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return datetime.fromisoformat(ts).timestamp()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def get_current_policy_version(tenant_id: str) -> str | None:
+    """Return the tenant's current policy_version, or None on Redis error.
+
+    Used both at escalate-audit-write time (stamps the metadata) and at
+    replay-lookup time (compares stamped vs current to reject replays
+    that crossed a policy upload).
+    """
+    try:
+        from sdk.common.redis import get_redis_client
+        r = get_redis_client(settings.REDIS_URL, decode_responses=True)
+        try:
+            return await r.get(f"acp:tenant:policy_version:{tenant_id}")
+        finally:
+            try:
+                await r.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def lookup_approval(
     request: Request, tenant_id: str, approval_id: str,
 ) -> dict | None:
     """Return the normalized approval record or None if not found.
+
+    Returns None ALSO if the approval is too old to replay (>5 min since
+    operator decided) or if the tenant's policy version has bumped since
+    the approval was recorded — both gates collapse the replay-window
+    attack documented in testing.md scenario I.
 
     Shape::
 
@@ -165,6 +228,43 @@ async def lookup_approval(
                 reason = ov.get("reason") or None
     except httpx.HTTPError as exc:
         logger.warning("approval_lookup_override_failed", error=str(exc))
+
+    # U6 gate 1 — TTL window on the replay shortcut.
+    if status_str == "approved":
+        decided_ts = _parse_iso(decided_at)
+        if decided_ts is not None:
+            import time as _time
+            age_s = _time.time() - decided_ts
+            if age_s > APPROVAL_REPLAY_TTL_S:
+                logger.info(
+                    "approval_replay_expired",
+                    approval_id=approval_id, age_s=int(age_s),
+                    ttl_s=APPROVAL_REPLAY_TTL_S,
+                )
+                return None
+
+        # U6 gate 2 — policy version match. Fail closed on Redis error.
+        try:
+            from sdk.common.redis import get_redis_client
+            _r = get_redis_client(settings.REDIS_URL, decode_responses=True)
+            try:
+                current_ver = await _r.get(f"acp:tenant:policy_version:{tenant_id}")
+            finally:
+                try:
+                    await _r.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
+            approval_ver = meta.get("policy_version")
+            if current_ver is not None and approval_ver is not None and str(current_ver) != str(approval_ver):
+                logger.info(
+                    "approval_replay_stale_policy",
+                    approval_id=approval_id,
+                    approval_ver=approval_ver, current_ver=current_ver,
+                )
+                return None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("approval_policy_version_check_failed", error=str(exc))
+            return None  # fail-closed
 
     return {
         "approval_id":     approval_id,

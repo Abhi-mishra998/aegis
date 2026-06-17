@@ -269,6 +269,10 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
             approval_id = (
                 request.headers.get("X-Request-ID") or str(uuid.uuid4())
             )
+            # U6 — stamp policy_version (see messages.py for the rationale).
+            esc_policy_version = await proxy_helpers.get_current_policy_version(
+                tenant_id_str,
+            )
             await push_audit_event(
                 redis=redis,
                 tenant_id=tenant_id_str,
@@ -293,6 +297,7 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                     "framework_controls": matched_pack_controls,
                     "prompt_excerpt":   scan_text[:240],
                     "upstream_provider": "openai",
+                    "policy_version":   esc_policy_version,
                 },
                 request_id=approval_id,
             )
