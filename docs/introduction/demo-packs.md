@@ -10,7 +10,7 @@ tool calls → each call goes through the real Aegis pipeline → the UI
 animates each decision with risk score, finding, and signed receipt.
 The audit chain grows in real time on the right rail.
 
-### Scenario picker (R5, 2026-06-13)
+### Scenario picker (R5, shipped 2026-06-13, default since 2026-06-17)
 
 Three scripted scenarios at the top of the page tell three distinct
 stories with one click — each provisions its own demo agent with a
@@ -83,9 +83,9 @@ The packs need direct access to the gateway, identity, identity_graph, and auton
 
 ### Pre-requisites
 
-1. The dev environment is up: `curl -fsS https://ha.aegisagent.in/system/health` returns `healthy: 12 / total: 12`.
+1. The environment is up: `curl -fsS https://aegisagent.in/system/health` returns `healthy: 12 / total: 12`.
 2. The repo's `demos/` directory has been uploaded to S3 (it isn't in the production tarball — `aws s3 cp demos.tar.gz s3://acp-backups-prodha-628478/demos/`).
-3. The dev admin credentials work: `admin@acp.local` is accepted by the gateway as of 2026-06-01 (`.local` TLD was rejected before that — see `services/gateway/routers/auth.py`).
+3. You have an Aegis API key (`acp_…`) from the workspace dashboard with ADMIN role. The Clerk-backed signup flow (live as of 2026-06-15) replaces the pre-seeded local admin used in earlier dev environments — see [`setup-agies.md`](../../setup-agies.md) §1 for the sign-up walkthrough.
 
 ### One-shot runner
 
@@ -97,9 +97,8 @@ docker run --rm --network infra_default \
   -e ACP_GRAPH_URL=http://identity_graph:8000 \
   -e ACP_AUTONOMY_URL=http://autonomy:8000 \
   -e INTERNAL_SECRET=<from Secrets Manager: acp-ha/internal_secret> \
-  -e ACP_TENANT_ID=00000000-0000-0000-0000-000000000001 \
-  -e ACP_ADMIN_EMAIL=admin@acp.local \
-  -e ACP_ADMIN_PASSWORD=<from onboarding> \
+  -e ACP_TENANT_ID=<your tenant UUID from the dashboard> \
+  -e ACP_API_KEY=<acp_... minted in Onboard a new agent> \
   -e DEMO_PG_DSN=postgresql+asyncpg://postgres:<RDS pwd>@acp-prodha-postgres.<id>.ap-south-1.rds.amazonaws.com:5432/acp_demo \
   -e DEMO_ADMIN_PG_DSN=postgresql+asyncpg://postgres:<RDS pwd>@acp-prodha-postgres.<id>.ap-south-1.rds.amazonaws.com:5432/postgres \
   python:3.11-slim bash -c \
@@ -109,7 +108,7 @@ docker run --rm --network infra_default \
 Two gotchas to know up front:
 
 - **Internal services listen on `:8000`** for every container — not 8002/8013/8015 like the local-dev defaults inside `setup_demo.py`. Override every `ACP_*_URL` env var.
-- **The tenant header value is `tenants.tenant_id`, not the row primary key.** For the seeded dev tenant: `00000000-0000-0000-0000-000000000001`, not the UUID `d77eecb9-…`.
+- **The tenant header value is `tenants.tenant_id`, not the row primary key.** Pull yours from **Workspace → Settings → API Keys** in the dashboard (or from the JWT claim returned by `/auth/me`). Earlier dev environments used a seeded fixture UUID; production workspaces use the Clerk-provisioned tenant UUID.
 
 The runner does setup + scripted execution for all three packs. Setup is idempotent except for agent name uniqueness — re-runs after a partial failure require cleaning up the previous `db-copilot-demo` / `devops-agent-demo` / `support-agent-demo` rows. The `agents` table has RLS enabled and rejects `DELETE` from the `postgres` superuser without an explicit `ALTER TABLE … DISABLE ROW LEVEL SECURITY` first.
 
@@ -138,7 +137,8 @@ The packs are read-or-write against the live dev environment. They are not isola
 
 ## Next
 
-- [Quickstart](quickstart.md) — manual curl walkthrough against the same dev environment
+- [`setup-agies.md`](../../setup-agies.md) — the full client onboarding narrative (Path A SDK vs Path B proxy, red-team script, approval inbox replay)
+- [Quickstart](quickstart.md) — the 5-minute first-call path
 - [60-second tour](60-second-tour.md) — UI walkthrough after a pack has populated the dashboards
 - [Decision service](../services/decision.md) — the signal stack the packs exercise
 - [Kill Switch](../security/kill-switch.md) — the lever the DevOps pack flips at scenario 8
