@@ -402,33 +402,50 @@ async def refresh_iag_from_audit(
             "tenant_id":        tenant_id,
         }
 
-    # Single synthetic role per agent — the Sprint 5 cache model needs
-    # the role hop, but for runtime-derived graphs the role layer is
-    # uninteresting. Naming them by agent_id makes them easy to scrub.
+    # Two-layer cache so the ThreatGraph page has both halves of the
+    # solid-vs-dashed contrast:
+    #
+    #   1. Tenant-wide tool pool — the union of every tool any agent
+    #      in this tenant has called. We grant EVERY agent a shared
+    #      synthetic role that grants the whole pool. This is the
+    #      "reachable" denominator.
+    #
+    #   2. The agent's own touched set comes out of audit at read time
+    #      in `_touched_tools_for_agent` (see /iag/agents/{id}).
+    #
+    # Result: untouched = tenant_pool - this_agent_tools, surfaced as
+    # dashed edges in the UI. Solid edges = tools the agent actually
+    # used. Matches the user's "touched vs reachable-but-untouched"
+    # mental model without needing a Postgres role catalog.
+    tenant_pool: set[str] = set()
+    for tools in agent_tools.values():
+        tenant_pool.update(tools)
+
+    shared_role = "runtime:tenant-pool"
+    shared_perm = "runtime-perm:tenant-pool"
+    await iag_store.upsert_role_perms(_redis, tenant_id, shared_role, {shared_perm})
+    await iag_store.upsert_perm_resources(_redis, tenant_id, shared_perm, tenant_pool)
+    for tool in tenant_pool:
+        meta = iag_graph.ResourceMeta(
+            resource_id=tool,
+            kind=iag_graph.KIND_TABLE,  # closest available bucket
+            label=tool,
+            sensitivity=_tool_sensitivity(tool),
+        )
+        await iag_store.upsert_resource_meta(_redis, tenant_id, meta)
+
     edge_count = 0
-    all_resources: set[str] = set()
-    for agent_id, tools in agent_tools.items():
-        role_id = f"runtime:{agent_id}"
-        perm_id = f"runtime-perm:{agent_id}"
-        await iag_store.upsert_agent_roles(_redis, tenant_id, agent_id, {role_id})
-        await iag_store.upsert_role_perms(_redis, tenant_id, role_id, {perm_id})
-        await iag_store.upsert_perm_resources(_redis, tenant_id, perm_id, tools)
-        for tool in tools:
-            meta = iag_graph.ResourceMeta(
-                resource_id=tool,
-                kind=iag_graph.KIND_TABLE,  # closest available bucket
-                label=tool,
-                sensitivity=_tool_sensitivity(tool),
-            )
-            await iag_store.upsert_resource_meta(_redis, tenant_id, meta)
-            all_resources.add(tool)
-            edge_count += 1
+    for agent_id in agent_tools:
+        await iag_store.upsert_agent_roles(
+            _redis, tenant_id, agent_id, {shared_role},
+        )
+        edge_count += len(tenant_pool)
 
     await iag_store.stamp_ingestion_done(_redis, tenant_id)
 
     return {
         "agents_seen":     len(agent_tools),
-        "resources_synth": len(all_resources),
+        "resources_synth": len(tenant_pool),
         "edges":           edge_count,
         "last_ingest_ts":  await iag_store.get_last_ingest_ts(_redis, tenant_id),
         "tenant_id":       tenant_id,
