@@ -45,6 +45,7 @@ from sdk.common.response import APIResponse
 from services.gateway.anthropic_pricing import cost_usd
 from services.gateway.client import service_client
 from services.gateway._helpers import internal_headers
+from services.gateway.inference_proxy import InjectionDetector
 
 logger = structlog.get_logger(__name__)
 
@@ -238,6 +239,69 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         except Exception:
             req_json = {}
         model = (req_json or {}).get("model") or "claude-haiku-4-5"
+
+        # 5b. prompt-injection scan — runs against the concatenation of
+        # every user/system message text so we catch payloads regardless
+        # of which turn they sit in. The corporate Anthropic key is NEVER
+        # touched on a refused call; instead we write an audit row tagged
+        # decision='deny' so harmful_blocked_30d on /team/overview lights
+        # up. Sprint 17.7.
+        scan_text_parts: list[str] = []
+        for msg in (req_json.get("messages") or []):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                scan_text_parts.append(content)
+            elif isinstance(content, list):
+                # Anthropic SDK content blocks: [{type:"text", text:"…"}]
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        scan_text_parts.append(str(block.get("text") or ""))
+        system_prompt = req_json.get("system")
+        if isinstance(system_prompt, str):
+            scan_text_parts.append(system_prompt)
+        elif isinstance(system_prompt, list):
+            for block in system_prompt:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    scan_text_parts.append(str(block.get("text") or ""))
+
+        scan_text = "\n".join(scan_text_parts)
+        scan_result = InjectionDetector.scan(scan_text) if scan_text else None
+        if scan_result is not None and not scan_result.allowed:
+            pattern_name = (scan_result.metadata or {}).get("pattern", "unknown")
+            await push_audit_event(
+                redis=redis,
+                tenant_id=tenant_id_str,
+                agent_id=None,
+                action="llm_proxy_call",
+                tool="anthropic_messages",
+                decision="deny",
+                reason=scan_result.reason,
+                metadata={
+                    "employee_email": employee_email,
+                    "model":          model,
+                    "input_tokens":   0,
+                    "output_tokens":  0,
+                    "cost_usd":       0.0,
+                    "status_code":    403,
+                    "latency_ms":     0,
+                    "anthropic_version": anthropic_version,
+                    "findings":       scan_result.flags or ["prompt_injection"],
+                    "risk_score":     scan_result.risk_score,
+                    "match_pattern":  str(pattern_name)[:120],
+                },
+                request_id=request.headers.get("X-Request-ID"),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "prompt_blocked",
+                    "reason": scan_result.reason,
+                    "findings": scan_result.flags or ["prompt_injection"],
+                    "risk_score": scan_result.risk_score,
+                },
+            )
 
         # 6. forward to api.anthropic.com
         forward_headers = {
