@@ -227,12 +227,198 @@ The gateway exposes ~90 routes. The most-trafficked tags:
 
 For the full list see [API Reference](../api/reference.md) (generated from `/openapi.json`).
 
+## Endpoint reference — 2026-06 deltas
+
+The endpoints below either landed or were materially reshaped in the 2026-06 docs refresh. Body shapes are the ones the SDK (`acp-client==1.1.0`) actually sends; response shapes are what the SDK consumes after the `APIResponse` envelope is unwrapped. Every path here was verified against `services/gateway/routers/`.
+
+### `POST /audit/logs/search` — typed audit search
+
+Source: `services/gateway/routers/audit.py:69`. Upstream handler: `services/audit/router.py:325` (schema `services/audit/schemas.py:27::AuditLogSearch`).
+
+**Body** (all fields optional except `limit` and `offset` defaults):
+
+```json
+{
+  "agent_id":        "<uuid>",
+  "action":          "execute_tool",
+  "tool":            "db.query",
+  "decision":        "deny",
+  "start_date":      "2026-06-01T00:00:00Z",
+  "end_date":        "2026-06-17T23:59:59Z",
+  "metadata_filter": {"finding": "pii.detected"},
+  "limit":           20,
+  "offset":          0
+}
+```
+
+`limit` is bounded by Pydantic `ge=1, le=100`; 422 if violated. `metadata_filter` is a JSONB containment match (`metadata_json @> filter`) against the audit row — keys like `finding`, `risk_score`, or any custom metadata your agent attached.
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "total":  342,
+    "limit":  20,
+    "offset": 0,
+    "items": [
+      {
+        "id":         "<uuid>",
+        "agent_id":   "<uuid>",
+        "action":     "execute_tool",
+        "tool":       "db.query",
+        "decision":   "deny",
+        "timestamp":  "2026-06-17T10:14:22.451Z",
+        "metadata":   { "...": "..." },
+        "prev_hash":  "<64-char hex>"
+      }
+    ]
+  }
+}
+```
+
+> **WAF gotcha.** AWS WAF has a managed rule that flags JSON bodies containing the literal string `"limit":<n>` as SQL-injection-ish, returning 403 before the request reaches the gateway. The UI's Audit Trail page therefore prefers `GET /audit/logs?limit=N&agent_id=…&action=…` for plain pagination and only falls back to POST `/audit/logs/search` when `metadata_filter` is non-empty (the JSONB filter has no GET equivalent). New SDK integrations should do the same.
+
+### `POST /policy/upload` — persist a named Rego policy
+
+Source: `services/gateway/routers/policy.py:127`. Pure proxy → policy service.
+
+**Body**: opaque to the gateway; forwarded to the policy service as-is. The expected shape upstream:
+
+```json
+{
+  "name":  "block_external_wire_above_25M",
+  "rego":  "package agent_policy\n\ndeny[msg] { ... }",
+  "notes": "Sprint-7 enterprise rule"
+}
+```
+
+Requires `ADMIN` or `SECURITY` role at the gateway auth check; tenant scoping comes from the JWT (`tenant_id` claim).
+
+**Response**: 200 with the upstream `APIResponse` envelope carrying the saved policy row (`id`, `name`, `version`, `created_at`). 403 if the role gate fails before the proxy fires.
+
+The two sibling routes — `POST /policy/simulate` and `POST /policy/test` (both in the same router) — fan out a `policy_decision` SSE event on non-trivial outcomes (deny / escalate / approval_required) via `_maybe_publish_policy_event`. `/policy/upload` itself does not currently emit an event; the UI re-fetches the policy list after the 200. See the [Live Feed page](../ui/operations/live-feed.md) for how SSE events are consumed.
+
+### `DELETE /api-keys/{key_id}` — revoke a programmatic API key
+
+Source: `services/gateway/routers/users.py:139`. Pure proxy → API service.
+
+**Body**: none. The path parameter is the key UUID returned by `POST /api-keys`.
+
+**Response**: 200 with `{ "success": true, "data": { "revoked": true, "id": "<uuid>" } }`. 404 if the key doesn't exist or already belongs to a different tenant.
+
+Forensic-grade revocation (revocation set + SSE event) is in the roadmap but not yet wired here; today the API service marks the key inactive and the next validation call (`POST /api-keys/validate`) returns 401. Clients caching the validation result should respect the 60-second TTL on `acp:apikey:validated:{hash}`.
+
+### `GET /iag/mitre-coverage` — MITRE ATT&CK coverage matrix
+
+Source: `services/gateway/routers/iag.py:111`. No DB call — reads the module-level `services/security/signal_registry.py` (Sprint-1 Security Signal Registry, 34 signals).
+
+**Query params**: none required. The handler enforces a tenant JWT but the response is registry-only (the same matrix for every tenant).
+
+**Response**:
+
+```json
+{
+  "tactics": [
+    {
+      "tactic_id":       "TA0001",
+      "tactic_name":     "Initial Access",
+      "technique_count": 2,
+      "signal_count":    3,
+      "techniques": [
+        {
+          "technique_id":   "T1078",
+          "technique_name": "Valid Accounts",
+          "max_severity":   "high",
+          "max_score":      70,
+          "signals": [
+            {
+              "id":               "SEC-AUTH-001",
+              "severity":         "high",
+              "default_score":    70,
+              "default_response": "escalate",
+              "description":      "Cross-tenant token reuse detected"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "signal_total":  34,
+  "tactic_total":  12
+}
+```
+
+The frontend's MitreCoverageGrid renders the result as a 12-tactic heatmap; the cell colour comes from `max_severity` within that technique's signals.
+
+### `GET /iag/agents/{agent_id}` — accessible-resources view for one agent
+
+Source: `services/gateway/routers/iag.py:187`.
+
+**Path param**: `agent_id` — UUID (or string id) of the agent.
+
+**Response**: the canonical `BlastRadius.to_dict()` shape from `services/security/iag/graph.py:79`. Because no incident is associated, every accessible resource lands in `untouched_resources`:
+
+```json
+{
+  "agent_id":             "<uuid>",
+  "incident_id":          "",
+  "accessible_resources": ["res-001", "res-014", "..."],
+  "touched_resources":    [],
+  "untouched_resources":  ["res-001", "res-014", "..."],
+  "criticality_score":    420,
+  "by_kind":              {"database": 12, "secret": 4, "endpoint": 31},
+  "resource_labels":      {"res-001": "patients_pii", "res-014": "billing_db_ro"},
+  "last_ingest_ts":       1718587200,
+  "dollar_estimate":      1250000,
+  "by_kind_dollars":      {"database": 1200000, "secret": 50000},
+  "system_values_configured": true
+}
+```
+
+If IAG ingestion has never run for the tenant, `accessible_resources` will be empty and `last_ingest_ts: 0` — the caller can use that to surface a "graph not ingested yet" empty state.
+
+The companion `GET /iag/incidents/{incident_id}/blast-radius` (line 223) returns the same shape but with `touched_resources` filled from the incident storyline and an extra `participating_agents` list.
+
+### `POST /autonomy/overrides` — human override timeline entry
+
+Routed via the catch-all `/autonomy/{full_path:path}` in `services/gateway/routers/proxies.py:41`. Upstream handler: `services/autonomy/router.py:318` (`add_override`, schema `services/autonomy/schemas.py:78::OverrideIn`).
+
+**Body**:
+
+```json
+{
+  "actor":       "cfo@example.com",
+  "actor_role":  "CFO",
+  "event_type":  "approve",
+  "target_kind": "incident",
+  "target_id":   "INC-2026-06-17-0042",
+  "request_id":  "<uuid optional>",
+  "reason":      "Verified out-of-band with treasury",
+  "metadata":    {"transaction_id": "TX-91A2"}
+}
+```
+
+`event_type` is open-vocabulary in the schema, but the autonomy enforcement engine recognises `approve`, `reject`, `acknowledge`, `comment`. `target_kind` is typically `incident`, `agent`, or `policy`; `target_id` is the matching primary key.
+
+**Actor attribution.** The gateway's auth middleware injects two headers before the request reaches the autonomy service:
+
+- `X-ACP-Actor` ← the JWT `sub` claim (validated user id / email)
+- `X-ACP-Role` ← the JWT `role` claim
+
+The autonomy handler (`router.py:331`) prefers these over the body's `actor` and `actor_role` fields. This means a browser cannot spoof a CFO override — the role on the row is whatever role the JWT carried at the moment the request was authenticated. Body fields remain the fallback for direct service-to-service calls that bypass the gateway (rare).
+
+**Response**: 200 with the persisted `OverrideOut` row (`id`, `tenant_id`, `actor`, `event_type`, `target_kind`, `target_id`, `occurred_at`, etc.). The handler does not currently publish an SSE event — UI surfaces that listen for override resolution re-poll `GET /autonomy/overrides?minutes=…`. The matching `GET /autonomy/overrides` query is the timeline feed (paginated, filterable by `target_kind` / `target_id`).
+
+> **What's documented vs. what's coming.** A few proxy and notification side-effects were mooted during the docs refresh that are not yet in the codebase: `POST /v1/messages` + `POST /v1/chat/completions` model-side proxy routes (only the abstraction layer `services/gateway/llm_router.py` exists; no wiring), `POST /v1/approvals/{id}/status` typed approval poll, `POST /iag/refresh?days=N`, `POST /api-keys/employees`, and SSE events `llm_proxy_call`, `llm_proxy_escalate`, `approval_resolved`, `key_revoked`. They are not currently routable through the gateway; this page is updated only after they ship and `services/gateway/routers/` grows the handlers.
+
 ## Example requests
 
 ### Mint a token
 
 ```bash
-curl -sS -X POST https://ha.aegisagent.in/auth/token \
+curl -sS -X POST https://aegisagent.in/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -d '{"email":"admin@acp.local","password":"REDACTED"}'
@@ -241,7 +427,7 @@ curl -sS -X POST https://ha.aegisagent.in/auth/token \
 ### List agents
 
 ```bash
-curl -sS https://ha.aegisagent.in/agents \
+curl -sS https://aegisagent.in/agents \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" | jq
 ```
@@ -249,7 +435,7 @@ curl -sS https://ha.aegisagent.in/agents \
 ### Execute a tool (the main event)
 
 ```bash
-curl -sS -X POST https://ha.aegisagent.in/execute \
+curl -sS -X POST https://aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
   -H "X-Agent-ID: $AGENT_ID" \
