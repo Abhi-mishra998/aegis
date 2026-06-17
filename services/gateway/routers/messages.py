@@ -1158,6 +1158,10 @@ async def team_employee_profile(email: str, request: Request) -> APIResponse[dic
             "decision":      decision,
             "findings":      meta.get("findings") or [],
             "latency_ms":    int(meta.get("latency_ms") or 0),
+            # Sprint 15 — Replay deep-link target. Every audit row
+            # carries request_id; surfacing it here lets the
+            # EmployeeProfile recent-calls table link to /replay/<id>.
+            "request_id":    r.get("request_id") or "",
         })
 
     requests_30d = len(employee_rows)
@@ -1674,6 +1678,207 @@ async def approval_status(approval_id: str, request: Request) -> APIResponse[dic
             detail=f"No approval with id {approval_id!r}",
         )
     return APIResponse(data=record)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 15 — Unified replay. One URL: /replay/{request_id}. Joins
+# every audit row for the request (typically one decision per
+# request_id + any human_override_events that resolved it) into a
+# 5-stage stepper payload the UI renders left-to-right.
+#
+# The handler is tenant-scoped via the gateway middleware's JWT auth
+# (path is in _MANAGEMENT_PATH_PREFIXES — see middleware.py).
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/replay/{request_id}")
+async def replay_request(request_id: str, request: Request) -> APIResponse[dict]:
+    """Return the full audit timeline for one request_id.
+
+    Shape::
+
+        {
+          "request_id": str,
+          "stages": [
+            {"kind": "user_request",       ...},   # 1
+            {"kind": "agent_decision",     ...},   # 2
+            {"kind": "tool_request",       ...},   # 3
+            {"kind": "aegis_evaluation",   ...},   # 4
+            {"kind": "outcome",            ...},   # 5
+          ],
+          "audit_rows":     [...],
+          "override_events": [...],
+        }
+    """
+    tenant_id_str = (
+        request.headers.get("X-Tenant-ID")
+        or (getattr(request.state, "jwt_claims", {}) or {}).get("tenant_id", "")
+    )
+    if not tenant_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant context missing — please sign in again.",
+        )
+
+    rid = request_id.strip()
+    headers = internal_headers(request)
+
+    # 1. Every audit row with this request_id (most have exactly one;
+    # some flows write a follow-on row when the operator approves).
+    audit_rows: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(
+                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
+                json={"limit": 50},
+                headers=headers,
+            )
+        if r.status_code == 200:
+            data = (r.json() or {}).get("data") or {}
+            items = data.get("items", []) if isinstance(data, dict) else []
+            audit_rows = [x for x in items if (x.get("request_id") or "") == rid]
+    except httpx.HTTPError as exc:
+        logger.warning("replay_audit_fetch_failed", error=str(exc))
+
+    # 2. Override events keyed by request_id (operator approve / reject /
+    # kill / note).
+    override_events: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(
+                f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/overrides",
+                params={"minutes": 43200, "target_kind": "request", "target_id": rid, "limit": 20},
+                headers=headers,
+            )
+        if r.status_code == 200:
+            body = r.json() or {}
+            items = body.get("data") if isinstance(body, dict) else body
+            if isinstance(items, list):
+                override_events = items
+    except httpx.HTTPError as exc:
+        logger.warning("replay_overrides_fetch_failed", error=str(exc))
+
+    if not audit_rows and not override_events:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No audit history for request_id {rid!r}",
+        )
+
+    # Pick the primary audit row — earliest by timestamp.
+    audit_rows.sort(key=lambda x: str(x.get("timestamp") or x.get("created_at") or ""))
+    primary = audit_rows[0] if audit_rows else {}
+    meta = primary.get("metadata_json") or primary.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            import json as _json
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+
+    # Derive stage fields once.
+    employee_email   = meta.get("employee_email") or ""
+    model            = meta.get("model") or ""
+    matched_pattern  = meta.get("matched_pattern") or ""
+    approver_role    = meta.get("approver_role") or ""
+    decision         = (primary.get("decision") or "").lower()
+    policy_pack      = meta.get("policy_pack")
+    framework_ctrls  = meta.get("framework_controls") or []
+    findings         = meta.get("findings") or []
+    risk_score       = meta.get("risk_score")
+    prompt_excerpt   = meta.get("prompt_excerpt") or meta.get("reason") or ""
+    tool_name        = primary.get("tool") or ""
+    action_name      = primary.get("action") or ""
+    status_code      = meta.get("status_code")
+    latency_ms       = meta.get("latency_ms")
+    input_tokens     = meta.get("input_tokens")
+    output_tokens    = meta.get("output_tokens")
+    cost_usd         = meta.get("cost_usd")
+    upstream_provider = meta.get("upstream_provider") or (
+        "anthropic" if tool_name == "anthropic_messages" else (
+            "openai" if tool_name == "openai_chat_completions" else None
+        )
+    )
+
+    # Map override events into a stable shape.
+    overrides_view = []
+    for o in override_events:
+        overrides_view.append({
+            "event_type": (o.get("event_type") or "").lower(),
+            "actor":      o.get("actor"),
+            "actor_role": o.get("actor_role"),
+            "reason":     o.get("reason"),
+            "occurred_at": o.get("occurred_at"),
+            "metadata":   o.get("metadata_json") or o.get("metadata") or {},
+        })
+
+    # Resolution = the latest override's event_type.
+    resolution = None
+    if overrides_view:
+        latest = overrides_view[-1]
+        et = latest.get("event_type") or ""
+        if et == "approval":
+            resolution = "approved"
+        elif et == "override":
+            resolution = "rejected"
+        elif et:
+            resolution = et
+
+    # ── Build the 5-stage stepper ──────────────────────────────────
+    stages = [
+        {
+            "kind":  "user_request",
+            "label": "User request",
+            "icon":  "user",
+            "employee_email": employee_email,
+            "prompt_excerpt": prompt_excerpt,
+            "at":     primary.get("timestamp") or primary.get("created_at"),
+        },
+        {
+            "kind":  "agent_decision",
+            "label": "Agent decision",
+            "icon":  "bot",
+            "model": model,
+            "upstream_provider": upstream_provider,
+            "input_tokens":  input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd":      cost_usd,
+        },
+        {
+            "kind":  "tool_request",
+            "label": "Tool / proxy call",
+            "icon":  "crosshair",
+            "tool":   tool_name,
+            "action": action_name,
+        },
+        {
+            "kind":  "aegis_evaluation",
+            "label": "Aegis evaluation",
+            "icon":  "shield",
+            "decision":           decision,
+            "matched_pattern":    matched_pattern,
+            "approver_role":      approver_role,
+            "policy_pack":        policy_pack,
+            "framework_controls": framework_ctrls,
+            "findings":           findings,
+            "risk_score":         risk_score,
+            "latency_ms":         latency_ms,
+        },
+        {
+            "kind":  "outcome",
+            "label": "Outcome",
+            "icon":  "flag",
+            "status_code":    status_code,
+            "resolution":     resolution,
+            "override_events": overrides_view,
+        },
+    ]
+
+    return APIResponse(data={
+        "request_id":      rid,
+        "stages":          stages,
+        "audit_rows":      audit_rows,
+        "override_events": override_events,
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────

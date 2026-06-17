@@ -7,6 +7,7 @@ import {
   DollarSign,
   Gauge,
   Loader2,
+  PlayCircle,
   RefreshCw,
   Shield,
   ShieldCheck,
@@ -332,7 +333,8 @@ export default function EmployeeProfile() {
                   <th className="py-2 pr-3 text-right">Out</th>
                   <th className="py-2 pr-3 text-right">Cost</th>
                   <th className="py-2 pr-3">Decision</th>
-                  <th className="py-2 pr-2 text-right">Latency</th>
+                  <th className="py-2 pr-3 text-right">Latency</th>
+                  <th className="py-2 pr-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -354,8 +356,19 @@ export default function EmployeeProfile() {
                           {r.decision || 'allow'}
                         </span>
                       </td>
-                      <td className="py-2 pr-2 text-neutral-500 font-mono text-right">
+                      <td className="py-2 pr-3 text-neutral-500 font-mono text-right">
                         {r.latency_ms ? `${r.latency_ms}ms` : '—'}
+                      </td>
+                      <td className="py-2 pr-2 text-right">
+                        {r.request_id ? (
+                          <Link
+                            to={`/replay/${encodeURIComponent(r.request_id)}`}
+                            title="Replay timeline"
+                            className="inline-flex items-center gap-1 text-[10px] text-blue-300 hover:text-white px-2 py-0.5 rounded-md border border-blue-500/30 bg-blue-500/[0.06] hover:bg-blue-500/[0.12] transition-colors"
+                          >
+                            <PlayCircle size={10} /> Replay
+                          </Link>
+                        ) : null}
                       </td>
                     </tr>
                   )
