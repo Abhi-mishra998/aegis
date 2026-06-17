@@ -270,3 +270,89 @@ async def test_validate_falls_back_to_redis_org_mapping(rsa_keypair):
 
     assert payload["tenant_id"] == "99999999-9999-9999-9999-999999999999"
     assert payload["role"] == "ADMIN"  # from org_role fallback
+
+
+# ---------------------------------------------------------------------------
+# U4 — HS256 + Clerk-iss downgrade attack
+# ---------------------------------------------------------------------------
+#
+# `looks_like_clerk_token(token)` reads the UNVERIFIED `iss` claim to pick
+# the validator. If an attacker who knows JWT_SECRET_KEY can mint an HS256
+# token with iss=<clerk_issuer>, the dispatcher would route it to the Clerk
+# path and (in a misconfigured world) verify it with HS256, bypassing JWKS.
+#
+# The fix lives in services/gateway/auth.py: the dispatcher REQUIRES the
+# JWT alg header to be RS256/RS512 when the token claims to be Clerk.
+
+
+@pytest.mark.asyncio
+async def test_hs256_token_with_clerk_iss_is_rejected_at_dispatch(monkeypatch):
+    """U4: an HS256 JWT with iss=<clerk_issuer> must be rejected — not
+    routed to the Clerk path and not validated as legacy either."""
+    from sdk.common.config import settings as gw_settings
+    from services.gateway.auth import LocalTokenValidator, _LOCAL_TOKEN_LRU
+
+    # Make sure cached state from earlier tests can't short-circuit us.
+    _LOCAL_TOKEN_LRU.clear()
+
+    # Force the gateway into the dual-provider mode where both legacy HS
+    # and Clerk RS are accepted — this is the riskiest dispatch surface.
+    monkeypatch.setattr(gw_settings, "ACP_AUTH_PROVIDER", "both", raising=False)
+    # JWT_SECRET_KEY is the legacy HS256 signing key. An attacker who
+    # learns it (or any insider) gets the ability to mint HS tokens.
+    monkeypatch.setattr(
+        gw_settings, "JWT_SECRET_KEY",
+        "test-legacy-hs256-secret-for-u4-only",
+        raising=False,
+    )
+
+    # Forge an HS256 token bearing the Clerk issuer claim. This is the
+    # downgrade payload: same iss as a real Clerk token, but signed with
+    # the legacy HS secret. There is NO `kid` header — and we don't need
+    # one, because the dispatcher must reject this long before the Clerk
+    # validator's JWKS lookup runs.
+    now = int(time.time())
+    forged_payload = {
+        "iss": _TEST_ISSUER,
+        "sub": "user_attacker",
+        "aegis_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "aegis_org_id":   "11111111-1111-1111-1111-111111111111",
+        "aegis_role":     "org:admin",
+        "email": "attacker@example.com",
+        "iat": now,
+        "exp": now + 600,
+        # Legacy required claims so it would otherwise pass _validate_signature.
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "role":      "OWNER",
+        "jti":       "forged-jti-001",
+    }
+    forged_token = jwt.encode(
+        forged_payload,
+        "test-legacy-hs256-secret-for-u4-only",
+        algorithm="HS256",
+    )
+
+    validator = LocalTokenValidator(redis_client=None)
+    with pytest.raises(ACPAuthError, match="Invalid Clerk token alg"):
+        await validator.validate(forged_token)
+
+
+@pytest.mark.asyncio
+async def test_rs256_clerk_token_still_accepted_after_alg_gate(monkeypatch, rsa_keypair):
+    """U4 regression check: a legitimate RS256 Clerk token must STILL be
+    accepted by the dispatcher after the alg gate is in place."""
+    from sdk.common.config import settings as gw_settings
+    from services.gateway.auth import LocalTokenValidator, _LOCAL_TOKEN_LRU
+
+    _LOCAL_TOKEN_LRU.clear()
+    monkeypatch.setattr(gw_settings, "ACP_AUTH_PROVIDER", "both", raising=False)
+
+    _seed_jwks(rsa_keypair["public_jwk"])
+    token = _make_token(rsa_keypair)
+
+    validator = LocalTokenValidator(redis_client=None)
+    payload = await validator.validate(token)
+
+    assert payload["sub"] == "user_test_001"
+    assert payload["tenant_id"] == "11111111-1111-1111-1111-111111111111"
+    assert payload["auth_provider"] == "clerk"
