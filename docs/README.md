@@ -16,9 +16,10 @@ The [AEVF section](AEVF/README.md) is where that promise becomes operational: an
 | Security engineer evaluating Aegis | [What is Aegis?](introduction/what-is-aegis.md) then [Why Runtime Governance](introduction/why-runtime-governance.md) |
 | Developer integrating an agent | [Quickstart](introduction/quickstart.md) then [API Reference](api/reference.md) |
 | Architect doing a design review | [System Overview](architecture/system-overview.md) then [Flow of a Decision](architecture/flow-of-a-decision.md) |
-| SRE responsible for the production deployment | [Deployment Topology](architecture/deployment-topology.md) then the [Runbooks](operations/runbooks/audit-chain-violation.md) |
+| SRE responsible for the production deployment | [Deployment Topology](architecture/deployment-topology.md) then the [Runbooks](runbooks/audit_chain_violation.md) |
 | GRC manager (Vanta / Drata / Secureframe user) | [Evidence Export](integrations/evidence-export.md) — `/compliance/export/grc?format=csv` produces rows your GRC platform ingests, each row carrying a back-reference to a verifiable AEVF bundle |
 | Product or business reader | [60-Second Tour](introduction/60-second-tour.md) |
+| Onboarding a new client / first-time install | [`setup-agies.md`](../setup-agies.md) at the repo root — long-form client onboarding guide, plus [`final-testing.md`](../final-testing.md) for 31/31 E2E PASS evidence |
 
 ## What's covered
 
@@ -34,11 +35,12 @@ The [AEVF section](AEVF/README.md) is where that promise becomes operational: an
 
 ## Platform at a glance (current state)
 
-- **Live URL:** `https://ha.aegisagent.in` (prod-ha cut-over 2026-06-13). Multi-AZ ASG of 2× `m6g.medium` Graviton behind ALB; Multi-AZ RDS Postgres; Redis replication group; WAFv2; KMS-rooted ed25519 signing keys in SSM SecureString.
+- **Live URL:** `https://aegisagent.in` — clean canonical URL (the `ha.aegisagent.in` alias still resolves and is documented where the prod-ha topology is being named explicitly). Multi-AZ ASG of 2× `m6g.medium` Graviton behind ALB; Multi-AZ RDS Postgres; Redis replication group; WAFv2; KMS-rooted ed25519 signing keys in SSM SecureString.
 - **16 application services across 22 containers.**
-- **Cryptographic audit chain** — every decision signed with ed25519, chained via SHA-256 `prev_hash`, rolled into a daily Merkle root, **format published as the open AEVF spec at `/aevf/spec.md`**.
+- **Cryptographic audit chain** — every decision signed with ed25519, chained via SHA-256 `prev_hash`, rolled into a daily Merkle root, **format published as the open AEVF spec at `/aevf/spec.md`**. The audit table is protected by an append-only DB trigger — no `UPDATE` / `DELETE` will even reach disk.
 - **49 React UI pages** — every page wired to a live backend.
-- **3 framework SDKs on PyPI:** `aegis-anthropic`, `aegis-openai`, `aegis-langchain` — drop-in wrappers for Anthropic / OpenAI / LangChain agents.
+- **3 framework SDKs on PyPI — pinned to `==1.1.0`:** `aegis-anthropic`, `aegis-openai`, `aegis-langchain` — drop-in wrappers for Anthropic / OpenAI / LangChain agents. See [SDK 1.1.0 Release](integrations/sdk-1.1.0-release.md) for the changelog and pin-line.
+- **Streaming control-plane events:** the SSE channel surfaces four new event types — `decision.upserted`, `incident.opened`, `incident.closed`, and `mitre.coverage.updated` (per-agent MITRE coverage in the Threat Graph).
 - **Compliance coverage** — signed verifiable bundles for **SOC 2, EU AI Act, NIST AI RMF, and India DPDP Act 2023** (with Rules 2025-11-13); GRC export shaped for Vanta / Drata / Secureframe / Hyperproof; AEVF back-reference on every SIEM event and every GRC row.
 - **Live demo at `/live-demo`** — scenario picker (fintech_data_egress / devops_destruction / support_pii_exfil), buyer-editable prompts, every deny earned from action semantics across all risk levels.
 - **Minimal self-host mode** at `infra/minimal/` — 3 docker services (aegis-core + postgres + redis), validated 10/10 on a throwaway EC2.
@@ -70,19 +72,19 @@ Every page in this set cites real code paths. A reviewer can cross-check claims:
 grep -n "<claimed snippet>" <cited file>
 
 # Pull the public AEVF spec — auditors do this without an account:
-curl -sS https://ha.aegisagent.in/aevf/spec.md | head -20
+curl -sS https://aegisagent.in/aevf/spec.md | head -20
 
 # Download the reference bundle and verify it offline:
-curl -O https://ha.aegisagent.in/aevf/reference-bundle-2026-06.json
+curl -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
 sha256sum reference-bundle-2026-06.json
 # → 8a6f09f65c374edf44c811dba8f146c8d79dab9ed74e3c49920be759951f20fc
-pip install aegis-aevf
+pip install 'aegis-aevf==1.1.0'
 aegis-verify --bundle reference-bundle-2026-06.json
 # → 6/6 PASS
 
 # Verify the running OpenAPI spec matches the reference.
 TOKEN=...
-curl -sS https://ha.aegisagent.in/openapi.json | jq '.paths | keys | length'
+curl -sS https://aegisagent.in/openapi.json | jq '.paths | keys | length'
 ```
 
 Where this documentation and the running code disagree, the code wins. Please open an issue.
@@ -113,9 +115,11 @@ docs/
 
 ## Links
 
-- **Live URL:** [ha.aegisagent.in](https://ha.aegisagent.in)
-- **AEVF landing:** [ha.aegisagent.in/aevf/](https://ha.aegisagent.in/aevf/)
-- **Reference verifier on PyPI:** [aegis-verify](https://pypi.org/project/aegis-aevf/)
-- **Framework SDKs:** [aegis-anthropic](https://pypi.org/project/aegis-anthropic/) · [aegis-openai](https://pypi.org/project/aegis-openai/) · [aegis-langchain](https://pypi.org/project/aegis-langchain/)
+- **Live URL:** [aegisagent.in](https://aegisagent.in) (clean canonical URL; `ha.aegisagent.in` alias still resolves)
+- **AEVF landing:** [aegisagent.in/aevf/](https://aegisagent.in/aevf/)
+- **Reference verifier on PyPI (1.1.0):** [`pip install 'aegis-aevf==1.1.0'`](https://pypi.org/project/aegis-aevf/)
+- **Framework SDKs (1.1.0):** [`pip install 'aegis-anthropic==1.1.0'`](https://pypi.org/project/aegis-anthropic/) · [`pip install 'aegis-openai==1.1.0'`](https://pypi.org/project/aegis-openai/) · [`pip install 'aegis-langchain==1.1.0'`](https://pypi.org/project/aegis-langchain/)
+- **Client onboarding (long-form):** [`setup-agies.md`](../setup-agies.md) at the repo root
+- **E2E PASS evidence:** [`final-testing.md`](../final-testing.md) at the repo root (31/31 PASS)
 - **Repository:** [github.com/Abhi-mishra998/aegis](https://github.com/Abhi-mishra998/aegis)
 - **Security disclosures:** [`SECURITY.md`](https://github.com/Abhi-mishra998/aegis/blob/main/SECURITY.md)
