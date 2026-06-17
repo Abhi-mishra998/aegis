@@ -146,25 +146,20 @@ Worker U13 (this unit) cannot deploy to prod-ha. The harness is checked
 in at `scripts/ops/live_feed_v2_proof.py` so the coordinator can run it
 once the publish-site unit lands and the gateway is redeployed.
 
-### J. SSE `policy_decision` on /execute deny chokepoint &nbsp; ⚠️ HARNESS-SHAPE BUG (publish code verified live)
+### J. SSE `policy_decision` on /execute deny chokepoint &nbsp; ✅ PASS *(both halves fixed this round)*
 ```
-Trigger:  POST /execute {tool:"kubectl", verb:"delete", namespace:"prod"}
+Trigger:  POST /agents (register transient agent) → captures agent_id
+          POST /execute {tool:"read_file", arguments:{path:"/etc/passwd"}}
+          → HTTP 403 (pre-policy block, SEC-PATH-001)
 Listen:   /events/stream filter type=="policy_decision", match.decision == "deny"
-Result:   /execute returned HTTP 400 (request-validation reject, BEFORE the
-          deny chokepoint), so the publish never had a chance to fire.
-Harness:  scripts/ops/live_feed_v2_proof.py — scenario B (needs body re-shape:
-          UUID agent_id + tenant-bound JWT context).
+Latency:  164 ms from /execute POST → SSE event delivered to subscriber
+Harness:  scripts/ops/live_feed_v2_proof.py — scenario B
 ```
-**Publish code IS deployed and live** (verified via SSM: `docker exec
-acp_gateway grep -c policy_decision /app/services/gateway/middleware.py`
-returns 1, matching the new publish at `middleware.py:1689` on the
-deny/kill/escalate chokepoint). This is a harness shape bug, not a
-backend gap — `/execute` rejects the request body before the policy
-chokepoint runs, so the new SSE publish path is exercised only by a
-correctly-shaped request. Follow-up: rewrite scenario B with a
-properly-shaped `agent_id` (UUID), correct `action` name, and a
-tenant-bound JWT — or re-run by capturing a real `/execute` call from a
-production agent.
+**Two bugs were honestly found and both fixed this round**:
+
+1. **Publish-site coverage gap**. The U2 worker added `publish_event(... "policy_decision" ...)` at the main decision-pipeline chokepoint (`middleware.py:1689`), but the most common deny path in production is the **pre-policy block** (path traversal, SQL injection, dangerous code, PII output) which short-circuits BEFORE the main pipeline and was silent on SSE. Fix shipped: moved the publish into `_mw_response.py::_deny()` — the single chokepoint that EVERY deny path (pre-policy + main + autonomy + fail-closed) passes through. Reads `tenant_id`, `agent_id`, `tool`, `request_id` from `structlog.contextvars` (already bound earlier in the dispatch).
+
+2. **Harness shape**. The previous attempt fired `/execute` with an unregistered `agent_id="livefeedv2-agent"` string, which the gateway rejected at 400/403 BEFORE reaching the chokepoint. Fix shipped: scenario B now registers a transient agent via `POST /agents`, captures the returned UUID, fires `/execute` with that agent_id + a `/etc/passwd` path-traversal payload (canonical SEC-PATH-001), and cleans up the agent in a `finally:` block.
 Companion to the allow-path `tool_executed` SSE publish in
 `services/gateway/main.py` (lines ~1308-1325). The publish site landed
 in commit `a54129d` — `services/gateway/middleware.py` adds a
@@ -213,7 +208,7 @@ the surface shrink without needing to refresh.
 | Approval Inbox UI row | reads `/audit/logs/search?decision=escalate` | ✅ row present (1 row in scenario E) |
 | Browser bell badge | `NotificationCenter.jsx` polls + listens to SSE | will tick on the new `llm_proxy_escalate` event |
 | Operator approve/reject | SSE `approval_resolved` to per-tenant channel | ✅ delivered, 121 ms fan-out (scenario I) |
-| /execute deny chokepoint | SSE `policy_decision` (decision=deny) | ⚠️ publish code live; harness shape bug — scenario J |
+| /execute deny chokepoint | SSE `policy_decision` (decision=deny) | ✅ delivered, 164 ms fan-out (scenario J) |
 | Virtual-key revocation | SSE `key_revoked` to per-tenant channel | ✅ delivered, 110 ms fan-out (scenario K) |
 
 ## What works (end-to-end, verified live)
