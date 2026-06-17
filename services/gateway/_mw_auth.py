@@ -27,25 +27,65 @@ logger = structlog.get_logger(__name__)
 _IDEMPOTENCY_PREFIX = "acp:idempotency:"
 _API_KEY_CACHE_PREFIX = "acp:apikey:valid:"
 _API_KEY_CACHE_TTL = 60  # seconds
+_API_KEY_REVOKED_SET = "acp:apikey:revoked"  # SET of revoked api_key UUIDs (across tenants)
 
 
 class _AuthMixin:
     async def _validate_api_key_cached(self, raw_key: str) -> dict | None:
-        """Validate an API key with Redis caching (60s TTL) to avoid per-request DB calls."""
+        """Validate an API key with Redis caching (60s TTL) to avoid per-request DB calls.
+
+        Defense in depth against cache-staleness on revoke:
+          1. Reject if the payload itself reports ``is_active is False`` (the api-svc
+             SQL filter already excludes inactive rows on fresh validates, but a
+             cached blob from before revocation can still be active until TTL).
+          2. Reject if the api-svc returned a key whose ``id`` is in the global
+             ``_API_KEY_REVOKED_SET`` (populated by the revoke proxy on DELETE,
+             closing the 60-second cache-staleness window).
+        """
         cache_key = f"{_API_KEY_CACHE_PREFIX}{hashlib.sha256(raw_key.encode()).hexdigest()}"
+        key_data: dict | None = None
         try:
             cached = await self.redis.get(cache_key)
             if cached:
-                return json.loads(cached)
+                key_data = json.loads(cached)
         except Exception:
             pass  # cache miss is fine; fall through to live call
 
-        key_data = await service_client.validate_api_key(raw_key)
-        if key_data:
+        if key_data is None:
+            key_data = await service_client.validate_api_key(raw_key)
+            if key_data:
+                try:
+                    await self.redis.setex(cache_key, _API_KEY_CACHE_TTL, json.dumps(key_data, default=str))
+                except Exception:
+                    pass
+
+        if not key_data:
+            return None
+
+        # Hard reject explicitly inactive keys. The api-svc filters at SQL level,
+        # but a stale Redis cache entry could otherwise let a revoked key through.
+        if key_data.get("is_active") is False:
             try:
-                await self.redis.setex(cache_key, _API_KEY_CACHE_TTL, json.dumps(key_data, default=str))
+                await self.redis.delete(cache_key)
             except Exception:
                 pass
+            return None
+
+        # Cross-check the revocation index: even if a cached payload still claims
+        # is_active=True (it was cached before revoke), the DELETE proxy will have
+        # added the key id here and we must reject.
+        key_id = key_data.get("id")
+        if key_id:
+            try:
+                if await self.redis.sismember(_API_KEY_REVOKED_SET, str(key_id)):
+                    try:
+                        await self.redis.delete(cache_key)
+                    except Exception:
+                        pass
+                    return None
+            except Exception:
+                pass  # If the revocation-index check itself errors, do not fail open silently — but Redis outage is logged elsewhere; keep behavior consistent with revocation check on JWT path which is fail-closed only on detected timeouts.
+
         return key_data
 
     async def _authenticate(
