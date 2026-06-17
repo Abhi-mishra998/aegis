@@ -35,11 +35,9 @@ const KillSwitch         = lazy(() => import('./pages/KillSwitch'));
 const Forensics          = lazy(() => import('./pages/Forensics'));
 const AuditLogs          = lazy(() => import('./pages/AuditLogs'));
 const Billing            = lazy(() => import('./pages/Billing'));
-const SecurityDashboard  = lazy(() => import('./pages/SecurityDashboard'));
 const RiskEngine         = lazy(() => import('./pages/RiskEngine'));
 const AgentPlayground    = lazy(() => import('./pages/AgentPlayground'));
 const DeveloperPanel     = lazy(() => import('./pages/DeveloperPanel'));
-const Observability      = lazy(() => import('./pages/Observability'));
 const SystemHealth       = lazy(() => import('./pages/SystemHealth'));
 const IdentityGraph      = lazy(() => import('./pages/IdentityGraph'));
 const FlightRecorder     = lazy(() => import('./pages/FlightRecorder'));
@@ -120,7 +118,7 @@ function GlobalShortcuts({ onShowHelp, onShowPalette }) {
     { key: 'g i', handler: () => navigate('/incidents')       },
     { key: 'g s', handler: () => navigate('/settings')        },
     { key: 'g g', handler: () => navigate('/identity-graph')  },
-    { key: 'g o', handler: () => navigate('/observability')   },
+    { key: 'g o', handler: () => navigate('/live-feed')       },
     { key: 'g h', handler: () => navigate('/system-health')   },
     { key: 'g d', handler: () => navigate('/developer')       },
     { key: 'g l', handler: () => navigate('/live-feed')       },
@@ -140,7 +138,7 @@ const HOTKEY_GROUPS = [
       { key: 'g a', desc: 'Audit logs' },
       { key: 'g i', desc: 'Incidents' },
       { key: 'g g', desc: 'Identity graph' },
-      { key: 'g o', desc: 'Observability' },
+      { key: 'g o', desc: 'Live event feed (observability scope)' },
       { key: 'g h', desc: 'System health' },
       { key: 'g s', desc: 'Settings' },
       { key: 'g d', desc: 'Developer panel' },
@@ -369,9 +367,12 @@ function App() {
 
               {/* Admin / surfaced via Settings hub (hidden from sidebar) */}
               <Route path="/rbac"            element={<ProtectedRoute><RBAC /></ProtectedRoute>} />
-              <Route path="/security"        element={<ProtectedRoute><SecurityDashboard /></ProtectedRoute>} />
+              {/* Observability + SecurityDashboard consolidated into LiveFeed
+                  scope filter. External bookmarks / command palette entries
+                  redirect so deep links keep working. */}
+              <Route path="/security"        element={<Navigate to="/live-feed" replace />} />
+              <Route path="/observability"   element={<Navigate to="/live-feed" replace />} />
               <Route path="/system-health"   element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
-              <Route path="/observability"   element={<ProtectedRoute><Observability /></ProtectedRoute>} />
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />
               <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
               <Route path="/risk"            element={<ProtectedRoute><RiskEngine /></ProtectedRoute>} />
