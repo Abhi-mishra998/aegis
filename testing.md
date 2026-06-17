@@ -360,6 +360,62 @@ Both shipped to git on this branch (commit `21f2906` + `51376e9`) but
 not yet `terraform apply`'d. Coordinator will apply with explicit
 `terraform plan` review since these change live network topology.
 
+## ThreatGraph per-agent MITRE coverage — live evidence
+
+Honest user finding: the ATT&CK grid on `/threat-graph` always showed all
+36 signals across 9 tactics regardless of agent — it was the static
+registry view, not a "what did this agent actually fire" view. Also, the
+audit log's `metadata.findings` array was empty on every pre-policy hard
+deny (path traversal, SQL injection, etc.) — the aggregator's
+`jsonb_array_elements_text(metadata_json->'findings')` had nothing to
+roll up.
+
+**3 fixes shipped this round**:
+
+1. `services/gateway/_mw_audit.py::_log_audit` now auto-injects
+   `findings=[reason]` into metadata when the caller didn't set it.
+   Existing rows stay null; all new deny rows carry the canonical signal
+   id.
+2. `services/gateway/middleware.py` path-traversal chokepoint now passes
+   `_pre_finding` (the canonical signal id: `system_sensitive_path` /
+   `cloud_credential_path` / `ssh_credential_path` /
+   `path_traversal_detected`) to `_log_audit`. Previously it used the
+   generic "path_traversal_detected" for every path, which the registry
+   only had for the fallback bucket.
+3. `services/gateway/routers/iag.py::/iag/mitre-coverage` now accepts
+   `agent_id` + `days` query params. When supplied, it calls
+   `/logs/agent-findings/{agent_id}` (audit aggregator) and decorates
+   each signal/technique/tactic with `touched: bool`, plus
+   `touched_count` per technique and `touched_techniques`/`touched_signals`
+   per tactic. Top-level `touched_tactics` + `touched_techniques_total`
+   + `touched_signals_total` for the header counter.
+4. `MitreCoverageGrid.jsx` accepts `agentId` prop, dims+dashes
+   untouched cells, shows `2/9 tactics fired` header, and reads the
+   same solid-vs-dashed convention as the blast-radius graph on the
+   left.
+
+### Probe (live prod-ha)
+
+Created an agent, fired `/etc/passwd` (SEC-PATH-001) + `DROP TABLE`
+(SQL injection), queried `/iag/mitre-coverage?agent_id=<id>&days=7`:
+
+```
+touched_tactics    = 2/9
+touched_techniques = 2
+touched_signals    = 2
+  TA0001 Initial Access     fired 1/1 technique  T1190
+  TA0006 Credential Access  fired 1/2 techniques T1552.001
+```
+
+The UI swap is now: pick an agent in the picker → the right panel grid
+shows 36 signals total, the 2 the agent fired stay at full color with a
+"• fired" badge, the other 34 dim to 40% opacity with a dashed border —
+matching the user's intent: "Touched (solid) vs reachable-but-untouched
+(dashed) resources surface the blast radius your agent could have hit
+but didn't."
+
+The 8/8 regression suite still passes (`/tmp/live_prodha_test.py`).
+
 ## Reproduce this run
 
 ```bash
