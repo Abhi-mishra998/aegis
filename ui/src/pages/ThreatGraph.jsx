@@ -229,15 +229,33 @@ export default function ThreatGraph() {
             blast radius your agent could have hit but didn't.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setRefreshTick((t) => t + 1)}
-          disabled={loading || !selectedAgentId}
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={async () => {
+              try {
+                await iagService.refreshGraph(30);
+              } catch (e) {
+                // Best-effort — the user always gets the regular Refresh too.
+              }
+              setRefreshTick((t) => t + 1);
+            }}
+            title="Re-ingest the tenant's tool surface from the audit log"
+          >
+            <RefreshCw size={12} aria-hidden="true" />
+            Re-ingest
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setRefreshTick((t) => t + 1)}
+            disabled={loading || !selectedAgentId}
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">

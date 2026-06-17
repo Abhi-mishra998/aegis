@@ -399,6 +399,10 @@ export const iagService = {
     const qs = params.toString();
     return request(`/iag/mitre-coverage${qs ? `?${qs}` : ""}`);
   },
+  // Synthesise the IAG cache from the audit log so /iag/agents/{id}
+  // returns real touched/reachable data. Cheap + idempotent.
+  refreshGraph: (days = 30) =>
+    request(`/iag/refresh?days=${days}`, { method: 'POST' }),
 };
 
 // Sprint 5 — Auto-Remediation. Read policy + ledger; force replay on demand.
