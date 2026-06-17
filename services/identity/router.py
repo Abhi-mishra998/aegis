@@ -696,10 +696,21 @@ from services.identity.models import (  # noqa: E402 — avoids circular at modu
     TenantTier,
 )
 
+# Per-tier per-MINUTE rate-limit fallback used when tenant.rpm_limit
+# is unset. These have to stay >= the Sprint-3.2 token-bucket
+# capacity (requests_per_second × 60) or the legacy 60-second bucket
+# becomes the bottleneck on bursty workloads — exactly the bug that
+# bit the brutal-audit /v1/messages probe at 1 RPS sustained on
+# 2026-06-17 (the basic default used to be 60 RPM = 1 RPS, completely
+# at odds with the documented 50 RPS token bucket). Defaults below
+# match (and slightly exceed) the per-tier token-bucket capacity:
+#   basic         50 RPS → 3000 RPM
+#   pro          100 RPS → 6000 RPM
+#   enterprise   200 RPS → 12000 RPM
 _TIER_RPM_DEFAULTS: dict[str, int] = {
-    "basic":      60,
-    "pro":       300,
-    "enterprise": 1000,
+    "basic":      3000,
+    "pro":        6000,
+    "enterprise": 12000,
 }
 
 
