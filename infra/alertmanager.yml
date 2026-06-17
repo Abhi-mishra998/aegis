@@ -17,6 +17,21 @@ route:
   receiver: slack
 
   routes:
+    # Page alerts: highest urgency — used for audit chain violations and
+    # similar integrity failures where the prom rule sets `severity: page`
+    # with for:0m. Must hit a real pager. Reuses the `critical` receiver
+    # today (Slack #aegis-critical + PagerDuty) so the alert is never lost
+    # in the void. Coordinator will wire a dedicated PagerDuty service.
+    # TODO: switch to pagerduty_configs with a dedicated routing key for
+    # severity=page (separate escalation policy from severity=critical).
+    - matchers:
+        - severity = "page"
+      receiver: critical
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 30m
+      continue: true
+
     # Critical alerts: page via PagerDuty AND Slack; short repeat window.
     - matchers:
         - severity = "critical"
