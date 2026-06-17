@@ -507,6 +507,9 @@ from services.gateway.routers.admin import router as _admin_router  # noqa: E402
 from services.gateway.routers.agents import router as _agents_router  # noqa: E402
 from services.gateway.routers.audit import router as _audit_router  # noqa: E402
 from services.gateway.routers.auth import router as _auth_router  # noqa: E402
+from services.gateway.routers.autonomy import (
+    router as _autonomy_router,  # noqa: E402
+)
 from services.gateway.routers.clerk import router as _clerk_router  # noqa: E402
 from services.gateway.routers.workspace import router as _workspace_router  # noqa: E402
 from services.gateway.routers.auto_response import (
@@ -550,6 +553,11 @@ from services.gateway.routers.voice import router as _voice_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
+# autonomy must be included BEFORE proxies — proxies has a catch-all
+# /autonomy/{full_path:path} that would otherwise eat the specific
+# /autonomy/overrides route that publishes the approval_resolved SSE
+# event. FastAPI matches routes in registration order.
+app.include_router(_autonomy_router)
 app.include_router(_proxies_router)
 app.include_router(_tenant_admin_router)
 app.include_router(_stripe_router)
