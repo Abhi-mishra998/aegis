@@ -1228,6 +1228,147 @@ async def put_slack_config(
 
 
 # =============================================================================
+# Sprint 23 — Compliance Policy Packs.
+# =============================================================================
+
+
+@router.get(
+    "/policy-packs/catalog",
+    summary="The 5 sales-grade compliance packs Aegis ships with",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def list_policy_packs_catalog() -> dict:
+    """Static catalog of packs. Same content the wizard + Settings tab
+    render — single source of truth lives in services/policy/packs.py."""
+    from services.policy import packs as _packs  # local import = no startup cost when unused
+    out: list[dict] = []
+    for p in _packs.all_packs():
+        out.append({
+            "id":                  p.id,
+            "label":               p.label,
+            "blurb":               p.blurb,
+            "framework_controls":  list(p.framework_controls),
+            "default_capabilities": list(p.default_capabilities),
+            "extra_escalations": [
+                {
+                    "id":            ep.id,
+                    "label":         ep.label,
+                    "approver_role": ep.approver_role,
+                }
+                for ep in p.extra_escalation_patterns
+            ],
+        })
+    return {"status": "ok", "data": out}
+
+
+@router.get(
+    "/workspace/policy-packs",
+    summary="Internal — tenant's enabled policy-pack IDs (gateway reads this every escalation)",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def get_policy_packs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return {
+        "status": "ok",
+        "data": {
+            "enabled": list(tenant.enabled_policy_packs or []),
+        },
+    }
+
+
+@router.put(
+    "/workspace/policy-packs",
+    summary="OWNER/ADMIN — set the tenant's enabled policy-pack IDs",
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def put_policy_packs(
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+    x_acp_role: Annotated[str | None, Header(alias="X-ACP-Role")] = None,
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
+) -> dict:
+    """Body: ``{"enabled": ["SOC2", "HIPAA"]}``.
+
+    Unknown IDs are ignored (warns in the audit row, doesn't 400). The
+    JSONB column is overwritten as PUT-not-PATCH semantics: an empty
+    list disables every pack.
+    """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    if _canonical_role(x_acp_role) not in ("OWNER", "ADMIN"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only OWNER / ADMIN can change Compliance Policy Packs",
+        )
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    raw_enabled = body.get("enabled") or []
+    if not isinstance(raw_enabled, list):
+        raise HTTPException(status_code=400, detail="`enabled` must be a JSON array")
+
+    from services.policy import packs as _packs
+    known = set(_packs.KNOWN_PACK_IDS)
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    ignored: list[str] = []
+    for pid in raw_enabled:
+        if not isinstance(pid, str):
+            continue
+        if pid in seen:
+            continue
+        seen.add(pid)
+        if pid in known:
+            cleaned.append(pid)
+        else:
+            ignored.append(pid)
+
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    tenant.enabled_policy_packs = cleaned
+    await db.commit()
+
+    try:
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_uuid,
+            agent_id=None,
+            action="workspace_policy_packs_update",
+            metadata={
+                "actor":   x_acp_actor or "",
+                "enabled": cleaned,
+                "ignored": ignored,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("policy_packs_audit_failed", error=str(exc))
+
+    return {
+        "status": "ok",
+        "data":   {"enabled": cleaned, "ignored": ignored},
+    }
+
+
+# =============================================================================
 # Clerk synchronous provision — closes the signup → first-request race.
 # =============================================================================
 #

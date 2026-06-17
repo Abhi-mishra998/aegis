@@ -217,6 +217,19 @@ class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
         String(128), nullable=True,
     )
 
+    # Sprint 23 — Compliance Policy Packs (SOC2 / PCI / HIPAA / Finance
+    # / DevOps). List of pack IDs the tenant has enabled — the gateway
+    # consults this on every /v1/messages + /v1/chat/completions to
+    # extend the base escalation pattern set without redeploying the
+    # policy engine. Default empty array means only the founder's base
+    # rules (wire $100k, kubectl prod, etc.) apply.
+    enabled_policy_packs: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        default=list,
+    )
+
 
 class AgentCredential(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Stores hashed secrets + status for agent authentication."""

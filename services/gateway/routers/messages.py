@@ -48,6 +48,7 @@ from services.gateway._helpers import internal_headers
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
 from services.gateway import slack_approvals
+from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
 
@@ -60,6 +61,28 @@ _UPSTREAM_TIMEOUT_S = 60.0
 # at. Comes from settings.PUBLIC_BASE_URL when set, otherwise falls back
 # to the well-known prod-ha hostname.
 _PUBLIC_BASE_URL = getattr(settings, "PUBLIC_BASE_URL", "") or "https://ha.aegisagent.in"
+
+
+async def _fetch_enabled_policy_packs(
+    request: Request, tenant_id: str,
+) -> list[str]:
+    """Sprint 23 — read the enabled policy-pack IDs off the tenant row.
+    Never raises; returns [] on any fetch error so the proxy keeps
+    serving with the base escalation rules."""
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.get(
+                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/policy-packs",
+                headers=internal_headers(request),
+            )
+        if resp.status_code != 200:
+            return []
+        body = resp.json() or {}
+        data = body.get("data") if isinstance(body, dict) else None
+        return list((data or {}).get("enabled") or [])
+    except httpx.HTTPError as exc:
+        logger.warning("policy_packs_fetch_failed", error=str(exc))
+        return []
 
 
 async def _fetch_tenant_slack_config(
@@ -437,7 +460,27 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         # already-approved X-Aegis-Approval-ID — the operator has
         # explicitly cleared the same prompt and the audit row above
         # has it on record.
-        esc_pattern = None if replay_approved else escalation_patterns.scan(scan_text)
+        # Base + pack-aware escalation scan. The base patterns (wire
+        # $100k, kubectl prod, etc.) always run; the pack patterns
+        # extend coverage when the tenant has enabled SOC2 / PCI /
+        # HIPAA / Finance / DevOps.
+        esc_pattern = None
+        matched_pack_id: str | None = None
+        matched_pack_controls: list[str] = []
+        if not replay_approved:
+            esc_pattern = escalation_patterns.scan(scan_text)
+            if esc_pattern is None:
+                enabled_packs = await _fetch_enabled_policy_packs(
+                    request, tenant_id_str,
+                )
+                pack_hit = policy_packs.scan_for_pack_escalation(
+                    scan_text, enabled_packs,
+                )
+                if pack_hit is not None:
+                    esc_pattern, matched_pack_id = pack_hit
+                    pack = policy_packs.get(matched_pack_id)
+                    if pack is not None:
+                        matched_pack_controls = list(pack.framework_controls)
         if esc_pattern is not None:
             # The approval_id we hand back is the request_id — the
             # Approval Inbox already uses request_id as the resolution
@@ -466,8 +509,12 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                     "risk_score":       65.0,
                     "approver_role":    esc_pattern.approver_role,
                     "matched_pattern":  esc_pattern.id,
-                    # Surface a short, non-PII excerpt so the operator
-                    # can read the inbox card without expanding it.
+                    # Sprint 23 — when a pack rule contributed the
+                    # match, surface the pack_id + the compliance
+                    # framework controls it covers so the Compliance
+                    # page can badge them correctly.
+                    "policy_pack":      matched_pack_id,
+                    "framework_controls": matched_pack_controls,
                     "prompt_excerpt":   scan_text[:240],
                 },
                 request_id=approval_id,
