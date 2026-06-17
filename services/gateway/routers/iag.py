@@ -127,7 +127,7 @@ async def _touched_signals_for_agent(
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
             resp = await client.get(
-                url, params={"days": days, "limit": 200},
+                url, params={"days": days, "limit": 50},  # audit-svc caps at 50
                 headers=internal_headers(request),
             )
         if resp.status_code != 200:
