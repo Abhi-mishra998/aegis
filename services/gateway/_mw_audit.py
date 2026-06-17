@@ -378,6 +378,15 @@ class _AuditMixin:
         meta["actor"] = actor if actor and actor != "unknown" else ""
         meta["trace_id"] = ctx.get("trace_id", request_id)
 
+        # Surface the canonical signal/finding ID in metadata.findings so the
+        # audit aggregator (`/logs/agent-findings/{id}`) and the IAG MITRE
+        # coverage endpoint can roll deny rows up by tactic. Pre-policy
+        # blocks used to pass only `{"blocked_field", "blocked_path"}` here,
+        # leaving the JSONB findings array null — which silently emptied the
+        # ATT&CK matrix for every blocked agent.
+        if reason and not meta.get("findings"):
+            meta["findings"] = [reason]
+
         # If the request never extracted a tool name (e.g. auth failed before
         # the tool-name parse), categorise the row as a security-edge event
         # instead of an execute_tool with a "tool: unknown" sticky. Common
