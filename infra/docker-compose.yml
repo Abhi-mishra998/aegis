@@ -151,6 +151,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
@@ -175,6 +180,11 @@ services:
     environment:
       - AUDIT_SERVICE_URL=http://audit:8000
     command: uvicorn services.insight.main:app --host 0.0.0.0 --port 8000
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 10s
@@ -193,6 +203,11 @@ services:
       - .env
     command: python -m services.insight.worker
     restart: always
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       # Heartbeat probe — the worker SETEX's the key on every loop iteration
       # with a 90-second TTL. A stuck loop never refreshes it; healthcheck
@@ -232,6 +247,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -267,6 +287,11 @@ services:
       registry:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -305,6 +330,11 @@ services:
       registry:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -352,6 +382,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -382,6 +417,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -413,6 +453,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -479,6 +524,11 @@ services:
       decision:
         condition: service_started
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "768M"
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -517,6 +567,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -546,8 +601,13 @@ services:
       pgbouncer:
         condition: service_healthy
       audit:
-        condition: service_started
+        condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -568,8 +628,13 @@ services:
       - "5173:80"
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "128M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 15s
@@ -604,6 +669,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -634,6 +704,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -664,6 +739,11 @@ services:
       pgbouncer:
         condition: service_healthy
     restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
