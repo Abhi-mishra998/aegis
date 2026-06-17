@@ -236,6 +236,21 @@ class LocalTokenValidator:
         )
 
         if is_clerk:
+            # U4 FIX (2026-06-17): HS256 + Clerk-iss downgrade-attack reject.
+            # `looks_like_clerk_token` only inspects the unverified `iss`
+            # claim. An attacker who knows JWT_SECRET_KEY could mint an
+            # HS256 token with iss=<clerk_issuer> and ride the Clerk path.
+            # The inner ClerkTokenValidator enforces alg via the JWK, but
+            # we enforce it here as defense-in-depth so the dispatcher
+            # itself never lets an HS-signed token reach the Clerk path.
+            try:
+                _alg = jwt.get_unverified_header(token).get("alg")
+            except JWTError as exc:
+                raise ACPAuthError(f"Invalid Clerk token header: {exc}") from exc
+            if _alg not in ("RS256", "RS512"):
+                raise ACPAuthError(
+                    f"Invalid Clerk token alg: expected RS256/RS512, got {_alg!r}",
+                )
             clerk_validator = get_clerk_validator(self._redis)
             payload = await clerk_validator.validate(token)
         elif auth_provider in ("legacy", "both"):
