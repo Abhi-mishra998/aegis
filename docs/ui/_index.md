@@ -7,7 +7,7 @@
 The UI sidebar has three groups, in left-to-right order of how often operators use them:
 
 - **Primary nav** (5 items) — the daily-driver pages.
-- **Operations dropdown** (11–12 items) — power-user surfaces.
+- **Operations dropdown** (12–13 items) — power-user surfaces.
 - **Settings hub** — 17 sub-pages reachable from the Settings page.
 
 The full sidebar source is at `ui/src/components/Layout/Sidebar.jsx`. The agent-scope selector shown at the top of the sidebar (and mirrored in the topbar on wide layouts) is the shared `AgentScopePicker` component — see [UI Primitives](../architecture/ui-primitives.md) for the wider set of reusable components and the conventions they follow.
@@ -36,13 +36,14 @@ Some entry points live in the topbar rather than the sidebar:
 | Incidents | `/incidents` | G I | api, audit | [Incidents](primary/incidents.md) |
 | Settings | `/settings` | G S | — (nav only) | [Settings Hub](primary/settings-hub.md) |
 
-## Operations dropdown (12 pages)
+## Operations dropdown (13 pages)
 
 | Page | Sidebar path | Hint | Backend services | Page |
 |---|---|---|---|---|
 | Agents | `/agents` | — | registry | [Agents](operations/agents.md) |
 | Identity Graph | `/identity-graph` | G G | identity_graph | [Identity Graph](operations/identity-graph.md) |
 | Autonomy | `/autonomy` | — | autonomy | [Autonomy](operations/autonomy.md) |
+| Approval Inbox | `/approval-inbox` | — | audit + autonomy + gateway (SSE) | [Approval Inbox](operations/approval-inbox.md) |
 | Forensics | `/forensics` | — | forensics | [Forensics](operations/forensics.md) |
 | Playground | `/playground` | — | gateway + decision + registry | [Playground](operations/playground.md) |
 | Live Feed | `/live-feed` | G L | gateway (SSE) + audit | [Live Feed](operations/live-feed.md) |
