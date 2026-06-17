@@ -414,6 +414,9 @@ const _withAgent = (url, agentId) => {
 };
 
 export const auditService = {
+  // Sprint 16 — Pack enforcement rollup for /compliance.
+  getPackEnforcement: (days = 30) =>
+    request(`/audit/logs/pack-enforcement?days=${encodeURIComponent(days)}`),
   getSummary: (agentId) => request(_withAgent("/audit/logs/summary", agentId)),
   getLogs: (limit = 10, offset = 0, agentId) =>
     request(_withAgent(`/audit/logs?limit=${limit}&offset=${offset}`, agentId)),
