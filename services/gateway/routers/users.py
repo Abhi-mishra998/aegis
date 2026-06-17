@@ -13,14 +13,19 @@ the "users" tag.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Request
+from redis.asyncio import Redis
 
 from sdk.common.config import settings
-from services.gateway._helpers import internal_headers, passthrough
+from sdk.common.redis import get_redis_client
+from services.gateway._helpers import internal_headers, passthrough, publish_event
 
 router = APIRouter()
+
+_redis: Redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
 
 
 def _identity_base() -> str:
@@ -138,9 +143,36 @@ async def validate_api_key(request: Request) -> Any:
 
 @router.delete("/api-keys/{key_id}", tags=["API Keys"])
 async def revoke_api_key(key_id: str, request: Request) -> Any:
-    """Proxy → API service revoke key."""
+    """Proxy → API service revoke key. Publishes key_revoked SSE event.
+
+    Security operators need real-time visibility into key revocations
+    because the tenant's threat surface just changed — a revoked
+    virtual key may be in active use by an exiting employee or
+    compromised agent.
+    """
     resp = await request.app.state.client.delete(
         f"{_api_base()}/api-keys/{key_id}",
         headers=internal_headers(request),
     )
+    if resp.status_code in (200, 204):
+        try:
+            tenant_id_str = (
+                getattr(request.state, "tenant_id", None)
+                or request.headers.get("X-Tenant-ID", "")
+            )
+            if tenant_id_str:
+                revoker = getattr(request.state, "actor", "unknown")
+                await publish_event(
+                    _redis,
+                    str(tenant_id_str),
+                    "key_revoked",
+                    {
+                        "key_id": key_id,
+                        "revoker_email": revoker,
+                        "subject_kind": "employee",
+                        "revoked_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+        except Exception:
+            pass
     return passthrough(resp)
