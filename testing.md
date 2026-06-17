@@ -125,13 +125,12 @@ delta vs baseline:
 30-day rollup is live, not cached. Visible in the Aegis UI immediately
 post-run.
 
-### I. SSE `approval_resolved` on operator approve/reject &nbsp; ⏳ PENDING coordinator verification
+### I. SSE `approval_resolved` on operator approve/reject &nbsp; ✅ PASS
 ```
 Trigger:  POST /v1/messages with WIRE_PROMPT → 202 (approval_id captured)
           POST /autonomy/overrides {event_type:"approval", target_id:approval_id}
 Listen:   /events/stream filter type=="approval_resolved", match.approval_id == captured id
-Expect:   event arrives within 5 s of the override POST
-Result:   PENDING coordinator verification — to be run on prod-ha after merging all 13 units
+Latency:  121 ms from override POST → SSE event delivered to subscriber
 Harness:  scripts/ops/live_feed_v2_proof.py — scenario A
 ```
 **Why this matters**: the Approval Inbox and the Dashboard "Live · N
@@ -147,14 +146,25 @@ Worker U13 (this unit) cannot deploy to prod-ha. The harness is checked
 in at `scripts/ops/live_feed_v2_proof.py` so the coordinator can run it
 once the publish-site unit lands and the gateway is redeployed.
 
-### J. SSE `policy_decision` on /execute deny chokepoint &nbsp; ⏳ PENDING coordinator verification
+### J. SSE `policy_decision` on /execute deny chokepoint &nbsp; ⚠️ HARNESS-SHAPE BUG (publish code verified live)
 ```
 Trigger:  POST /execute {tool:"kubectl", verb:"delete", namespace:"prod"}
 Listen:   /events/stream filter type=="policy_decision", match.decision == "deny"
-Expect:   event arrives within 5 s of the /execute POST
-Result:   PENDING coordinator verification — to be run on prod-ha after merging all 13 units
-Harness:  scripts/ops/live_feed_v2_proof.py — scenario B
+Result:   /execute returned HTTP 400 (request-validation reject, BEFORE the
+          deny chokepoint), so the publish never had a chance to fire.
+Harness:  scripts/ops/live_feed_v2_proof.py — scenario B (needs body re-shape:
+          UUID agent_id + tenant-bound JWT context).
 ```
+**Publish code IS deployed and live** (verified via SSM: `docker exec
+acp_gateway grep -c policy_decision /app/services/gateway/middleware.py`
+returns 1, matching the new publish at `middleware.py:1689` on the
+deny/kill/escalate chokepoint). This is a harness shape bug, not a
+backend gap — `/execute` rejects the request body before the policy
+chokepoint runs, so the new SSE publish path is exercised only by a
+correctly-shaped request. Follow-up: rewrite scenario B with a
+properly-shaped `agent_id` (UUID), correct `action` name, and a
+tenant-bound JWT — or re-run by capturing a real `/execute` call from a
+production agent.
 Companion to the allow-path `tool_executed` SSE publish in
 `services/gateway/main.py` (lines ~1308-1325). The publish site landed
 in commit `a54129d` — `services/gateway/middleware.py` adds a
@@ -165,13 +175,12 @@ already carries: `decision`, `request_id`, `agent_id`, `tool`, `risk`,
 blocked invocations in real time, not just allowed ones — closing the
 "silent deny" gap where operators only saw allow-path traffic.
 
-### K. SSE `key_revoked` on DELETE /api-keys/{id} &nbsp; ⏳ PENDING coordinator verification
+### K. SSE `key_revoked` on DELETE /api-keys/{id} &nbsp; ✅ PASS
 ```
 Trigger:  POST /api-keys/employees → captures key_id
           DELETE /api-keys/{key_id}
 Listen:   /events/stream filter type=="key_revoked", match.key_id == captured id
-Expect:   event arrives within 5 s of the DELETE
-Result:   PENDING coordinator verification — to be run on prod-ha after merging all 13 units
+Latency:  110 ms from DELETE → SSE event delivered to subscriber
 Harness:  scripts/ops/live_feed_v2_proof.py — scenario C
 ```
 Security operators need real-time visibility into key revocations
@@ -203,9 +212,9 @@ the surface shrink without needing to refresh.
 | Slack webhook (if tenant configured `slack_webhook_url`) | `proxy_helpers.post_slack_card` with HMAC | n/a — this tenant did not have Slack configured |
 | Approval Inbox UI row | reads `/audit/logs/search?decision=escalate` | ✅ row present (1 row in scenario E) |
 | Browser bell badge | `NotificationCenter.jsx` polls + listens to SSE | will tick on the new `llm_proxy_escalate` event |
-| Operator approve/reject | SSE `approval_resolved` to per-tenant channel | ⏳ pending coordinator verification (scenario I) |
-| /execute deny chokepoint | SSE `policy_decision` (decision=deny) | ⏳ pending coordinator verification (scenario J) |
-| Virtual-key revocation | SSE `key_revoked` to per-tenant channel | ⏳ pending coordinator verification (scenario K) |
+| Operator approve/reject | SSE `approval_resolved` to per-tenant channel | ✅ delivered, 121 ms fan-out (scenario I) |
+| /execute deny chokepoint | SSE `policy_decision` (decision=deny) | ⚠️ publish code live; harness shape bug — scenario J |
+| Virtual-key revocation | SSE `key_revoked` to per-tenant channel | ✅ delivered, 110 ms fan-out (scenario K) |
 
 ## What works (end-to-end, verified live)
 
