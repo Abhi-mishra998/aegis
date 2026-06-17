@@ -14,6 +14,7 @@
 
 * [What is Aegis?](introduction/what-is-aegis.md)
 * [Why Runtime Governance](introduction/why-runtime-governance.md)
+* [60-Second Tour](introduction/60-second-tour.md)
 * [Quickstart](introduction/quickstart.md)
 * [Demo Packs](introduction/demo-packs.md)
 
@@ -26,6 +27,7 @@
 * [Data Model](architecture/data-model.md)
 * [Multi-Tenancy](architecture/multi-tenancy.md)
 * [Deployment Topology](architecture/deployment-topology.md)
+* [UI Primitives](architecture/ui-primitives.md)
 
 ## Services
 
@@ -71,6 +73,7 @@
   * [Compliance](ui/operations/compliance.md)
   * [Attack Sim](ui/operations/attack-sim.md)
   * [Kill Switch](ui/operations/kill-switch.md)
+  * [Open Source](ui/operations/open-source.md)
 * Settings sub-pages
   * [System Health](ui/settings/system-health.md)
   * [Observability](ui/settings/observability.md)
@@ -83,6 +86,7 @@
   * [User Management](ui/settings/user-management.md)
   * [Security Dashboard](ui/settings/security-dashboard.md)
   * [Quota Management](ui/settings/quota-management.md)
+  * [Billing](ui/settings/billing.md)
   * [SSO Settings](ui/settings/sso-settings.md)
   * [Webhook Settings](ui/settings/webhook-settings.md)
   * [SIEM Settings](ui/settings/siem-settings.md)
@@ -99,6 +103,7 @@
 ## Integrations
 
 * [SDK Wrappers (PyPI)](integrations/sdk-wrappers.md)
+* [SDK 1.1.0 Release](integrations/sdk-1.1.0-release.md)
 * [Evidence Export Adapters (SIEM + GRC)](integrations/evidence-export.md)
 
 ## Security
@@ -111,6 +116,7 @@
 * [Kill Switch](security/kill-switch.md)
 * [OPA Policies](security/opa-policies.md)
 * [Threat Scenarios](security/threat-scenarios.md)
+* [Threat Model](THREAT_MODEL.md)
 * [Secret Management](security/secret-management.md)
 * [SOC 2 Tracker](security/soc2_tracker.md)
 * [Vendor Security One-Pager](security/vendor-security-onepager.md)
@@ -127,9 +133,11 @@
 * Runbooks
   * [Audit Chain Violation](runbooks/audit_chain_violation.md)
   * [Key Rotation](runbooks/key_rotation.md)
+  * [Key Rotation Drill Log](runbooks/key_rotation_drill_log.md)
   * [Restore Drill](runbooks/restore_drill.md)
   * [Tenant Data Request](runbooks/tenant_data_request.md)
-  * [Disaster Recovery](runbooks/dr.md)
+  * [Kill Switch Engaged](operations/runbooks/kill-switch-engaged.md)
+  * [Rate Limit Spike](operations/runbooks/rate-limit-spike.md)
 
 ## API
 
