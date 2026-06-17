@@ -302,9 +302,9 @@ class LocalTokenValidator:
             return payload
 
         except ExpiredSignatureError as exc:
-            raise ACPAuthError("Token has expired") from exc
+            raise ACPAuthError("Token has expired", reason="session_expired") from exc
         except JWTError as exc:
-            raise ACPAuthError(f"Invalid token: {str(exc)}") from exc
+            raise ACPAuthError(f"Invalid token: {str(exc)}", reason="invalid_token") from exc
 
     async def _get_cached_payload(self, token: str) -> dict[str, Any] | None:
         """Retrieve cached payload from Redis (if exists and valid)."""
@@ -406,7 +406,7 @@ def verify_role(*allowed):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing Authorization header",
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
             )
 
         raw = extract_bearer_token(authorization)
@@ -414,7 +414,7 @@ def verify_role(*allowed):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Malformed Authorization header — expected 'Bearer <token>'",
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
             )
 
         if token_validator is None:
@@ -426,10 +426,11 @@ def verify_role(*allowed):
         try:
             claims = await token_validator.validate(raw)
         except ACPAuthError as exc:
+            reason = getattr(exc, "reason", None) or "invalid_token"
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=str(exc),
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
             ) from exc
 
         role_canonical = canonical_role(claims.get("role"))
@@ -440,6 +441,7 @@ def verify_role(*allowed):
                     f"Role {role_canonical!r} is not permitted on this endpoint. "
                     f"Required: {sorted(allowed_set)}."
                 ),
+                headers={"WWW-Authenticate": 'Bearer realm="insufficient_role"'},
             )
 
         # Stamp the canonical projection onto the claims so route handlers

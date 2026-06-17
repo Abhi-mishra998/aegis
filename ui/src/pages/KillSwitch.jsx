@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { killSwitchService, auditService } from '../services/api'
+import { killSwitchService, auditService, parseApiError } from '../services/api'
 import {
   AlertTriangle, Power, ShieldCheck, AlertOctagon,
   ShieldAlert, Zap, Lock, RefreshCw, Clock,
@@ -85,7 +85,7 @@ export default function KillSwitch() {
       )
       await fetchStatus()
     } catch (err) {
-      addToast?.(err.message || 'Kill switch operation failed.', 'error')
+      addToast?.(parseApiError(err, 'Kill switch operation failed.'), 'error')
     } finally {
       setActionLoading(false)
     }
