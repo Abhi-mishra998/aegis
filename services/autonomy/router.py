@@ -53,6 +53,38 @@ async def _invalidate_autonomy_cache(tenant_id, agent_id) -> None:
             await _redis_client.delete(k)
     except Exception as exc:
         _logger.warning("autonomy_cache_invalidation_failed", error=str(exc))
+
+
+_rl_redis_client: _Redis | None = None
+
+
+async def _rl_redis() -> _Redis:
+    """Return a dedicated module-level Redis client for rate-limiting.
+
+    Kept separate from _redis_client (which mixes decode_responses modes between
+    _invalidate_autonomy_cache and _get_redis) so DOS limits never depend on
+    whichever caller initialized the shared client first.
+    """
+    global _rl_redis_client
+    if _rl_redis_client is None:
+        _rl_redis_client = _Redis.from_url(_REDIS_URL, decode_responses=False)
+    return _rl_redis_client
+
+
+async def _check_rate(redis: _Redis, key: str, limit: int, window: int = 60) -> None:
+    """Per-tenant DOS ceiling on state-mutating routes (token-bucket-lite)."""
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, window)
+    if count > limit:
+        ttl = await redis.ttl(key)
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(max(1, ttl))},
+        )
+
+
 from services.autonomy.models import (
     AutonomyContract,
     AutonomyViolation,
@@ -126,6 +158,11 @@ async def create_contract(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[ContractOut]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:contracts_create:{tenant_id}",
+        limit=60,
+    )
     c = AutonomyContract(
         tenant_id=tenant_id, org_id=tenant_id,
         agent_id=payload.agent_id, name=payload.name,
@@ -158,6 +195,11 @@ async def update_contract(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[ContractOut]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:contracts_update:{tenant_id}",
+        limit=60,
+    )
     c = (await db.execute(
         select(AutonomyContract).where(
             AutonomyContract.id == contract_id,
@@ -190,6 +232,11 @@ async def disable_contract(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[dict]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:contracts_delete:{tenant_id}",
+        limit=60,
+    )
     c = (await db.execute(
         select(AutonomyContract).where(
             AutonomyContract.id == contract_id,
@@ -323,6 +370,11 @@ async def add_override(
     x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
     x_acp_role: Annotated[str | None, Header(alias="X-ACP-Role")] = None,
 ) -> APIResponse[OverrideOut]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:overrides_create:{tenant_id}",
+        limit=60,
+    )
     # Actor attribution: prefer gateway-injected headers (JWT-validated `sub`
     # and `role`) over client-supplied body fields. The gateway sets
     # X-ACP-Actor/X-ACP-Role from request.state after auth (services/gateway/
@@ -467,6 +519,11 @@ async def create_playbook(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[PlaybookOut]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:playbooks_create:{tenant_id}",
+        limit=60,
+    )
     pb = Playbook(
         tenant_id=tenant_id,
         name=payload.name,
@@ -508,6 +565,11 @@ async def update_playbook(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[PlaybookOut]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:playbooks_update:{tenant_id}",
+        limit=60,
+    )
     from sqlalchemy import select  # noqa: F811
     pb = (await db.execute(
         select(Playbook).where(
@@ -534,6 +596,11 @@ async def delete_playbook(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[dict]:
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:playbooks_delete:{tenant_id}",
+        limit=60,
+    )
     from sqlalchemy import select  # noqa: F811
     pb = (await db.execute(
         select(Playbook).where(
@@ -559,6 +626,11 @@ async def trigger_playbook(
     Manually trigger a playbook run.
     The run is executed in the background; response returns the run_id immediately.
     """
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:playbooks_trigger:{tenant_id}",
+        limit=60,
+    )
     from sqlalchemy import select  # noqa: F811
     # Verify playbook exists and belongs to tenant
     pb = (await db.execute(
@@ -713,6 +785,11 @@ async def save_webhook_config(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
     """Persist webhook configuration for the tenant in Redis."""
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:webhooks_config:{tenant_id}",
+        limit=60,
+    )
     redis = await _get_redis()
     key = f"acp:webhooks:{tenant_id}"
     mapping: dict[str, str] = {}
@@ -733,6 +810,11 @@ async def test_slack_webhook(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
     """Fire a test Slack message using the configured (or supplied) webhook URL."""
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:webhooks_test_slack:{tenant_id}",
+        limit=60,
+    )
     redis = await _get_redis()
     key = f"acp:webhooks:{tenant_id}"
     raw: dict[str, str] = await redis.hgetall(key)
@@ -752,6 +834,11 @@ async def test_pagerduty_webhook(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
     """Fire a test PagerDuty alert using the configured (or supplied) routing key."""
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:webhooks_test_pagerduty:{tenant_id}",
+        limit=60,
+    )
     redis = await _get_redis()
     key = f"acp:webhooks:{tenant_id}"
     raw: dict[str, str] = await redis.hgetall(key)
@@ -771,6 +858,11 @@ async def test_generic_webhook(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
     """Fire a test generic webhook using the configured (or supplied) URL."""
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:webhooks_test_generic:{tenant_id}",
+        limit=60,
+    )
     redis = await _get_redis()
     key = f"acp:webhooks:{tenant_id}"
     raw: dict[str, str] = await redis.hgetall(key)

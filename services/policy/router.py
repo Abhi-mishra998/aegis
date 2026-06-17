@@ -17,6 +17,7 @@ from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings as policy_settings
 from sdk.common.db import get_tenant_id
 from sdk.common.deadline import check_deadline
+from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
 from services.policy.opa_client import opa_client
 from services.policy.schemas import (
@@ -30,6 +31,34 @@ from services.policy.schemas import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/policy", tags=["policy"])
+
+# Module-level Redis client for rate-limiting state-mutating routes.
+# Shared via _rl_redis() — lazy-init so import-time costs are avoided.
+_rl_redis_client: Any = None
+
+
+def _rl_redis() -> Any:
+    """Return the lazy-init Redis client used for per-tenant rate limits."""
+    global _rl_redis_client
+    if _rl_redis_client is None:
+        _rl_redis_client = get_redis_client(
+            policy_settings.REDIS_URL, decode_responses=False
+        )
+    return _rl_redis_client
+
+
+async def _check_rate(redis: Any, key: str, limit: int, window: int = 60) -> None:
+    """Per-tenant DOS ceiling on state-mutating routes (token-bucket-lite)."""
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, window)
+    if count > limit:
+        ttl = await redis.ttl(key)
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(max(1, ttl))},
+        )
 
 
 # Persistent clients — lifecycle managed via startup/shutdown
@@ -669,6 +698,11 @@ async def upload_policy(
     Requires ADMIN or SECURITY role (enforced via ``X-ACP-Role`` header injected
     by the Gateway from the validated JWT claims).
     """
+    await _check_rate(
+        _rl_redis(),
+        f"acp:ratelimit:policy:upload:{tenant_id}",
+        limit=60,
+    )
     if not _NAME_RE.match(payload.name):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
