@@ -70,9 +70,11 @@ module "network" {
   public_subnet_cidrs  = ["10.20.1.0/24", "10.20.2.0/24"]
   private_subnet_cidrs = ["10.20.3.0/24", "10.20.4.0/24"]
   enable_nat_gateways  = true
-  # 20-user testing infra: single shared NAT saves ~$32/mo. For real
-  # production load set one_nat_per_az=true to remove the AZ-A SPOF.
-  one_nat_per_az = false
+  # Per-AZ NAT gateways: removes the single-NAT SPOF that would otherwise
+  # take ALL private-subnet outbound (RDS failover, Secrets Manager, SSM)
+  # offline if AZ-A NAT failed. Cost impact: +~$32/mo for the second NAT.
+  # Required for any environment running customer-facing workloads in 2 AZs.
+  one_nat_per_az = true
   tags           = local.common_tags
 }
 
