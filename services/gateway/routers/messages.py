@@ -192,6 +192,16 @@ async def proxy_anthropic_messages(request: Request) -> Response:
     daily_budget_usd   = key_data.get("daily_budget_usd")
     monthly_budget_usd = key_data.get("monthly_budget_usd")
 
+    # Pin the tenant onto request.state so internal_headers() picks it
+    # up for downstream service calls (audit-svc + autonomy-svc), and
+    # mirror it as a header on subsequent fan-outs. /v1/messages auths
+    # via x-api-key not Bearer, so X-Tenant-ID isn't auto-set by the
+    # gateway's normal Clerk middleware.
+    try:
+        request.state.tenant_id = tenant_id_str
+    except Exception:  # noqa: BLE001
+        pass
+
     # 3. budget pre-check
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
@@ -304,6 +314,53 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                 },
             )
 
+        # 5b-bis. Approval-replay shortcut. If the client received a
+        # 202 earlier and the operator has since approved, the SDK
+        # re-sends the same prompt with `X-Aegis-Approval-ID: <id>`.
+        # We look it up; if the approval is `approved`, belongs to this
+        # tenant, and matches this employee, we skip the escalation
+        # scan and forward to Anthropic. Sprint 19 follow-up.
+        replay_id = (request.headers.get("X-Aegis-Approval-ID") or "").strip()
+        replay_approved = False
+        if replay_id:
+            record = await _lookup_approval(request, tenant_id_str, replay_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No approval with id {replay_id!r}",
+                )
+            if (record.get("employee_email") or "").lower() != employee_email.lower():
+                # Approval belongs to a different employee — refuse.
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Approval does not belong to this employee",
+                )
+            if record.get("status") == "rejected":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error":  "approval_rejected",
+                        "reason": record.get("reason"),
+                    },
+                )
+            if record.get("status") != "approved":
+                # Still pending — refuse with the same 202 the SDK saw
+                # originally so it knows to keep waiting.
+                import json as _json
+                return Response(
+                    content=_json.dumps({
+                        "status":          "pending_approval",
+                        "approver_role":   record.get("approver_role"),
+                        "matched_pattern": record.get("matched_pattern"),
+                        "approval_id":     replay_id,
+                        "reason":          "Still awaiting human approval",
+                        "inbox_url":       "/approval-inbox",
+                    }),
+                    status_code=status.HTTP_202_ACCEPTED,
+                    media_type="application/json",
+                )
+            replay_approved = True
+
         # 5c. high-risk-but-not-deny patterns — escalate to a human
         # approver instead of forwarding to Anthropic. Sprint 19.
         # The audit row tagged decision='escalate' shows up in the
@@ -311,7 +368,12 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         # via POST /autonomy/overrides, which lands in
         # human_override_events and ticks the Sprint 12 dashboard's
         # `escalations_prevented` KPI.
-        esc_pattern = escalation_patterns.scan(scan_text)
+        #
+        # Skip this gate entirely if the SDK is replaying with an
+        # already-approved X-Aegis-Approval-ID — the operator has
+        # explicitly cleared the same prompt and the audit row above
+        # has it on record.
+        esc_pattern = None if replay_approved else escalation_patterns.scan(scan_text)
         if esc_pattern is not None:
             # The approval_id we hand back is the request_id — the
             # Approval Inbox already uses request_id as the resolution
@@ -1160,10 +1222,41 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
     except httpx.HTTPError as exc:
         logger.warning("dashboard_audit_failed", error=str(exc))
 
+    # 2c. /autonomy/overrides — fan-out to autonomy-svc so we can split
+    # the bare `escalated` count into pending / approved / rejected.
+    # The Approval Inbox already uses the same join (matched by
+    # request_id). Sprint 19 follow-up. The 30-day window is 43200
+    # minutes — same upper bound the autonomy router accepts.
+    approved_ids: set[str] = set()
+    rejected_ids: set[str] = set()
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            ov_resp = await client.get(
+                f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/overrides",
+                params={"minutes": 43200, "limit": 1000},
+                headers=headers,
+            )
+        if ov_resp.status_code == 200:
+            ov_body = ov_resp.json() or {}
+            ov_items = ov_body.get("data") if isinstance(ov_body, dict) else ov_body
+            if isinstance(ov_items, list):
+                for o in ov_items:
+                    rid = (o.get("request_id") or "").strip()
+                    if not rid:
+                        continue
+                    et = (o.get("event_type") or "").lower()
+                    if et == "approval":
+                        approved_ids.add(rid)
+                    elif et == "override":
+                        rejected_ids.add(rid)
+    except httpx.HTTPError as exc:
+        logger.warning("dashboard_overrides_failed", error=str(exc))
+
     # 3. Per-row business-value aggregate.
     records_protected = 0
     dollar_risk = 0.0
     distinct_controls: set[str] = set()
+    escalate_request_ids: set[str] = set()
 
     for r in rows:
         decision = (r.get("decision") or "").lower()
@@ -1174,6 +1267,13 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
                 meta = _json.loads(meta)
             except Exception:
                 meta = {}
+
+        # Track every escalate row's request_id so we can intersect
+        # with the approval / rejection sets pulled from autonomy-svc.
+        if decision == "escalate":
+            rid = (r.get("request_id") or "").strip()
+            if rid:
+                escalate_request_ids.add(rid)
 
         findings = meta.get("findings") if isinstance(meta, dict) else None
         if findings and isinstance(findings, list):
@@ -1210,6 +1310,22 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
                 # Sonnet 4.6. Documented in the UI tooltip.
                 dollar_risk += 0.05
 
+    # Sprint 19 follow-up — split escalations into pending / approved /
+    # rejected by intersecting the escalate-row request_ids (from the
+    # /logs scan above, capped at 1000 — so this is best-effort for
+    # tenants with >1000 audit rows in 30d; the bare `escalated` count
+    # in mandate_kpis is authoritative since it comes from the
+    # /logs/aggregate server-side count). When the per-row pull missed
+    # an escalation but autonomy-svc still resolved it, surface that
+    # as approved/rejected too via the union.
+    seen_esc_ids = escalate_request_ids | approved_ids | rejected_ids
+    escalations_approved = len(approved_ids & seen_esc_ids)
+    escalations_rejected = len(rejected_ids & seen_esc_ids)
+    # Pending = (all escalations) – (already approved or rejected).
+    # Floor at zero in case the aggregate count is lower than the per-
+    # row scan (different windows; aggregate is wider).
+    escalations_pending = max(0, escalated - escalations_approved - escalations_rejected)
+
     return APIResponse(data={
         "mandate_kpis": {
             "protected_agents":  protected_agents,
@@ -1219,11 +1335,168 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
             "escalated":         escalated,
             "active_findings":   findings_count,
         },
+        "escalation_breakdown": {
+            "pending":  escalations_pending,
+            "approved": escalations_approved,
+            "rejected": escalations_rejected,
+        },
         "business_value": {
             "records_protected_estimate":   records_protected,
-            "escalations_prevented":        escalated,
+            # Sprint 19 — restate against the actual approver workflow.
+            # An escalation that was approved DOES count as prevented
+            # because the agent didn't run it autonomously; a rejected
+            # one obviously counts too. A pending one is still in
+            # flight so we don't credit it.
+            "escalations_prevented":        escalations_approved + escalations_rejected,
             "compliance_controls_enforced": len(distinct_controls),
             "dollar_risk_mitigated_usd":    round(dollar_risk, 2),
         },
         "window_days": 30,
     })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 19 follow-up — Approval resume API. Two surfaces:
+#
+#   1. GET /approvals/{approval_id}/status — the SDK calls this to
+#      poll the state of an approval it received via the 202 response
+#      from /v1/messages. Returns pending / approved / rejected +
+#      decided_at + reason + approver_role + matched_pattern, all
+#      scoped to the caller's tenant.
+#
+#   2. /v1/messages now accepts the X-Aegis-Approval-ID header. If the
+#      approval exists, belongs to this tenant, and is currently
+#      approved, the escalation scan is bypassed and the prompt is
+#      forwarded to Anthropic. The original 202 + this 200-on-replay
+#      flow is the CFO-approved-the-wire pattern the founder asked
+#      for.
+#
+# The approval store is the existing audit_logs (decision='escalate')
+# joined with human_override_events (event_type='approval' /
+# 'override'). We don't introduce a new table — append-only audit is
+# the single source of truth.
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def _lookup_approval(
+    request: Request, tenant_id: str, approval_id: str,
+) -> dict | None:
+    """Return a normalized approval record or None if not found.
+
+    Shape::
+
+        {
+          "approval_id":     str,
+          "status":          "pending" | "approved" | "rejected",
+          "approver_role":   str | None,
+          "matched_pattern": str | None,
+          "employee_email":  str | None,
+          "requested_at":    str | None,   # ISO timestamp of the escalate row
+          "decided_at":      str | None,   # ISO timestamp of the override row
+          "decided_by":      str | None,
+          "reason":          str | None,   # operator's note
+          "prompt_excerpt":  str | None,
+        }
+    """
+    headers = internal_headers(request)
+    # 1. Pull the original escalate audit row.
+    esc_row: dict | None = None
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            # POST /logs/search supports filter by metadata.request_id;
+            # GET /logs doesn't. The body shape mirrors AuditLogSearch.
+            resp = await client.post(
+                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
+                json={"decision": "escalate", "limit": 50},
+                headers=headers,
+            )
+        if resp.status_code == 200:
+            data = (resp.json() or {}).get("data") or {}
+            items = data.get("items", []) if isinstance(data, dict) else []
+            for r in items:
+                if (r.get("request_id") or "") == approval_id:
+                    esc_row = r
+                    break
+    except httpx.HTTPError as exc:
+        logger.warning("approval_lookup_audit_failed", error=str(exc))
+
+    if esc_row is None:
+        return None
+
+    meta = esc_row.get("metadata_json") or esc_row.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            import json as _json
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+
+    # 2. Pull any override events tied to this request_id.
+    decided_at: str | None = None
+    decided_by: str | None = None
+    operator_reason: str | None = None
+    status_str = "pending"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            ov_resp = await client.get(
+                f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/overrides",
+                params={"minutes": 43200, "target_kind": "request", "target_id": approval_id, "limit": 10},
+                headers=headers,
+            )
+        if ov_resp.status_code == 200:
+            ov_body = ov_resp.json() or {}
+            ov_items = ov_body.get("data") if isinstance(ov_body, dict) else ov_body
+            if isinstance(ov_items, list) and ov_items:
+                # First match wins — list_overrides returns newest first.
+                ov = ov_items[0]
+                et = (ov.get("event_type") or "").lower()
+                if et == "approval":
+                    status_str = "approved"
+                elif et == "override":
+                    status_str = "rejected"
+                decided_at = ov.get("occurred_at") or None
+                decided_by = ov.get("actor") or None
+                operator_reason = ov.get("reason") or None
+    except httpx.HTTPError as exc:
+        logger.warning("approval_lookup_override_failed", error=str(exc))
+
+    return {
+        "approval_id":     approval_id,
+        "status":          status_str,
+        "approver_role":   meta.get("approver_role"),
+        "matched_pattern": meta.get("matched_pattern"),
+        "employee_email":  meta.get("employee_email"),
+        "requested_at":    esc_row.get("timestamp") or esc_row.get("created_at"),
+        "decided_at":      decided_at,
+        "decided_by":      decided_by,
+        "reason":          operator_reason,
+        "prompt_excerpt":  meta.get("prompt_excerpt"),
+    }
+
+
+@router.get("/approvals/{approval_id}/status")
+async def approval_status(approval_id: str, request: Request) -> APIResponse[dict]:
+    """Public-facing approval status lookup for the SDK + Approval Inbox.
+
+    Caller is the tenant that originally received the 202 from
+    /v1/messages. Cross-tenant lookups return 404 — the audit + autonomy
+    queries are tenant-scoped automatically by the internal-secret
+    header.
+    """
+    tenant_id_str = (
+        request.headers.get("X-Tenant-ID")
+        or (getattr(request.state, "jwt_claims", {}) or {}).get("tenant_id", "")
+    )
+    if not tenant_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant context missing — please sign in again.",
+        )
+
+    record = await _lookup_approval(request, tenant_id_str, approval_id.strip())
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No approval with id {approval_id!r}",
+        )
+    return APIResponse(data=record)

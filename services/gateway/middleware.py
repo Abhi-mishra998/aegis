@@ -131,6 +131,10 @@ _MANAGEMENT_PATH_PREFIXES = (
     # Sprint 12 — mandate-KPI rollup for the post-login Dashboard hero.
     # Read-only management surface, audit-log fan-out under the hood.
     "/dashboard",
+    # Sprint 19 follow-up — approval resume API. The SDK polls
+    # /approvals/{id}/status and the management Inbox might also
+    # consume the same endpoint; both go through the standard JWT.
+    "/approvals",
     "/metrics",
     "/risk",
     "/stream",
