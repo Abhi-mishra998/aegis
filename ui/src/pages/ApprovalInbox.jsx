@@ -11,6 +11,7 @@ import {
   Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, RefreshCw, User,
 } from 'lucide-react'
 import { auditService, autonomyService } from '../services/api'
+import ErrorBoundary from '../components/Common/ErrorBoundary'
 
 function unwrap(resp) { return resp?.data ?? resp }
 function fmtTs(s) { if (!s) return '—'; try { return new Date(s).toLocaleString() } catch { return s } }
@@ -30,7 +31,7 @@ function severityBadge(risk) {
   return { label: 'LOW',  cls: 'bg-neutral-800 text-neutral-300 border-neutral-700' }
 }
 
-export default function ApprovalInbox() {
+function ApprovalInboxPage() {
   const [windowMinutes, setWindowMinutes] = useState(1440)
   const [escalations, setEscalations] = useState([])
   const [overrides, setOverrides] = useState([])
@@ -137,6 +138,9 @@ export default function ApprovalInbox() {
           <h1 className="text-xl font-semibold inline-flex items-center gap-2">
             <Inbox size={18} /> Approval Inbox
           </h1>
+          <p className="text-xs text-neutral-400 mt-1">
+            Pending escalations awaiting human approval
+          </p>
           <p className="text-sm text-neutral-400 mt-1">
             Decisions the pipeline ESCALATEd — autonomy contracts said a
             human must approve before this action runs. Approve or reject
@@ -329,5 +333,13 @@ function Field({ label, value, mono = false }) {
         {value === null || value === undefined || value === '' ? '—' : String(value)}
       </div>
     </div>
+  )
+}
+
+export default function ApprovalInbox() {
+  return (
+    <ErrorBoundary>
+      <ApprovalInboxPage />
+    </ErrorBoundary>
   )
 }
