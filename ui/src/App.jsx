@@ -110,7 +110,7 @@ function GlobalShortcuts({ onShowHelp, onShowPalette }) {
   const navigate = useNavigate()
   const bindings = useMemo(() => ([
     { key: 'g f', handler: () => navigate('/flight-recorder') },
-    { key: 'g p', handler: () => navigate('/policy-builder')  },
+    { key: 'g p', handler: () => navigate('/policies')        },
     { key: 'g a', handler: () => navigate('/audit-logs')      },
     { key: 'g i', handler: () => navigate('/incidents')       },
     { key: 'g s', handler: () => navigate('/settings')        },

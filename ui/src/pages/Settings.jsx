@@ -51,17 +51,30 @@ function WorkspaceTab() {
   );
 }
 
+// Visual grouping only — the `?tab=<id>` URL contract is unchanged.
+const GROUP = {
+  IDENTITY:     'identity',
+  INTEGRATIONS: 'integrations',
+  WORKSPACE:    'workspace',
+};
+const GROUP_LABELS = {
+  [GROUP.IDENTITY]:     'Access & Identity',
+  [GROUP.INTEGRATIONS]: 'Integrations',
+  [GROUP.WORKSPACE]:    'Workspace',
+};
+const GROUP_ORDER = [GROUP.IDENTITY, GROUP.INTEGRATIONS, GROUP.WORKSPACE];
+
 const TABS = [
-  { id: 'workspace',     label: 'Workspace',     icon: Building,     Component: WorkspaceTab,    legacy: '/settings' },
-  { id: 'system-values', label: 'System Values', icon: DollarSign,   Component: SystemValuesTab, legacy: '/settings?tab=system-values' },
-  { id: 'team',          label: 'Team',          icon: Users,        Component: UserManagement,  legacy: '/users' },
-  { id: 'roles',      label: 'Roles',       icon: SettingsIcon, Component: RBAC,            legacy: '/rbac' },
-  { id: 'sso',        label: 'SSO',         icon: Key,          Component: SsoSettings,     legacy: '/sso' },
-  { id: 'api-keys',   label: 'API Keys',    icon: Code2,        Component: DeveloperPanel,  legacy: '/developer' },
-  { id: 'webhooks',   label: 'Webhooks',    icon: Webhook,      Component: WebhookSettings, legacy: '/webhook-settings' },
-  { id: 'siem',       label: 'SIEM',        icon: Database,     Component: SiemSettings,    legacy: '/siem' },
-  { id: 'reports',    label: 'Reports',     icon: Calendar,     Component: ScheduledReports, legacy: '/scheduled-reports' },
-  { id: 'quota',      label: 'Quota',       icon: Gauge,        Component: QuotaManagement, legacy: '/quota' },
+  { id: 'workspace',     label: 'Workspace',     icon: Building,     Component: WorkspaceTab,     legacy: '/settings',                   group: null },
+  { id: 'team',          label: 'Team',          icon: Users,        Component: UserManagement,   legacy: '/users',                      group: GROUP.IDENTITY },
+  { id: 'roles',         label: 'Roles',         icon: SettingsIcon, Component: RBAC,             legacy: '/rbac',                       group: GROUP.IDENTITY },
+  { id: 'sso',           label: 'SSO',           icon: Key,          Component: SsoSettings,      legacy: '/sso',                        group: GROUP.IDENTITY },
+  { id: 'api-keys',      label: 'API Keys',      icon: Code2,        Component: DeveloperPanel,   legacy: '/developer',                  group: GROUP.IDENTITY },
+  { id: 'siem',          label: 'SIEM',          icon: Database,     Component: SiemSettings,     legacy: '/siem',                       group: GROUP.INTEGRATIONS },
+  { id: 'webhooks',      label: 'Webhooks',      icon: Webhook,      Component: WebhookSettings,  legacy: '/webhook-settings',           group: GROUP.INTEGRATIONS },
+  { id: 'system-values', label: 'System Values', icon: DollarSign,   Component: SystemValuesTab,  legacy: '/settings?tab=system-values', group: GROUP.WORKSPACE },
+  { id: 'quota',         label: 'Quota',         icon: Gauge,        Component: QuotaManagement,  legacy: '/quota',                      group: GROUP.WORKSPACE },
+  { id: 'reports',       label: 'Reports',       icon: Calendar,     Component: ScheduledReports, legacy: '/scheduled-reports',          group: GROUP.WORKSPACE },
 ];
 
 export default function Settings() {
@@ -94,36 +107,66 @@ export default function Settings() {
     return tab.Component;
   }, [activeTab]);
 
+  const renderTabButton = ({ id, label, icon: Icon }) => {
+    const isActive = id === activeTab;
+    return (
+      <button
+        key={id}
+        role="tab"
+        aria-selected={isActive}
+        onClick={() => setActiveTab(id)}
+        className={
+          'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
+          (isActive
+            ? 'bg-white/[0.08] text-white border border-white/[0.1] border-b-transparent -mb-px'
+            : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]')
+        }
+      >
+        <Icon size={13} aria-hidden="true" />
+        {label}
+      </button>
+    );
+  };
+
+  // Workspace tab renders first with an invisible label-row so it aligns
+  // vertically with the labeled groups beside it.
+  const sections = [
+    { key: '__ungrouped', label: null,                tabs: TABS.filter((t) => !t.group) },
+    ...GROUP_ORDER.map((g) => ({
+      key: g,
+      label: GROUP_LABELS[g],
+      tabs: TABS.filter((t) => t.group === g),
+    })),
+  ];
+
   return (
     <div className="space-y-5">
       <div className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight text-white">Settings</h1>
         <p className="text-xs text-neutral-400">
-          Workspace · System Values · Team · Roles · SSO · API Keys · Webhooks · SIEM · Reports · Quota
+          Workspace · Access &amp; Identity · Integrations · Workspace controls
         </p>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto pb-1 border-b border-white/[0.06]" role="tablist">
-        {TABS.map(({ id, label, icon: Icon }) => {
-          const isActive = id === activeTab;
-          return (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => setActiveTab(id)}
-              className={
-                'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
-                (isActive
-                  ? 'bg-white/[0.08] text-white border border-white/[0.1] border-b-transparent -mb-px'
-                  : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]')
-              }
+      <div
+        className="flex flex-wrap items-end gap-x-4 gap-y-2 pb-1 border-b border-white/[0.06]"
+        role="tablist"
+        aria-label="Settings sections"
+      >
+        {sections.map(({ key, label, tabs }) => (
+          <div key={key} className="flex flex-col gap-0.5">
+            <div className="text-[10px] uppercase tracking-wider text-neutral-500 px-1">
+              {label ?? ' '}
+            </div>
+            <div
+              className="flex gap-1"
+              role={label ? 'group' : undefined}
+              aria-label={label || undefined}
             >
-              <Icon size={13} aria-hidden="true" />
-              {label}
-            </button>
-          );
-        })}
+              {tabs.map(renderTabButton)}
+            </div>
+          </div>
+        ))}
       </div>
 
       <Suspense
