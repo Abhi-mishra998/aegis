@@ -34,6 +34,7 @@
   * [Gateway](services/gateway.md)
   * [Decision](services/decision.md)
   * [Audit](services/audit.md)
+    * [Audit Signal Reference](services/audit-signal-reference.md)
   * [Identity](services/identity.md)
   * [Policy](services/policy.md)
 * Trust layer
