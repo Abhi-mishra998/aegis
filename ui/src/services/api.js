@@ -877,6 +877,23 @@ export const threatIntelService = {
   enrichIp:     (ip)     => request('/threat-intel/ip', { method: 'POST', body: JSON.stringify({ ip }) }),
   enrichDomain: (domain) => request('/threat-intel/domain', { method: 'POST', body: JSON.stringify({ domain }) }),
   getSummary:   ()       => request('/threat-intel/summary'),
+  // IOC + Feed CRUD — see services/gateway/routers/threatintel.py.
+  listIocs:     (params = {}) => {
+    const q = new URLSearchParams()
+    if (params.kind)   q.set('kind',   params.kind)
+    if (params.source) q.set('source', params.source)
+    if (params.limit)  q.set('limit',  String(params.limit))
+    if (params.include_global === false) q.set('include_global', 'false')
+    const qs = q.toString()
+    return request(`/threat-intel/iocs${qs ? `?${qs}` : ''}`)
+  },
+  createIoc:    (data)        => request('/threat-intel/iocs', { method: 'POST', body: JSON.stringify(data) }),
+  deleteIoc:    (id)          => request(`/threat-intel/iocs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  listFeeds:    ()            => request('/threat-intel/feeds'),
+  updateFeed:   (name, data)  => request(`/threat-intel/feeds/${encodeURIComponent(name)}`, {
+    method: 'PUT', body: JSON.stringify(data),
+  }),
+  refresh:      ()            => request('/threat-intel/refresh', { method: 'POST' }),
 };
 
 export const notificationService = {
