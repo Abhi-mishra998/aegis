@@ -57,6 +57,7 @@ import UserManagement from './pages/UserManagement';
 import Playbooks from './pages/Playbooks';
 // Sprint 17 — Aegis for Teams (per-employee LLM proxy + spend rollup)
 import Team from './pages/Team';
+import EmployeeProfile from './pages/EmployeeProfile';
 // Sprint 3 — Decision Explorer + Session Explorer
 import DecisionExplorer from './pages/DecisionExplorer';
 import SessionExplorer from './pages/SessionExplorer';
@@ -375,7 +376,9 @@ function App() {
               <Route path="/users"            element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
               <Route path="/playbooks"        element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
               {/* Sprint 17 — Aegis for Teams: per-employee Claude usage + spend */}
-              <Route path="/team"             element={<ProtectedRoute><Team /></ProtectedRoute>} />
+              <Route path="/team"              element={<ProtectedRoute><Team /></ProtectedRoute>} />
+              {/* Sprint 17.6 — per-employee drill-down (token burn + recent calls) */}
+              <Route path="/team/:email"       element={<ProtectedRoute><EmployeeProfile /></ProtectedRoute>} />
 
               {/* Sprint 6 — ExecutiveDashboard merged into /dashboard. */}
               <Route path="/executive-summary" element={<Navigate to="/dashboard" replace />} />

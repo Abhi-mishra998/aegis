@@ -674,3 +674,244 @@ async def team_overview(request: Request) -> APIResponse[dict]:
         "departments": departments,
         "trend_30d":   trend,
     })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 17.6 — per-employee drill-down. The Members tab on /team links
+# each row to /team/<email>, which calls this endpoint. Single fetch
+# returns the employee record, both budget bars, 30-day token-burn
+# trend, and the last 25 calls so the page can render with no
+# additional round-trips.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/team/employees/{email}/profile")
+async def team_employee_profile(email: str, request: Request) -> APIResponse[dict]:
+    """Single-fetch payload for the /team/<email> detail page.
+
+    Shape::
+
+        {
+          "employee": {
+            "email": str,
+            "name":  str,
+            "department": str | None,
+            "key_prefix": str,
+            "is_active": bool,
+            "daily_budget_usd": float | None,
+            "monthly_budget_usd": float | None,
+            "created_at": str,
+          },
+          "kpis": {
+            "requests_30d":             int,
+            "spend_30d_usd":            float,
+            "spend_today_usd":          float,
+            "spend_month_usd":          float,
+            "daily_budget_used_pct":    float,
+            "monthly_budget_used_pct":  float,
+            "harmful_blocked_30d":      int,
+            "models_used":              [str],
+            "last_active":              str | null,
+            "risk_score":               float,
+            "risk_label":               "Low" | "Moderate" | "Elevated" | "High",
+          },
+          "trend_30d":   [{day, requests, spend_usd}, …],
+          "recent_calls": [{ts, model, input_tokens, output_tokens, cost_usd, decision, findings}, …]
+        }
+    """
+    tenant_id_str = (
+        request.headers.get("X-Tenant-ID")
+        or (getattr(request.state, "jwt_claims", {}) or {}).get("tenant_id", "")
+    )
+    if not tenant_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant context missing — please sign in again.",
+        )
+
+    email_lc = email.strip().lower()
+    if not email_lc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is required.",
+        )
+
+    # 1.  Find the employee key. We list every employee then filter — the
+    # api-svc /api-keys GET doesn't expose a single-email lookup, and
+    # tenants have at most a few hundred keys.
+    keys = await _list_employee_keys_from_apisvc(request)
+    match = next(
+        (k for k in keys if (k.get("subject_email") or "").strip().lower() == email_lc),
+        None,
+    )
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No employee key for {email_lc!r}",
+        )
+
+    employee = {
+        "email":              email_lc,
+        "name":               match.get("name") or email_lc.split("@", 1)[0],
+        "department":         match.get("department"),
+        "key_prefix":         match.get("key_prefix"),
+        "is_active":          bool(match.get("is_active", True)),
+        "daily_budget_usd":   match.get("daily_budget_usd"),
+        "monthly_budget_usd": match.get("monthly_budget_usd"),
+        "created_at":         match.get("created_at"),
+    }
+
+    # 2.  Pull every llm_proxy_call row for the tenant in the last 30
+    # days, then narrow by email in-process. Same GET-/logs contract as
+    # /team/overview so WAFv2 doesn't trip.
+    from datetime import datetime, timedelta, timezone
+    start_iso = (
+        datetime.now(tz=timezone.utc) - timedelta(days=30)
+    ).isoformat()
+    proxy_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                proxy_url,
+                params={
+                    "action":     "llm_proxy_call",
+                    "start_date": start_iso,
+                    "limit":      1000,
+                },
+                headers=internal_headers(request),
+            )
+        body = resp.json() if resp.status_code == 200 else {}
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, dict):
+            rows = data.get("items", []) or []
+        elif isinstance(data, list):
+            rows = data
+        else:
+            rows = []
+    except httpx.HTTPError:
+        rows = []
+
+    # 3.  Filter + aggregate.
+    from collections import defaultdict
+
+    employee_rows: list[dict] = []
+    daily: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"requests": 0, "spend_usd": 0.0},
+    )
+    spend_30d = 0.0
+    harmful_30d = 0
+    models_used: set[str] = set()
+    last_active: str | None = None
+
+    for r in rows:
+        meta = r.get("metadata_json") or r.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                import json as _json
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        row_email = (meta.get("employee_email") or "").strip().lower()
+        if row_email != email_lc:
+            continue
+
+        cost = float(meta.get("cost_usd") or 0)
+        decision = (r.get("decision") or "allow").lower()
+        is_harmful = decision in ("deny", "block", "error") or bool(meta.get("findings"))
+        model = (meta.get("model") or "").strip() or "unknown"
+
+        spend_30d += cost
+        if is_harmful:
+            harmful_30d += 1
+        models_used.add(model)
+
+        ts = r.get("created_at") or r.get("timestamp")
+        if ts:
+            day = str(ts)[:10]
+            daily[day]["requests"]  += 1
+            daily[day]["spend_usd"] += cost
+            if last_active is None or str(ts) > last_active:
+                last_active = str(ts)
+
+        employee_rows.append({
+            "ts":            ts,
+            "model":         model,
+            "input_tokens":  int(meta.get("input_tokens") or 0),
+            "output_tokens": int(meta.get("output_tokens") or 0),
+            "cost_usd":      round(cost, 6),
+            "decision":      decision,
+            "findings":      meta.get("findings") or [],
+            "latency_ms":    int(meta.get("latency_ms") or 0),
+        })
+
+    requests_30d = len(employee_rows)
+
+    # 4.  Live spend counters from Redis (fast-path for the budget bars).
+    redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
+    try:
+        today_usd, month_usd = await _current_spend(redis, tenant_id_str, email_lc)
+    finally:
+        try:
+            await redis.aclose()
+        except Exception:  # noqa: BLE001
+            pass
+
+    daily_cap   = employee["daily_budget_usd"]
+    monthly_cap = employee["monthly_budget_usd"]
+    daily_pct = (
+        round((today_usd / float(daily_cap)) * 100.0, 2)
+        if daily_cap and float(daily_cap) > 0
+        else 0.0
+    )
+    monthly_pct = (
+        round((month_usd / float(monthly_cap)) * 100.0, 2)
+        if monthly_cap and float(monthly_cap) > 0
+        else 0.0
+    )
+
+    # 5.  Risk score — same shape as the /team/overview computation so
+    # the rollup and the drill-down agree.
+    if requests_30d <= 0:
+        risk_score = 0.0
+    else:
+        rate = harmful_30d / requests_30d
+        risk_score = round(min(1.0, max(0.05, rate * 4)), 2)
+    if   risk_score >= 0.7: risk_label = "High"
+    elif risk_score >= 0.4: risk_label = "Elevated"
+    elif risk_score >= 0.15: risk_label = "Moderate"
+    else: risk_label = "Low"
+
+    # 6.  30-day trend, fill empty days with zero.
+    now = datetime.now(tz=timezone.utc)
+    trend = []
+    for i in range(29, -1, -1):
+        day = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        b = daily.get(day, {"requests": 0, "spend_usd": 0.0})
+        trend.append({
+            "day":       day,
+            "requests":  int(b["requests"]),
+            "spend_usd": round(float(b["spend_usd"]), 6),
+        })
+
+    # 7.  Recent activity — newest 25.
+    employee_rows.sort(key=lambda r: str(r.get("ts") or ""), reverse=True)
+    recent = employee_rows[:25]
+
+    return APIResponse(data={
+        "employee": employee,
+        "kpis": {
+            "requests_30d":            requests_30d,
+            "spend_30d_usd":           round(spend_30d, 6),
+            "spend_today_usd":         round(today_usd, 6),
+            "spend_month_usd":         round(month_usd, 6),
+            "daily_budget_used_pct":   daily_pct,
+            "monthly_budget_used_pct": monthly_pct,
+            "harmful_blocked_30d":     harmful_30d,
+            "models_used":             sorted(models_used),
+            "last_active":             last_active,
+            "risk_score":              risk_score,
+            "risk_label":              risk_label,
+        },
+        "trend_30d":    trend,
+        "recent_calls": recent,
+    })
