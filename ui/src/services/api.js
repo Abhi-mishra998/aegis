@@ -577,6 +577,15 @@ export const dashboardService = {
   overview: () => request('/dashboard/overview'),
 }
 
+// Sprint 19 — approval resume API. The SDK + Approval Inbox both
+// poll GET /approvals/{id}/status to see whether the operator has
+// cleared a previously-escalated request. Returns the normalized
+// {status, approver_role, matched_pattern, decided_at, decided_by,
+// reason, prompt_excerpt} shape.
+export const approvalService = {
+  status: (id) => request(`/approvals/${encodeURIComponent(id)}/status`),
+}
+
 export const policyService = {
   simulate: (payload) => request("/policy/simulate", {
     method: "POST",

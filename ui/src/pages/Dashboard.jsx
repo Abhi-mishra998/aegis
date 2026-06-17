@@ -300,12 +300,14 @@ export default function Dashboard() {
               label="Escalated"
               value={loading ? '—' : fmtInt(overview?.mandate_kpis?.escalated)}
               sublabel={
-                (overview?.mandate_kpis?.escalated ?? 0) > 0
-                  ? 'Open Approval Inbox →'
-                  : 'Awaiting human'
+                loading
+                  ? '…'
+                  : (overview?.mandate_kpis?.escalated ?? 0) === 0
+                    ? 'No human-in-loop yet'
+                    : `${overview?.escalation_breakdown?.pending ?? 0} pending · ${overview?.escalation_breakdown?.approved ?? 0} approved · ${overview?.escalation_breakdown?.rejected ?? 0} rejected`
               }
-              accent={(overview?.mandate_kpis?.escalated ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-              tooltip="Decisions sent to the Approval Inbox for a human reviewer. Click to open the inbox."
+              accent={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+              tooltip="Decisions sent to a human reviewer. Sub-label splits the total into pending (waiting on a human), approved (CFO/CISO/etc said yes), rejected (operator denied). Click to open the Approval Inbox."
             />
           </Link>
           <MetricTile
