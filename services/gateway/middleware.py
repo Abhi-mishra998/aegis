@@ -1186,6 +1186,29 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         except Exception as _cnx:
                             logger.warning("canonical_normalize_failed", error=str(_cnx))
 
+                        # Surface behavior-side findings to the LiveFeed as
+                        # `behavior_flagged` whenever the baseline + canonical
+                        # evaluation produced ANY non-empty finding —
+                        # independent of the policy verdict — so operators
+                        # see the signal even when the decision engine still
+                        # allows. Fire-and-forget; never delays the request.
+                        _behavior_flags = list(_baseline_findings or [])
+                        if _attack_chain:
+                            _behavior_flags.append(f"attack_chain:{_attack_chain}")
+                        if _behavior_flags:
+                            asyncio.create_task(_safe_bg(publish_event(
+                                self.redis, t_id_str, "behavior_flagged",
+                                {
+                                    "agent_id":   str(agent_id),
+                                    "tool":       tool_name,
+                                    "flags":      _behavior_flags[:8],
+                                    "attack_chain": _attack_chain or None,
+                                    "attack_chain_severity": _attack_chain_severity or None,
+                                    "request_id": request_id,
+                                },
+                                agent_id=str(agent_id),
+                            )))
+
                         # GAP-5 2026-06-15 — Cross-agent kill-chain detector.
                         # Record this action_type + target into the per-tenant
                         # window. If the trailing 15min contains a kill chain
@@ -2126,6 +2149,21 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 summary="approval_required", status="pending",
                 payload={"contract_id": ac.get("contract_id")},
             )))
+            # Surface the approval requirement so the LiveFeed + Approvals
+            # inbox light up in real time instead of waiting for the
+            # operator to poll /auto-response/pending.
+            asyncio.create_task(_safe_bg(publish_event(
+                self.redis, t_id_str, "approval_required",
+                {
+                    "agent_id":    str(agent_id),
+                    "tool":        tool_name,
+                    "contract_id": ac.get("contract_id"),
+                    "reason":      ac.get("reason") or "autonomy_contract_approval",
+                    "request_id":  request_id,
+                    "risk_score":  risk_score,
+                },
+                agent_id=str(agent_id),
+            )))
             flight_final["decision"] = "escalate"
             flight_final["risk"]     = risk_score or 0.0
             flight_final["status"]   = "failed"
@@ -2395,9 +2433,43 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         )
         if not proxy_result.allowed:
             await self._log_block(t_id_str, agent_id, tool_name, proxy_result, request_id, tokens=proxy_result.metadata.get("tokens", 1))
+            # Surface the inference-proxy block as `llm_proxy_escalate` so
+            # the LiveFeed shows when the gateway short-circuited an LLM
+            # request (injection / risk-score / tool-guard / tenant-iso).
+            # Fire-and-forget — a Redis stall must not block the deny path.
+            asyncio.create_task(_safe_bg(publish_event(
+                self.redis, t_id_str, "llm_proxy_escalate",
+                {
+                    "agent_id":   str(agent_id),
+                    "tool":       tool_name,
+                    "reason":     proxy_result.reason,
+                    "status":     proxy_result.status_code,
+                    "risk_score": float(getattr(proxy_result, "risk_score", 0.0) or 0.0),
+                    "risk_level": getattr(proxy_result, "risk_level", "low"),
+                    "flags":      (getattr(proxy_result, "flags", []) or [])[:5],
+                    "request_id": request_id,
+                },
+                agent_id=str(agent_id),
+            )))
             return self._deny(
                 f"Security: {proxy_result.reason}", proxy_result.status_code
             )
+
+        # Surface the inference-proxy admit-decision so the LiveFeed
+        # renders the request-side LLM hand-off. The downstream
+        # `tool_executed` event covers the response-side success.
+        asyncio.create_task(_safe_bg(publish_event(
+            self.redis, t_id_str, "llm_proxy_call",
+            {
+                "agent_id":   str(agent_id),
+                "tool":       tool_name,
+                "risk_score": float(getattr(proxy_result, "risk_score", 0.0) or 0.0),
+                "risk_level": getattr(proxy_result, "risk_level", "low"),
+                "tokens":     int(proxy_result.metadata.get("tokens", 1) or 1) if isinstance(proxy_result.metadata, dict) else 1,
+                "request_id": request_id,
+            },
+            agent_id=str(agent_id),
+        )))
 
         return proxy_result
 
