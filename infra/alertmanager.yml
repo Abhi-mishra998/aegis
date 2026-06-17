@@ -17,24 +17,18 @@ route:
   receiver: slack
 
   routes:
-    # Page alerts: highest urgency — used for audit chain violations and
-    # similar integrity failures where the prom rule sets `severity: page`
-    # with for:0m. Must hit a real pager. Reuses the `critical` receiver
-    # today (Slack #aegis-critical + PagerDuty) so the alert is never lost
-    # in the void. repeat_interval kept short so the page keeps firing
-    # until acknowledged.
-    # TODO: switch to dedicated pagerduty_configs / routing key, populated
-    # operator-side via /etc/alertmanager/pagerduty_routing_key, with a
-    # separate escalation policy from severity=critical.
+    # Page alerts: highest urgency — separate PagerDuty routing key maps to a
+    # higher escalation policy (e.g. wakes the on-call SRE immediately).
+    # group_wait/repeat_interval are tight so noise is intentional here.
     - matchers:
         - severity = "page"
-      receiver: critical
-      group_wait: 0s
+      receiver: page
+      group_wait: 10s
       group_interval: 1m
       repeat_interval: 30m
       continue: true
 
-    # Critical alerts: page via PagerDuty AND Slack; short repeat window.
+    # Critical alerts: PagerDuty (standard routing key) + Slack; short repeat window.
     - matchers:
         - severity = "critical"
       receiver: critical
@@ -69,6 +63,22 @@ receivers:
           {{ end }}
     pagerduty_configs:
       - routing_key_file: /etc/alertmanager/pagerduty_routing_key
+        send_resolved: true
+        severity: critical
+        description: '{{ .CommonAnnotations.summary }}'
+
+  - name: page
+    slack_configs:
+      - channel: '#aegis-page'
+        send_resolved: true
+        title: 'PAGE: {{ .CommonAnnotations.summary }}'
+        text: |-
+          *Service:* {{ .CommonLabels.service }}
+          {{ range .Alerts }}
+          • {{ .Annotations.description }}
+          {{ end }}
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/pagerduty_routing_key_page
         send_resolved: true
         severity: critical
         description: '{{ .CommonAnnotations.summary }}'
