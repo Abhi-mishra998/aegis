@@ -1,7 +1,49 @@
 # SPRINT.md — Aegis Sprint Roadmap
 
-> **Phase A — Sprint 1-10 plumbing**: ✅ SHIPPED 2026-06-15 (table below).
-> **Phase B — Enterprise activation (Sprints 11-18)**: 🔴 OPEN as of 2026-06-16. This is what the product needs to actually sell.
+> **Phase A — Sprint 1-10 plumbing**: ✅ SHIPPED 2026-06-15.
+> **Phase B — Enterprise activation (Sprints 11-18)**: ✅ SHIPPED 2026-06-17.
+> **Founder priorities (post Phase B)**: ✅ SHIPPED 2026-06-17.
+> **Phase B follow-on (Sprints 19-23)**: ✅ SHIPPED 2026-06-17.
+
+---
+
+## 📒 Actual ledger — what's live on `https://ha.aegisagent.in`
+
+Every row below was deployed end-to-end, live-tested, and the bundle uploaded to
+`s3://acp-backups-prodha-628478946931/releases/current.tar.gz` so the next ASG
+replacement boots clean. All commits are local to `main`; nothing has been
+pushed to `origin/main` per founder hard-rule.
+
+| Sprint | Commit | What it shipped |
+|---|---|---|
+| **11** Marketing landing | `ca2fe4b` | Public `/` landing — hero "AI governance & runtime security platform", 3 value-prop cards, 4 mandate Q&A, Path B code snippet, trust strip. Authenticated users redirect to `/dashboard`. |
+| **12** Dashboard mandate KPIs | `8a9d5c5` + `da299b6` | 6 mandate KPIs (protected_agents / actions_evaluated / allowed / denied / escalated / active_findings) + 4 business-value tiles. Backed by gateway `dashboard_overview` fan-out to registry + audit-svc `/logs/aggregate` (server-side counts; not capped at 1000). |
+| **13** Capability wizard | `d6ed7b3` | Wizard Step 2 replaced 'risk level' with 7 capability checkboxes (filesystem/database/infrastructure/payments/email/external_apis/internal_apis). Live preview of `policies_enabled` from `services/registry/capabilities.py`. |
+| **14** Incident card 6 fields | `da299b6` | Every `/incidents` row shows DENIED/ESCALATED/REVIEWED verdict + User + Agent + Tool + Policy + MITRE + Time + Merkle proof Verified chip. |
+| **15** Unified replay | `092d657` | Gateway `GET /replay/{request_id}` joins audit + override events. New `/replay/:request_id` page — 5-stage stepper (User → Agent → Tool → Aegis eval → Outcome). Deep-linked from Incidents + Approval Inbox + EmployeeProfile recent_calls. |
+| **16** Compliance grid | `f4cadc0` | Audit-svc `GET /logs/pack-enforcement?days=30` rolls escalations up by pack + control. `/compliance` page surfaces real per-control hit counts + 3 recent examples each. |
+| **17** Aegis for Teams + **17.5/17.6/17.7** | `e2efe8b` `779bd0b` `43c12df` | `POST /v1/messages` Anthropic proxy + acp_emp_… employee virtual keys (Sprint 17). Team page hero with 6 KPIs + Members/Departments/Executive tabs + Observe/Protect/Prove sidebar (17.5). `/team/:email` drill-down (17.6). `InjectionDetector` wired into the proxy (17.7). |
+| **18** Positioning sweep | `da299b6` | "AgentControl" replaced with "Aegis" + "AI governance & runtime security platform" framing on Login, Signup, Sidebar, `<title>`, `<meta description>`. |
+| **19** Approval workflows + follow-up | `e505e91` + `88ed7b4` | `services/gateway/escalation_patterns.py` (5 base patterns). `/v1/messages` returns 202 with approval_id + Slack-style card payload. Dashboard 'Escalated' tile links to `/approval-inbox`. Follow-up split escalation KPIs (pending/approved/rejected), added `/approvals/{id}/status` dual-auth + `X-Aegis-Approval-ID` replay. Three gaps closed: ASG launch-template v9, autonomy URL fix, JSONB cast fix. |
+| **20** SDK Path-B wrappers + UI freshness | `740edf6` | New `AegisAnthropicProxy` class (transparent 202 → poll → replay, typed exceptions). Dual-auth `/approvals/{id}/status` (Bearer JWT OR x-api-key). UI freshness pass — ApprovalInbox 8s poll, Dashboard SSE-triggered refetch + 20s belt-and-braces, Team 30s poll. |
+| **21** Slack approvals | `727b80c` | `tenants.slack_webhook_url` + `slack_approval_secret` (migration `b9c0d1e2f3a4`). Block-Kit card posted on escalate. HMAC-signed `/slack/approve/{id}` + `/slack/reject/{id}` callbacks return a tiny HTML success page. Settings → Slack approvals tab. |
+| **22** OpenAI proxy | `d5a1cc3` | `POST /v1/chat/completions` proxy + `services/gateway/openai_pricing.py`. `AegisOpenAIProxy` SDK class in `integrations/aegis-openai` v1.1.0. Same gates + audit-row shape as Anthropic. |
+| **23** Policy packs (SOC2 / PCI / HIPAA / Finance / DevOps) | `3a8ec1a` | `services/policy/packs.py` — 5 packs × 13 escalation rules total. `tenants.enabled_policy_packs` JSONB column (migration `c0d1e2f3a4b5`). Settings → Policy packs tab. Escalation audit rows carry `policy_pack` + `framework_controls`. |
+
+### Operational fixes also shipped this session
+
+| What | Commit | Why |
+|---|---|---|
+| `/team/overview` audit-search fix | `e2efe8b` | Was calling `POST /logs/search` with GET → 405. Switched to `GET /logs` with `start_date` param. Dashboard KPIs jumped 1000 → 30,402 (real count). |
+| `current.tar.gz` ASG bundle refreshed | (after every sprint) | Next ASG instance replacement boots with the live state, not a stale snapshot. |
+| Launch-template v9 | terraform apply equivalent via CLI | Added `/aegis-prodha/anthropic/upstream-key → UPSTREAM_ANTHROPIC_KEY` to `SSM_OVERLAY`. ASG replacements no longer need a runbook hotfix. |
+| pgbouncer userlist + cascade-restart safety | (operator response) | Discovered `docker compose up -d --force-recreate ui` cascades a pgbouncer restart that drops auth. Documented `--no-deps --force-recreate ui` as the canonical safe form; used on every subsequent UI redeploy. |
+| Founder-mandate framing on `/setup-agies.md` | `ab57b7f` | Restructured around Path A (SDK wrap) + Path B (Anthropic proxy), with B.3 red-team script. Verified live 6/6 attacks blocked + 2/2 benign allowed. |
+
+> The list above replaces the per-sprint **Estimate** lines below. Original spec
+> kept verbatim for traceability.
+
+---
 
 Translation layer between PRODUCT_PLAN.md and ground-level work. One sprint = one shippable unit on `ha.aegisagent.in`. No sprint completes without:
 
