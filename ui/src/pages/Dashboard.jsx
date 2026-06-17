@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  Activity,
   AlertTriangle,
   Bot,
   Brain,
@@ -8,12 +9,17 @@ import {
   Clock,
   Code2,
   Cpu,
+  DollarSign,
+  FileCheck2,
   Globe,
   Plus,
   RefreshCw,
   Shield,
+  ShieldCheck,
   Sparkles,
+  Target,
   Terminal,
+  TrendingUp,
   Users,
   Wand2,
 } from 'lucide-react';
@@ -21,6 +27,7 @@ import {
   workspaceService,
   registryService,
   auditService,
+  dashboardService,
 } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
 import { useAuth } from '../hooks/useAuth';
@@ -46,16 +53,40 @@ const RISK_TIER_META = {
   critical: { label: 'Critical', color: 'text-red-400',    bg: 'bg-red-500/[0.07]'    },
 };
 
-function MetricTile({ label, value, sublabel, accent = 'text-white' }) {
+function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon, tooltip }) {
   return (
     <Card>
-      <div className="space-y-1">
-        <div className="text-[10px] uppercase tracking-widest text-neutral-500">{label}</div>
+      <div className="space-y-1" title={tooltip || undefined}>
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-neutral-500">
+          {Icon && <Icon size={11} aria-hidden="true" />}
+          <span>{label}</span>
+        </div>
         <div className={`text-3xl font-bold ${accent}`}>{value}</div>
         {sublabel && <div className="text-[11px] text-neutral-500">{sublabel}</div>}
       </div>
     </Card>
   );
+}
+
+// Sprint 12 — short integer formatter ("1.2K", "12.3M") so the mandate
+// tiles stay legible even when a busy tenant racks up six-figure
+// actions_evaluated counts.
+function fmtInt(n) {
+  if (n == null) return '—';
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000)     return `${(v / 1_000).toFixed(1)}K`;
+  return v.toLocaleString();
+}
+
+function fmtUSD(n) {
+  if (n == null) return '—';
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000)     return `$${(v / 1_000).toFixed(1)}K`;
+  if (v >= 1)         return `$${v.toFixed(2)}`;
+  if (v > 0)          return `$${v.toFixed(4)}`;
+  return '$0';
 }
 
 function ProviderRow({ providerId, count, total }) {
@@ -97,6 +128,10 @@ export default function Dashboard() {
   const [inventory, setInventory] = useState(null);
   const [workspace, setWorkspace] = useState(null);
   const [recentEvents, setRecentEvents] = useState([]);
+  // Sprint 12 — mandate KPIs (6 metrics) + business-value (4 metrics).
+  // Single fetch from the gateway aggregation endpoint so the hero row
+  // renders with one round-trip alongside the existing inventory load.
+  const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
@@ -120,23 +155,27 @@ export default function Dashboard() {
       workspaceService.inventory(),
       workspaceService.me(),
       auditService.getLogs(10, 0),
+      dashboardService.overview(),
     ]).then((results) => {
       if (cancelled) return;
-      const [invResult, wsResult, evResult] = results;
+      const [invResult, wsResult, evResult, ovResult] = results;
       const invResp = invResult.status === 'fulfilled' ? invResult.value : null;
       const wsResp  = wsResult.status  === 'fulfilled' ? wsResult.value  : null;
       const evResp  = evResult.status  === 'fulfilled' ? evResult.value  : null;
+      const ovResp  = ovResult.status  === 'fulfilled' ? ovResult.value  : null;
       setInventory(invResp?.data || invResp || null);
       setWorkspace(wsResp?.data || wsResp || null);
+      setOverview(ovResp?.data || ovResp || null);
       const items = evResp?.data?.items || evResp?.data || evResp?.items || [];
       setRecentEvents(Array.isArray(items) ? items.slice(0, 8) : []);
       setLoading(false);
-      // If ALL three failed, surface a single banner; one partial failure
-      // shouldn't blank the dashboard, but a total network outage should be
-      // visible.
-      const allFailed = results.every((r) => r.status === 'rejected');
-      if (allFailed) {
-        setError(results[0].reason?.message || 'Failed to load dashboard data');
+      // Inventory + overview are the must-have fetches; treat failure as
+      // total only if BOTH fail. Recent events + workspace identity can
+      // degrade gracefully on a partial outage.
+      const corePartiallyOk = (invResult.status === 'fulfilled')
+        || (ovResult.status === 'fulfilled');
+      if (!corePartiallyOk) {
+        setError(invResult.reason?.message || ovResult.reason?.message || 'Failed to load dashboard data');
       } else {
         setError('');
       }
@@ -214,25 +253,135 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Top metrics row */}
+      {/* Sprint 12 — Row 1: the six mandate KPIs every CISO buyer
+          evaluates Aegis against. Numbers are 30-day totals from the
+          audit log (allowed/denied/escalated/active_findings) plus the
+          live agent count (protected_agents) — single fetch via the
+          gateway /dashboard/overview aggregator. */}
+      <div>
+        <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
+          <Shield size={11} aria-hidden="true" />
+          <span>Last 30 days · runtime security at a glance</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <MetricTile
+            icon={Bot}
+            label="Protected agents"
+            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.protected_agents)}
+            sublabel="Active in this workspace"
+            tooltip="Active agents (status=ACTIVE) registered in this workspace. Source of truth: /workspace/inventory."
+          />
+          <MetricTile
+            icon={Activity}
+            label="Actions evaluated"
+            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.actions_evaluated)}
+            sublabel="Every tool call + proxy call"
+            tooltip="Total tool-call + LLM-proxy-call decisions Aegis evaluated in the last 30 days."
+          />
+          <MetricTile
+            icon={CheckCircle2}
+            label="Allowed"
+            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.allowed)}
+            sublabel="No risk gate hit"
+            accent="text-green-400"
+            tooltip="Decisions returned allow — no signal, policy, or budget threshold tripped."
+          />
+          <MetricTile
+            icon={Shield}
+            label="Denied"
+            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.denied)}
+            sublabel="Hard block fired"
+            accent={(overview?.mandate_kpis?.denied ?? 0) > 0 ? 'text-red-400' : 'text-white'}
+            tooltip="Decisions returned deny / block / kill — Aegis refused the action before it ran."
+          />
+          <MetricTile
+            icon={AlertTriangle}
+            label="Escalated"
+            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.escalated)}
+            sublabel="Awaiting human"
+            accent={(overview?.mandate_kpis?.escalated ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+            tooltip="Decisions sent to the Approval Inbox for a human reviewer."
+          />
+          <MetricTile
+            icon={Target}
+            label="Active findings"
+            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.active_findings)}
+            sublabel="Decisions with signals"
+            accent={(overview?.mandate_kpis?.active_findings ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+            tooltip="Audit rows carrying one or more security findings (signal_registry hits)."
+          />
+        </div>
+      </div>
+
+      {/* Sprint 12 — Row 2: business-value rollup. Translates the
+          security metrics into the language a CFO + CISO + GC can
+          share. Dollar figure uses the Sprint 8 system_values map for
+          blocked tool calls, plus a $0.05 conservative estimate per
+          blocked LLM-proxy call. */}
+      <div>
+        <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
+          <TrendingUp size={11} aria-hidden="true" />
+          <span>Business value · what Aegis saved you</span>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <MetricTile
+            icon={FileCheck2}
+            label="Records protected"
+            value={loading ? '—' : fmtInt(overview?.business_value?.records_protected_estimate)}
+            sublabel="Bulk-PII / dump blocks"
+            tooltip="Estimated row count Aegis prevented from leaving the workspace via blocked SQL dumps / bulk PII egress."
+          />
+          <MetricTile
+            icon={AlertTriangle}
+            label="Escalations prevented"
+            value={loading ? '—' : fmtInt(overview?.business_value?.escalations_prevented)}
+            sublabel="Sent to approval inbox"
+            tooltip="Actions Aegis kicked to a human reviewer instead of letting the agent self-execute."
+          />
+          <MetricTile
+            icon={ShieldCheck}
+            label="Controls enforced"
+            value={loading ? '—' : fmtInt(overview?.business_value?.compliance_controls_enforced)}
+            sublabel="Distinct signal classes"
+            tooltip="Distinct security-signal classes (Security:*, Compliance:*, etc.) that Aegis fired against in this window."
+          />
+          <MetricTile
+            icon={DollarSign}
+            label="Dollar risk mitigated"
+            value={loading ? '—' : fmtUSD(overview?.business_value?.dollar_risk_mitigated_usd)}
+            sublabel="Wire blocks + LLM blocks"
+            accent={(overview?.business_value?.dollar_risk_mitigated_usd ?? 0) > 0 ? 'text-green-400' : 'text-white'}
+            tooltip="Sum of (wire-transfer amounts on denied money movement) + ($0.05 × blocked LLM-proxy calls). Lower-bound estimate."
+          />
+        </div>
+      </div>
+
+      {/* Workspace status row — preserves the wizard / shadow-mode
+          context that used to live in the top row. Same numbers,
+          lower-priority placement now that the mandate KPIs occupy
+          the hero. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricTile
-          label="Agents"
-          value={loading ? '—' : inventory?.total ?? 0}
+          icon={Bot}
+          label="Total agents"
+          value={loading ? '—' : fmtInt(inventory?.total)}
           sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`}
         />
         <MetricTile
+          icon={AlertTriangle}
           label="High risk"
-          value={loading ? '—' : inventory?.high_risk ?? 0}
+          value={loading ? '—' : fmtInt(inventory?.high_risk)}
           sublabel={`${inventory?.by_risk?.critical ?? 0} critical · ${inventory?.by_risk?.high ?? 0} high`}
           accent={(inventory?.high_risk ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
         />
         <MetricTile
+          icon={Wand2}
           label="Wizard provisioned"
-          value={loading ? '—' : inventory?.wizard_provisioned ?? 0}
+          value={loading ? '—' : fmtInt(inventory?.wizard_provisioned)}
           sublabel="Created via /onboarding"
         />
         <MetricTile
+          icon={Shield}
           label="Shadow mode"
           value={loading ? '—' : shadowActive ? `${shadowDaysLeft ?? '?'}d` : 'OFF'}
           sublabel={shadowActive ? 'Observe-only window' : 'Enforce mode'}

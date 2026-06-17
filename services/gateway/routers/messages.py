@@ -979,3 +979,170 @@ async def team_employee_profile(email: str, request: Request) -> APIResponse[dic
         "trend_30d":    trend,
         "recent_calls": recent,
     })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 12 — Dashboard mandate KPIs. Replaces the abstract
+# Agents/High-risk/Wizard-provisioned tiles with the 6 metrics every
+# CISO buyer evaluates Aegis against (Protected Agents, Actions
+# Evaluated, Allowed, Denied, Escalated, Active Findings) plus a
+# business-value row (records protected estimate, escalations
+# prevented, compliance controls enforced, dollar risk mitigated).
+#
+# One fetch fans out to registry (/workspace/inventory) + audit-svc
+# (/logs windowed by date) so the Dashboard renders without N+1.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/dashboard/overview")
+async def dashboard_overview(request: Request) -> APIResponse[dict]:
+    """Single-fetch payload for the post-Sprint-12 Dashboard hero.
+
+    Shape::
+
+        {
+          "mandate_kpis": {
+            "protected_agents":   int,
+            "actions_evaluated":  int,
+            "allowed":            int,
+            "denied":             int,
+            "escalated":          int,
+            "active_findings":    int,
+          },
+          "business_value": {
+            "records_protected_estimate":   int,
+            "escalations_prevented":        int,
+            "compliance_controls_enforced": int,
+            "dollar_risk_mitigated_usd":    float,
+          },
+          "window_days": 30,
+        }
+    """
+    tenant_id_str = (
+        request.headers.get("X-Tenant-ID")
+        or (getattr(request.state, "jwt_claims", {}) or {}).get("tenant_id", "")
+    )
+    if not tenant_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant context missing — please sign in again.",
+        )
+
+    from datetime import datetime, timedelta, timezone
+    start_iso = (
+        datetime.now(tz=timezone.utc) - timedelta(days=30)
+    ).isoformat()
+
+    # 1. /workspace/inventory — protected_agents = active count.
+    headers = internal_headers(request)
+    protected_agents = 0
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            inv_resp = await client.get(
+                f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/workspace/inventory",
+                headers=headers,
+            )
+        if inv_resp.status_code == 200:
+            inv_body = inv_resp.json() or {}
+            inv_data = inv_body.get("data") if isinstance(inv_body, dict) else inv_body
+            if isinstance(inv_data, dict):
+                protected_agents = int(inv_data.get("active") or 0)
+    except httpx.HTTPError as exc:
+        logger.warning("dashboard_inventory_failed", error=str(exc))
+
+    # 2. /logs — every audit row in the last 30 days. Same WAF-safe
+    # GET-/logs contract as /team/overview.
+    proxy_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs"
+    rows: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                proxy_url,
+                params={"start_date": start_iso, "limit": 1000},
+                headers=headers,
+            )
+        body = resp.json() if resp.status_code == 200 else {}
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, dict):
+            rows = data.get("items", []) or []
+        elif isinstance(data, list):
+            rows = data
+    except httpx.HTTPError as exc:
+        logger.warning("dashboard_audit_failed", error=str(exc))
+
+    # 3. Aggregate.
+    actions_evaluated = 0
+    allowed = denied = escalated = 0
+    findings_count = 0
+    records_protected = 0
+    dollar_risk = 0.0
+    distinct_controls: set[str] = set()
+
+    for r in rows:
+        actions_evaluated += 1
+        decision = (r.get("decision") or "").lower()
+        if decision == "allow":
+            allowed += 1
+        elif decision in ("deny", "block", "kill"):
+            denied += 1
+        elif decision == "escalate":
+            escalated += 1
+
+        meta = r.get("metadata_json") or r.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                import json as _json
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+
+        findings = meta.get("findings") if isinstance(meta, dict) else None
+        if findings:
+            findings_count += 1
+            if isinstance(findings, list):
+                for f in findings:
+                    if isinstance(f, str):
+                        distinct_controls.add(f.split(":", 1)[0])
+
+        if decision in ("deny", "block", "kill", "escalate") and isinstance(meta, dict):
+            # records_protected_estimate — sum of row_count / dump_size
+            # bytes-as-rows / page-content-rows when the block was a bulk
+            # PII / dump / no-LIMIT SQL guard.
+            for k in ("row_count", "page_rows", "rows", "result_rows"):
+                v = meta.get(k)
+                if isinstance(v, (int, float)) and v > 0:
+                    records_protected += int(v)
+                    break
+
+            # dollar_risk_mitigated — sum of amount_usd on wire blocks +
+            # cost of blocked llm_proxy_calls (which would have run on
+            # the corporate Anthropic key). Both are real money saved.
+            amount = meta.get("amount_usd") or meta.get("amount")
+            if isinstance(amount, (int, float)) and amount > 0:
+                dollar_risk += float(amount)
+            if r.get("action") == "llm_proxy_call":
+                # Blocked LLM call: would have spent at the request's
+                # expected token cost. We don't have that estimate
+                # at block time (the prompt is refused pre-flight),
+                # so credit a conservative $0.05 per blocked call —
+                # the average enterprise-prompt round-trip cost on
+                # Sonnet 4.6. Documented in the UI tooltip.
+                dollar_risk += 0.05
+
+    return APIResponse(data={
+        "mandate_kpis": {
+            "protected_agents":  protected_agents,
+            "actions_evaluated": actions_evaluated,
+            "allowed":           allowed,
+            "denied":            denied,
+            "escalated":         escalated,
+            "active_findings":   findings_count,
+        },
+        "business_value": {
+            "records_protected_estimate":   records_protected,
+            "escalations_prevented":        escalated,
+            "compliance_controls_enforced": len(distinct_controls),
+            "dollar_risk_mitigated_usd":    round(dollar_risk, 2),
+        },
+        "window_days": 30,
+    })

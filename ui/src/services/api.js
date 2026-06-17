@@ -362,6 +362,7 @@ export const workspaceService = {
     }),
 };
 
+
 // Sprint 5-7 — Identity & Access Graph + Blast Radius read API.
 // Surfaces the IAG endpoints that were built but never wired to the UI,
 // plus the Sprint 7 MITRE coverage grid that pulls from signal_registry.
@@ -569,6 +570,11 @@ export const decisionService = {
 export const dashboardService = {
   getState: () => request('/dashboard/state'),
   getSystemHealth: () => request('/system/health'),
+  // Sprint 12 — single fetch powering the post-login Dashboard hero
+  // (6 mandate KPIs + 4 business-value KPIs). Backed by
+  // services/gateway/routers/messages.py::dashboard_overview which
+  // fans out to /workspace/inventory + audit-svc /logs.
+  overview: () => request('/dashboard/overview'),
 }
 
 export const policyService = {
