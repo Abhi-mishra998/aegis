@@ -613,6 +613,10 @@ export const dashboardService = {
 // cleared a previously-escalated request. Returns the normalized
 // {status, approver_role, matched_pattern, decided_at, decided_by,
 // reason, prompt_excerpt} shape.
+// approvalService — split definition.
+//   status:           Sprint 17.7 — SDK status-poll for a single approval.
+//   getPendingCount:  U10 — Sidebar pending-count badge, defined below near
+//                     the other audit-derived counters.
 export const approvalService = {
   status: (id) => request(`/approvals/${encodeURIComponent(id)}/status`),
 }
@@ -1025,34 +1029,34 @@ export const notificationService = {
 // Returns { unread: N } so the Sidebar caller can accept either
 // `res.unread` or `res.data.unread` via `(res?.data?.unread ?? res?.unread ?? 0)`,
 // the same shape notificationService.getCount produces server-side.
-export const approvalService = {
-  getPendingCount: async () => {
-    try {
-      const escResp = await auditService.searchLogs({ decision: 'escalate', limit: 200 });
-      const escData = escResp?.data ?? escResp;
-      const escItems = Array.isArray(escData) ? escData : (escData?.items || []);
+// Attach getPendingCount to the existing approvalService export rather
+// than redeclaring it (esbuild rejects duplicate `export const` names).
+approvalService.getPendingCount = async () => {
+  try {
+    const escResp = await auditService.searchLogs({ decision: 'escalate', limit: 200 });
+    const escData = escResp?.data ?? escResp;
+    const escItems = Array.isArray(escData) ? escData : (escData?.items || []);
 
-      const ovrResp = await autonomyService.listOverrides({ minutes: 43200, limit: 500 });
-      const ovrData = ovrResp?.data ?? ovrResp;
-      const ovrItems = Array.isArray(ovrData) ? ovrData : [];
+    const ovrResp = await autonomyService.listOverrides({ minutes: 43200, limit: 500 });
+    const ovrData = ovrResp?.data ?? ovrResp;
+    const ovrItems = Array.isArray(ovrData) ? ovrData : [];
 
-      const resolved = new Set();
-      for (const o of ovrItems) {
-        if (!o?.request_id) continue;
-        if (o.event_type === 'approval' || o.event_type === 'override') {
-          resolved.add(o.request_id);
-        }
+    const resolved = new Set();
+    for (const o of ovrItems) {
+      if (!o?.request_id) continue;
+      if (o.event_type === 'approval' || o.event_type === 'override') {
+        resolved.add(o.request_id);
       }
-
-      let pending = 0;
-      for (const r of escItems) {
-        if (r?.request_id && !resolved.has(r.request_id)) pending += 1;
-      }
-      return { unread: pending };
-    } catch {
-      return { unread: 0 };
     }
-  },
+
+    let pending = 0;
+    for (const r of escItems) {
+      if (r?.request_id && !resolved.has(r.request_id)) pending += 1;
+    }
+    return { unread: pending };
+  } catch {
+    return { unread: 0 };
+  }
 };
 
 export const ssoService = {
