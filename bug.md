@@ -1,14 +1,33 @@
 # Aegis bug + cleanup ledger
 
-> **Audit date:** 2026-06-17 (post-Sprint-23 cleanup)
-> **Scope of scan:** `services/` + `sdk/` + `integrations/` + `ui/src/` + `scripts/ops/`
+> **Latest audit:** 2026-06-17 — Clerk integration senior-audit (PASS/FAIL with live HTTP evidence)
+> **Prior audit:** 2026-06-17 — post-Sprint-23 dead-code sweep
+> **Scope of scans:** `services/` + `sdk/` + `integrations/` + `ui/src/` + `scripts/ops/`
 > **Excluded by founder direction:** `*.md` docs, build artifacts (`ui/dist`, `**/__pycache__`, `*.egg-info`, `build/`), `tests/`, alembic versions (append-only history).
-> **Audit method:** static + grep verification + Explore-agent subagent + targeted reads of every flagged section.
+> **Audit method (Clerk):** static + grep + live cross-tenant + RBAC + JWT-failure probes against prod-ha through the public ALB.
 
 This file is the **single source of truth** for what's left to fix. Every item
 below has a verification path and a parallel-resolvable scope. The previous
 session shipped 24 commits + 14 sprints; the items here are what the audit found
 NOT addressed by those.
+
+---
+
+## ✅ CL-3 Cross-tenant leak via X-Tenant-ID forge on skip-listed paths
+
+**Severity:** HIGH. Confirmed cross-tenant data leak in production traffic.
+**Discovered:** 2026-06-17 Clerk senior-audit live probe.
+**Fixed:** commit `82c21a7`.
+
+- **Root cause:** `services/gateway/_helpers.py:internal_headers()` forwarded the client's `X-Tenant-ID` verbatim. JWT-auth paths re-verified it against the JWT claim (`_mw_auth.py:313-315` → 403 "Tenant mismatch detected"). Skip-listed paths (`/v1/messages`, `/v1/chat/completions`, `/v1/approvals`, `/slack/`) trusted the api-key handler to pin `request.state.tenant_id` but `internal_headers` never read it as the canonical source.
+- **Attack reproduced:** tenant B's `acp_emp_…` key on `/v1/messages` with `X-Tenant-ID: <tenant_A_uuid>` header:
+  - Pack scan ran tenant B's prompt against tenant A's PCI Pack rules.
+  - Slack-config fetch returned tenant A's webhook + signing secret.
+  - Escalation card POSTed to tenant A's Slack channel with tenant B's prompt excerpt + employee email.
+- **Fix:** `internal_headers()` now ALWAYS sources `X-Tenant-ID` + `X-Agent-ID` from `request.state.*` when set; falls back to client header only when state is unset (pre-auth / test utility paths). Same defence the helper has always used for `X-ACP-Role`.
+- **Post-fix proof:** re-ran the same probe — both leaks closed. PCI escalation that fired pre-fix now returns 200 (no pack match against tenant B's empty list). `slack_notified` no longer set.
+- **Regression check:** all 15 baseline Clerk probes still pass (`/tmp/clerk_audit_live.py` re-run).
+- **Live evidence files:** `/tmp/clerk_audit_live.py` (15-probe baseline), `/tmp/clerk_xtenant_deep.py` (the breaking + fixed probe).
 
 ---
 
