@@ -57,6 +57,28 @@ function MetricTile({ label, value, sublabel, accent = 'text-white' }) {
   );
 }
 
+// Empty-state replacement for the Agents tile on fresh tenants. Same footprint
+// as MetricTile so the dashboard grid stays balanced.
+function AgentsEmptyTile() {
+  return (
+    <Card>
+      <div className="space-y-2">
+        <div className="text-[10px] uppercase tracking-widest text-neutral-500">Agents</div>
+        <div className="text-sm font-semibold text-white">No agents yet</div>
+        <div className="text-[11px] text-neutral-500 leading-snug">
+          Create your first agent to start governing tool calls.
+        </div>
+        <Link to="/onboarding" className="inline-block pt-1">
+          <Button size="xs">
+            Create agent
+            <span aria-hidden="true">→</span>
+          </Button>
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
 function ProviderRow({ providerId, count, total }) {
   const meta = PROVIDER_META[providerId] || PROVIDER_META.custom;
   const Icon = meta.icon;
@@ -192,11 +214,15 @@ export default function Dashboard() {
 
       {/* Top metrics row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <MetricTile
-          label="Agents"
-          value={loading ? '—' : inventory?.total ?? 0}
-          sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`}
-        />
+        {!loading && !(inventory?.total > 0) ? (
+          <AgentsEmptyTile />
+        ) : (
+          <MetricTile
+            label="Agents"
+            value={loading ? '—' : inventory?.total ?? 0}
+            sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`}
+          />
+        )}
         <MetricTile
           label="High risk"
           value={loading ? '—' : inventory?.high_risk ?? 0}

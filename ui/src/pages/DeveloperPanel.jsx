@@ -100,6 +100,8 @@ export default function DeveloperPanel() {
   const [revokeTarget, setRevokeTarget] = useState(null)
   const [keysError,   setKeysError]   = useState('')
   const [createError, setCreateError] = useState('')
+  const [testing,     setTesting]     = useState({})  // { [keyId]: bool }
+  const [testResult,  setTestResult]  = useState({})  // { [keyId]: { ok: bool, label: str } }
 
   const tid              = tenant_id || '00000000-0000-0000-0000-000000000001'
   // Demo agent IDs from the production seed — keep in sync with seed_demo_data.py.
@@ -159,6 +161,33 @@ export default function DeveloperPanel() {
     finally {
       if (mounted.current) setRevoking(r => ({ ...r, [revokeTarget.id]: false }))
       setRevokeTarget(null)
+    }
+  }
+
+  // Round-trip a freshly-minted key against /agents to confirm it actually
+  // authenticates. Only meaningful while the raw token (k.key) is still in
+  // memory — once the page reloads, only the masked id remains.
+  const testKey = async (k) => {
+    if (!k?.key) return
+    setTesting(t => ({ ...t, [k.id]: true }))
+    setTestResult(r => ({ ...r, [k.id]: null }))
+    try {
+      const res = await fetch(`${GW}/agents?limit=1`, {
+        headers: { Authorization: `Bearer ${k.key}` },
+        credentials: 'include',
+      })
+      const ok = res.ok
+      const label = ok ? '✓ Works' : `✗ ${res.status} ${res.statusText || ''}`.trim()
+      if (mounted.current) setTestResult(r => ({ ...r, [k.id]: { ok, label } }))
+    } catch (err) {
+      if (mounted.current) {
+        setTestResult(r => ({ ...r, [k.id]: { ok: false, label: `✗ ${err?.message || 'network error'}` } }))
+      }
+    } finally {
+      if (mounted.current) setTesting(t => ({ ...t, [k.id]: false }))
+      setTimeout(() => {
+        if (mounted.current) setTestResult(r => ({ ...r, [k.id]: null }))
+      }, 5000)
     }
   }
 
@@ -464,7 +493,28 @@ const AGENT_ID = '${DEMO_AGENT}'; // demo-agent
                     <p className="text-xs text-neutral-600 hidden sm:block">
                       {k.created_at ? new Date(k.created_at).toLocaleDateString() : '—'}
                     </p>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-2">
+                      {testResult[k.id] && (
+                        <span
+                          className={`text-[11px] font-mono ${testResult[k.id].ok ? 'text-green-400' : 'text-red-400'}`}
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {testResult[k.id].label}
+                        </span>
+                      )}
+                      {k.key && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          loading={testing[k.id]}
+                          disabled={testing[k.id]}
+                          onClick={() => testKey(k)}
+                          aria-label={`Test API key ${k.name}`}
+                        >
+                          Test
+                        </Button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setVisibleKeys(v => ({ ...v, [k.id]: !v[k.id] }))}
@@ -523,17 +573,17 @@ const AGENT_ID = '${DEMO_AGENT}'; // demo-agent
               {[
                 {
                   label: 'LangChain',
-                  install: 'pip install aegis-langchain',
+                  install: 'pip install aegis-langchain==1.1.0',
                   code: `from aegis_langchain import AegisMiddleware\nagent = AegisMiddleware(my_langchain_agent, api_key="acp_...")\nresult = agent.invoke({"input": "analyze /etc/passwd"})  # automatically blocked`,
                 },
                 {
                   label: 'OpenAI',
-                  install: 'pip install aegis-openai',
+                  install: 'pip install aegis-openai==1.1.0',
                   code: `from aegis_openai import AegisOpenAI\nclient = AegisOpenAI(aegis_key="acp_...", tenant_id="${tid}")\nresponse = client.chat.completions.create(model="gpt-4o", messages=[...], tools=[...])`,
                 },
                 {
                   label: 'Anthropic / Claude',
-                  install: 'pip install aegis-anthropic',
+                  install: 'pip install aegis-anthropic==1.1.0',
                   code: `from aegis_anthropic import AegisAnthropic\nclient = AegisAnthropic(aegis_key="acp_...", tenant_id="${tid}")\nresponse = client.messages.create(model="claude-opus-4-7", max_tokens=1024, tools=[...], messages=[...])`,
                 },
               ].map(({ label, install, code }) => (
