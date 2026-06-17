@@ -65,6 +65,7 @@ The public production demo currently has 0 contracts configured — the panels s
 - [Autonomy service](../../services/autonomy.md)
 - [Gateway 10-Stage Pipeline](../../architecture/10-stage-pipeline.md) — where stage 7 evaluates contracts
 - [Playbooks UI](playbooks.md) — sibling page for automated remediation
+- [Approval Inbox UI](approval-inbox.md) — the dedicated queue for ESCALATEd actions waiting on a human and the `X-Aegis-Approval-ID` replay contract
 - [Audit Trail UI](../primary/audit-trail.md) — where overrides are recorded
 
 ## Screenshot

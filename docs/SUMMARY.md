@@ -63,6 +63,7 @@
   * [Agents](ui/operations/agents.md)
   * [Identity Graph](ui/operations/identity-graph.md)
   * [Autonomy](ui/operations/autonomy.md)
+  * [Approval Inbox](ui/operations/approval-inbox.md)
   * [Forensics](ui/operations/forensics.md)
   * [Playground](ui/operations/playground.md)
   * [Live Feed](ui/operations/live-feed.md)

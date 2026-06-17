@@ -42,6 +42,17 @@ The service has two faces: a synchronous API consulted at stage 7 of the gateway
 4. If any check fails, returns `{ ok: false, violation: { contract_id, reason } }`.
 5. Gateway downgrades the decision from ALLOW/MONITOR to ESCALATE or KILL and records the violation.
 
+### Approval replay (post-ESCALATE)
+
+When the pipeline ESCALATEs an action (e.g. a large wire transfer), the audit row carries `metadata.matched_pattern`, `metadata.approver_role`, and a stamp of the current `acp:tenant:policy_version:{tenant_id}` Redis value. The SDK receives a 202 with an `approval_id` and an `inbox_url`. An operator approves the request via `POST /autonomy/overrides`, which writes a `human_override_events` row of `event_type=approval` and publishes a per-tenant `approval_resolved` SSE event so connected browsers see the inbox row clear in real time.
+
+The SDK then replays the same prompt with `X-Aegis-Approval-ID: <id>`. The gateway's `lookup_approval` helper (at `services/gateway/proxy_helpers.py`) runs two security gates before taking the replay shortcut:
+
+1. **TTL gate** — `now - decided_at < APPROVAL_REPLAY_TTL_S` (300 s). Older tickets fall through to a fresh deny/escalate scan.
+2. **Policy-version gate** — `escalate_row.metadata.policy_version == current Redis value`. A tightened or loosened policy invalidates outstanding tickets; the replay is re-evaluated against current policy. Fails closed on Redis error (no shortcut → full scan).
+
+Both gates passing → the request bypasses the escalation pattern engine and forwards to the underlying provider. See [Approval Inbox UI](../ui/operations/approval-inbox.md) for the operator-facing flow.
+
 ### Playbook execution
 
 1. UI calls `POST /playbooks/{id}/trigger` with a context payload.
