@@ -225,11 +225,12 @@ export default function SessionExplorer() {
               </div>
               <div className="text-xs text-neutral-500">
                 Want to see this populate live?{' '}
-                <a href="/live-demo" className="text-indigo-400 hover:text-indigo-300 underline">
-                  Run the live demo
+                <a href="/onboarding" className="text-indigo-400 hover:text-indigo-300 underline">
+                  Open onboarding
                 </a>{' '}
-                — every demo run carries an <code>X-Session-ID</code> so you'll
-                see the rising risk trajectory across the agent's turns.
+                — the guided flow walks you through registering an agent and
+                firing a session-tagged <code>/execute</code> call you'll see
+                land here within seconds.
               </div>
             </div>
           )}
