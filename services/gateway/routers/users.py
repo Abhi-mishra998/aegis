@@ -138,9 +138,32 @@ async def validate_api_key(request: Request) -> Any:
 
 @router.delete("/api-keys/{key_id}", tags=["API Keys"])
 async def revoke_api_key(key_id: str, request: Request) -> Any:
-    """Proxy → API service revoke key."""
+    """Proxy → API service revoke key.
+
+    On a successful revoke we also push the key_id into
+    ``acp:apikey:revoked`` so the gateway's api-key cache
+    (``acp:apikey:valid:<sha256(raw_key)>``, 60s TTL) cannot
+    keep a revoked key alive until the next cache miss. The
+    auth path SISMEMBER-checks this set on every request and
+    rejects with 401 as soon as the DELETE lands. See
+    ``services/gateway/_mw_auth.py::_validate_api_key_cached``.
+    """
     resp = await request.app.state.client.delete(
         f"{_api_base()}/api-keys/{key_id}",
         headers=internal_headers(request),
     )
+
+    if 200 <= resp.status_code < 300:
+        try:
+            redis = getattr(request.app.state, "redis", None)
+            if redis is not None:
+                await redis.sadd("acp:apikey:revoked", str(key_id))
+        except Exception:
+            # If the index update fails the api-svc has still flipped
+            # is_active=False — on the next cache miss the api-svc
+            # filter at services/api/repository/api_key.py::get_by_hash
+            # will return None and the gateway will 401. The window is
+            # bounded by the 60-second cache TTL even without the index.
+            pass
+
     return passthrough(resp)
