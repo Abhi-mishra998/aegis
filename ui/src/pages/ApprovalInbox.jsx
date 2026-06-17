@@ -70,6 +70,16 @@ export default function ApprovalInbox() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
+  // Sprint 20 UX pass — the Approval Inbox is the founder's "Pending
+  // CFO approval" surface. If a new escalation lands and the inbox
+  // doesn't auto-refresh, the operator wouldn't notice until they
+  // manually hit Refresh. Poll every 8s while the page is mounted —
+  // cheap (single GET + one GET on the overrides table).
+  useEffect(() => {
+    const id = setInterval(() => { fetchAll() }, 8_000)
+    return () => clearInterval(id)
+  }, [fetchAll])
+
   const resolvedRequestIds = useMemo(() => {
     const set = new Set()
     for (const o of overrides) {

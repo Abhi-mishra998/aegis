@@ -192,8 +192,25 @@ export default function Dashboard() {
     onMessage: (evt) => {
       if (!evt?.type) return;
       setLiveEventCount((c) => c + 1);
+      // Sprint 20 UX pass — when a decision or override event lands,
+      // re-pull the mandate KPIs so the Escalated tile + breakdown
+      // refresh without the operator hitting Refresh.
+      const t = String(evt.type).toLowerCase();
+      if (t.includes('decision') || t.includes('override') || t.includes('approval') || t.includes('escalate')) {
+        setRefreshTick((tick) => tick + 1);
+      }
     },
   });
+
+  // Sprint 20 UX pass — belt-and-braces poll every 20s in case SSE is
+  // momentarily disconnected (rolling deploy, ALB drain, etc.). At
+  // ~3 lightweight GETs per cycle (workspace, audit aggregate, overrides
+  // join) this stays well under any per-tenant rate ceiling.
+  useEffect(() => {
+    if (!tenant_id) return;
+    const id = setInterval(() => { setRefreshTick((t) => t + 1) }, 20_000);
+    return () => clearInterval(id);
+  }, [tenant_id]);
 
   const providerEntries = useMemo(() => {
     const by = inventory?.by_provider || {};
