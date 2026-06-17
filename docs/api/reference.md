@@ -1,18 +1,20 @@
 # API Reference
 
-*Every endpoint Aegis exposes. Generated from the live OpenAPI spec at `https://ha.aegisagent.in/openapi.json`. 201 operations across 35 tags.*
+*Every endpoint Aegis exposes. Generated from the live OpenAPI spec at `https://aegisagent.in/openapi.json`. 201 operations across 35 tags.*
 
 ## How to use this page
 
-Aegis is a single FastAPI app at `https://ha.aegisagent.in` (or `http://localhost:8000` for a local install). The OpenAPI spec is live at `/openapi.json` — this page is its human-friendly index.
+Aegis is a single FastAPI app at `https://aegisagent.in` (or `http://localhost:8000` for a local install). The OpenAPI spec is live at `/openapi.json` — this page is its human-friendly index.
 
 For the full machine-readable spec including request/response schemas:
 
 ```bash
-curl -sS https://ha.aegisagent.in/openapi.json | jq
+curl -sS https://aegisagent.in/openapi.json | jq
 ```
 
-For an interactive explorer, the Swagger UI is at `https://ha.aegisagent.in/docs` and Redoc at `https://ha.aegisagent.in/redoc`.
+For an interactive explorer, the Swagger UI is at `https://aegisagent.in/docs` and Redoc at `https://aegisagent.in/redoc`.
+
+> Every endpoint is also reachable under the stable `/v1/*` namespace alias (`services/gateway/main.py::_v1_prefix_alias`). New customers should pin `/v1` — the unversioned forms remain for the dashboard. `GET /v1/audit/logs` and `GET /audit/logs` resolve to the same handler.
 
 ## Common request shape
 
@@ -113,6 +115,32 @@ User and agent authentication, SSO orchestration, tenant lookup.
 | POST | `/execute` | The main event — runs the 11-stage pipeline |
 | POST | `/execute/{tool_name}` | Sugar variant with tool name in the path |
 
+### `LLM proxy` — OpenAI- and Anthropic-compatible endpoints
+
+The gateway hosts a transparent compatibility layer so existing agents that already speak the OpenAI/Anthropic HTTP contracts can route through Aegis with a single `base_url` swap. Every `tool_use` / `tool_calls` block from the upstream provider is run through `/execute` before the response is returned. See [SDK Wrappers — Path B](../integrations/sdk-wrappers.md#path-b--drop-in-proxy-zero-code-change).
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/v1/messages` | Anthropic-compatible. Body is the standard Anthropic `messages.create` schema. Upstream credential held server-side. **Accepts `X-Aegis-Approval-ID` header.** |
+| POST | `/v1/chat/completions` | OpenAI-compatible. Body is the standard OpenAI `chat.completions.create` schema. Upstream credential held server-side. **Accepts `X-Aegis-Approval-ID` header.** |
+
+#### `X-Aegis-Approval-ID` contract
+
+When a prior call returned `403 approval_required`, the operator approves it via `POST /autonomy/approvals/{key}/approve` (or the Approval Inbox UI), receiving a one-time approval ID. The original caller replays the same body with the header:
+
+```
+X-Aegis-Approval-ID: <approval_uuid>
+```
+
+The gateway validates two invariants before short-circuiting the deny:
+
+1. **5-minute TTL.** The approval key lives at `acp:approval:{tenant_id}:{approval_id}` with `EXPIRE 300`. Replays after 300s return a fresh `403 approval_required` and must be approved again.
+2. **Policy version match.** The Rego version recorded at approval time (snapshot of `acp:tenant:policy_version:{tenant_id}`) must match the version at replay time. If `POST /policy/upload` ran in the window, the counter incremented and the stale approval is invalidated — the operator must re-approve under the new policy. This prevents a stale approval slipping through a tightened policy.
+
+On match: the audit row records `decision=allow_approved`, `meta.approval_id`, `meta.policy_version`, and the original risk score. On miss: the deny stands and the row records the mismatch reason.
+
+The header is honoured on `/execute`, `/v1/execute`, `/v1/messages`, `/v1/chat/completions` — every code path that runs the decision pipeline.
+
 ### `demo` (1 op)
 
 | Method | Path | Purpose |
@@ -126,8 +154,8 @@ The largest tag. Includes the audit log primary endpoints plus 24 aggregator end
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/audit/logs` | Paginated audit rows. Accepts query filters `agent_id`, `action`, `decision`, `tool`, `start_date`, `end_date`, `limit`, `offset`. The UI's search panel migrated from POST `/audit/logs/search` to this GET on 2026-06-13 — the POST form was blocked by AWS WAFv2's SQLi managed rule whenever the body contained `"limit":N`. |
-| POST | `/audit/logs/search` | Filtered search (still works for SDK callers that bypass the WAF, e.g. internal calls). Same filter set as the GET variant plus `metadata_filter`. |
+| GET | `/audit/logs` | Paginated audit rows. Accepts query filters `agent_id`, `action`, `decision`, `tool`, `start_date`, `end_date`, `limit` (≤ 1000), `offset`. The UI's search panel migrated from POST `/audit/logs/search` to this GET on 2026-06-13 — the POST form was blocked by AWS WAFv2's SQLi managed rule whenever the body contained `"limit":N` (WAF reads it as `LIMIT N` SQL). Query params bypass body inspection. |
+| POST | `/audit/logs/search` | Filtered search. Body schema is the same filter set as the GET variant plus `metadata_filter`, and **`limit` is hard-capped at 100** (`services/audit/router.py:525`, `le=100`). Requests with `"limit": > 100` return `422 Validation failed`. SDK callers that bypass the WAF (internal calls, on-prem) can use this; browser-fronted callers should stay on the GET variant and page with `offset`. |
 | GET | `/audit/logs/summary` | KPI tiles |
 | GET | `/audit/logs/verify` | Chain verification |
 | GET | `/audit/logs/{audit_id}/explain` | Decision explanation |
@@ -168,7 +196,7 @@ The largest tag. Includes the audit log primary endpoints plus 24 aggregator end
 |---|---|---|
 | POST | `/policy/simulate` | Replay a draft policy over historical events |
 | POST | `/policy/test` | Run Rego unit tests |
-| POST | `/policy/upload` | Persist a new or updated Rego file |
+| POST | `/policy/upload` | Persist a new or updated Rego file. **ADMIN/SECURITY only.** Body: `{name: "agent_policy.rego", rego: "<source>"}`. Side-effect: `INCR acp:tenant:policy_version:{tenant_id}` so any in-flight `X-Aegis-Approval-ID` issued under the old version is invalidated on replay. The incremented value is returned to the caller and is recorded on every audit row in `meta.policy_version` for receipt-side replay. Source: `services/gateway/routers/policy.py:127`. |
 
 ### `receipts` and `transparency` (3 + 8 ops)
 
@@ -250,6 +278,19 @@ Rules, simulation, history, rollback, feedback, pending approvals, metrics, togg
 
 Generic-prefix proxies into the per-service routes (`/flight/timelines`, `/flight/timeline/{id}`, `/forensics/investigation`, `/graph/agents`, `/graph/blast-radius/{id}`, `/graph/compromise/simulate`, etc.). The exact sub-routes are documented in each service's docs ([Flight Recorder](../services/flight-recorder.md), [Forensics](../services/forensics.md), [Identity Graph](../services/identity-graph.md)).
 
+### `IAG` — Identity & Access Graph (Sprint 5–8, 4 ops)
+
+The IAG endpoints surface what an agent *could* reach, what it *did* touch in an incident, and how those overlap with the MITRE ATT&CK matrix. All paths require a tenant JWT — the gateway auth middleware runs before the handler. Source: `services/gateway/routers/iag.py`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/iag/refresh?days=<1..90>` | Force a fresh ingestion from the audit log into the IAG cache. No body. Default `days=7`; max `days=90`. Returns `{"agents_seen": <int>, "resources_synth": <int>, "edges": <int>, "last_ingest_ts": <unix-epoch-ms>, "tenant_id": "<uuid>", "days": <int>}`. Use after a policy or permissions bulk-change so the graph isn't stale for blast-radius queries. Source: `services/gateway/routers/iag.py:refresh_iag_from_audit`. |
+| GET | `/iag/mitre-coverage?agent_id=<uuid>&days=<1..90>` | Returns the 34-signal registry grouped by MITRE tactic → technique, with the current agent's hit counts per cell over the last `days`. Response: `{"tactics": [{"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": [...]}], "signal_total": <int>, "tactic_total": <int>, "agent_id": "<uuid>", "days": <int>, "touched_tactics": <int>, "touched_techniques_total": <int>, "touched_signals_total": <int>}`. Used by the UI's MitreCoverageGrid heatmap (cell colour = max severity in the technique's signal set). Source: `services/gateway/routers/iag.py:get_mitre_coverage`. |
+| GET | `/iag/agents/{agent_id}` | "What could this agent reach right now?" Returns the BlastRadius shape with `touched_resources=[]` — every accessible resource lives in the `untouched_resources` slice. Fields: `touched_resources`, `untouched_resources`, `reachable_resource_count`, `criticality_score`, `last_ingest_ts`, `dollar_estimate` (Sprint 8 — multiplies untouched-count-per-kind by the workspace's `system_values` weights; `$0` if the workspace hasn't configured weights). Source: `services/gateway/routers/iag.py:get_agent_iag`. |
+| GET | `/iag/incidents/{incident_id}/blast-radius` | Combines the Sprint 4 storyline (touched resources) with the IAG (accessible resources) for one (incident, agent) pair. Same BlastRadius shape as above plus `participating_agents`. Returns `404` if the incident doesn't exist for the tenant, `409` if the incident has no participating agents. |
+
+All four endpoints carry `last_ingest_ts=0` when no IAG ingestion has run yet — the caller can spot the gap and trigger `POST /iag/refresh`.
+
 ### `webhooks` (5 ops), `siem` (5 ops), `threat-intel` (3 ops)
 
 Outbound notification and SIEM forwarder configuration; threat-intel IP/domain enrichment.
@@ -268,7 +309,32 @@ In-platform notification feed.
 |---|---|---|
 | GET | `/events/stream` | Server-Sent Events stream — Live Feed |
 
-This is the only long-lived endpoint. It bypasses most middleware (auth happens inline in the route).
+This is the only long-lived endpoint. It bypasses most middleware (auth happens inline in the route handler at `services/gateway/main.py::events_stream`). Auth: `acp_token` cookie (browser EventSource) or `Authorization: Bearer <jwt>` (SDK). Query-string tokens were dropped — they leak via access logs, browser history, and Referer headers. Per-agent scoping via `?agent_id=<uuid>` subscribes to both the tenant-wide channel and the per-agent channel.
+
+#### 16 event types
+
+The stream emits an `event: connected` line on subscription, then a heartbeat every 15s, then domain events. Every event payload includes `tenant_id` and (when relevant) `agent_id` so the browser can filter client-side. Source: every `publish_event(...)` call site across `services/gateway/`.
+
+| `event:` | Source router | Payload (selected fields) | When it fires |
+|---|---|---|---|
+| `connected` | `events_stream` | `{status: "connected", tenant_id, agent_id?}` | One-shot on subscribe |
+| `tool_executed` | `gateway/main.py` `/execute` path | `{agent_id, tool, decision, risk_score, request_id}` | Every `/execute` call (allowed and denied) |
+| `policy_decision` | `routers/policy.py` | `{agent_id, action, allowed, reasons[≤3], source: "simulate"\|"test"}` | Non-trivial outcomes only (`deny`/`escalate`/`approval_required`/`block`) |
+| `agent_created` | `routers/agents.py` | `{agent_id, name, risk_level}` | `POST /agents` succeeds |
+| `agent_deleted` | `routers/agents.py` | `{agent_id}` | `DELETE /agents/{id}` succeeds |
+| `agent_quarantined` | `routers/agents.py` + `_mw_response.py` | `{agent_id, reason}` | Manual `POST /agents/{id}/quarantine` or auto-quarantine on runaway/bulk-PII loop |
+| `agent_quarantine_released` | `routers/agents.py` | `{agent_id, by}` | `DELETE /agents/{id}/quarantine` |
+| `risk_updated` | `routers/agents.py` permission grants | `{agent_id, score, delta, source}` | Permission grant, role change, drift recompute |
+| `billing_updated` | `routers/billing.py` | `{period, amount_usd, source}` | Budget request actioned, Stripe webhook reconciled |
+| `quota_warning` | `routers/tenant.py` | `{limit_type, used_pct, reset_at}` | 80% monthly request cap one-shot warning |
+| `kill_switch` | `routers/decision.py` | `{engaged: bool, by, reason}` | `POST/DELETE /decision/kill-switch/{tenant_id}` |
+| `incident_updated` | `routers/incidents.py` | `{incident_id, status, action}` | Create, status change, action recorded |
+| `would_have_blocked` | `middleware.py` shadow eval hook | `{agent_id, tool, shadow_policy_version, shadow_reason}` | A shadow policy would have denied a call the live policy allowed |
+| `decision_explained` | `routers/decision.py` | `{audit_id, decision, findings[], explanation}` | UI requests the explain panel for a row |
+| `aevf_bundle_ready` | `compliance` background job | `{period_start, period_end, bundle_url, sha256}` | A new AEVF evidence bundle is sealed |
+| `transparency_root_sealed` | `transparency` scheduler | `{date, root_hash, leaf_count, prev_root_hash}` | Daily Merkle root is signed and uploaded to S3 |
+
+The browser-side `useSSE` hook (`ui/src/hooks/useSSE.js`) demuxes these by `event:` name and routes them to the right page reducer. See [Live Feed](../ui/operations/live-feed.md) (U8 — the human-facing page that consumes the stream).
 
 ### `API Keys` (4 ops)
 
@@ -318,16 +384,16 @@ This is the only long-lived endpoint. It bypasses most middleware (auth happens 
 
 The authoritative spec is always at:
 
-- `https://ha.aegisagent.in/openapi.json` — production
+- `https://aegisagent.in/openapi.json` — production
 - `http://localhost:8000/openapi.json` — local install
 
 Spec metadata as of the most recent capture: **201 operations, 35 tags, 127.6 KB**. The spec is auto-generated by FastAPI from the route declarations; the moment a new route ships, the spec updates.
 
-> **`/openapi.json` is served as `application/json` via an explicit `location =` block in `ui/nginx.conf` (added 2026-06-14).** Before that fix, the URL fell through the SPA's `location /` and returned the React `index.html` as `text/html`. If a buyer's `curl https://ha.aegisagent.in/openapi.json | jq` returns `parse error: Invalid numeric literal at line 1, column 11`, they have a cached UI image without the nginx fix — redeploy the UI per [Deployment](../operations/deployment.md).
+> **`/openapi.json` is served as `application/json` via an explicit `location =` block in `ui/nginx.conf` (added 2026-06-14).** Before that fix, the URL fell through the SPA's `location /` and returned the React `index.html` as `text/html`. If a buyer's `curl https://aegisagent.in/openapi.json | jq` returns `parse error: Invalid numeric literal at line 1, column 11`, they have a cached UI image without the nginx fix — redeploy the UI per [Deployment](../operations/deployment.md).
 
 ## Live-verified endpoints (2026-06-14 prod-ha)
 
-These were live-tested against `https://ha.aegisagent.in` with the documented admin credentials. Each `n/m` is `(observed-200-responses / total-hits)` across `m` requests through the ALB (so they cross both ASG hosts):
+These were live-tested against `https://aegisagent.in` with the documented admin credentials. Each `n/m` is `(observed-200-responses / total-hits)` across `m` requests through the ALB (so they cross both ASG hosts):
 
 - `GET /openapi.json` → 20/20 with `content-type: application/json`, 127,627 B
 - `GET /compliance/dpdp?period_start=…&period_end=…` → 30/30, ~23 KB DPDP bundle (Sections 8(5)-8(9), §11, Rules Schedule II)
