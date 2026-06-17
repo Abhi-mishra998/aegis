@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink } from 'lucide-react'
+import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink, BookOpen } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -50,6 +50,7 @@ export default function Compliance() {
   // they touch the export button.
   const [packEvidence, setPackEvidence] = useState(null)
   const [packsLoading, setPacksLoading] = useState(true)
+  const [boardLoading, setBoardLoading] = useState(false)
 
   const loadEvidence = async (fw) => {
     setLoading(prev => ({ ...prev, [fw]: true }))
@@ -104,10 +105,31 @@ export default function Compliance() {
     }
   }
 
+  const handleBoardReport = async () => {
+    setBoardLoading(true)
+    setError('')
+    try {
+      const blob = await complianceService.boardReport({
+        start_date: startDate,
+        end_date:   endDate,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `aegis-board-report-${iso(today)}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err.message || 'Board report failed.')
+    } finally {
+      setBoardLoading(false)
+    }
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Shield size={22} className="text-neutral-400" aria-hidden="true" />
           <div>
@@ -115,6 +137,16 @@ export default function Compliance() {
             <p className="text-xs text-neutral-500 mt-0.5">Generate evidence reports for EU AI Act, NIST AI RMF, and SOC 2</p>
           </div>
         </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleBoardReport}
+          loading={boardLoading}
+          aria-label="Generate board report PDF"
+        >
+          <BookOpen size={12} aria-hidden="true" />
+          Generate Board Report
+        </Button>
       </div>
 
       {/* Date range */}
