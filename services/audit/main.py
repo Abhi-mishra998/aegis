@@ -547,7 +547,11 @@ async def board_report(
     """
     Generate a board-level executive PDF security report.
 
-    Body: {"start_date": "...", "end_date": "...", "tenant_id": "..."}
+    Body: {"start_date": "...", "end_date": "..."}
+
+    The tenant scope is ALWAYS taken from the JWT-derived X-Tenant-ID header
+    (via `get_tenant_id`). Any `tenant_id` field in the body is IGNORED — see
+    SEC fix below.
 
     Returns application/pdf with Content-Disposition attachment.
     """
@@ -583,12 +587,13 @@ async def board_report(
     period_start = _parse_dt(start_str, default_start)
     period_end = _parse_dt(end_str, default_end)
 
-    # Allow tenant_id override in body (gateway injects via header as well)
-    body_tenant_id = payload.get("tenant_id")
-    try:
-        tenant_id = uuid.UUID(body_tenant_id) if body_tenant_id else tenant_id_dep
-    except (ValueError, AttributeError):
-        tenant_id = tenant_id_dep
+    # SEC: tenant_id MUST come from the JWT-derived header dependency, NEVER
+    # from the request body. Honoring `payload["tenant_id"]` was a cross-tenant
+    # data-leak — a tenant-A user with a valid JWT could read tenant-B's audit
+    # summary by setting {"tenant_id": "<tenant-B-uuid>"} in the body. Body
+    # tenant_id is now silently ignored (kept in the schema only so old clients
+    # don't 422; the value has no effect).
+    tenant_id = tenant_id_dep
 
     start_display = period_start.strftime("%Y-%m-%d")
     end_display = period_end.strftime("%Y-%m-%d")
