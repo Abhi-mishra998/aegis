@@ -26,8 +26,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any
 
 import httpx
 import structlog
@@ -38,10 +36,9 @@ from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from services.gateway.openai_pricing import cost_usd
 from services.gateway.client import service_client
-from services.gateway._helpers import internal_headers
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
-from services.gateway import slack_approvals
+from services.gateway import proxy_helpers
 from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
@@ -55,196 +52,9 @@ _PUBLIC_BASE_URL = (
 )
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Helpers — same shape as the Anthropic proxy. We deliberately don't
-# share the helpers from messages.py because the imports would create
-# a circular reference: this module is mounted alongside the Anthropic
-# one. The 30 lines of duplication is acceptable for the isolation.
-# ─────────────────────────────────────────────────────────────────────
-
-
-def _spend_key_day(tenant_id: str, email: str, day: str) -> str:
-    return f"acp:llm_spend:emp:{tenant_id}:{email}:{day}"
-
-
-def _spend_key_month(tenant_id: str, email: str, month: str) -> str:
-    return f"acp:llm_spend:emp:{tenant_id}:{email}:{month}"
-
-
-async def _current_spend(redis, tenant_id: str, email: str) -> tuple[float, float]:
-    now = datetime.now(tz=timezone.utc)
-    day_str   = now.strftime("%Y-%m-%d")
-    month_str = now.strftime("%Y-%m")
-    try:
-        today_raw = await redis.get(_spend_key_day(tenant_id, email, day_str))
-        month_raw = await redis.get(_spend_key_month(tenant_id, email, month_str))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("openai_spend_read_failed", error=str(exc))
-        return 0.0, 0.0
-    return (float(today_raw or 0), float(month_raw or 0))
-
-
-async def _record_spend(redis, tenant_id: str, email: str, cost: float) -> None:
-    if cost <= 0:
-        return
-    now = datetime.now(tz=timezone.utc)
-    day_str   = now.strftime("%Y-%m-%d")
-    month_str = now.strftime("%Y-%m")
-    try:
-        await redis.incrbyfloat(_spend_key_day(tenant_id, email, day_str), cost)
-        await redis.incrbyfloat(_spend_key_month(tenant_id, email, month_str), cost)
-        # Day buckets live 7d, month buckets live 70d — well past any
-        # billing reconciliation window.
-        await redis.expire(_spend_key_day(tenant_id, email, day_str), 7 * 24 * 3600)
-        await redis.expire(_spend_key_month(tenant_id, email, month_str), 70 * 24 * 3600)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("openai_spend_record_failed", error=str(exc))
-
-
-async def _lookup_approval(
-    request: Request, tenant_id: str, approval_id: str,
-) -> dict | None:
-    """Re-implementation of the helper from messages.py for module
-    isolation. Returns the normalized approval record or None."""
-    headers = internal_headers(request)
-    esc_row: dict | None = None
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.post(
-                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
-                json={"decision": "escalate", "limit": 50},
-                headers=headers,
-            )
-        if resp.status_code == 200:
-            data = (resp.json() or {}).get("data") or {}
-            items = data.get("items", []) if isinstance(data, dict) else []
-            for r in items:
-                if (r.get("request_id") or "") == approval_id:
-                    esc_row = r
-                    break
-    except httpx.HTTPError as exc:
-        logger.warning("approval_lookup_audit_failed", error=str(exc))
-
-    if esc_row is None:
-        return None
-
-    meta = esc_row.get("metadata_json") or esc_row.get("metadata") or {}
-    if isinstance(meta, str):
-        try:
-            import json as _json
-            meta = _json.loads(meta)
-        except Exception:
-            meta = {}
-
-    status_str = "pending"
-    decided_at = decided_by = reason = None
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            ov_resp = await client.get(
-                f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/overrides",
-                params={
-                    "minutes": 43200, "target_kind": "request",
-                    "target_id": approval_id, "limit": 10,
-                },
-                headers=headers,
-            )
-        if ov_resp.status_code == 200:
-            ov_body = ov_resp.json() or {}
-            ov_items = ov_body.get("data") if isinstance(ov_body, dict) else ov_body
-            if isinstance(ov_items, list) and ov_items:
-                ov = ov_items[0]
-                et = (ov.get("event_type") or "").lower()
-                if et == "approval":
-                    status_str = "approved"
-                elif et == "override":
-                    status_str = "rejected"
-                decided_at = ov.get("occurred_at") or None
-                decided_by = ov.get("actor") or None
-                reason = ov.get("reason") or None
-    except httpx.HTTPError as exc:
-        logger.warning("approval_lookup_override_failed", error=str(exc))
-
-    return {
-        "approval_id":     approval_id,
-        "status":          status_str,
-        "approver_role":   meta.get("approver_role"),
-        "matched_pattern": meta.get("matched_pattern"),
-        "employee_email":  meta.get("employee_email"),
-        "requested_at":    esc_row.get("timestamp") or esc_row.get("created_at"),
-        "decided_at":      decided_at,
-        "decided_by":      decided_by,
-        "reason":          reason,
-        "prompt_excerpt":  meta.get("prompt_excerpt"),
-    }
-
-
-async def _fetch_enabled_policy_packs(
-    request: Request, tenant_id: str,
-) -> list[str]:
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(
-                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/policy-packs",
-                headers=internal_headers(request),
-            )
-        if resp.status_code != 200:
-            return []
-        body = resp.json() or {}
-        data = body.get("data") if isinstance(body, dict) else None
-        return list((data or {}).get("enabled") or [])
-    except httpx.HTTPError as exc:
-        logger.warning("policy_packs_fetch_failed", error=str(exc))
-        return []
-
-
-async def _fetch_tenant_slack_config(
-    request: Request, tenant_id: str,
-) -> tuple[str | None, str | None]:
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(
-                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/slack-config",
-                headers=internal_headers(request),
-            )
-        if resp.status_code != 200:
-            return (None, None)
-        body = resp.json() or {}
-        data = body.get("data") if isinstance(body, dict) else None
-        if not isinstance(data, dict):
-            return (None, None)
-        return (data.get("webhook_url") or None, data.get("signing_secret") or None)
-    except httpx.HTTPError as exc:
-        logger.warning("slack_config_fetch_failed", error=str(exc))
-        return (None, None)
-
-
-async def _post_slack_card(
-    *,
-    webhook_url: str,
-    secret: str,
-    tenant_id: str,
-    approval_id: str,
-    approver_role: str,
-    matched_pattern: str,
-    employee_email: str,
-    prompt_excerpt: str,
-) -> None:
-    try:
-        card = slack_approvals.build_slack_card(
-            base_url=_PUBLIC_BASE_URL,
-            tenant_id=tenant_id,
-            secret=secret,
-            approval_id=approval_id,
-            approver_role=approver_role,
-            matched_pattern=matched_pattern,
-            employee_email=employee_email,
-            prompt_excerpt=prompt_excerpt,
-            requested_at_iso=datetime.now(tz=timezone.utc).isoformat(),
-        )
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            await client.post(webhook_url, json=card)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("slack_card_post_failed", error=str(exc))
+# All per-employee bookkeeping + approval lookup + Slack + policy-pack
+# fetch lives in services/gateway/proxy_helpers.py — both proxies
+# share it. See the 2026-06-17 dead-code audit (SPRINT.md ledger).
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -304,7 +114,7 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
     # 3. budget pre-check
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
-        today_usd, month_usd = await _current_spend(redis, tenant_id_str, employee_email)
+        today_usd, month_usd = await proxy_helpers.current_spend(redis, tenant_id_str, employee_email)
         if daily_budget_usd is not None and today_usd >= float(daily_budget_usd):
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -358,7 +168,7 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
         replay_id = (request.headers.get("X-Aegis-Approval-ID") or "").strip()
         replay_approved = False
         if replay_id:
-            record = await _lookup_approval(request, tenant_id_str, replay_id)
+            record = await proxy_helpers.lookup_approval(request, tenant_id_str, replay_id)
             if record is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -442,7 +252,7 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
         if not replay_approved:
             esc_pattern = escalation_patterns.scan(scan_text)
             if esc_pattern is None:
-                enabled_packs = await _fetch_enabled_policy_packs(
+                enabled_packs = await proxy_helpers.fetch_enabled_policy_packs(
                     request, tenant_id_str,
                 )
                 pack_hit = policy_packs.scan_for_pack_escalation(
@@ -484,18 +294,19 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                 },
                 request_id=approval_id,
             )
-            slack_url, slack_secret = await _fetch_tenant_slack_config(
+            slack_url, slack_secret = await proxy_helpers.fetch_tenant_slack_config(
                 request, tenant_id_str,
             )
             slack_notified = False
             if slack_url and slack_secret:
-                await _post_slack_card(
+                await proxy_helpers.post_slack_card(
                     webhook_url=slack_url, secret=slack_secret,
                     tenant_id=tenant_id_str, approval_id=approval_id,
                     approver_role=esc_pattern.approver_role,
                     matched_pattern=esc_pattern.id,
                     employee_email=employee_email,
                     prompt_excerpt=scan_text[:240],
+                    base_url=_PUBLIC_BASE_URL,
                 )
                 slack_notified = True
             import json as _json
@@ -564,7 +375,7 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
         except Exception:
             pass
         call_cost = cost_usd(model, usage_input, usage_output)
-        await _record_spend(redis, tenant_id_str, employee_email, call_cost)
+        await proxy_helpers.record_spend(redis, tenant_id_str, employee_email, call_cost)
 
         # 8. audit trail
         try:

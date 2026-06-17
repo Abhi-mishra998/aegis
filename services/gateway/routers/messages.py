@@ -28,7 +28,6 @@ employee's machine.
 """
 from __future__ import annotations
 
-import hashlib
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -48,6 +47,7 @@ from services.gateway._helpers import internal_headers
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
 from services.gateway import slack_approvals
+from services.gateway import proxy_helpers
 from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
@@ -63,150 +63,10 @@ _UPSTREAM_TIMEOUT_S = 60.0
 _PUBLIC_BASE_URL = getattr(settings, "PUBLIC_BASE_URL", "") or "https://ha.aegisagent.in"
 
 
-async def _fetch_enabled_policy_packs(
-    request: Request, tenant_id: str,
-) -> list[str]:
-    """Sprint 23 — read the enabled policy-pack IDs off the tenant row.
-    Never raises; returns [] on any fetch error so the proxy keeps
-    serving with the base escalation rules."""
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(
-                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/policy-packs",
-                headers=internal_headers(request),
-            )
-        if resp.status_code != 200:
-            return []
-        body = resp.json() or {}
-        data = body.get("data") if isinstance(body, dict) else None
-        return list((data or {}).get("enabled") or [])
-    except httpx.HTTPError as exc:
-        logger.warning("policy_packs_fetch_failed", error=str(exc))
-        return []
-
-
-async def _fetch_tenant_slack_config(
-    request: Request, tenant_id: str,
-) -> tuple[str | None, str | None]:
-    """Return ``(webhook_url, signing_secret)`` for the tenant, or
-    ``(None, None)`` if Slack approvals aren't configured.
-    Identity-svc owns the canonical row; we go through the
-    ``/workspace/me`` shape so we don't open a second DB connection
-    from the gateway."""
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(
-                f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/workspace/slack-config",
-                headers=internal_headers(request),
-            )
-        if resp.status_code != 200:
-            return (None, None)
-        body = resp.json() or {}
-        data = body.get("data") if isinstance(body, dict) else None
-        if not isinstance(data, dict):
-            return (None, None)
-        return (data.get("webhook_url") or None, data.get("signing_secret") or None)
-    except httpx.HTTPError as exc:
-        logger.warning("slack_config_fetch_failed", error=str(exc))
-        return (None, None)
-
-
-async def _post_slack_card(
-    *,
-    webhook_url: str,
-    secret: str,
-    tenant_id: str,
-    approval_id: str,
-    approver_role: str,
-    matched_pattern: str,
-    employee_email: str,
-    prompt_excerpt: str,
-) -> None:
-    """Fire the Slack webhook. Best-effort — failures NEVER fail the
-    /v1/messages response. The audit row + Approval Inbox already give
-    the operator a non-Slack path."""
-    try:
-        from datetime import datetime, timezone
-        card = slack_approvals.build_slack_card(
-            base_url=_PUBLIC_BASE_URL,
-            tenant_id=tenant_id,
-            secret=secret,
-            approval_id=approval_id,
-            approver_role=approver_role,
-            matched_pattern=matched_pattern,
-            employee_email=employee_email,
-            prompt_excerpt=prompt_excerpt,
-            requested_at_iso=datetime.now(tz=timezone.utc).isoformat(),
-        )
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            await client.post(webhook_url, json=card)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("slack_card_post_failed", error=str(exc))
-
-
-# ─────────────────────────────────────────────────────────────────────
-# We do NOT hit the api_keys DB directly from the gateway — the gateway
-# DATABASE_URL points at acp_identity, not acp_api. Auth + listing go
-# through the api service's existing HTTP endpoints (validate +
-# /api-keys?subject_kind=employee) so the gateway stays a pure proxy.
-# ─────────────────────────────────────────────────────────────────────
-
-
-def _hash_key(raw_key: str) -> str:
-    return hashlib.sha256(raw_key.encode()).hexdigest()
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Spend tracking — Redis counter per (tenant, employee_email, day) and
-# per (tenant, employee_email, month). Daily + monthly budget enforced
-# BEFORE we forward to Anthropic so the corporate key is never spent
-# above the cap.
-# ─────────────────────────────────────────────────────────────────────
-
-
-def _spend_key_day(tenant_id: str, email: str, day: str) -> str:
-    return f"acp:llm_spend:emp:{tenant_id}:{email}:{day}"
-
-
-def _spend_key_month(tenant_id: str, email: str, month: str) -> str:
-    return f"acp:llm_spend:emp:{tenant_id}:{email}:{month}"
-
-
-async def _current_spend(redis, tenant_id: str, email: str) -> tuple[float, float]:
-    """Return (today_usd, this_month_usd) for one employee. NEVER throws."""
-    now = datetime.now(tz=timezone.utc)
-    day_str   = now.strftime("%Y-%m-%d")
-    month_str = now.strftime("%Y-%m")
-    try:
-        today_raw = await redis.get(_spend_key_day(tenant_id, email, day_str))
-        month_raw = await redis.get(_spend_key_month(tenant_id, email, month_str))
-    except Exception as exc:
-        logger.warning("llm_proxy_spend_read_failed", error=str(exc))
-        return 0.0, 0.0
-    return (
-        float(today_raw or 0),
-        float(month_raw or 0),
-    )
-
-
-async def _record_spend(
-    redis, tenant_id: str, email: str, cost: float,
-) -> None:
-    """Increment both day + month counters. NEVER throws — spend tracking
-    must not break the proxy itself; reconciliation against the upstream
-    Anthropic invoice catches any drift."""
-    now = datetime.now(tz=timezone.utc)
-    day_str   = now.strftime("%Y-%m-%d")
-    month_str = now.strftime("%Y-%m")
-    try:
-        pipe = redis.pipeline()
-        pipe.incrbyfloat(_spend_key_day(tenant_id, email, day_str), cost)
-        pipe.expire(_spend_key_day(tenant_id, email, day_str), 7 * 24 * 3600)
-        pipe.incrbyfloat(_spend_key_month(tenant_id, email, month_str), cost)
-        pipe.expire(_spend_key_month(tenant_id, email, month_str), 60 * 24 * 3600)
-        await pipe.execute()
-    except Exception as exc:
-        logger.warning("llm_proxy_spend_record_failed", error=str(exc), cost=cost)
+# Per-employee budget bookkeeping, approval lookup, Slack + policy-
+# pack fetch all live in services/gateway/proxy_helpers.py so the
+# Anthropic + OpenAI proxies don't duplicate them. Extracted in the
+# 2026-06-17 dead-code audit — see SPRINT.md ledger.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -292,7 +152,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
     # 3. budget pre-check
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
-        today_usd, month_usd = await _current_spend(redis, tenant_id_str, employee_email)
+        today_usd, month_usd = await proxy_helpers.current_spend(redis, tenant_id_str, employee_email)
 
         if daily_budget_usd is not None and today_usd >= float(daily_budget_usd):
             raise HTTPException(
@@ -410,7 +270,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         replay_id = (request.headers.get("X-Aegis-Approval-ID") or "").strip()
         replay_approved = False
         if replay_id:
-            record = await _lookup_approval(request, tenant_id_str, replay_id)
+            record = await proxy_helpers.lookup_approval(request, tenant_id_str, replay_id)
             if record is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -470,7 +330,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         if not replay_approved:
             esc_pattern = escalation_patterns.scan(scan_text)
             if esc_pattern is None:
-                enabled_packs = await _fetch_enabled_policy_packs(
+                enabled_packs = await proxy_helpers.fetch_enabled_policy_packs(
                     request, tenant_id_str,
                 )
                 pack_hit = policy_packs.scan_for_pack_escalation(
@@ -523,12 +383,12 @@ async def proxy_anthropic_messages(request: Request) -> Response:
             # Sprint 21 — if the tenant has Slack approvals configured,
             # fire the webhook card with HMAC-signed Approve / Reject
             # links. Best-effort; the in-app Inbox is unaffected.
-            slack_url, slack_secret = await _fetch_tenant_slack_config(
+            slack_url, slack_secret = await proxy_helpers.fetch_tenant_slack_config(
                 request, tenant_id_str,
             )
             slack_notified = False
             if slack_url and slack_secret:
-                await _post_slack_card(
+                await proxy_helpers.post_slack_card(
                     webhook_url=slack_url,
                     secret=slack_secret,
                     tenant_id=tenant_id_str,
@@ -537,6 +397,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                     matched_pattern=esc_pattern.id,
                     employee_email=employee_email,
                     prompt_excerpt=scan_text[:240],
+                    base_url=_PUBLIC_BASE_URL,
                 )
                 slack_notified = True
 
@@ -596,7 +457,7 @@ async def proxy_anthropic_messages(request: Request) -> Response:
             pass
 
         call_cost = cost_usd(model, usage_input, usage_output)
-        await _record_spend(redis, tenant_id_str, employee_email, call_cost)
+        await proxy_helpers.record_spend(redis, tenant_id_str, employee_email, call_cost)
 
         # 8. audit trail — this is the row that lights up the Sprint
         # 17.3 /team page + the cryptographic Merkle chain. Action name
@@ -745,7 +606,7 @@ async def list_team_employees(request: Request) -> APIResponse[list[dict]]:
             email = (k.get("subject_email") or "").strip()
             today_usd, month_usd = (0.0, 0.0)
             if email:
-                today_usd, month_usd = await _current_spend(
+                today_usd, month_usd = await proxy_helpers.current_spend(
                     redis, str(k.get("tenant_id") or ""), email,
                 )
             rows.append({
@@ -1169,7 +1030,7 @@ async def team_employee_profile(email: str, request: Request) -> APIResponse[dic
     # 4.  Live spend counters from Redis (fast-path for the budget bars).
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
-        today_usd, month_usd = await _current_spend(redis, tenant_id_str, email_lc)
+        today_usd, month_usd = await proxy_helpers.current_spend(redis, tenant_id_str, email_lc)
     finally:
         try:
             await redis.aclose()
@@ -1515,100 +1376,9 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
 # ─────────────────────────────────────────────────────────────────────
 
 
-async def _lookup_approval(
-    request: Request, tenant_id: str, approval_id: str,
-) -> dict | None:
-    """Return a normalized approval record or None if not found.
-
-    Shape::
-
-        {
-          "approval_id":     str,
-          "status":          "pending" | "approved" | "rejected",
-          "approver_role":   str | None,
-          "matched_pattern": str | None,
-          "employee_email":  str | None,
-          "requested_at":    str | None,   # ISO timestamp of the escalate row
-          "decided_at":      str | None,   # ISO timestamp of the override row
-          "decided_by":      str | None,
-          "reason":          str | None,   # operator's note
-          "prompt_excerpt":  str | None,
-        }
-    """
-    headers = internal_headers(request)
-    # 1. Pull the original escalate audit row.
-    esc_row: dict | None = None
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            # POST /logs/search supports filter by metadata.request_id;
-            # GET /logs doesn't. The body shape mirrors AuditLogSearch.
-            resp = await client.post(
-                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/search",
-                json={"decision": "escalate", "limit": 50},
-                headers=headers,
-            )
-        if resp.status_code == 200:
-            data = (resp.json() or {}).get("data") or {}
-            items = data.get("items", []) if isinstance(data, dict) else []
-            for r in items:
-                if (r.get("request_id") or "") == approval_id:
-                    esc_row = r
-                    break
-    except httpx.HTTPError as exc:
-        logger.warning("approval_lookup_audit_failed", error=str(exc))
-
-    if esc_row is None:
-        return None
-
-    meta = esc_row.get("metadata_json") or esc_row.get("metadata") or {}
-    if isinstance(meta, str):
-        try:
-            import json as _json
-            meta = _json.loads(meta)
-        except Exception:
-            meta = {}
-
-    # 2. Pull any override events tied to this request_id.
-    decided_at: str | None = None
-    decided_by: str | None = None
-    operator_reason: str | None = None
-    status_str = "pending"
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            ov_resp = await client.get(
-                f"{settings.AUTONOMY_SERVICE_URL.rstrip('/')}/autonomy/overrides",
-                params={"minutes": 43200, "target_kind": "request", "target_id": approval_id, "limit": 10},
-                headers=headers,
-            )
-        if ov_resp.status_code == 200:
-            ov_body = ov_resp.json() or {}
-            ov_items = ov_body.get("data") if isinstance(ov_body, dict) else ov_body
-            if isinstance(ov_items, list) and ov_items:
-                # First match wins — list_overrides returns newest first.
-                ov = ov_items[0]
-                et = (ov.get("event_type") or "").lower()
-                if et == "approval":
-                    status_str = "approved"
-                elif et == "override":
-                    status_str = "rejected"
-                decided_at = ov.get("occurred_at") or None
-                decided_by = ov.get("actor") or None
-                operator_reason = ov.get("reason") or None
-    except httpx.HTTPError as exc:
-        logger.warning("approval_lookup_override_failed", error=str(exc))
-
-    return {
-        "approval_id":     approval_id,
-        "status":          status_str,
-        "approver_role":   meta.get("approver_role"),
-        "matched_pattern": meta.get("matched_pattern"),
-        "employee_email":  meta.get("employee_email"),
-        "requested_at":    esc_row.get("timestamp") or esc_row.get("created_at"),
-        "decided_at":      decided_at,
-        "decided_by":      decided_by,
-        "reason":          operator_reason,
-        "prompt_excerpt":  meta.get("prompt_excerpt"),
-    }
+# _lookup_approval lives in services/gateway/proxy_helpers.py — both
+# the Anthropic + OpenAI proxies + this status handler use the same
+# join across audit_logs + human_override_events.
 
 
 @router.get("/approvals/{approval_id}/status")
@@ -1646,7 +1416,7 @@ async def approval_status(approval_id: str, request: Request) -> APIResponse[dic
         except Exception:  # noqa: BLE001
             pass
 
-        record = await _lookup_approval(request, tenant_id_str, approval_id.strip())
+        record = await proxy_helpers.lookup_approval(request, tenant_id_str, approval_id.strip())
         if record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1671,7 +1441,7 @@ async def approval_status(approval_id: str, request: Request) -> APIResponse[dic
             detail="Tenant context missing — please sign in again.",
         )
 
-    record = await _lookup_approval(request, tenant_id_str, approval_id.strip())
+    record = await proxy_helpers.lookup_approval(request, tenant_id_str, approval_id.strip())
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1926,7 +1696,7 @@ async def _slack_decide(
     except Exception:  # noqa: BLE001
         pass
 
-    _, secret = await _fetch_tenant_slack_config(request, tenant_id_str)
+    _, secret = await proxy_helpers.fetch_tenant_slack_config(request, tenant_id_str)
     if not secret:
         return Response(
             content=slack_approvals.render_result_html(
@@ -1957,7 +1727,7 @@ async def _slack_decide(
 
     # Look up the approval and bail early if it's already been actioned
     # (idempotent — clicking the link twice should be safe).
-    record = await _lookup_approval(request, tenant_id_str, approval_id)
+    record = await proxy_helpers.lookup_approval(request, tenant_id_str, approval_id)
     if record is None:
         return Response(
             content=slack_approvals.render_result_html(
