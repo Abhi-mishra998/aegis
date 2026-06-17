@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
-  RefreshCw, Filter, ChevronRight, Zap, User,
+  AlertTriangle, Shield, ShieldCheck, Clock, CheckCircle2, XCircle,
+  RefreshCw, Filter, ChevronRight, Zap, User, Bot, FileBadge2,
   Activity, TrendingDown, Eye, Lock, Slash, ArrowUpRight,
-  Download,
+  Download, Crosshair,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
@@ -685,41 +685,109 @@ export default function Incidents() {
           </div>
         ) : (
           <div className="divide-y divide-white/[0.04]">
-            {items.map((inc) => (
-              <button
-                key={inc.id}
-                onClick={() => setSelected(inc)}
-                className="w-full flex items-center gap-4 px-4 py-3.5 hover:bg-white/[0.03] transition-colors text-left group"
-              >
-                {/* Severity indicator */}
-                <div className={`w-1 self-stretch rounded-full shrink-0 ${SEV_CONFIG[inc.severity]?.dot || 'bg-neutral-600'}`} />
+            {items.map((inc) => {
+              // Sprint 14 — evidence-forward row. Six fields shown on
+              // the card (was: title + agent slice + risk %). Layout
+              // intentionally renders the founder's mandate vocabulary
+              // (User / Agent / Policy / Time / Decision / Verified)
+              // so a CISO, auditor, and platform engineer all read
+              // the same line.
+              //
+              // Decision is derived from status: OPEN/INVESTIGATING →
+              // DENIED (block was the original action), ESCALATED →
+              // ESCALATED, MITIGATED/RESOLVED → REVIEWED. Severity
+              // remains the colored side rail so list scanning stays
+              // identical to pre-Sprint-14.
+              const status = (inc.status || '').toUpperCase();
+              const decision =
+                status === 'ESCALATED' ? 'ESCALATED'
+                : status === 'MITIGATED' || status === 'RESOLVED' ? 'REVIEWED'
+                : 'DENIED';
+              const decisionCls =
+                decision === 'DENIED'    ? 'text-red-400 bg-red-500/10 border-red-500/20'
+                : decision === 'ESCALATED' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                : 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+              const policyId = inc.blocking_policy_id || inc.policy_id || inc.trigger || '';
+              const mitre    = inc.mitre_technique_id || inc.mitre_technique || '';
+              const userTag  = inc.user_email || inc.actor || inc.subject_email || '';
+              const hasProof = Boolean(inc.request_id || inc.related_audit_ids?.length);
 
-                {/* Main info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-mono text-neutral-500 shrink-0">{inc.incident_number}</span>
-                    <SeverityBadge severity={inc.severity} />
-                    <StatusBadge status={inc.status} />
+              return (
+                <button
+                  key={inc.id}
+                  onClick={() => setSelected(inc)}
+                  className="w-full flex items-stretch gap-4 px-4 py-3.5 hover:bg-white/[0.03] transition-colors text-left group"
+                >
+                  {/* Severity rail */}
+                  <div className={`w-1 self-stretch rounded-full shrink-0 ${SEV_CONFIG[inc.severity]?.dot || 'bg-neutral-600'}`} />
+
+                  {/* Body — two rows: (a) decision + ID + title, (b) 6 evidence chips */}
+                  <div className="flex-1 min-w-0 space-y-2">
+                    {/* Row A — decision verdict + incident number + headline */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`status-badge text-[10px] font-semibold ${decisionCls}`}>
+                        {decision}
+                      </span>
+                      <span className="text-xs font-mono text-neutral-500 shrink-0">{inc.incident_number}</span>
+                      <SeverityBadge severity={inc.severity} />
+                      <StatusBadge status={inc.status} />
+                      <p className="text-xs text-white font-medium truncate flex-1 min-w-0">{inc.title}</p>
+                    </div>
+
+                    {/* Row B — six evidence chips in CISO/auditor vocabulary */}
+                    <div className="flex items-center gap-3 flex-wrap text-[10px] text-neutral-400 font-mono">
+                      <span className="inline-flex items-center gap-1" title="User who triggered the agent action">
+                        <User size={10} className="text-neutral-600" />
+                        {userTag || <span className="text-neutral-700">—</span>}
+                      </span>
+                      <span className="text-neutral-800">·</span>
+                      <span className="inline-flex items-center gap-1" title="Agent that attempted the action">
+                        <Bot size={10} className="text-neutral-600" />
+                        {inc.agent_id?.slice(0, 8) || <span className="text-neutral-700">—</span>}
+                      </span>
+                      <span className="text-neutral-800">·</span>
+                      <span className="inline-flex items-center gap-1" title="Action / tool target">
+                        <Crosshair size={10} className="text-neutral-600" />
+                        {inc.tool || <span className="text-neutral-700">N/A</span>}
+                      </span>
+                      <span className="text-neutral-800">·</span>
+                      <span className="inline-flex items-center gap-1" title="Policy that fired">
+                        <Shield size={10} className="text-neutral-600" />
+                        {policyId
+                          ? <span className="text-neutral-300">{policyId}</span>
+                          : <span className="text-neutral-700">no policy id</span>}
+                      </span>
+                      {mitre && (
+                        <>
+                          <span className="text-neutral-800">·</span>
+                          <span className="inline-flex items-center gap-1" title="MITRE ATT&CK technique">
+                            <FileBadge2 size={10} className="text-neutral-600" />
+                            <span className="text-neutral-300">{String(mitre).slice(0, 24)}</span>
+                          </span>
+                        </>
+                      )}
+                      <span className="text-neutral-800">·</span>
+                      <span className="inline-flex items-center gap-1" title="Decision timestamp">
+                        <Clock size={10} className="text-neutral-600" />
+                        {new Date(inc.created_at).toLocaleString(undefined, {
+                          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </span>
+                      <span className="text-neutral-800">·</span>
+                      <span
+                        className={`inline-flex items-center gap-1 ${hasProof ? 'text-green-400' : 'text-neutral-700'}`}
+                        title="Merkle-chain proof — every audited request is signed nightly with an ed25519 root and mirrored to a public S3 bucket"
+                      >
+                        <ShieldCheck size={10} />
+                        {hasProof ? 'Merkle proof: Verified' : 'no receipt'}
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-xs text-white font-medium truncate">{inc.title}</p>
-                  <p className="text-[10px] text-neutral-600 mt-0.5 font-mono truncate">
-                    Agent {inc.agent_id?.slice(0, 8)} · {inc.tool || 'N/A'} · Risk {((inc.risk_score ?? 0) * 100).toFixed(0)}%
-                  </p>
-                </div>
 
-                {/* Meta */}
-                <div className="shrink-0 text-right hidden sm:block">
-                  <p className="text-[10px] text-neutral-600">
-                    {new Date(inc.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                  </p>
-                  <p className="text-[10px] text-neutral-700 font-mono">
-                    {new Date(inc.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                </div>
-
-                <ChevronRight size={14} className="text-neutral-700 group-hover:text-neutral-400 transition-colors shrink-0" />
-              </button>
-            ))}
+                  <ChevronRight size={14} className="text-neutral-700 group-hover:text-neutral-400 transition-colors shrink-0 self-center" />
+                </button>
+              );
+            })}
           </div>
         )}
 

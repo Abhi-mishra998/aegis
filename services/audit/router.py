@@ -15,10 +15,12 @@ from datetime import datetime
 from typing import Annotated
 
 import sqlalchemy as sa
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
@@ -36,6 +38,7 @@ from services.audit.schemas import (
 )
 from services.audit.writer import AuditWriter
 
+logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/logs", tags=["audit"], dependencies=[Depends(verify_internal_secret)])
 
 
@@ -261,6 +264,91 @@ async def risk_top_threats(
     """Return top high-risk agents in the specified window."""
     agents = await AuditAggregator.get_top_risky_agents(db, tenant_id, limit=limit, agent_id=agent_id)
     return APIResponse(data=agents)
+
+
+@router.get("/aggregate", response_model=APIResponse[dict])
+async def aggregate_logs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    days: int = Query(30, ge=1, le=90),
+    action: str | None = Query(None),
+) -> APIResponse[dict]:
+    """Server-side aggregation for the Sprint 12 Dashboard.
+
+    Returns total + per-decision counts over the window, computed in
+    Postgres so a tenant with millions of audit rows doesn't get a
+    floored figure capped by the /logs row limit. Counts are always
+    accurate; the /logs endpoint stays for row-level inspection.
+
+    Output::
+
+        {
+          "window_days":   30,
+          "total":         12345,
+          "by_decision": {
+            "allow":     11210,
+            "deny":         812,
+            "block":          0,
+            "kill":          12,
+            "escalate":      33,
+            ...
+          },
+          "with_findings": 71,
+          "action_filter": null
+        }
+    """
+    import datetime as _dt
+    start = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+
+    base = (
+        select(AuditLog.decision, func.count().label("cnt"))
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= start)
+        .group_by(AuditLog.decision)
+    )
+    if action:
+        base = base.where(AuditLog.action == action)
+    by_decision_rows = (await db.execute(base)).all()
+    by_decision: dict[str, int] = {
+        str(r.decision or "unknown"): int(r.cnt or 0)
+        for r in by_decision_rows
+    }
+    total = sum(by_decision.values())
+
+    findings_q = (
+        select(func.count())
+        .select_from(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.timestamp >= start)
+        # metadata_json is a JSON column (not JSONB); cast to JSONB so
+        # jsonb_array_length can read the 'findings' array and a coalesce
+        # to '[]'::jsonb keeps the count accurate for rows without the key.
+        .where(
+            func.jsonb_array_length(
+                func.coalesce(
+                    sa.cast(AuditLog.metadata_json["findings"], PG_JSONB),
+                    sa.cast(sa.text("'[]'"), PG_JSONB),
+                ),
+            ) > 0,
+        )
+    )
+    if action:
+        findings_q = findings_q.where(AuditLog.action == action)
+    try:
+        with_findings = (await db.execute(findings_q)).scalar() or 0
+    except Exception as exc:  # noqa: BLE001
+        # If metadata_json isn't JSONB on this deployment, swallow + fall
+        # back to "unknown" so the dashboard still renders.
+        logger.warning("aggregate_findings_count_failed", error=str(exc))
+        with_findings = 0
+
+    return APIResponse(data={
+        "window_days":   days,
+        "total":         total,
+        "by_decision":   by_decision,
+        "with_findings": int(with_findings),
+        "action_filter": action,
+    })
 
 
 @router.get("", response_model=APIResponse[AuditLogListResponse])

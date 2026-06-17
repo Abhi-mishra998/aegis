@@ -185,7 +185,7 @@ export default function Sidebar({ isOpen, onClose }) {
             <div className="w-7 h-7 rounded-md bg-white text-black flex items-center justify-center">
               <Shield size={14} aria-hidden="true" />
             </div>
-            <span className="text-sm font-bold text-white tracking-tight">AgentControl</span>
+            <span className="text-sm font-bold text-white tracking-tight">Aegis</span>
           </NavLink>
           <button
             type="button"
