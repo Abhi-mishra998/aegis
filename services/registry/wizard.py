@@ -43,6 +43,7 @@ from services.registry.schemas import (
     PermissionCreate,
 )
 from services.registry.service import AgentService
+from services.registry import capabilities as _cap
 
 logger = structlog.get_logger(__name__)
 
@@ -89,11 +90,31 @@ _DEFAULT_TOOL_WHITELIST: tuple[str, ...] = (
 
 
 class WizardCreateRequest(BaseModel):
-    """Step 2 of the wizard collapses into this payload."""
+    """Step 2 of the wizard collapses into this payload.
+
+    Sprint 13 — `capabilities` is the canonical 'what does this agent do'
+    input. `risk_level` is still accepted for backwards-compat with the
+    older wizard payload, but when `capabilities` is set we derive it
+    automatically from the picked set's max risk_weight.
+    """
 
     name: str = Field(..., min_length=3, max_length=100)
     provider: Provider
-    risk_level: Literal["low", "medium", "high"] = "medium"
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Founder-mandate capability checkboxes: filesystem, database, "
+            "infrastructure, payments, email, external_apis, internal_apis. "
+            "Aegis auto-enables the matching policy set."
+        ),
+    )
+    risk_level: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description=(
+            "Legacy field. Ignored when `capabilities` is non-empty (the "
+            "risk level is derived from the picked capabilities)."
+        ),
+    )
     description: str | None = Field(
         default=None, max_length=500,
         description="Optional human description. Defaults to provider+name template.",
@@ -112,6 +133,18 @@ class WizardCreateRequest(BaseModel):
         # 409 from the create_agent call.
         return v.strip().lower().replace(" ", "-")
 
+    @field_validator("capabilities")
+    @classmethod
+    def _normalize_capabilities(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for c in v or []:
+            cid = str(c).strip().lower()
+            if cid and cid in _cap.KNOWN_CAPABILITIES and cid not in seen:
+                seen.add(cid)
+                out.append(cid)
+        return out
+
 
 class WizardCreatedResponse(BaseModel):
     """Returned to the OnboardingWizard.jsx — every value here is needed
@@ -127,6 +160,11 @@ class WizardCreatedResponse(BaseModel):
     provider: Provider
     name: str
     risk_level: str
+    # Sprint 13 — surface the chosen capabilities + the derived policy
+    # set on the wizard's Step-3 confirmation card. Lets the CISO read
+    # back exactly what runtime gates Aegis just turned on.
+    capabilities: list[str] = Field(default_factory=list)
+    policies_enabled: list[str] = Field(default_factory=list)
     shadow_mode_until_hint: str | None = Field(
         default=None,
         description=(
@@ -260,11 +298,21 @@ async def wizard_create_agent(
         payload.description
         or f"{payload.provider.title()} agent created via onboarding wizard."
     )
+    # Sprint 13 — derive the legacy risk_level from the capabilities
+    # selection when present; fall back to whatever the caller sent (or
+    # 'medium' if neither was provided).
+    capabilities = list(payload.capabilities)
+    if capabilities:
+        derived_risk = _cap.derive_risk_level(capabilities)
+    else:
+        derived_risk = payload.risk_level or "medium"
+    policies_enabled = _cap.policies_for(capabilities)
+
     agent_payload = AgentCreate(
         name=payload.name,
         description=description,
         owner_id=payload.owner_id,
-        risk_level=payload.risk_level,
+        risk_level=derived_risk,
     )
     repo = AgentRepository(db)
     perm_repo = PermissionRepository(db)
@@ -281,6 +329,12 @@ async def wizard_create_agent(
         meta = dict(agent_row.metadata_data or {})
         meta["provider"] = payload.provider
         meta["wizard"] = True
+        # Sprint 13 — pin the chosen capabilities + the policy set the
+        # signal engine should apply. Persisting both decouples future
+        # capability/policy edits from the original wizard run.
+        if capabilities:
+            meta["capabilities"] = capabilities
+            meta["policies_enabled"] = policies_enabled
         agent_row.metadata_data = meta
         await db.commit()
         await db.refresh(agent_row)
@@ -332,7 +386,9 @@ async def wizard_create_agent(
             ),
             provider=payload.provider,
             name=payload.name,
-            risk_level=payload.risk_level,
+            risk_level=derived_risk,
+            capabilities=capabilities,
+            policies_enabled=policies_enabled,
             shadow_mode_until_hint=(
                 "Your workspace is in 14-day shadow mode by default — every "
                 "decision is logged but no real block fires until you exit "
@@ -643,6 +699,73 @@ def _build_snippet(provider: Provider, *, tenant_id: uuid.UUID, agent_id: uuid.U
             "Aegis returns {decision: allow|deny|escalate|monitor|quarantine}.",
             "Your LLM provider key stays on your machine — Aegis only sees tool-call intents.",
         ],
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Sprint 13 — capability catalog + policy preview.
+# ────────────────────────────────────────────────────────────────────────
+
+
+class CapabilityCard(BaseModel):
+    id:           str
+    label:        str
+    blurb:        str
+    example_tool: str
+    risk_weight:  int
+    policies:     list[str]
+
+
+class PolicyPreviewResponse(BaseModel):
+    capabilities:     list[str]
+    risk_level:       str           # derived low / medium / high
+    risk_score_pct:   int           # 0-100 — aggregate score for the bar
+    policies_enabled: list[str]     # canonical signal-registry IDs
+
+
+@router.get(
+    "/wizard/capabilities",
+    response_model=APIResponse[list[CapabilityCard]],
+    summary="Capability catalog the wizard renders as a checkbox grid",
+)
+async def wizard_capabilities() -> APIResponse[list[CapabilityCard]]:
+    return APIResponse(
+        data=[
+            CapabilityCard(
+                id=d.id,
+                label=d.label,
+                blurb=d.blurb,
+                example_tool=d.example_tool,
+                risk_weight=d.risk_weight,
+                policies=list(d.policies),
+            )
+            for d in _cap.all_definitions()
+        ],
+    )
+
+
+@router.get(
+    "/wizard/policy-preview",
+    response_model=APIResponse[PolicyPreviewResponse],
+    summary="Live preview of the policy set + risk level for a capability pick",
+)
+async def wizard_policy_preview(
+    capabilities: str = "",
+) -> APIResponse[PolicyPreviewResponse]:
+    """Comma-separated capability ids in the query string. Returns the
+    derived risk_level, an aggregate risk_score_pct (for the wizard's
+    progress bar), and the canonical policy list that will fire when
+    these capabilities run.
+    """
+    raw = [c.strip().lower() for c in capabilities.split(",") if c.strip()]
+    picked = [c for c in raw if c in _cap.KNOWN_CAPABILITIES]
+    return APIResponse(
+        data=PolicyPreviewResponse(
+            capabilities=picked,
+            risk_level=_cap.derive_risk_level(picked),
+            risk_score_pct=_cap.derive_risk_score_pct(picked),
+            policies_enabled=_cap.policies_for(picked),
+        ),
     )
 
 

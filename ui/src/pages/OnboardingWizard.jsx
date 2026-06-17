@@ -10,13 +10,20 @@ import {
   Code2,
   Copy,
   Cpu,
+  Database,
+  DollarSign,
+  FileText,
   Globe,
   Lock,
+  Mail,
+  Network,
   RefreshCw,
+  Server,
   Shield,
   Sparkles,
   Terminal,
   Wand2,
+  Workflow,
 } from 'lucide-react';
 import { registryService } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
@@ -34,11 +41,29 @@ const PROVIDER_CATALOG = [
   { id: 'custom', label: 'Custom / HTTP', icon: Globe, blurb: 'Raw HTTP — works from any language.', sdk: 'curl' },
 ];
 
-const RISK_LEVELS = [
-  { id: 'low', label: 'Low risk', blurb: 'Read-only, sandboxed tools.' },
-  { id: 'medium', label: 'Medium risk', blurb: 'Read+write, business systems.' },
-  { id: 'high', label: 'High risk', blurb: 'Money movement, prod systems.' },
+// Sprint 13 — Capability-based wizard. The Step-2 question shifted from
+// "how risky is this agent?" (the wrong question — CISOs don't know the
+// answer in the abstract) to "what can this agent actually do?". Each
+// box maps to a canonical Aegis policy set on the backend; the live
+// preview panel below the grid shows exactly which rules will fire.
+//
+// Icons are paired with the founder's vocabulary so the visual scan
+// matches what's in the back-of-the-CISO's-mind.
+const CAPABILITIES = [
+  { id: 'filesystem',     label: 'Filesystem',       blurb: 'Read or write files on disk.',          icon: FileText  },
+  { id: 'database',       label: 'Database (SQL)',   blurb: 'Query / mutate tenant databases.',      icon: Database  },
+  { id: 'infrastructure', label: 'Infrastructure',   blurb: 'kubectl / terraform / cloud control.',  icon: Server    },
+  { id: 'payments',       label: 'Payments',         blurb: 'Wire transfers, refunds, treasury.',    icon: DollarSign },
+  { id: 'email',          label: 'Email (outbound)', blurb: 'Send email on behalf of users.',        icon: Mail      },
+  { id: 'external_apis',  label: 'External APIs',    blurb: 'HTTP / webhooks to non-tenant hosts.',  icon: Globe     },
+  { id: 'internal_apis',  label: 'Internal APIs',    blurb: 'RPC to other tenant-internal services.',icon: Network   },
 ];
+
+const RISK_LABEL_STYLES = {
+  high:   'text-red-400  bg-red-500/10  border-red-500/20',
+  medium: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  low:    'text-green-400 bg-green-500/10 border-green-500/20',
+};
 
 function StepHeader({ step, title }) {
   return (
@@ -122,7 +147,11 @@ export default function OnboardingWizard() {
   const [step, setStep] = useState(1);
   const [provider, setProvider] = useState('anthropic');
   const [agentName, setAgentName] = useState('');
-  const [riskLevel, setRiskLevel] = useState('medium');
+  // Sprint 13 — capabilities replace risk_level on Step 2. Default
+  // selection is `database` because the SDK-on-endpoint demo (Step 3)
+  // walks the customer through a query_database tool call.
+  const [capabilities, setCapabilities] = useState(['database']);
+  const [policyPreview, setPolicyPreview] = useState(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [created, setCreated] = useState(null); // { agent_id, aegis_api_key, ... }
@@ -134,7 +163,26 @@ export default function OnboardingWizard() {
   const providerCatalogItem = PROVIDER_CATALOG.find((p) => p.id === provider);
 
   const canAdvanceFromStep1 = Boolean(provider);
-  const canAdvanceFromStep2 = agentName.trim().length >= 3 && Boolean(riskLevel);
+  const canAdvanceFromStep2 = agentName.trim().length >= 3;
+
+  // Sprint 13 — live policy preview. Re-fetch from the wizard backend
+  // whenever the capability selection changes so the CISO sees the
+  // exact rules being enabled. Debounced via the effect's natural
+  // batching — no setInterval, no SSE.
+  useEffect(() => {
+    let cancelled = false;
+    registryService
+      .wizardPolicyPreview(capabilities)
+      .then((resp) => {
+        if (cancelled) return;
+        setPolicyPreview(resp?.data || resp || null);
+      })
+      .catch(() => {
+        // Backend offline / 404 — fall back to local stub. UI still renders.
+        if (!cancelled) setPolicyPreview(null);
+      });
+    return () => { cancelled = true; };
+  }, [capabilities]);
 
   const handleStep2Continue = async () => {
     if (!canAdvanceFromStep2 || creating) return;
@@ -144,7 +192,7 @@ export default function OnboardingWizard() {
       const resp = await registryService.wizard({
         name: agentName.trim(),
         provider,
-        risk_level: riskLevel,
+        capabilities,
       });
       const data = resp?.data || resp;
       if (!data?.aegis_api_key) {
@@ -278,10 +326,11 @@ export default function OnboardingWizard() {
 
         {step === 2 && (
           <Card>
-            <StepHeader step={2} title="Name + risk" />
+            <StepHeader step={2} title="What can this agent do?" />
             <p className="text-xs text-neutral-400 mb-5 max-w-xl">
-              We'll register the agent + a default whitelist of 8 common tools + mint
-              an Aegis key. You can refine permissions any time.
+              Pick the capabilities your agent needs. Aegis auto-enables the
+              matching policy set — you don't have to write any Rego. You can
+              tighten or loosen these later in <code>Protect → Policies</code>.
             </p>
 
             <div className="grid grid-cols-1 gap-4 mb-5">
@@ -302,27 +351,85 @@ export default function OnboardingWizard() {
                 </p>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="label-standard">Risk level</label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {RISK_LEVELS.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => setRiskLevel(r.id)}
-                      className={
-                        'text-left p-3 rounded-xl border transition-all ' +
-                        (riskLevel === r.id
-                          ? 'border-white bg-white/[0.06]'
-                          : 'border-white/[0.07] bg-[#0a0a0a] hover:border-white/20')
-                      }
-                    >
-                      <div className="text-sm font-semibold text-white">{r.label}</div>
-                      <div className="text-[11px] text-neutral-500 mt-0.5">{r.blurb}</div>
-                    </button>
-                  ))}
+              <div className="space-y-2">
+                <div className="flex items-baseline justify-between">
+                  <label className="label-standard">Capabilities</label>
+                  {policyPreview && (
+                    <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest">
+                      <span className="text-neutral-500">Aggregate risk</span>
+                      <span className={`status-badge ${RISK_LABEL_STYLES[policyPreview.risk_level] || RISK_LABEL_STYLES.low}`}>
+                        {policyPreview.risk_level} · {policyPreview.risk_score_pct}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {CAPABILITIES.map((c) => {
+                    const Icon = c.icon;
+                    const selected = capabilities.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setCapabilities((prev) =>
+                            prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                          );
+                        }}
+                        className={
+                          'text-left p-3 rounded-xl border transition-all flex gap-3 items-start ' +
+                          (selected
+                            ? 'border-white bg-white/[0.06]'
+                            : 'border-white/[0.07] bg-[#0a0a0a] hover:border-white/20')
+                        }
+                      >
+                        <div className={
+                          'w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5 ' +
+                          (selected ? 'bg-white text-black' : 'bg-white/[0.05] text-neutral-300')
+                        }>
+                          <Icon size={14} aria-hidden="true" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-white">{c.label}</span>
+                            {selected && <Check size={13} className="text-white shrink-0" aria-hidden="true" />}
+                          </div>
+                          <div className="text-[11px] text-neutral-500 mt-0.5 leading-snug">{c.blurb}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+
+              {/* Live preview of the policies Aegis will turn on */}
+              {policyPreview && policyPreview.policies_enabled?.length > 0 && (
+                <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-neutral-500">
+                    <Workflow size={11} aria-hidden="true" />
+                    <span>Policies Aegis will enable for this agent</span>
+                    <span className="ml-auto text-neutral-400">{policyPreview.policies_enabled.length}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {policyPreview.policies_enabled.map((p) => (
+                      <span
+                        key={p}
+                        className="inline-flex items-center gap-1 text-[10px] text-neutral-200 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] font-mono"
+                      >
+                        <Shield size={9} className="text-neutral-500" />
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {policyPreview && policyPreview.policies_enabled?.length === 0 && (
+                <div className="rounded-xl border border-neutral-700 bg-neutral-900/40 p-3 text-[11px] text-neutral-500">
+                  No capabilities selected — Aegis will still log every tool call,
+                  but no runtime gate will fire. Pick at least one capability above
+                  to enable a policy set.
+                </div>
+              )}
 
               <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3 flex gap-3">
                 <Lock size={14} className="text-amber-400 mt-0.5 shrink-0" aria-hidden="true" />
