@@ -39,6 +39,7 @@ from services.gateway.client import service_client
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
 from services.gateway import proxy_helpers
+from services.gateway._helpers import publish_event
 from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
@@ -294,6 +295,24 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                 },
                 request_id=approval_id,
             )
+            # Real-time UI feed: mirror messages.py — surface OpenAI-proxy
+            # escalations on the per-tenant SSE channel so /events/stream
+            # consumers update without a poll.
+            try:
+                await publish_event(
+                    redis, tenant_id_str, "llm_proxy_escalate",
+                    {
+                        "approval_id":     approval_id,
+                        "approver_role":   esc_pattern.approver_role,
+                        "matched_pattern": esc_pattern.id,
+                        "policy_pack":     matched_pack_id,
+                        "employee_email":  employee_email,
+                        "model":           model,
+                        "upstream":        "openai",
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
             slack_url, slack_secret = await proxy_helpers.fetch_tenant_slack_config(
                 request, tenant_id_str,
             )
@@ -401,6 +420,26 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("openai_proxy_audit_failed", error=str(exc))
+
+        # Real-time UI feed — same channel as the Claude proxy so the
+        # Dashboard ticker fires regardless of upstream provider.
+        try:
+            await publish_event(
+                redis, tenant_id_str, "llm_proxy_call",
+                {
+                    "decision":        "allow" if upstream_resp.is_success else "error",
+                    "model":           model,
+                    "employee_email":  employee_email,
+                    "input_tokens":    usage_input,
+                    "output_tokens":   usage_output,
+                    "cost_usd":        call_cost,
+                    "status_code":     upstream_resp.status_code,
+                    "latency_ms":      int(latency_ms),
+                    "upstream":        "openai",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 9. passthrough
         return Response(

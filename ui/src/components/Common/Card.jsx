@@ -68,7 +68,9 @@ export default function Card({
         <div className="flex flex-col h-full">
           {title && (
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-xs font-bold text-white tracking-wide uppercase">{title}</h3>
+              {/* h2 keeps screen-reader hierarchy `h1 → h2` (page → section).
+                  Tailwind handles visual sizing so the SR tag is independent. */}
+              <h2 className="text-xs font-bold text-white tracking-wide uppercase">{title}</h2>
               {Icon && <Icon className="text-neutral-600 shrink-0" size={15} />}
             </div>
           )}

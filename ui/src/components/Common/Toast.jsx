@@ -52,9 +52,10 @@ export default function Toast({ message, type, onClose }) {
       </div>
       <button
         onClick={handleClose}
+        aria-label="Dismiss notification"
         className="flex-shrink-0 text-white/50 hover:text-white transition-colors"
       >
-        <X size={16} />
+        <X size={16} aria-hidden="true" />
       </button>
     </div>
   )

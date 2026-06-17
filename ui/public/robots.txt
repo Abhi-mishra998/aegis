@@ -1,0 +1,26 @@
+# Aegis SaaS console — robots policy.
+# The authenticated SPA shell is behind Clerk and serves the same
+# index.html on every route, so there is nothing useful to index.
+# Marketing surface (landing page) lives at /, anything under
+# /dashboard /settings /agents etc. is operator-only.
+
+User-agent: *
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /agents
+Disallow: /team
+Disallow: /audit-logs
+Disallow: /forensics
+Disallow: /flight-recorder
+Disallow: /approval-inbox
+Disallow: /policies
+Disallow: /incidents
+Disallow: /billing
+Disallow: /admin
+Disallow: /onboarding
+Disallow: /signup
+Disallow: /login
+Disallow: /api/
+Allow: /
+
+Sitemap: https://aegisagent.in/sitemap.xml

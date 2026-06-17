@@ -104,6 +104,43 @@ _PATTERNS: tuple[EscalationPattern, ...] = (
         ),
     ),
 
+    # ── Single-record PII lookup ─────────────────────────────────────
+    # Closes the gap surfaced by testing.md scenario D-OPEN: prompts like
+    # "what is the SSN for customer 123-45-6789" weren't caught by the
+    # bulk regex because they target one record, not a bulk export. A
+    # single-customer SSN/account/DOB lookup is still a PII exposure
+    # that an LLM agent should not autonomously make on behalf of an
+    # employee — kick it to a CISO read.
+    EscalationPattern(
+        id="single_record_pii_lookup",
+        label="Single-record PII lookup (CISO approval)",
+        approver_role="CISO",
+        pattern=re.compile(
+            # Two equivalent shapes (alternation):
+            #   1. "(verb) … (PII noun) … (for|of) … (customer|user|…)"
+            #   2. "what (is|are) the (PII noun) (for|of) (customer|user|…)"
+            r"\b("
+            r"(?:show|get|look\s*up|lookup|tell\s+me|give\s+me|retrieve|fetch|find|"
+            r"display|print|output)\b"
+            r"(?:\s+\w+){0,8}\s+"
+            r"(?:ssn|social\s+security|tax\s*id|tin|"
+            r"date\s+of\s+birth|d\.?o\.?b\.?|"
+            r"credit\s+card|cc\s+number|account\s+number|bank\s+account|"
+            r"passport(?:\s+number)?|driver'?s?\s+licen[cs]e|"
+            r"medical\s+record|patient\s+(?:id|record)|health\s+record|"
+            r"home\s+address|full\s+(?:address|profile|name\s+and\s+\w+))\b"
+            r"|"
+            r"\bwhat\s+(?:is|are)\s+(?:the\s+)?"
+            r"(?:ssn|social\s+security(?:\s+number)?|tax\s*id|tin|"
+            r"date\s+of\s+birth|d\.?o\.?b\.?|"
+            r"credit\s+card|cc\s+number|account\s+number|bank\s+account|"
+            r"passport(?:\s+number)?|driver'?s?\s+licen[cs]e|"
+            r"medical\s+record|patient\s+(?:id|record))\b"
+            r")",
+            re.IGNORECASE,
+        ),
+    ),
+
     # ── Sensitive file access ────────────────────────────────────────
     # Note: /etc/passwd / id_rsa / .aws/credentials are already DENIED
     # by the path-traversal detector in the tool-call path. This rule
