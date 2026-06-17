@@ -491,6 +491,16 @@ export const registryService = {
   getProfile: (id) => request(`/agents/${id}/profile`),
   wizard: (data) =>
     request("/agents/wizard", { method: "POST", body: JSON.stringify(data) }),
+  // Sprint 13 — capability catalog the wizard renders as a checkbox grid.
+  wizardCapabilities: () => request("/agents/wizard/capabilities"),
+  // Sprint 13 — live preview of the policies that will fire for a
+  // capability selection. Called every time the operator ticks /
+  // unticks a box.
+  wizardPolicyPreview: (capabilities) =>
+    request(
+      "/agents/wizard/policy-preview?capabilities=" +
+        encodeURIComponent((capabilities || []).join(",")),
+    ),
   installSnippet: (agentId, provider, aegisApiKey) =>
     request(
       `/agents/wizard/install-snippet/${agentId}/${provider}` +

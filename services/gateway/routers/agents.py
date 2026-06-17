@@ -152,6 +152,30 @@ async def wizard_install_snippet(agent_id: str, provider: str, request: Request)
     )
 
 
+# Sprint 13 — capability catalog + live policy preview the wizard
+# Step-2 grid pulls every render. Both proxy straight through to
+# registry-svc; they're declared BEFORE the catch-all /agents/{id}
+# so FastAPI doesn't parse 'wizard' as an agent UUID.
+@router.get("/agents/wizard/capabilities", tags=["agents", "wizard"])
+async def wizard_capabilities(request: Request) -> Any:
+    return await trust_proxy(
+        settings.REGISTRY_SERVICE_URL,
+        "/agents/wizard/capabilities",
+        request,
+    )
+
+
+@router.get("/agents/wizard/policy-preview", tags=["agents", "wizard"])
+async def wizard_policy_preview(request: Request) -> Any:
+    qs = request.url.query
+    path = "/agents/wizard/policy-preview" + (f"?{qs}" if qs else "")
+    return await trust_proxy(
+        settings.REGISTRY_SERVICE_URL,
+        path,
+        request,
+    )
+
+
 # Specific paths /agents/summary + /registry/tools must precede the
 # catch-all /agents/{agent_id} so FastAPI doesn't match "summary" or
 # "tools" as an agent_id.
