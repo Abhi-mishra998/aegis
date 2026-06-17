@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthContext } from './context/AuthContext';
 import { AgentProvider } from './context/AgentContext';
@@ -11,72 +11,72 @@ import { useHotkeys } from './hooks/useHotkeys';
 import { onAuthFailure } from './lib/authEvents';
 import { clearSessionMetadata } from './services/api';
 
-import Login from './pages/Login';
-import Signup from './pages/Signup';
-import OnboardingWizard from './pages/OnboardingWizard';
-import ShadowModeReview from './pages/ShadowModeReview';
+// Critical-path imports — first paint cost.
+// Dashboard is the Lighthouse LCP target so it stays eager; the auth-bridge
+// must mount synchronously so ClerkAuthBridge can mirror the session into
+// AuthContext before any ProtectedRoute decides to redirect to /login.
 import Dashboard from './pages/Dashboard';
-import Policies from './pages/Policies';
-import AgentSnapshot from './pages/AgentSnapshot';
-import ThreatGraph from './pages/ThreatGraph';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
-import Settings from './pages/Settings';
-import Agents from './pages/Agents';
-import KillSwitch from './pages/KillSwitch';
-import Forensics from './pages/Forensics';
-import AuditLogs from './pages/AuditLogs';
-import Billing from './pages/Billing';
-import SecurityDashboard from './pages/SecurityDashboard';
-import RiskEngine from './pages/RiskEngine';
-import AgentPlayground from './pages/AgentPlayground';
-import DeveloperPanel from './pages/DeveloperPanel';
-import Observability from './pages/Observability';
-import SystemHealth from './pages/SystemHealth';
-import IdentityGraph from './pages/IdentityGraph';
-import FlightRecorder from './pages/FlightRecorder';
-import AutonomyContracts from './pages/AutonomyContracts';
-import PolicyBuilder from './pages/PolicyBuilder';
-import RBAC from './pages/RBAC';
-import Incidents from './pages/Incidents';
-import AttackSimulation from './pages/AttackSimulation';
-import AutoResponse from './pages/AutoResponse';
-import Compliance from './pages/Compliance';
-import WebhookSettings from './pages/WebhookSettings';
-import AdminConsole from './pages/AdminConsole';
-import SiemSettings from './pages/SiemSettings';
-import PolicyAnalytics from './pages/PolicyAnalytics';
-import ScheduledReports from './pages/ScheduledReports';
-import ThreatIntel from './pages/ThreatIntel';
-import QuotaManagement from './pages/QuotaManagement';
-import AgentProfile from './pages/AgentProfile';
-import SsoSettings from './pages/SsoSettings';
-import Notifications from './pages/Notifications';
-import LiveFeed from './pages/LiveFeed';
-import PolicySim from './pages/PolicySim';
-import UserManagement from './pages/UserManagement';
-import Playbooks from './pages/Playbooks';
-// Sprint 17 — Aegis for Teams (per-employee LLM proxy + spend rollup)
-import Team from './pages/Team';
-import EmployeeProfile from './pages/EmployeeProfile';
-import Replay from './pages/Replay';
-import Landing from './pages/Landing';
-// Sprint 3 — Decision Explorer + Session Explorer
-import DecisionExplorer from './pages/DecisionExplorer';
-import SessionExplorer from './pages/SessionExplorer';
-// Sprint 4 — Fleet dashboards + Agent FinOps + Topology
-import Fleet from './pages/Fleet';
-import AgentHealth from './pages/AgentHealth';
-import AgentCost from './pages/AgentCost';
-import AgentTopology from './pages/AgentTopology';
-// Sprint 5 — Attack Evaluation Suite
-import Evaluation from './pages/Evaluation';
-// Sprint 6 — Shadow-mode policies + online evaluation
-import ShadowMode from './pages/ShadowMode';
-// Sprint 7 — Policy Playground
-import PolicyPlayground from './pages/PolicyPlayground';
-// Days 70-90 — Approval Inbox (operator surface for ESCALATE actions)
-import ApprovalInbox from './pages/ApprovalInbox';
 import Toast from './components/Common/Toast';
+
+// Lazy-loaded routes — split into their own chunks so the initial /dashboard
+// load doesn't pay for FlightRecorder, IdentityGraph, Policies, etc.
+// Order preserved from the original eager list for review.
+const Login              = lazy(() => import('./pages/Login'));
+const Signup             = lazy(() => import('./pages/Signup'));
+const OnboardingWizard   = lazy(() => import('./pages/OnboardingWizard'));
+const ShadowModeReview   = lazy(() => import('./pages/ShadowModeReview'));
+const Policies           = lazy(() => import('./pages/Policies'));
+const AgentSnapshot      = lazy(() => import('./pages/AgentSnapshot'));
+const ThreatGraph        = lazy(() => import('./pages/ThreatGraph'));
+const Settings           = lazy(() => import('./pages/Settings'));
+const Agents             = lazy(() => import('./pages/Agents'));
+const KillSwitch         = lazy(() => import('./pages/KillSwitch'));
+const Forensics          = lazy(() => import('./pages/Forensics'));
+const AuditLogs          = lazy(() => import('./pages/AuditLogs'));
+const Billing            = lazy(() => import('./pages/Billing'));
+const SecurityDashboard  = lazy(() => import('./pages/SecurityDashboard'));
+const RiskEngine         = lazy(() => import('./pages/RiskEngine'));
+const AgentPlayground    = lazy(() => import('./pages/AgentPlayground'));
+const DeveloperPanel     = lazy(() => import('./pages/DeveloperPanel'));
+const Observability      = lazy(() => import('./pages/Observability'));
+const SystemHealth       = lazy(() => import('./pages/SystemHealth'));
+const IdentityGraph      = lazy(() => import('./pages/IdentityGraph'));
+const FlightRecorder     = lazy(() => import('./pages/FlightRecorder'));
+const RBAC               = lazy(() => import('./pages/RBAC'));
+const Incidents          = lazy(() => import('./pages/Incidents'));
+const AttackSimulation   = lazy(() => import('./pages/AttackSimulation'));
+const AutoResponse       = lazy(() => import('./pages/AutoResponse'));
+const Compliance         = lazy(() => import('./pages/Compliance'));
+const WebhookSettings    = lazy(() => import('./pages/WebhookSettings'));
+const AdminConsole       = lazy(() => import('./pages/AdminConsole'));
+const SiemSettings       = lazy(() => import('./pages/SiemSettings'));
+const ScheduledReports   = lazy(() => import('./pages/ScheduledReports'));
+const ThreatIntel        = lazy(() => import('./pages/ThreatIntel'));
+const QuotaManagement    = lazy(() => import('./pages/QuotaManagement'));
+const SsoSettings        = lazy(() => import('./pages/SsoSettings'));
+const Notifications      = lazy(() => import('./pages/Notifications'));
+const LiveFeed           = lazy(() => import('./pages/LiveFeed'));
+const UserManagement     = lazy(() => import('./pages/UserManagement'));
+const Playbooks          = lazy(() => import('./pages/Playbooks'));
+const Team               = lazy(() => import('./pages/Team'));
+const EmployeeProfile    = lazy(() => import('./pages/EmployeeProfile'));
+const Replay             = lazy(() => import('./pages/Replay'));
+const Landing            = lazy(() => import('./pages/Landing'));
+const DecisionExplorer   = lazy(() => import('./pages/DecisionExplorer'));
+const SessionExplorer    = lazy(() => import('./pages/SessionExplorer'));
+const Fleet              = lazy(() => import('./pages/Fleet'));
+const Evaluation         = lazy(() => import('./pages/Evaluation'));
+const ShadowMode         = lazy(() => import('./pages/ShadowMode'));
+const ApprovalInbox      = lazy(() => import('./pages/ApprovalInbox'));
+
+// Lightweight fallback while the route chunk streams in.
+const RouteFallback = () => (
+  <div className="flex items-center justify-center min-h-[60vh]" role="status" aria-live="polite">
+    <div className="h-8 w-8 rounded-full border-2 border-slate-700 border-t-slate-300 animate-spin" />
+    <span className="sr-only">Loading…</span>
+  </div>
+);
 
 // Auth state is based on session metadata (tenant_id + expiry), not the token itself.
 // The JWT lives exclusively in the httpOnly cookie.
@@ -289,6 +289,7 @@ function App() {
                 Clerk-specific rewrite of every consumer. */}
             <ClerkAuthBridge />
 
+            <Suspense fallback={<RouteFallback />}>
             <Routes>
               {/* Clerk's <SignIn /> / <SignUp /> components own sub-routes
                   (e.g. /signup/verify-email-address) — the `/*` is required. */}
@@ -394,6 +395,7 @@ function App() {
 
               <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>
+            </Suspense>
 
             {/* Command palette — inside BrowserRouter so useNavigate() has context */}
             <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />

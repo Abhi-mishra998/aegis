@@ -9,7 +9,13 @@ import { auditService } from '../services/api'
 import { AgentContext } from '../context/AgentContext'
 
 const EVENT_META = {
-  risk_updated:       { label: 'Risk Update',      color: 'text-amber-400',  dot: 'bg-amber-500',  border: 'border-amber-500/20' },
+  // LLM-proxy events from /v1/messages + /v1/chat/completions.
+  // Aegis publishes these on every Claude / OpenAI call so the feed shows
+  // real traffic, not just /execute tool-calls.
+  llm_proxy_call:     { label: 'LLM Call',          color: 'text-sky-400',    dot: 'bg-sky-500',    border: 'border-sky-500/20' },
+  llm_proxy_escalate: { label: 'Approval Queued',   color: 'text-amber-400',  dot: 'bg-amber-500',  border: 'border-amber-500/20' },
+  // Existing /execute tool-call + signal-engine events.
+  risk_updated:       { label: 'Risk Update',       color: 'text-amber-400',  dot: 'bg-amber-500',  border: 'border-amber-500/20' },
   tool_executed:      { label: 'Tool Executed',     color: 'text-blue-400',   dot: 'bg-blue-500',   border: 'border-blue-500/20' },
   policy_decision:    { label: 'Policy Decision',   color: 'text-purple-400', dot: 'bg-purple-500', border: 'border-purple-500/20' },
   alert:              { label: 'Security Alert',    color: 'text-red-400',    dot: 'bg-red-500',    border: 'border-red-500/20' },
@@ -59,6 +65,13 @@ function ConnectionBadge({ state, lastError }) {
 
 function EventRow({ ev, onInvestigate }) {
   const meta = EVENT_META[ev.type] ?? EVENT_META.alert
+  const isLLMCall  = ev.type === 'llm_proxy_call'
+  const isEscalate = ev.type === 'llm_proxy_escalate'
+  // Decision pill colour: deny → red, escalate → amber, allow → green.
+  const decisionColour =
+    ev.data?.decision === 'deny'     ? 'border-red-500/30 text-red-400' :
+    isEscalate                       ? 'border-amber-500/30 text-amber-400' :
+                                       'border-green-500/30 text-green-400'
   return (
     <div className={`group flex items-start gap-3 px-4 py-3 border-b border-[var(--border-subtle)] hover:bg-white/[0.02] transition-colors`}>
       <div className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${meta.dot} ${ev.fresh ? 'animate-pulse' : ''}`} aria-hidden="true" />
@@ -66,12 +79,41 @@ function EventRow({ ev, onInvestigate }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span className={`text-[10px] font-bold uppercase tracking-wider ${meta.color}`}>{meta.label}</span>
-          {ev.data?.decision && (
-            <span className={`text-[10px] px-1.5 py-0 rounded border font-mono ${ev.data.decision === 'deny' ? 'border-red-500/30 text-red-400' : 'border-green-500/30 text-green-400'}`}>
-              {ev.data.decision}
+          {(ev.data?.decision || isEscalate) && (
+            <span className={`text-[10px] px-1.5 py-0 rounded border font-mono ${decisionColour}`}>
+              {isEscalate ? 'escalate' : ev.data.decision}
+            </span>
+          )}
+          {ev.data?.model && (
+            <span className="text-[10px] px-1.5 py-0 rounded border border-white/10 text-neutral-400 font-mono truncate max-w-[180px]">
+              {ev.data.model}
             </span>
           )}
         </div>
+        {/* LLM-proxy traffic: surface who called what, how much, how long. */}
+        {(isLLMCall || isEscalate) && ev.data?.employee_email && (
+          <p className="text-[11px] text-neutral-400 font-mono truncate">
+            {ev.data.employee_email}
+          </p>
+        )}
+        {isLLMCall && (ev.data?.input_tokens != null || ev.data?.output_tokens != null) && (
+          <p className="text-[11px] text-neutral-500 font-mono">
+            {ev.data.input_tokens ?? 0} in · {ev.data.output_tokens ?? 0} out
+            {ev.data?.latency_ms != null && (
+              <> · <span className={Number(ev.data.latency_ms) > 1500 ? 'text-amber-400' : ''}>{ev.data.latency_ms} ms</span></>
+            )}
+            {ev.data?.cost_usd != null && Number(ev.data.cost_usd) > 0 && (
+              <> · ${Number(ev.data.cost_usd).toFixed(4)}</>
+            )}
+          </p>
+        )}
+        {isEscalate && ev.data?.matched_pattern && (
+          <p className="text-[11px] text-amber-300/80 font-mono truncate">
+            {ev.data.matched_pattern}
+            {ev.data?.approver_role && <span className="text-neutral-500"> → {ev.data.approver_role}</span>}
+          </p>
+        )}
+        {/* Legacy /execute pipeline events. */}
         {ev.data?.agent_id && (
           <p className="text-[11px] text-neutral-500 font-mono">
             Agent: {ev.data.agent_id?.slice(0, 16)}
@@ -92,13 +134,16 @@ function EventRow({ ev, onInvestigate }) {
 
       <div className="shrink-0 text-right flex flex-col items-end gap-1.5">
         <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(ev.ts)}</span>
-        {ev.data?.agent_id && (
+        {(ev.data?.agent_id || ev.data?.approval_id) && (
           <button
             onClick={() => onInvestigate(ev)}
-            className="opacity-0 group-hover:opacity-100 text-[10px] text-neutral-500 hover:text-white flex items-center gap-1 transition-all"
-            aria-label="Investigate in Forensics"
+            // Always visible (not just on hover) so operators don't have to
+            // discover the action — enterprise-grade UI: surface the next
+            // step, don't hide it.
+            className="text-[10px] text-neutral-400 hover:text-white flex items-center gap-1 transition-all"
+            aria-label={isEscalate ? "Open approval inbox" : "Investigate in Forensics"}
           >
-            Investigate <ChevronRight size={10} />
+            {isEscalate ? 'Review' : 'Investigate'} <ChevronRight size={10} />
           </button>
         )}
       </div>
@@ -224,6 +269,13 @@ export default function LiveFeed() {
   }
 
   const investigate = (ev) => {
+    // Approval-shaped escalations → operator's Approval Inbox; tool-call
+    // events → Forensics with the agent prefilter; otherwise general
+    // Forensics landing.
+    if (ev.type === 'llm_proxy_escalate' && ev.data?.approval_id) {
+      navigate(`/approval-inbox?id=${encodeURIComponent(ev.data.approval_id)}`)
+      return
+    }
     const agentId = ev.data?.agent_id
     if (agentId) navigate(`/forensics?agent=${agentId}`)
     else navigate('/forensics')

@@ -21,7 +21,9 @@
 
   --text-main: #ffffff;
   --text-muted: #a1a1aa;
-  --text-dim: #52525b;
+  /* Lighthouse contrast audit: #52525b on #0a0a0a was 3.93:1 (fails AA).
+     #737373 = neutral-500 gives ~5.10:1 — passes AA for normal text. */
+  --text-dim:  #737373;
 
   --accent-success: #22c55e;
   --accent-warning: #f59e0b;
@@ -610,8 +612,12 @@
 }
 
 @keyframes pulseCritical {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(239, 68, 68, 0.5); }
-  50%       { opacity: 0.6; box-shadow: 0 0 16px rgba(239, 68, 68, 0.8); }
+  /* Animate opacity only — box-shadow forces a paint every frame and
+     keeps the layer off the compositor (Lighthouse "20 non-composited
+     animations"). Use a static shadow via the element's `box-shadow`
+     class if a glow is required. */
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
 }
 
 @keyframes spin {

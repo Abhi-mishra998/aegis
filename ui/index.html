@@ -4,8 +4,19 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0a0a" />
     <title>Aegis — AI governance & runtime security platform</title>
     <meta name="description" content="Aegis sits between AI agents and the systems they control — enforcing policy, requiring approvals, tracking usage, and generating cryptographically verifiable audit trails." />
+
+    <!--
+      Clerk's session check fires the moment React mounts. Pre-warming DNS
+      + TLS on the Clerk hosts shaves ~150 ms off the first auth round-trip
+      (Lighthouse "render-blocking requests" insight on /dashboard).
+    -->
+    <link rel="preconnect" href="https://clerk.aegisagent.in" crossorigin />
+    <link rel="dns-prefetch" href="https://clerk.aegisagent.in" />
+    <link rel="preconnect" href="https://clerk-telemetry.com" crossorigin />
+    <link rel="dns-prefetch" href="https://clerk-telemetry.com" />
   </head>
   <body class="bg-[#0a0a0a] text-slate-100 font-sans selection:bg-white selection:text-black antialiased">
     <div id="root"></div>

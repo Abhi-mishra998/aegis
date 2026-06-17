@@ -43,12 +43,17 @@ const primaryNav = [
   { path: '/live-feed',       label: 'Live Feed',  icon: Radio,         hint: 'G L' },
 
   { kind: 'section', label: 'Protect',     icon: Shield },
-  { path: '/agents',          label: 'Agents',     icon: Bot,           hint: 'G A' },
-  { path: '/incidents',       label: 'Incidents',  icon: AlertTriangle, hint: 'G I' },
-  { path: '/policies',        label: 'Policies',   icon: GitMerge,      hint: 'G P' },
+  { path: '/agents',          label: 'Agents',         icon: Bot,           hint: 'G A' },
+  { path: '/incidents',       label: 'Incidents',      icon: AlertTriangle, hint: 'G I' },
+  { path: '/policies',        label: 'Policies',       icon: GitMerge,      hint: 'G P' },
+  // Approval Inbox is the human-in-the-loop surface for the 202 escalate
+  // flow (testing.md scenario C). It MUST be visible in primary nav —
+  // not hidden under "Advanced" — so operators can find pending
+  // wire-transfer / PII / kubectl-prod requests without hunting.
+  { path: '/approval-inbox',  label: 'Approval Inbox', icon: Inbox,         hint: 'G Q' },
 
   { kind: 'section', label: 'Prove',       icon: ShieldCheck },
-  { path: '/compliance',      label: 'Compliance', icon: ShieldCheck,   hint: 'G C' },
+  { path: '/compliance',      label: 'Compliance',     icon: ShieldCheck,   hint: 'G C' },
 
   { kind: 'section', label: 'Workspace',   icon: SettingsIcon },
   { path: '/settings',        label: 'Settings',   icon: SettingsIcon,  hint: 'G S' },
@@ -70,14 +75,13 @@ const advancedNav = [
   { path: '/flight-recorder',   label: 'Flight Recorder',  icon: Film,     hint: 'G F' },
   { path: '/decision-explorer', label: 'Decision Explorer', icon: Workflow, hint: 'G E' },
   { path: '/session-explorer',  label: 'Session Explorer', icon: MessagesSquare },
-  { path: '/approval-inbox',    label: 'Approval Inbox',   icon: Inbox     },
   { path: '/fleet',             label: 'Fleet',            icon: HeartPulse },
 ]
 
 const adminNav = [
+  // Compliance was duplicated here; it lives in primaryNav (Prove section).
   { path: '/system-health', label: 'System Health', icon: HeartPulse },
   { path: '/billing',       label: 'Billing',       icon: CreditCard },
-  { path: '/compliance',    label: 'Compliance',    icon: Shield     },
 ]
 
 const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power, danger: true }

@@ -37,5 +37,24 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        // Split heavy vendor libs into their own chunks so /dashboard FCP
+        // doesn't pay for reactflow + recharts + livekit that only fire on
+        // /identity-graph, /agent-cost, /voice-agent respectively.
+        manualChunks: (id) => {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('reactflow') || id.includes('@reactflow')) return 'vendor-reactflow'
+          if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts'
+          if (id.includes('@livekit') || id.includes('livekit-client')) return 'vendor-livekit'
+          if (id.includes('@clerk')) return 'vendor-clerk'
+          if (id.includes('lucide-react')) return 'vendor-icons'
+          if (id.includes('react-router')) return 'vendor-router'
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'vendor-react'
+          return 'vendor'
+        },
+      },
+    },
   },
 })

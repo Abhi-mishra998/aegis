@@ -43,7 +43,7 @@ from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
 from services.gateway.anthropic_pricing import cost_usd
 from services.gateway.client import service_client
-from services.gateway._helpers import internal_headers
+from services.gateway._helpers import internal_headers, publish_event
 from services.gateway.inference_proxy import InjectionDetector
 from services.gateway import escalation_patterns
 from services.gateway import slack_approvals
@@ -380,6 +380,26 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                 request_id=approval_id,
             )
 
+            # Real-time UI feed: push the escalation onto the per-tenant SSE
+            # channel so /events/stream subscribers (Dashboard, ApprovalInbox,
+            # NotificationCenter) light up the moment a CFO/CISO approval is
+            # queued, not on the next dashboard poll. Best-effort: SSE failure
+            # never blocks the 202.
+            try:
+                await publish_event(
+                    redis, tenant_id_str, "llm_proxy_escalate",
+                    {
+                        "approval_id":     approval_id,
+                        "approver_role":   esc_pattern.approver_role,
+                        "matched_pattern": esc_pattern.id,
+                        "policy_pack":     matched_pack_id,
+                        "employee_email":  employee_email,
+                        "model":           model,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
             # Sprint 21 — if the tenant has Slack approvals configured,
             # fire the webhook card with HMAC-signed Approve / Reject
             # links. Best-effort; the in-app Inbox is unaffected.
@@ -486,6 +506,27 @@ async def proxy_anthropic_messages(request: Request) -> Response:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("llm_proxy_audit_failed", error=str(exc))
+
+        # Real-time UI feed for allow / error paths. Same channel as the
+        # escalate publish above so the Dashboard "Live · N events"
+        # ticker increments on every Claude proxy call, not just the
+        # /execute path.
+        try:
+            await publish_event(
+                redis, tenant_id_str, "llm_proxy_call",
+                {
+                    "decision":        "allow" if upstream_resp.is_success else "error",
+                    "model":           model,
+                    "employee_email":  employee_email,
+                    "input_tokens":    usage_input,
+                    "output_tokens":   usage_output,
+                    "cost_usd":        call_cost,
+                    "status_code":     upstream_resp.status_code,
+                    "latency_ms":      int(latency_ms),
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 9. return upstream verbatim so the Anthropic SDK can't tell
         # we're in the middle.
