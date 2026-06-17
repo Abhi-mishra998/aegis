@@ -40,7 +40,11 @@ services:
   # PGBouncer (Production-Ready Config)
   # ─────────────────────────────────────────
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    # U12 2026-06-17 — pinned (was edoburu/pgbouncer:latest). Floating tag
+    # means upstream pgbouncer/alpine bumps could land via `docker compose
+    # pull` and break the userlist/pgbouncer.ini contract silently.
+    # TODO pin: 2026-Q3 — revisit and bump to current stable.
+    image: edoburu/pgbouncer:1.23.1
     container_name: acp_pgbouncer
     # Using mounted config for production reliability
     volumes:
@@ -100,7 +104,11 @@ services:
 
   opa:
     # debug image ships busybox (wget) — required for healthcheck in distroless-based builds
-    image: openpolicyagent/opa:latest-debug
+    # U12 2026-06-17 — pinned (was openpolicyagent/opa:latest-debug).
+    # Floating tag pulls would silently swap rego semantics across minor
+    # OPA versions. 0.69.0 is the current stable line.
+    # TODO pin: 2026-Q3 — revisit and bump to current stable.
+    image: openpolicyagent/opa:0.69.0-debug
 
     container_name: acp_opa
     ports:
@@ -471,19 +479,24 @@ services:
     volumes:
       - ../services:/app/services:ro
       - ../sdk:/app/sdk:ro
+    # U12 2026-06-17 — service_started→service_healthy on all 6 deps so the
+    # gateway waits for downstream /health to flip green before accepting
+    # traffic. Half-booted deps were silently breaking the request fan-out
+    # during cold start. All 6 services already declare healthcheck blocks
+    # (identity, policy, audit, api, usage, decision).
     depends_on:
       identity:
-        condition: service_started
+        condition: service_healthy
       policy:
-        condition: service_started
+        condition: service_healthy
       audit:
-        condition: service_started
+        condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
       usage:
-        condition: service_started
+        condition: service_healthy
       decision:
-        condition: service_started
+        condition: service_healthy
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
