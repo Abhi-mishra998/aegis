@@ -166,6 +166,8 @@ For SDK callers, the SDK transparently refreshes the token on 401 if it has a re
 
 ## Next
 
+- [Clerk Authentication](clerk-setup.md) — the RS256 path for browser SaaS users + the HS256-with-Clerk-iss downgrade guard
+- [API Keys](api-keys.md) — `acp_emp_<digits>` employee keys, daily/monthly budgets, revoke → next-call 401
 - [Identity service](../services/identity.md) — implementation detail
 - [Gateway service](../services/gateway.md) — the validator at stage 1
 - [RBAC Roles](rbac-roles.md) — the role matrix this JWT carries
