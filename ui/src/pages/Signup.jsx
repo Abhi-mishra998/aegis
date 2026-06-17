@@ -58,11 +58,12 @@ export default function Signup() {
           </div>
           <div className="text-center space-y-1.5">
             <h1 className="text-2xl font-bold tracking-tight text-white">
-              Create your workspace
+              Govern your AI agents
             </h1>
-            <p className="text-xs text-neutral-400 leading-relaxed max-w-[280px] mx-auto">
-              Aegis protects your AI agents in shadow mode for the first 14
-              days. No production breakage. Block when you're ready.
+            <p className="text-xs text-neutral-400 leading-relaxed max-w-[300px] mx-auto">
+              Allow, deny, escalate or require approval on every agent action.
+              14-day shadow mode by default — no production breakage. Block
+              when you're ready.
             </p>
           </div>
         </div>

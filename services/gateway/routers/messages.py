@@ -1050,8 +1050,41 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
     except httpx.HTTPError as exc:
         logger.warning("dashboard_inventory_failed", error=str(exc))
 
-    # 2. /logs — every audit row in the last 30 days. Same WAF-safe
-    # GET-/logs contract as /team/overview.
+    # 2a. /logs/aggregate — server-side decision counts. Authoritative
+    # for the mandate KPIs even on tenants with millions of rows. Used
+    # to be a single /logs fetch capped at 1000 rows — that read as a
+    # floor not a count on busy tenants.
+    agg_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/aggregate"
+    actions_evaluated = 0
+    allowed = denied = escalated = 0
+    findings_count = 0
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            agg_resp = await client.get(
+                agg_url,
+                params={"days": 30},
+                headers=headers,
+            )
+        agg_body = agg_resp.json() if agg_resp.status_code == 200 else {}
+        agg_data = agg_body.get("data") if isinstance(agg_body, dict) else None
+        if isinstance(agg_data, dict):
+            actions_evaluated = int(agg_data.get("total") or 0)
+            decisions = agg_data.get("by_decision") or {}
+            allowed   = int(decisions.get("allow") or 0)
+            denied    = (
+                int(decisions.get("deny") or 0)
+                + int(decisions.get("block") or 0)
+                + int(decisions.get("kill")  or 0)
+            )
+            escalated      = int(decisions.get("escalate") or 0)
+            findings_count = int(agg_data.get("with_findings") or 0)
+    except httpx.HTTPError as exc:
+        logger.warning("dashboard_aggregate_failed", error=str(exc))
+
+    # 2b. /logs — per-row pull capped at 1000 for the business-value
+    # rollup (sum of row_count + amount_usd + distinct findings prefix
+    # set). The dollar + records figures stay lower-bound on tenants
+    # past 1000 rows, but the mandate KPI integers above are accurate.
     proxy_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs"
     rows: list[dict] = []
     try:
@@ -1070,24 +1103,13 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
     except httpx.HTTPError as exc:
         logger.warning("dashboard_audit_failed", error=str(exc))
 
-    # 3. Aggregate.
-    actions_evaluated = 0
-    allowed = denied = escalated = 0
-    findings_count = 0
+    # 3. Per-row business-value aggregate.
     records_protected = 0
     dollar_risk = 0.0
     distinct_controls: set[str] = set()
 
     for r in rows:
-        actions_evaluated += 1
         decision = (r.get("decision") or "").lower()
-        if decision == "allow":
-            allowed += 1
-        elif decision in ("deny", "block", "kill"):
-            denied += 1
-        elif decision == "escalate":
-            escalated += 1
-
         meta = r.get("metadata_json") or r.get("metadata") or {}
         if isinstance(meta, str):
             try:
@@ -1097,12 +1119,14 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
                 meta = {}
 
         findings = meta.get("findings") if isinstance(meta, dict) else None
-        if findings:
-            findings_count += 1
-            if isinstance(findings, list):
-                for f in findings:
-                    if isinstance(f, str):
-                        distinct_controls.add(f.split(":", 1)[0])
+        if findings and isinstance(findings, list):
+            # Note: findings_count is sourced from /logs/aggregate
+            # above (server-side, not capped). Here we only mine the
+            # set of distinct controls/signal-class prefixes for the
+            # business-value 'Controls enforced' tile.
+            for f in findings:
+                if isinstance(f, str):
+                    distinct_controls.add(f.split(":", 1)[0])
 
         if decision in ("deny", "block", "kill", "escalate") and isinstance(meta, dict):
             # records_protected_estimate — sum of row_count / dump_size

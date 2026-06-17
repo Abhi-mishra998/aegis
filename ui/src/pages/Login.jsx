@@ -58,10 +58,11 @@ export default function Login() {
           </div>
           <div className="text-center space-y-1.5">
             <h1 className="text-2xl font-bold tracking-tight text-white">
-              AgentControl
+              Aegis
             </h1>
-            <p className="text-xs text-neutral-400 leading-relaxed max-w-[260px] mx-auto">
-              Tamper-evident replay + runtime deny for AI agents.
+            <p className="text-xs text-neutral-400 leading-relaxed max-w-[280px] mx-auto">
+              AI governance & runtime security. Policy, approvals, and a
+              cryptographically verifiable audit trail for every agent action.
             </p>
           </div>
         </div>
