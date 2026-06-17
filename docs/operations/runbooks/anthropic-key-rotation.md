@@ -1,108 +1,138 @@
-# Anthropic Upstream API-Key Rotation
+# Runbook: Anthropic API Key Rotation
 
-The `/v1/messages` Aegis proxy forwards to `api.anthropic.com` using one
-corporate Anthropic API key, stored in SSM at
-`/aegis-prodha/anthropic/upstream-key` and consumed by the gateway as
-the `UPSTREAM_ANTHROPIC_KEY` env var. This runbook is the procedure for
-rotating that key.
+## Scope
 
-## When to rotate
+Rotate the `ANTHROPIC_API_KEY` used by the gateway LLM router (`services/gateway/llm_router.py`) and any wizard-driven agent registrations (`services/registry/wizard.py:394`). This is the upstream Claude API credential — distinct from internal signing keys covered by [Key Rotation](../key-rotation.md).
 
-- Routine: every 90 days.
-- Immediately: any time the raw key value has appeared somewhere it
-  shouldn't (chat logs, support tickets, shared docs).
-- After offboarding any engineer with access to SSM SecureString reads
-  in `ap-south-1`.
+## Severity / cadence
 
-## Pre-requisites
+- **Routine rotation:** 90 days.
+- **Emergency rotation:** Immediately if the key is suspected leaked (commit accident, CI log dump, departing employee with access).
+- **Drill cadence:** 30 days — verify the rotation procedure runs end-to-end without disrupting in-flight traffic.
 
-- AWS CLI configured with the prod-ha admin profile
-  (`aws sts get-caller-identity` should return the prod account).
-- One operational `acp_emp_…` virtual key for the post-rotation smoke
-  test. Mint one via the Team page if you don't have one handy.
+## Oncall + paging
 
-## Procedure
+| Channel | Where |
+|---|---|
+| Slack | `#aegis-incidents` (announce rotation start + finish) |
+| PagerDuty | Only paged if emergency rotation; routine rotations are planned |
 
-### 1. Revoke the old key
+## Dashboards
 
-Console-only — there is no Anthropic Backend API to do this
-programmatically.
+- **Grafana → ACP Operations** (`acp-ops`) → "Behavior fail-CLOSED rate" and per-service p95 panels. LLM router upstream failures show up as 5xx on the gateway.
+- **Grafana → ACP Tenant Activity** (`acp-tenant-activity`) → "Inference cost blocked" panel; spikes after rotation usually mean a service still has the old key cached.
 
-1. Sign in at https://console.anthropic.com/settings/keys.
-2. Identify the active key (the dashboard prefix should match the
-   first eight characters returned by
-   `aws ssm get-parameter --name /aegis-prodha/anthropic/upstream-key --with-decryption --query Parameter.Value --output text | head -c 8`).
-3. Click "Revoke".
+## Prerequisites
 
-The Aegis proxy will start returning 401 from `/v1/messages` the next
-time it forwards. Treat the rotation as time-critical from here.
+- AWS SSM Parameter Store write access for `/aegis-gateway/anthropic-api-key` (or whichever parameter your deployment uses).
+- The new Anthropic key, generated from the Anthropic console (`console.anthropic.com → Settings → API Keys`) by an account with the right organization permissions.
+- SSH access to both ASG hosts (or `aws ssm send-command` permission to target the ASG).
 
-### 2. Mint the new key
+## Rotation steps
 
-1. In the same dashboard, "Create Key".
-2. Copy the new value (starts with `sk-ant-`). The dashboard will not
-   show it again.
+### 1. Generate the new key
 
-### 3. Push to SSM and restart
+In the Anthropic console, create a key labelled `aegis-prod-YYYYMMDD`. Do NOT revoke the previous key yet.
 
-One command:
+### 2. Push the new key into SSM
 
 ```bash
-python3 scripts/ops/rotate_anthropic_key.py \
-    --new-key 'sk-ant-api03-…' \
-    --restart \
-    --smoke \
-    --smoke-key 'acp_emp_…'
+aws ssm put-parameter \
+  --region ap-south-1 \
+  --name /aegis-gateway/anthropic-api-key \
+  --type SecureString \
+  --value "$NEW_KEY" \
+  --overwrite
 ```
 
-What the script does:
+The audit container's IAM role needs `ssm:GetParameter` on the parameter ARN and `kms:Decrypt` on the encrypting KMS key.
 
-1. Validates the new value looks like an Anthropic key
-   (`^sk-ant-[A-Za-z0-9_-]{20,}$`).
-2. `aws ssm put-parameter --type SecureString --overwrite` against
-   `/aegis-prodha/anthropic/upstream-key`.
-3. SSM Run-Command on both prod-ha instances
-   (`i-076882fbef70af91f` + `i-05a13cd061d30849d`):
-   re-reads the SSM value, appends it to
-   `/opt/aegis/infra/.env`, restarts `acp_gateway`.
-4. Calls `POST https://ha.aegisagent.in/v1/messages` with the supplied
-   employee key and expects HTTP 200.
+### 3. Restart the gateway on both hosts
 
-If you only want the SSM update without a restart (e.g. you'll do the
-restart during a maintenance window), drop `--restart` and `--smoke`.
-
-### 4. Verify
-
-If the script's smoke test passes you're done. If you want extra
-assurance:
+The gateway re-reads SSM at container startup; there is no in-process refresh path today.
 
 ```bash
-# Per-host gateway logs — look for llm_proxy_call rows.
-aws ssm send-command --instance-ids i-076882fbef70af91f \
-  --document-name AWS-RunShellScript \
-  --parameters 'commands=["docker logs --tail 50 acp_gateway 2>&1 | grep llm_proxy"]' \
-  --region ap-south-1
+INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+  --region ap-south-1 \
+  --auto-scaling-group-names acp-prodha-asg \
+  | jq -r '.AutoScalingGroups[0].Instances[].InstanceId' | paste -sd ' ' -)
+
+aws ssm send-command \
+  --region ap-south-1 \
+  --instance-ids $INSTANCE_IDS \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["docker restart acp_gateway"]'
 ```
 
-### 5. Drill log
+Restart is sequential per host — the ALB will drain connections from the restarting host while the other serves traffic. No customer-visible downtime if both hosts are healthy at start.
 
-Append a row to `docs/runbooks/key_rotation_drill_log.md` with the
-date, the operator, the old key's first eight characters, the new key's
-first eight characters, and whether the smoke test passed.
+### 4. Verify the new key is active
 
-## Failure modes
+```bash
+# A test inference through any agent that routes via Anthropic should succeed
+curl -sS -X POST https://aegisagent.in/execute \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-ID: $TENANT" \
+  -H "X-Agent-ID: $AGENT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"tool_name":"llm.complete","payload":{"prompt":"ping"}}'
 
-| Symptom | Diagnosis | Fix |
-| --- | --- | --- |
-| `--smoke` returns HTTP 401 | Gateway still has the old env var | Re-run with `--restart` |
-| `--smoke` returns HTTP 502 from Aegis | `acp_gateway` not back up yet | Wait 10s, run smoke again |
-| `POST /v1/messages` returns 401 from upstream Anthropic | New key is wrong or not active | Verify in the console |
-| SSM put-parameter fails | IAM lacks `ssm:PutParameter` on the path | Re-auth with the prod-ha admin profile |
+# Expected: 200 with a decision envelope; the audit row's metadata
+# carries the upstream provider's request id.
+```
 
-## Multi-tenant follow-on
+If you see `401` or `invalid_api_key` in the gateway logs, the SSM read failed or the container still has the old key. Re-check by exec-ing into the container:
 
-This runbook assumes one corporate Anthropic key shared across all
-tenants. Sprint 18+ will introduce a per-tenant encrypted column on
-`tenants` so each customer can BYO key; once that lands, the rotation
-procedure becomes a per-tenant operation in the Settings → Billing tab
-and this runbook applies only to the system-default key.
+```bash
+docker exec acp_gateway env | grep ANTHROPIC_API_KEY | head -c 16
+```
+
+The first 16 characters should match the new key's prefix (`sk-ant-`).
+
+### 5. Revoke the old key
+
+After confirming traffic flows through the new key, return to the Anthropic console and revoke the previous key. Once revoked, any service still pointing at the old key will start failing — which is the signal that you missed a host or service.
+
+### 6. Record the rotation
+
+Append a row to the drill log in `docs/operations/runbooks/key-rotation-drill-log.md` (or the legacy `docs/runbooks/key_rotation_drill_log.md` if that's the active log on your deploy) with `Key Type = ANTHROPIC_API_KEY`.
+
+## Emergency rotation (key leaked)
+
+If the key is in a public commit, CI log, or shared with a third party:
+
+1. Skip the overlap window. Revoke the leaked key in the Anthropic console **first**.
+2. Push the new key into SSM (step 2).
+3. Restart the gateway (step 3) — accept the brief LLM router 5xx window for in-flight inference.
+4. Audit `acp_audit_logs WHERE action='llm_inference' AND created_at >= '<leak_window_start>'` for unexpected upstream call volume.
+5. File an incident report. Customer notification depends on whether tenant data left the inference path during the leak window.
+
+## Rollback
+
+If the new key turns out to be wrong (e.g., scoped to the wrong org):
+
+1. Revert SSM to the previous key value. SSM keeps a 100-version history per parameter; the previous version is one `aws ssm get-parameter-history` away.
+2. Restart the gateway.
+3. Do NOT revoke the previous key until rollback is confirmed working.
+
+## Common failure modes
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Gateway logs `invalid_api_key` after restart | SSM read failed or stale env | Confirm the container's ENV file references SSM; re-restart |
+| Inference latency spikes after rotation | Anthropic rate-limit bucket reset on new key | Wait 5 min for the bucket to settle; if persistent, raise rate-limit with Anthropic |
+| Half the inference 200s, half 401 | Only one ASG host restarted | Restart the other host |
+| Wizard-registered agents fail registration | `services/registry/wizard.py` reads `ANTHROPIC_API_KEY` at request time; gateway has been restarted but registry has not | Restart `acp_registry` |
+| Drill log entry missing | Operator forgot | Append retroactively with actual rotation timestamp |
+
+## Related code
+
+- `services/gateway/llm_router.py:628` — the gateway's Anthropic client construction
+- `services/registry/wizard.py:394` — wizard reads the key for agent provisioning
+- `sdk/common/config.py:264` — `ANTHROPIC_API_KEY` settings field
+
+## Next
+
+- [Key Rotation](../key-rotation.md) — signing keys (transparency, mesh, JWT, INTERNAL_SECRET)
+- [Secret Management](../../security/secret-management.md) — full secret inventory
+- [Observability](../observability.md) — alert routing and dashboards

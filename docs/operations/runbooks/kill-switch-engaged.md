@@ -9,6 +9,19 @@
 **P1** by default. The platform is healthy; one tenant is intentionally halted.
 Upgrade to **P0** if the engage was unintended (e.g., misconfigured Auto Response rule).
 
+## Oncall + paging
+
+| Channel | Where |
+|---|---|
+| Slack | `#aegis-incidents` (engage / disengage notifications) |
+| PagerDuty | `aegis-platform` for unintended engages only |
+| Status page | `https://aegisagent.in/status` — update if engage affects a customer-visible tenant |
+
+## Dashboards
+
+- **Grafana → ACP Tenant Activity** (`acp-tenant-activity`) → filter to the halted tenant. The request-rate panel should drop to zero within 5 seconds of the engage.
+- **Grafana → ACP Trust Layers** (`acp-trust-layers`) → behavior-firewall outcomes for the same tenant.
+
 ## Pre-engage checklist (before pressing the button)
 
 If you are *considering* engaging the kill switch, work through this list first.
@@ -27,7 +40,7 @@ The current engage API records the reason server-side as the constant `manual_ad
 
 ### Who needs to know?
 
-The audit row produces a Slack notification if configured. If not, manually post to the incident channel before engaging.
+The audit row produces a Slack notification if configured. If not, manually post to `#aegis-incidents` before engaging.
 
 ## Engaging
 
@@ -43,7 +56,7 @@ The status badge turns red within 5 seconds.
 ### Via API
 
 ```bash
-curl -sS -X POST https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS -X POST https://aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "Content-Type: application/json" \
@@ -58,12 +71,12 @@ If you see HTTP 422 "Validation failed", you are running a pre-2026-06-01 decisi
 
 ```bash
 # Status should be engaged within 5 seconds
-curl -sS https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS https://aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" | jq
 
 # Verify a test execute is denied
-curl -sS -X POST https://ha.aegisagent.in/execute \
+curl -sS -X POST https://aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "Content-Type: application/json" \
@@ -107,7 +120,7 @@ Before disengaging:
 ### Via API
 
 ```bash
-curl -sS -X DELETE https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS -X DELETE https://aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID"
 ```
@@ -118,12 +131,12 @@ The DELETE route takes no body. The audit row records the disengage event with t
 
 ```bash
 # Status should be disengaged
-curl -sS https://ha.aegisagent.in/decision/kill-switch/$TENANT_ID \
+curl -sS https://aegisagent.in/decision/kill-switch/$TENANT_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" | jq '.data.status'  # should be "disengaged"
 
 # A test execute should now succeed
-curl -sS -X POST https://ha.aegisagent.in/execute \
+curl -sS -X POST https://aegisagent.in/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-ID: $TENANT_ID" \
   -H "X-Agent-ID: $AGENT_ID" \
@@ -166,3 +179,4 @@ curl -sS -X POST https://ha.aegisagent.in/execute \
 - [Kill Switch security](../../security/kill-switch.md) — the deep dive
 - [Decision service](../../services/decision.md) — the owner
 - [Audit service](../../services/audit.md) — the recorder
+- [Observability](../observability.md) — alert routing and dashboards
