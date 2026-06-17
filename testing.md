@@ -318,6 +318,48 @@ Worker U13 cannot deploy to prod-ha, so scenarios I/J/K are marked
 `live_feed_v2_proof.py` after merging all 13 units and the next ASG
 refresh.
 
+## Backend + infra round-3 security probes — 11 / 11 PASS
+
+The `/batch` backend pass spawned 14 worktree workers with verify-first
+prompts. Honest split:
+
+- **9 real bugs landed** locally + deployed: U1 (employee key cache), U2 (audit cross-tenant body override), U4 (HS256 + Clerk-iss downgrade), U5 (audit append-only DB trigger), U6 (approval-replay TTL + policy_version invalidation, coordinator-implemented), U10 (dashboard /state 503-on-down), U12 (compose hardening), U13 (ALB health via gateway), U14 (alertmanager page route + NAT-per-AZ).
+- **4 verify-first stops** (workers correctly refused to delete load-bearing code): U7 (services/learning is imported by behavior service), U8 (services/mcp_server is Sprint-8 stdio MCP server), U9 (voice router mints LiveKit JWT the browser can't), U11 (UI still reads `result.reasons` in two pages).
+- **1 cherry-pick of regression tests** (U3 — main already had the CL-3 fix; worker was on stale branch but produced 12 valuable guards).
+
+### Live probes against prod-ha
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| L. Employee key revoke → immediate 401 | ✅ PASS | pre=200, DELETE=200, post=**401** (U1 `acp:apikey:revoked` set works) |
+| M. `/compliance/board-report` ignores body `tenant_id` | ✅ PASS | HTTP 200 + PDF for JWT tenant; forged UUID NOT echoed (U2) |
+| N. HS256 + Clerk-shaped `iss` reject | ✅ PASS | HTTP 401 "Invalid or expired token" (U4 alg gate) |
+| O. Audit log UPDATE/DELETE blocked at DB | ✅ PASS | `RaiseError: audit_logs is append-only; UPDATE/DELETE is forbidden` (U5 PG trigger) |
+| 8 / 8 regression scenarios A–H | ✅ PASS | `/tmp/live_prodha_test.py` — unchanged |
+| 3 / 3 SSE v2 scenarios I, J, K | ✅ PASS | `scripts/ops/live_feed_v2_proof.py` — 117–163 ms fan-out |
+
+### Migration applied
+
+```
+alembic upgrade y0a1b2c3d4e5 -> 3a519b48a6f2 audit_logs append-only enforcement
+```
+
+Verified live via `docker exec acp_audit python3 /tmp/probe.py`:
+```
+target row: 3ab23ed3-17b0-4184-94a9-e7222d7b7776
+OK_blocked: RaiseError: audit_logs is append-only; UPDATE is forbidden
+OK_blocked: RaiseError: audit_logs is append-only; DELETE is forbidden
+```
+
+### Terraform changes pending separate apply (blast-radius-larger)
+
+- `one_nat_per_az = true` — adds second NAT gateway (~$32/mo); closes the AZ-A NAT SPOF.
+- ALB target-group health-check path `/health` → `/healthz` — proxies through nginx into gateway so a dead gateway behind healthy nginx is correctly deregistered. Lives in `prod-ha`, `prod`, `dev` env files.
+
+Both shipped to git on this branch (commit `21f2906` + `51376e9`) but
+not yet `terraform apply`'d. Coordinator will apply with explicit
+`terraform plan` review since these change live network topology.
+
 ## Reproduce this run
 
 ```bash
