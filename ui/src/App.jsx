@@ -59,6 +59,7 @@ import Playbooks from './pages/Playbooks';
 import Team from './pages/Team';
 import EmployeeProfile from './pages/EmployeeProfile';
 import Replay from './pages/Replay';
+import Landing from './pages/Landing';
 // Sprint 3 — Decision Explorer + Session Explorer
 import DecisionExplorer from './pages/DecisionExplorer';
 import SessionExplorer from './pages/SessionExplorer';
@@ -297,9 +298,13 @@ function App() {
               <Route path="/shadow-review" element={<ProtectedRoute><ShadowModeReview /></ProtectedRoute>} />
               <Route path="/threat-graph"  element={<ProtectedRoute><ThreatGraph /></ProtectedRoute>} />
 
-              {/* Sprint 4 — Dashboard is the landing page; FlightRecorder
-                  moves to /audit-feed for analysts. */}
-              <Route path="/"          element={<Navigate to="/dashboard" />} />
+              {/* Sprint 11 — public-facing marketing landing. Authenticated
+                  users skip straight to /dashboard; everyone else sees the
+                  value-prop page with the founder's positioning. */}
+              <Route
+                path="/"
+                element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Landing />}
+              />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
 
