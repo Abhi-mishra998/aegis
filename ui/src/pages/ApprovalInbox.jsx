@@ -7,8 +7,9 @@
 // human_override_events via POST /autonomy/overrides.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, RefreshCw, User,
+  Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, RefreshCw, User, PlayCircle,
 } from 'lucide-react'
 import { auditService, autonomyService } from '../services/api'
 
@@ -241,14 +242,22 @@ export default function ApprovalInbox() {
           {selected ? (
             <>
               <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                   <div>
                     <div className="text-xs text-neutral-400">request_id</div>
                     <div className="font-mono text-sm text-neutral-200">{selected.request_id}</div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-xs text-neutral-400">when</div>
-                    <div className="text-sm text-neutral-200">{fmtTs(selected.timestamp)}</div>
+                  <div className="flex items-center gap-3">
+                    <Link
+                      to={`/replay/${encodeURIComponent(selected.request_id)}`}
+                      className="inline-flex items-center gap-1 text-xs text-blue-300 hover:text-white px-2 py-1 rounded-md border border-blue-500/30 bg-blue-500/[0.06] hover:bg-blue-500/[0.12] transition-colors"
+                    >
+                      <PlayCircle size={12} /> Replay
+                    </Link>
+                    <div className="text-right">
+                      <div className="text-xs text-neutral-400">when</div>
+                      <div className="text-sm text-neutral-200">{fmtTs(selected.timestamp)}</div>
+                    </div>
                   </div>
                 </div>
 

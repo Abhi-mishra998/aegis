@@ -617,6 +617,13 @@ export const approvalService = {
   status: (id) => request(`/approvals/${encodeURIComponent(id)}/status`),
 }
 
+// Sprint 15 — Unified replay (single-URL audit timeline). Returns the
+// 5-stage stepper payload plus the raw audit + override rows for the
+// 'see raw' analyst drawer.
+export const replayService = {
+  get: (requestId) => request(`/replay/${encodeURIComponent(requestId)}`),
+}
+
 export const policyService = {
   simulate: (payload) => request("/policy/simulate", {
     method: "POST",

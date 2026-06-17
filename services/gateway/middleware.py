@@ -153,6 +153,10 @@ _MANAGEMENT_PATH_PREFIXES = (
     # /approvals/{id}/status and the management Inbox might also
     # consume the same endpoint; both go through the standard JWT.
     "/approvals",
+    # Sprint 15 — unified replay surface. /replay/{request_id} is a
+    # read-only audit-trail join the UI Incidents + Approval Inbox
+    # link to. JWT-auth, tenant-scoped by the handler.
+    "/replay",
     "/metrics",
     "/risk",
     "/stream",

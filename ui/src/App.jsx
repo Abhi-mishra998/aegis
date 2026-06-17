@@ -58,6 +58,7 @@ import Playbooks from './pages/Playbooks';
 // Sprint 17 — Aegis for Teams (per-employee LLM proxy + spend rollup)
 import Team from './pages/Team';
 import EmployeeProfile from './pages/EmployeeProfile';
+import Replay from './pages/Replay';
 // Sprint 3 — Decision Explorer + Session Explorer
 import DecisionExplorer from './pages/DecisionExplorer';
 import SessionExplorer from './pages/SessionExplorer';
@@ -379,6 +380,8 @@ function App() {
               <Route path="/team"              element={<ProtectedRoute><Team /></ProtectedRoute>} />
               {/* Sprint 17.6 — per-employee drill-down (token burn + recent calls) */}
               <Route path="/team/:email"       element={<ProtectedRoute><EmployeeProfile /></ProtectedRoute>} />
+              {/* Sprint 15 — Unified replay (single-URL audit timeline) */}
+              <Route path="/replay/:request_id" element={<ProtectedRoute><Replay /></ProtectedRoute>} />
 
               {/* Sprint 6 — ExecutiveDashboard merged into /dashboard. */}
               <Route path="/executive-summary" element={<Navigate to="/dashboard" replace />} />

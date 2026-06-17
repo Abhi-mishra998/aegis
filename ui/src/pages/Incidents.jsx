@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Shield, ShieldCheck, Clock, CheckCircle2, XCircle,
   RefreshCw, Filter, ChevronRight, Zap, User, Bot, FileBadge2,
   Activity, TrendingDown, Eye, Lock, Slash, ArrowUpRight,
-  Download, Crosshair,
+  Download, Crosshair, PlayCircle,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
@@ -784,6 +784,19 @@ export default function Incidents() {
                     </div>
                   </div>
 
+                  {/* Sprint 15 — quick Replay deep-link on every incident.
+                      Click bubbles up; the Link's stopPropagation prevents the
+                      row drawer from also opening. */}
+                  {inc.request_id && (
+                    <Link
+                      to={`/replay/${encodeURIComponent(inc.request_id)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title="Open replay timeline for this request"
+                      className="hidden sm:inline-flex items-center gap-1 text-[11px] text-blue-300 hover:text-white px-2 py-1 rounded-md border border-blue-500/30 bg-blue-500/[0.06] hover:bg-blue-500/[0.12] transition-colors shrink-0 self-center"
+                    >
+                      <PlayCircle size={12} /> Replay
+                    </Link>
+                  )}
                   <ChevronRight size={14} className="text-neutral-700 group-hover:text-neutral-400 transition-colors shrink-0 self-center" />
                 </button>
               );
