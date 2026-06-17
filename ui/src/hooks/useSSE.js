@@ -4,6 +4,15 @@ const API_BASE = import.meta.env.VITE_GATEWAY_URL || ''
 const MAX_BACKOFF_MS = 32_000
 const HEARTBEAT_TIMEOUT_MS = 45_000
 const HEARTBEAT_WATCHDOG_INTERVAL_MS = 10_000
+// Sprint 3: Clerk JWT rotation (60s TTL) can briefly disconnect SSE.
+// If the session was clearly fresh (cookie expiry > 30s in the future) and
+// the previous failure wasn't an auth_expired one, reconnect quickly instead
+// of waiting through the exponential backoff so the UI doesn't flash a
+// "Disconnected" badge on every rotation cycle. Bounded to MAX_FAST_RECONNECTS
+// consecutive attempts so we cannot livelock.
+const FAST_RECONNECT_DELAY_MS = 1_000
+const FAST_RECONNECT_FRESH_WINDOW_MS = 30_000
+const MAX_FAST_RECONNECTS = 5
 
 /**
  * useSSE — hardened SSE consumer.
@@ -44,6 +53,10 @@ export function useSSE({
   const onErrorRef         = useRef(onError)
   const channelsRef        = useRef(channels)
   const agentIdRef         = useRef(agentId)
+  // Sprint 3: track the most recent error reason and how many consecutive
+  // fast-reconnects we've done so we can cap the fast path.
+  const lastErrorRef       = useRef(null)
+  const fastReconnectCountRef = useRef(0)
 
   const [state, setState] = useState('connecting')
   // Sprint 2: surface the most recent failure reason so a UI badge can
@@ -108,6 +121,10 @@ export function useSSE({
 
     es.addEventListener('connected', (e) => {
       attemptsRef.current = 0
+      // Successful (re)connection — clear both error trail and the fast-
+      // reconnect budget so the next disconnect starts fresh.
+      fastReconnectCountRef.current = 0
+      lastErrorRef.current = null
       setState('open')
       setLastError(null)
       lastHeartbeatAtRef.current = Date.now()
@@ -157,16 +174,23 @@ export function useSSE({
       const wasOpen = es.readyState === EventSource.OPEN
       const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10)
       const sessionLooksValid = expiry > Date.now()
+      // Snapshot the previous error reason BEFORE we overwrite it — the
+      // fast-reconnect branch needs to know that we weren't already in an
+      // auth_expired state (which routes to IncidentOverlay).
+      const prevError = lastErrorRef.current
+      let nextError
       if (wasOpen) {
-        setLastError('network')
+        nextError = 'network'
       } else if (sessionLooksValid) {
-        setLastError('network')
+        nextError = 'network'
       } else if (getCurrentToken() || localStorage.getItem("tenant_id")) {
         // Session metadata present but expiry past → really expired.
-        setLastError('auth_expired')
+        nextError = 'auth_expired'
       } else {
-        setLastError('network')
+        nextError = 'network'
       }
+      lastErrorRef.current = nextError
+      setLastError(nextError)
 
       es.close()
       esRef.current = null
@@ -174,8 +198,38 @@ export function useSSE({
       attemptsRef.current += 1
       setState('closed')
       onErrorRef.current?.()
+
+      // Sprint 3 fast-reconnect: when the session is clearly still fresh
+      // (cookie expiry > 30s away) AND we never tripped auth_expired (this
+      // disconnect OR the previous one), this is almost certainly a Clerk
+      // token-rotation race rather than a real outage. Reconnect quickly
+      // and skip the exponential backoff. Capped at MAX_FAST_RECONNECTS so a
+      // pathological server can't trap us in a 1s reconnect loop forever.
+      const freshSession =
+        expiry > 0 && (expiry - Date.now()) > FAST_RECONNECT_FRESH_WINDOW_MS
+      const errorIsBenign = nextError !== 'auth_expired'
+      const prevWasBenign = prevError === null || prevError === 'network'
+      const fastBudgetLeft =
+        fastReconnectCountRef.current < MAX_FAST_RECONNECTS
+      const useFastReconnect =
+        freshSession && errorIsBenign && prevWasBenign && fastBudgetLeft
+
+      const delay = useFastReconnect ? FAST_RECONNECT_DELAY_MS : backoffMs
+      if (useFastReconnect) {
+        fastReconnectCountRef.current += 1
+        // Don't grow exponential backoff while on the fast path — successful
+        // reconnect will reset attemptsRef via the 'connected' handler. If
+        // we end up falling back to exponential, we still want to start
+        // from a sane attempt count.
+        attemptsRef.current = Math.max(0, attemptsRef.current - 1)
+      } else {
+        // Exiting the fast path → reset the budget so a future fresh-
+        // session disconnect gets its full 5 attempts again.
+        fastReconnectCountRef.current = 0
+      }
+
       if (mountedRef.current) {
-        reconnectTimerRef.current = setTimeout(connect, backoffMs)
+        reconnectTimerRef.current = setTimeout(connect, delay)
       }
     }
   }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -200,6 +254,8 @@ export function useSSE({
     esRef.current?.close()
     esRef.current = null
     attemptsRef.current = 0
+    fastReconnectCountRef.current = 0
+    lastErrorRef.current = null
     setLastError(null)
     connect()
   }, [connect])
