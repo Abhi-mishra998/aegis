@@ -96,27 +96,64 @@ def clamp_int(value: str | None, default: int, lo: int, hi: int) -> int:
 def internal_headers(request: Request | None = None) -> dict[str, str]:
     """Build internal service-to-service headers, forwarding tenant/auth context.
 
-    X-ACP-Role is injected from the JWT-validated request.state.role — never from
-    the client header — to prevent privilege escalation via forged role claims.
+    SECURITY (2026-06-17 audit) — X-Tenant-ID is ALWAYS sourced from
+    ``request.state.tenant_id`` when set, NEVER from the client header.
+    Previously we forwarded the client's X-Tenant-ID header verbatim;
+    on JWT-auth paths the gateway middleware first verified header ==
+    JWT claim (so a forge was caught at the boundary), BUT on
+    skip-listed paths (/v1/messages, /v1/chat/completions, /v1/approvals,
+    /slack/) the auth handler pins ``request.state.tenant_id`` from the
+    validated API key — the client's X-Tenant-ID header was never
+    re-verified, and ``internal_headers`` was forwarding the forged
+    value to identity-svc + audit-svc. Live probe proved this enabled
+    tenant B's escalation card to be posted to tenant A's Slack
+    webhook with tenant B's prompt excerpt, and tenant B's prompts to
+    be scanned against tenant A's policy packs. Both leaks closed by
+    always preferring request.state.tenant_id.
 
-    Content-Type is forwarded because some proxies stream raw bytes to the
-    upstream service (e.g. /compliance/board-report uses content=body, not
-    json=body); without Content-Type the upstream FastAPI handler can't
-    decode the body into its pydantic model and raises a validation error
-    that surfaces as 500 (rather than the expected 200/4xx).
+    X-ACP-Role is injected from the JWT-validated request.state.role —
+    never from the client header — to prevent privilege escalation via
+    forged role claims.
+
+    Content-Type is forwarded because some proxies stream raw bytes to
+    the upstream service (e.g. /compliance/board-report uses
+    content=body, not json=body); without Content-Type the upstream
+    FastAPI handler can't decode the body into its pydantic model and
+    raises a validation error that surfaces as 500 (rather than the
+    expected 200/4xx).
     """
     headers: dict[str, str] = {"X-Internal-Secret": settings.INTERNAL_SECRET}
     if request is not None:
-        for h in ("X-Tenant-ID", "X-Agent-ID", "Authorization", "X-Request-ID", "X-Trace-ID", "Content-Type"):
+        # Non-tenant client headers we forward (signature-bearing or
+        # benign). X-Tenant-ID and X-Agent-ID are explicitly excluded
+        # here — they come from request.state below.
+        for h in ("Authorization", "X-Request-ID", "X-Trace-ID", "Content-Type"):
             val = request.headers.get(h)
             if val:
                 headers[h] = val
 
-        if "X-Tenant-ID" not in headers and hasattr(request.state, "tenant_id") and request.state.tenant_id is not None:
+        # Tenant + agent always sourced from validated request.state.
+        # On JWT paths the middleware sets these from the validated
+        # token. On skip-listed paths the handler pins them from the
+        # validated API key.
+        if hasattr(request.state, "tenant_id") and request.state.tenant_id is not None:
             headers["X-Tenant-ID"] = str(request.state.tenant_id)
+        else:
+            # Pre-auth fall-through (e.g. the handler hasn't run yet
+            # because we're called from a place that bypassed middleware
+            # AND didn't pin state). Trust the client header as a last
+            # resort — this matches the previous behaviour for those
+            # paths and there is no validated tenant context to substitute.
+            client_tenant = request.headers.get("X-Tenant-ID")
+            if client_tenant:
+                headers["X-Tenant-ID"] = client_tenant
 
-        if "X-Agent-ID" not in headers and hasattr(request.state, "agent_id") and request.state.agent_id is not None:
+        if hasattr(request.state, "agent_id") and request.state.agent_id is not None:
             headers["X-Agent-ID"] = str(request.state.agent_id)
+        else:
+            client_agent = request.headers.get("X-Agent-ID")
+            if client_agent:
+                headers["X-Agent-ID"] = client_agent
 
         # Cookie-to-header bridge for browser/SSE clients.
         if "Authorization" not in headers:
