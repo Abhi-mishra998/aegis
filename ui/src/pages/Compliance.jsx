@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink, BookOpen } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
+import EmptyStateV2 from '../components/Common/EmptyStateV2'
 import { auditService, complianceService } from '../services/api'
 
 const FRAMEWORKS = [
@@ -35,6 +36,7 @@ const COLOR = {
 function iso(date) { return date.toISOString().split('T')[0] }
 
 export default function Compliance() {
+  const navigate = useNavigate()
   const today = new Date()
   const thirtyDaysAgo = new Date(today); thirtyDaysAgo.setDate(today.getDate() - 30)
 
@@ -192,17 +194,13 @@ export default function Compliance() {
             Loading evidence…
           </div>
         ) : (!packEvidence || (packEvidence.packs || []).length === 0) ? (
-          <div className="text-xs text-neutral-500 py-6 text-center space-y-2">
-            <ShieldCheck size={22} className="mx-auto text-neutral-700" />
-            <div>No pack-tagged escalations in the last 30 days.</div>
-            <div className="text-[10px] text-neutral-600 max-w-md mx-auto">
-              Enable one or more Compliance Policy Packs in{' '}
-              <Link to="/settings?tab=policy-packs" className="underline hover:text-white">
-                Settings → Policy packs
-              </Link>{' '}
-              to start producing per-control evidence here.
-            </div>
-          </div>
+          <EmptyStateV2
+            icon={FileText}
+            title="No audit records yet"
+            body="Compliance reports will appear here once agents have executed actions. Connect an agent on the Agents page to get started."
+            ctaLabel="Go to Agents"
+            onCta={() => navigate('/agents')}
+          />
         ) : (
           <div className="space-y-4">
             <div className="text-[11px] text-neutral-500 leading-snug max-w-2xl">
