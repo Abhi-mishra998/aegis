@@ -43,8 +43,9 @@ services:
     # U12 2026-06-17 — pinned (was edoburu/pgbouncer:latest). Floating tag
     # means upstream pgbouncer/alpine bumps could land via `docker compose
     # pull` and break the userlist/pgbouncer.ini contract silently.
+    # D1/D2 closure 2026-06-18: real tag + arm64-compatible variant.
     # TODO pin: 2026-Q3 — revisit and bump to current stable.
-    image: edoburu/pgbouncer:1.23.1
+    image: edoburu/pgbouncer:v1.23.1-p3
     container_name: acp_pgbouncer
     # Using mounted config for production reliability
     volumes:
@@ -107,8 +108,9 @@ services:
     # U12 2026-06-17 — pinned (was openpolicyagent/opa:latest-debug).
     # Floating tag pulls would silently swap rego semantics across minor
     # OPA versions. 0.69.0 is the current stable line.
+    # D1/D2 closure 2026-06-18: real tag + arm64-compatible variant.
     # TODO pin: 2026-Q3 — revisit and bump to current stable.
-    image: openpolicyagent/opa:0.69.0-debug
+    image: openpolicyagent/opa:0.69.0-static-debug
 
     container_name: acp_opa
     ports:
