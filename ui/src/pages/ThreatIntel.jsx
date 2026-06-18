@@ -150,7 +150,7 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
       isOpen={isOpen}
       onClose={onClose}
       title="Add IOC"
-      description="Tenant-scoped indicator of compromise. Substring match for most kinds; destructive_shell takes a Python regex."
+      description="Workspace-scoped indicator of compromise. Substring match for most kinds; destructive_shell takes a Python regex."
       size="md"
       footer={
         <>

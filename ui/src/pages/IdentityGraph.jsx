@@ -342,7 +342,7 @@ export default function IdentityGraph() {
                       : 'text-green-400'}
               />
               <Kpi label="Reachable" value={simResult.reachable_nodes?.length || 0} />
-              <Kpi label="Tenants" value={simResult.affected_tenants?.length || 0} />
+              <Kpi label="Workspaces" value={simResult.affected_tenants?.length || 0} />
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 mb-4">

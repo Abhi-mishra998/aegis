@@ -110,7 +110,7 @@ export default function QuotaManagement() {
         <div>
           <h1 className="text-2xl font-semibold text-white mb-1">Quota Management</h1>
           <p className="text-sm text-neutral-400">
-            Real-time request limits and inference cost caps for this tenant.
+            Real-time request limits and inference cost caps for this workspace.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -137,7 +137,7 @@ export default function QuotaManagement() {
           <div>
             <div className="text-sm font-medium">Live quota unavailable. Showing default limits — may not match enforcement.</div>
             <div className="text-xs mt-0.5 opacity-80">
-              Could not reach the tenant quota service. Values shown below are fallback defaults; actual rate limiting may differ.
+              Could not reach the workspace quota service. Values shown below are fallback defaults; actual rate limiting may differ.
             </div>
           </div>
         </div>

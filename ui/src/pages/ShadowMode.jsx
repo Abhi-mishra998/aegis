@@ -269,7 +269,7 @@ export default function ShadowMode() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="truncate">
                     <div className="text-sm text-neutral-200 truncate">{p.name}</div>
-                    <div className="text-[10px] text-neutral-500 truncate">{p.id.slice(0, 8)}… · v{p.version} · {p.agent_id ? `agent ${p.agent_id.slice(0,8)}…` : 'tenant-wide'}</div>
+                    <div className="text-[10px] text-neutral-500 truncate">{p.id.slice(0, 8)}… · v{p.version} · {p.agent_id ? `agent ${p.agent_id.slice(0,8)}…` : 'workspace-wide'}</div>
                   </div>
                   {modePill(p.mode)}
                 </div>
