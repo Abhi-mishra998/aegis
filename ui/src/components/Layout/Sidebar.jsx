@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Users, Shield, FileText, X, Power, Zap,
+  Users, Shield, FileText, X, Zap,
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
@@ -83,13 +83,14 @@ const adminNav = [
   { path: '/billing',       label: 'Billing',       icon: CreditCard },
 ]
 
-const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power, danger: true }
+// Kill Switch lives in the Topbar (U1) as a top-right emergency surface so
+// operators can reach it without expanding Admin nav. Don't re-add it here.
 
 export default function Sidebar({ isOpen, onClose }) {
   const location  = useLocation()
   const navigate  = useNavigate()
   const { updateAuth, isAuthenticated } = useAuth()
-  const { isAdmin, canViewKillSwitch } = useRole()
+  const { isAdmin } = useRole()
   const navRef    = useRef(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [pendingApprovals, setPendingApprovals] = useState(0)
@@ -126,7 +127,7 @@ export default function Sidebar({ isOpen, onClose }) {
   const [advancedOpen, setAdvancedOpen] = useState(advancedActive)
   useEffect(() => { if (advancedActive) setAdvancedOpen(true) }, [advancedActive])
 
-  const admin = canViewKillSwitch ? [...adminNav, killSwitchItem] : adminNav
+  const admin = adminNav
   const adminActive = admin.some((i) => location.pathname.startsWith(i.path))
   const [adminOpen, setAdminOpen] = useState(adminActive)
   useEffect(() => { if (adminActive) setAdminOpen(true) }, [adminActive])

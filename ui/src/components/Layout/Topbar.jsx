@@ -1,19 +1,23 @@
 import React, { useState, useMemo, useEffect, useRef, useContext, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
+import { useRole } from '../../hooks/useRole'
 import { AgentContext } from '../../context/AgentContext'
-import { authService, incidentService } from '../../services/api'
-import { LogOut, Menu, ChevronDown, Settings, User, Zap, Bot, Command, AlertTriangle } from 'lucide-react'
+import { approvalService, authService, incidentService } from '../../services/api'
+import { LogOut, Menu, ChevronDown, Settings, User, Zap, Bot, Command, AlertTriangle, Power, Inbox } from 'lucide-react'
 import NotificationCenter from '../Common/NotificationCenter'
+import ConfirmDialog from '../Common/ConfirmDialog'
 import AgentScopePicker from './AgentScopePicker'
-import VoiceAgentButton from '../VoiceAgent/VoiceAgentButton'
 
 export default function Topbar({ onMenuClick, onCommandPalette }) {
   const navigate  = useNavigate()
   const { user, tenant_id, updateAuth, addToast } = useAuth()
+  const { canViewKillSwitch } = useRole()
   const { sseConnected } = useContext(AgentContext)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [openIncidents, setOpenIncidents] = useState(0)
+  const [pendingApprovals, setPendingApprovals] = useState(0)
+  const [killSwitchConfirmOpen, setKillSwitchConfirmOpen] = useState(false)
   const dropdownRef = useRef(null)
 
   const fetchIncidentCount = useCallback(async () => {
@@ -24,11 +28,24 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
     } catch {}
   }, [])
 
+  const fetchPendingApprovals = useCallback(async () => {
+    try {
+      const res = await approvalService.getPendingCount()
+      setPendingApprovals((res?.data?.unread ?? res?.unread ?? 0))
+    } catch {}
+  }, [])
+
   useEffect(() => {
     fetchIncidentCount()
     const id = setInterval(fetchIncidentCount, 60_000)
     return () => clearInterval(id)
   }, [fetchIncidentCount])
+
+  useEffect(() => {
+    fetchPendingApprovals()
+    const id = setInterval(fetchPendingApprovals, 30_000)
+    return () => clearInterval(id)
+  }, [fetchPendingApprovals])
 
   const role = useMemo(() => {
     const stored = localStorage.getItem('user_role')
@@ -87,11 +104,8 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
         <AgentScopePicker variant="header" />
       </div>
 
-      {/* Right: voice agent + SSE status + cmd palette + notifications + user menu */}
+      {/* Right: SSE status + cmd palette + escalations + incidents + kill switch + notifications + user menu */}
       <div className="flex items-center gap-2 shrink-0">
-        {/* Voice Agent — opens the killer animated overlay */}
-        <VoiceAgentButton />
-
         {/* Live SSE indicator */}
         <div
           className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--bg-surface-elevated)] border border-[var(--border-subtle)]"
@@ -116,6 +130,25 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
           <span className="text-xs font-mono hidden md:inline">⌘K</span>
         </button>
 
+        {/* Escalations inbox badge */}
+        <button
+          onClick={() => navigate('/approval-inbox')}
+          aria-label={pendingApprovals > 0 ? `${pendingApprovals} pending escalations` : 'Escalations inbox — none pending'}
+          title="Escalations inbox"
+          className="relative p-2 rounded-lg text-neutral-500 hover:text-white hover:bg-white/[0.06] transition-colors"
+        >
+          <Inbox size={16} aria-hidden="true" className={pendingApprovals > 0 ? 'text-amber-400' : ''} />
+          {pendingApprovals > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-bold text-black"
+              aria-hidden="true"
+              style={{ boxShadow: '0 0 8px rgba(245,158,11,0.5)' }}
+            >
+              {pendingApprovals > 9 ? '9+' : pendingApprovals}
+            </span>
+          )}
+        </button>
+
         {/* Open incidents badge */}
         <button
           onClick={() => navigate('/incidents')}
@@ -134,6 +167,20 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
             </span>
           )}
         </button>
+
+        {/* Kill switch — emergency surface for OWNER/ADMIN. Opens a confirm
+            dialog; the actual POST happens on the dedicated /kill-switch page
+            so we don't duplicate state/transition logic in the topbar. */}
+        {canViewKillSwitch && (
+          <button
+            onClick={() => setKillSwitchConfirmOpen(true)}
+            aria-label="Activate kill switch (emergency)"
+            title="Activate kill switch (emergency)"
+            className="p-2 rounded-lg text-red-400 hover:text-white hover:bg-red-500/20 transition-colors"
+          >
+            <Power size={16} aria-hidden="true" />
+          </button>
+        )}
 
         {/* Notification center */}
         <NotificationCenter />
@@ -213,6 +260,16 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={killSwitchConfirmOpen}
+        title="Activate Kill Switch?"
+        description="This halts all agent actions globally. The action is logged and reversible from /kill-switch."
+        confirmLabel="Continue"
+        variant="danger"
+        onConfirm={() => navigate('/kill-switch')}
+        onClose={() => setKillSwitchConfirmOpen(false)}
+      />
     </header>
   )
 }
