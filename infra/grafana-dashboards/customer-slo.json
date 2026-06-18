@@ -1,0 +1,181 @@
+{
+  "title": "Customer SLO (Aegis v2.0)",
+  "uid": "aegis-customer-slo",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["aegis", "customer-facing", "sprint-v2.0", "track-E2"],
+  "description": "Customer-facing SLO board per SPRINT.md §8 E2. Tenant-scoped via the $tenant template variable; the public read-only URL at https://aegisagent.in/slo (gated by tenant id) renders this dashboard with $tenant pinned to the requester's tenant_id. Surfaces: rolling-30d availability, p50/p95/p99 decision latency, audit-chain verification status, approval queue depth and median time-to-approve.",
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "label": "Tenant",
+        "datasource": "Prometheus",
+        "query": "label_values(acp_slo_availability_total, tenant)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Availability — rolling 30 days",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+      "description": "Successful requests as a fraction of total requests over the trailing 30 days. SLO target = 99.9% (three nines).",
+      "targets": [
+        { "expr": "100 * (1 - (sum(increase(acp_slo_availability_total{service=\"gateway\",tenant=\"$tenant\",status=\"error\"}[30d])) / sum(increase(acp_slo_availability_total{service=\"gateway\",tenant=\"$tenant\"}[30d]))))", "legendFormat": "availability %" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0,     "color": "red" },
+              { "value": 99,    "color": "yellow" },
+              { "value": 99.9,  "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Audit-chain verification status",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 0 },
+      "description": "Green = no chain violations observed in the last 24h. Red = an active violation. Backed by the same counter that fires ChainViolationImmediate Alertmanager rule.",
+      "targets": [
+        { "expr": "sum(increase(acp_audit_chain_violations_total{tenant=\"$tenant\"}[24h]))", "legendFormat": "violations (24h)" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 1, "color": "red" }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "VERIFIED", "color": "green" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Pending approvals",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
+      "description": "Approval-queue depth. Backed by acp_autonomy_pending_approvals gauge. NOTE: gauge wiring is owed by Track E2 follow-up; until the gauge is exported by services/autonomy/, the panel reports N/A. Mapping is configured so 0 reads as 'EMPTY' (green) and >0 as the integer (yellow above 5, red above 25).",
+      "targets": [
+        { "expr": "max(acp_autonomy_pending_approvals{tenant=\"$tenant\"})", "legendFormat": "depth" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0,  "color": "green" },
+              { "value": 5,  "color": "yellow" },
+              { "value": 25, "color": "red" }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "EMPTY", "color": "green" } } }
+          ],
+          "noValue": "N/A — metric not yet exported"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "/execute decision latency — p50 / p95 / p99 (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 5 },
+      "description": "Customer-facing decision latency at the gateway. SLO targets: p50 < 100ms, p95 < 500ms, p99 < 1500ms (matches SPRINT.md §7 D1 pass criteria).",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\",tenant=\"$tenant\",route=~\"/execute.*\"}[5m])) by (le)) * 1000", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\",tenant=\"$tenant\",route=~\"/execute.*\"}[5m])) by (le)) * 1000", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(acp_slo_latency_seconds_bucket{service=\"gateway\",tenant=\"$tenant\",route=~\"/execute.*\"}[5m])) by (le)) * 1000", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0,    "color": "green" },
+              { "value": 500,  "color": "yellow" },
+              { "value": 1500, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Error rate — last 5 min (%)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 5 },
+      "description": "Customer-facing error rate over the trailing 5 minutes. SLO target < 0.5%.",
+      "targets": [
+        { "expr": "100 * sum(rate(acp_slo_availability_total{service=\"gateway\",tenant=\"$tenant\",status=\"error\"}[5m])) / sum(rate(acp_slo_availability_total{service=\"gateway\",tenant=\"$tenant\"}[5m]))", "legendFormat": "error %" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0,   "color": "green" },
+              { "value": 0.5, "color": "yellow" },
+              { "value": 1.0, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Approval time-to-approve — median + p95 (seconds)",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 9 },
+      "description": "Wall-clock from escalate emit to operator decision. Backed by acp_autonomy_approval_resolution_seconds_bucket. Like panel 3, the histogram is owed by Track E2 follow-up wiring; until then this panel is empty.",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(acp_autonomy_approval_resolution_seconds_bucket{tenant=\"$tenant\"}[1h])) by (le))", "legendFormat": "median" },
+        { "expr": "histogram_quantile(0.95, sum(rate(acp_autonomy_approval_resolution_seconds_bucket{tenant=\"$tenant\"}[1h])) by (le))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "N/A — metric not yet exported"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Request volume by status",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 14 },
+      "description": "Request rate broken out by HTTP status class. Lets the on-call distinguish a customer-side surge from an Aegis-side error storm.",
+      "targets": [
+        { "expr": "sum(rate(acp_slo_availability_total{service=\"gateway\",tenant=\"$tenant\"}[1m])) by (status)", "legendFormat": "{{status}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    }
+  ]
+}
