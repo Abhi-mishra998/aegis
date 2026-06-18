@@ -33,6 +33,7 @@ import { useSSE } from '../hooks/useSSE';
 import { useAuth } from '../hooks/useAuth';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
+import DataFreshness from '../components/Common/DataFreshness';
 
 const PROVIDER_META = {
   anthropic:   { label: 'Anthropic',   icon: Brain    },
@@ -174,6 +175,11 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [liveEventCount, setLiveEventCount] = useState(0);
+  // Sprint 21 — surface freshness ("Updated 12s ago") in the header so a CISO
+  // can tell at a glance whether the numbers are live or stale. Stamp on every
+  // successful KPI fetch (success defined as the same partial-OK rule the
+  // error banner uses below).
+  const [lastFetchAt, setLastFetchAt] = useState(null);
 
   // Refetch when tenant_id changes (e.g., ClerkAuthBridge mirrors session
   // *after* this page mounted — without re-deriving on tenant_id, the user
@@ -216,6 +222,7 @@ export default function Dashboard() {
         setError(invResult.reason?.message || ovResult.reason?.message || 'Failed to load dashboard data');
       } else {
         setError('');
+        setLastFetchAt(new Date().toISOString());
       }
     });
     return () => { cancelled = true; };
@@ -287,6 +294,7 @@ export default function Dashboard() {
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
             Live · {liveEventCount} events
           </div>
+          <DataFreshness updatedAt={lastFetchAt} />
           <Button variant="ghost" size="sm" onClick={() => setRefreshTick((t) => t + 1)}>
             <RefreshCw size={14} aria-hidden="true" />
           </Button>

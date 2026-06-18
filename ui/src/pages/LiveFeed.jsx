@@ -8,6 +8,7 @@ import { useSSE } from '../hooks/useSSE'
 import { auditService } from '../services/api'
 import { AgentContext } from '../context/AgentContext'
 import { AuthContext } from '../context/AuthContext'
+import DataFreshness from '../components/Common/DataFreshness'
 
 // ─── EVENT TYPE REGISTRY ────────────────────────────────────────────────────
 // Backend publishes 15 event types on the SSE stream; this map controls how
@@ -494,6 +495,14 @@ export default function LiveFeed() {
   const scopeTypes = SCOPES[scope]?.types || ALL_TYPES
   const scopeSet   = useMemo(() => new Set(scopeTypes), [scopeTypes])
 
+  // Sprint 21 — surface "Last event Ns ago" in the header so the operator can
+  // tell whether the SSE stream is actually delivering events or just sitting
+  // idle. Newest first, so events[0] is the freshest sample.
+  const lastFetchAt = useMemo(() => {
+    if (events.length === 0) return null
+    return new Date(events[0].ts).toISOString()
+  }, [events])
+
   const visible = useMemo(() => {
     return events.filter((e) => {
       if (!scopeSet.has(e.type)) return false
@@ -565,6 +574,7 @@ export default function LiveFeed() {
             </h1>
             <p className="text-sm text-neutral-400">Real-time security events from the gateway SSE stream.</p>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              <DataFreshness updatedAt={lastFetchAt} prefix="Last event" />
               {selectedAgent ? (
                 <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
                   <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
