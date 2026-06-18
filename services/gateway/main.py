@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -401,6 +402,15 @@ async def _refresh_queue_age_gauges_loop(_redis) -> None:
             return
 
 
+# M3 closure 2026-06-18: hide OpenAPI + Swagger UI in production.
+# Anonymous attackers should not be able to enumerate 246 paths or craft
+# requests in /docs. Set ENVIRONMENT=production in the deploy env to gate.
+_ENV = os.environ.get("ENVIRONMENT", "development").lower()
+_IS_PROD = _ENV == "production"
+_OPENAPI_URL = None if _IS_PROD else "/openapi.json"
+_DOCS_URL = None if _IS_PROD else "/docs"
+_REDOC_URL = None if _IS_PROD else "/redoc"
+
 app = FastAPI(
     title="ACP",
     summary="Tamper-evident replay + runtime deny for AI agents.",
@@ -415,6 +425,9 @@ app = FastAPI(
     version="1.0.0",
     contact={"name": "Aegis Maintainers", "url": "https://github.com/Abhi-mishra998/aegis"},
     license_info={"name": "Apache-2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0"},
+    openapi_url=_OPENAPI_URL,
+    docs_url=_DOCS_URL,
+    redoc_url=_REDOC_URL,
     servers=[
         {"url": "/v1", "description": "Stable v1 API (recommended for integrations)"},
         {"url": "/",   "description": "Unversioned — for the dashboard; do not pin"},
@@ -485,6 +498,39 @@ async def _v1_prefix_alias(request: Request, call_next):
             if raw.startswith(b"/v1/"):
                 request.scope["raw_path"] = raw[3:] or b"/"
     return await call_next(request)
+
+
+# M1 closure 2026-06-18: per-IP rate limit on 401 responses to slow down
+# token-stuffing / enumeration. 60 401s/minute/IP → 429 with Retry-After.
+# Sits OUTERMOST so it sees the final response after auth resolved.
+_RATE_LIMIT_401_PER_MIN = int(os.environ.get("AUTH_FAIL_RATE_LIMIT_PER_MIN", "60"))
+_RATE_LIMIT_WINDOW_S    = 60
+
+@app.middleware("http")
+async def _rate_limit_401(request: Request, call_next):
+    response = await call_next(request)
+    if response.status_code != 401:
+        return response
+    # Prefer X-Forwarded-For (ALB sets it); fall back to peer addr.
+    xff = request.headers.get("x-forwarded-for", "")
+    client_ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")
+    key = f"acp:ratelimit:auth401:{client_ip}"
+    try:
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, _RATE_LIMIT_WINDOW_S)
+        if count > _RATE_LIMIT_401_PER_MIN:
+            ttl = max(1, await redis.ttl(key))
+            from fastapi.responses import JSONResponse as _JR
+            return _JR(
+                status_code=429,
+                content={"success": False, "error": "Auth-failure rate limit exceeded", "meta": {"code": 429}},
+                headers={"Retry-After": str(ttl), "WWW-Authenticate": 'Bearer realm="rate_limited"'},
+            )
+    except Exception:
+        # Never fail-closed on rate limiter errors; just pass the original 401 through.
+        pass
+    return response
 
 
 # Add security middleware

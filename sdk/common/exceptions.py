@@ -117,9 +117,12 @@ def setup_exception_handlers(app: FastAPI) -> None:
         if not isinstance(detail, str):
             import json as _json
             detail = _json.dumps(detail)
+        # H1 closure 2026-06-18: preserve exc.headers so WWW-Authenticate realm
+        # hints set in services/gateway/auth.py reach the client (U10 contract).
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse(success=False, error=detail).model_dump(),
+            headers=exc.headers,
         )
 
     @app.exception_handler(ACPError)
@@ -127,6 +130,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse(success=False, error=exc.message).model_dump(),
+            headers=getattr(exc, "headers", None),
         )
 
     @app.exception_handler(RequestValidationError)
