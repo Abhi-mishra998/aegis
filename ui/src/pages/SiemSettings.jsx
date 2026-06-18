@@ -1,17 +1,52 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Database, Server, Play,
   Save, Loader2, AlertCircle, Upload,
   RefreshCw, AlertTriangle,
 } from 'lucide-react'
+import { z } from 'zod'
 import { siemService } from '../services/api'
 import { SecretInput, StatusBadge, IntegrationCard } from '../components/Common/ConnectorPrimitives'
+import { useRole } from '../hooks/useRole'
+import useUnsavedChanges from '../hooks/useUnsavedChanges'
+
+const DATADOG_SITES = ['datadoghq.com', 'us3.datadoghq.com', 'us5.datadoghq.com', 'datadoghq.eu', 'ddog-gov.com']
+
+const INITIAL_CFG = {
+  splunk_url: '', splunk_token: '',
+  datadog_key: '', datadog_site: 'datadoghq.com',
+}
+
+const isMasked = (v) => typeof v === 'string' && v.startsWith('***')
+
+const optionalUrl = z.union([
+  z.literal(''),
+  z.string().trim().url('Must be a valid URL'),
+])
+
+const siemSchema = z.object({
+  splunk_url: optionalUrl,
+  splunk_token: z.string().trim(),
+  datadog_key: z.union([
+    z.literal(''),
+    z.string().trim().min(32, 'API key must be at least 32 characters'),
+  ]),
+  datadog_site: z.enum(DATADOG_SITES, { message: 'Pick a valid Datadog site' }),
+}).superRefine((val, ctx) => {
+  if (val.splunk_url && !val.splunk_token) {
+    ctx.addIssue({ code: 'custom', path: ['splunk_token'], message: 'Required when Splunk URL is set' })
+  }
+  if (val.splunk_token && !val.splunk_url) {
+    ctx.addIssue({ code: 'custom', path: ['splunk_url'], message: 'Required when Splunk token is set' })
+  }
+})
 
 export default function SiemSettings() {
-  const [cfg, setCfg] = useState({
-    splunk_url: '', splunk_token: '',
-    datadog_key: '', datadog_site: 'datadoghq.com',
-  })
+  const { isOwner, isAdmin } = useRole()
+  const canMutate = isOwner || isAdmin
+  const [cfg, setCfg] = useState(INITIAL_CFG)
+  const [initialCfg, setInitialCfg] = useState(INITIAL_CFG)
+  const [touched, setTouched] = useState({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -29,13 +64,15 @@ export default function SiemSettings() {
     siemService.getConfig()
       .then(d => {
         const c = d?.data || d || {}
-        setCfg(prev => ({
-          ...prev,
-          splunk_url: c.splunk_url ?? prev.splunk_url,
-          splunk_token: c.splunk_token ?? prev.splunk_token,
-          datadog_key: c.datadog_key ?? prev.datadog_key,
-          datadog_site: c.datadog_site ?? prev.datadog_site,
-        }))
+        const merged = {
+          splunk_url: c.splunk_url ?? '',
+          splunk_token: c.splunk_token ?? '',
+          datadog_key: c.datadog_key ?? '',
+          datadog_site: c.datadog_site ?? 'datadoghq.com',
+        }
+        setCfg(merged)
+        setInitialCfg(merged)
+        setTouched({})
       })
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
@@ -43,11 +80,33 @@ export default function SiemSettings() {
 
   useEffect(() => { loadConfig() }, [loadConfig])
 
+  const cfgForValidation = useMemo(() => ({
+    splunk_url: isMasked(cfg.splunk_url) ? '' : cfg.splunk_url,
+    splunk_token: isMasked(cfg.splunk_token) ? 'masked-token' : cfg.splunk_token,
+    datadog_key: isMasked(cfg.datadog_key) ? 'x'.repeat(32) : cfg.datadog_key,
+    datadog_site: cfg.datadog_site,
+  }), [cfg])
+
+  const parsed = siemSchema.safeParse(cfgForValidation)
+  const fieldErrors = parsed.success ? {} : parsed.error.flatten().fieldErrors
+  const isValid = parsed.success
+  const showError = (key) => touched[key] && fieldErrors[key]?.[0]
+  const markTouched = (key) => setTouched(t => t[key] ? t : { ...t, [key]: true })
+
+  const dirty = useMemo(
+    () => JSON.stringify(cfg) !== JSON.stringify(initialCfg),
+    [cfg, initialCfg]
+  )
+  useUnsavedChanges(dirty && !saving)
+
   const save = async () => {
+    setTouched({ splunk_url: true, splunk_token: true, datadog_key: true, datadog_site: true })
+    if (!isValid) return
     setSaving(true)
     setError('')
     try {
       await siemService.saveConfig(cfg)
+      setInitialCfg(cfg)
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch {
@@ -102,14 +161,16 @@ export default function SiemSettings() {
             Push audit events to your SIEM in real time — Splunk HEC or Datadog Logs.
           </p>
         </div>
-        <button
-          onClick={save}
-          disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
-        >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          {saved ? 'Saved!' : 'Save'}
-        </button>
+        {canMutate && (
+          <button
+            onClick={save}
+            disabled={saving || !isValid || !dirty}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {saved ? 'Saved!' : 'Save'}
+          </button>
+        )}
       </header>
 
       {error && (
@@ -143,17 +204,35 @@ export default function SiemSettings() {
               type="url"
               value={cfg.splunk_url}
               onChange={e => setCfg(c => ({ ...c, splunk_url: e.target.value }))}
+              onBlur={() => markTouched('splunk_url')}
               placeholder="https://splunk.company.com:8088/services/collector/event"
-              className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
+              aria-invalid={!!showError('splunk_url')}
+              aria-describedby={showError('splunk_url') ? 'splunk_url_err' : undefined}
+              className={`w-full bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none ${showError('splunk_url') ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
             />
+            {showError('splunk_url') && (
+              <p id="splunk_url_err" className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('splunk_url')}
+              </p>
+            )}
           </div>
-          <SecretInput
-            id="splunk_token"
-            label="HEC Token"
-            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-            value={cfg.splunk_token}
-            onChange={v => setCfg(c => ({ ...c, splunk_token: v }))}
-          />
+          <div>
+            <SecretInput
+              id="splunk_token"
+              label="HEC Token"
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              value={cfg.splunk_token}
+              onChange={v => {
+                setCfg(c => ({ ...c, splunk_token: v }))
+                markTouched('splunk_token')
+              }}
+            />
+            {showError('splunk_token') && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('splunk_token')}
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => test('splunk')}
@@ -174,25 +253,42 @@ export default function SiemSettings() {
 
       <IntegrationCard icon={Database} title="Datadog" description="Logs Intake API v2" color="bg-[#632ca6]/80">
         <div className="space-y-3">
-          <SecretInput
-            id="dd_key"
-            label="API Key"
-            placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            value={cfg.datadog_key}
-            onChange={v => setCfg(c => ({ ...c, datadog_key: v }))}
-          />
+          <div>
+            <SecretInput
+              id="dd_key"
+              label="API Key"
+              placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              value={cfg.datadog_key}
+              onChange={v => {
+                setCfg(c => ({ ...c, datadog_key: v }))
+                markTouched('datadog_key')
+              }}
+            />
+            {showError('datadog_key') && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('datadog_key')}
+              </p>
+            )}
+          </div>
           <div>
             <label htmlFor="dd_site" className="block text-xs text-neutral-400 mb-1">Datadog Site</label>
             <select
               id="dd_site"
               value={cfg.datadog_site}
               onChange={e => setCfg(c => ({ ...c, datadog_site: e.target.value }))}
-              className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+              onBlur={() => markTouched('datadog_site')}
+              aria-invalid={!!showError('datadog_site')}
+              className={`w-full bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white focus:outline-none ${showError('datadog_site') ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
             >
-              {['datadoghq.com', 'us3.datadoghq.com', 'us5.datadoghq.com', 'datadoghq.eu', 'ddog-gov.com'].map(s => (
+              {DATADOG_SITES.map(s => (
                 <option key={s} value={s} className="bg-neutral-900">{s}</option>
               ))}
             </select>
+            {showError('datadog_site') && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('datadog_site')}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -234,14 +330,16 @@ export default function SiemSettings() {
               ))}
             </select>
           </div>
-          <button
-            onClick={pushNow}
-            disabled={pushing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 disabled:opacity-40"
-          >
-            {pushing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            Push now
-          </button>
+          {canMutate && (
+            <button
+              onClick={pushNow}
+              disabled={pushing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 disabled:opacity-40"
+            >
+              {pushing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              Push now
+            </button>
+          )}
           {pushResult && (
             <span className={`text-xs ${pushResult.status === 'error' ? 'text-red-400' : 'text-green-400'}`}>
               {pushResult.status === 'error' ? pushResult.reason : `Pushed ${pushResult.sent ?? 0} events`}
