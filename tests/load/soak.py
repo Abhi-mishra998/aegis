@@ -206,6 +206,28 @@ def _teardown_tenants(
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# User-class + shape registry — maps --user-class / --shape argv to the
+# (locustfile_path, ClassName) tuples we hand to locust as `-f` args.
+# Adding a new harness = add a new entry here. Locust accepts multiple -f
+# args; we pass the user file plus (when a shape is requested) the shape file.
+# --------------------------------------------------------------------------- #
+
+_USER_CLASS_REGISTRY: dict[str, tuple[str, str]] = {
+    # default — attack-shaped 60/15/10/10/5 soak harness
+    "SoakMixUser":     ("tests/load/soak_user.py",          "SoakMixUser"),
+    # v2.0 D1/D2 realistic mix — codifies SPRINT.md §7 D1 traffic shape
+    "V2RealisticUser": ("tests/load/v2_realistic_user.py",  "V2RealisticUser"),
+}
+
+_SHAPE_REGISTRY: dict[str, tuple[str, str]] = {
+    # sustained: no shape, locust runs steady-state at -u users for -t duration
+    "sustained": ("", ""),
+    # burst_10k: SPRINT.md §7 D2 — 100->10000 over 60s, hold 5min, ramp down
+    "burst_10k": ("tests/load/v2_realistic_burst.py", "BurstShape"),
+}
+
+
 def _launch_locust(
     *,
     gateway_url: str,
@@ -214,15 +236,42 @@ def _launch_locust(
     users: int,
     spawn_rate: int,
     duration: str,
+    user_class: str = "SoakMixUser",
+    shape: str = "sustained",
 ) -> int:
-    """Run locust headless. Returns its exit code."""
+    """Run locust headless. Returns its exit code.
+
+    `user_class` selects the locust HttpUser class via _USER_CLASS_REGISTRY.
+    `shape` selects an optional LoadTestShape via _SHAPE_REGISTRY; when set
+    to a non-sustained value, locust ignores `users` + `spawn_rate` + `-t`
+    in favour of the shape's tick() output.
+    """
     locust_bin = shutil.which("locust") or shutil.which("locust.exe")
     if not locust_bin:
         raise SystemExit(
             "locust not found in PATH. Install dev deps: pip install locust"
         )
+    if user_class not in _USER_CLASS_REGISTRY:
+        raise SystemExit(
+            f"unknown --user-class {user_class!r}; known: {sorted(_USER_CLASS_REGISTRY)}"
+        )
+    if shape not in _SHAPE_REGISTRY:
+        raise SystemExit(
+            f"unknown --shape {shape!r}; known: {sorted(_SHAPE_REGISTRY)}"
+        )
+
+    user_file, user_klass = _USER_CLASS_REGISTRY[user_class]
+    shape_file, shape_klass = _SHAPE_REGISTRY[shape]
+
     cmd = [
-        locust_bin, "-f", "tests/load/soak_user.py",
+        locust_bin,
+        "-f", f"{user_file}:{user_klass}",
+    ]
+    if shape_file:
+        # Locust accepts multiple -f args; the shape class is auto-discovered
+        # from the second file and overrides the -u/-r/-t static flags.
+        cmd += ["-f", f"{shape_file}:{shape_klass}"]
+    cmd += [
         "--headless", "--only-summary",
         "-u", str(users), "-r", str(spawn_rate), "-t", duration,
         "--host", gateway_url,
@@ -311,6 +360,15 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--internal-secret", default=os.environ.get("INTERNAL_SECRET", ""))
     p.add_argument("--reports-dir", default=os.environ.get("REPORTS_DIR", "reports/soak"))
     p.add_argument("--label-prefix", default="soak", help="tenant label prefix")
+    p.add_argument(
+        "--user-class", default="SoakMixUser",
+        help="locust user class to drive traffic. Known: %s" % sorted(_USER_CLASS_REGISTRY),
+    )
+    p.add_argument(
+        "--shape", default="sustained",
+        help="locust LoadTestShape (overrides -u/-r/-t when not 'sustained'). "
+             "Known: %s" % sorted(_SHAPE_REGISTRY),
+    )
     # Acceptance thresholds — overridable for CI smoke runs.
     p.add_argument("--max-failure-rate", type=float, default=0.005,
                    help="aggregate failure rate ceiling (default 0.5%%)")
@@ -356,6 +414,8 @@ def main() -> int:
         output_prefix=out_dir / "locust",
         users=int(args.users), spawn_rate=int(args.spawn_rate),
         duration=args.duration,
+        user_class=args.user_class,
+        shape=args.shape,
     )
     run_ended_at = datetime.now(UTC)
     print(f"[soak] locust exit={locust_rc}, window={run_started_at.isoformat()} → {run_ended_at.isoformat()}")
