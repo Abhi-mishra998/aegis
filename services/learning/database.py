@@ -9,7 +9,11 @@ from sdk.common.config import settings
 @functools.lru_cache
 def get_engine():
     """Lazily create the engine."""
-    return create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    return create_async_engine(
+        settings.DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"statement_cache_size": 0},
+    )
 
 @functools.lru_cache
 def get_session_factory():
