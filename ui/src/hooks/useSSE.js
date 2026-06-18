@@ -71,8 +71,7 @@ export function useSSE({
 
   const buildUrl = () => {
     // Auth flows over the same-origin httpOnly acp_token cookie via
-    // withCredentials. Query-string tokens are no longer accepted by the
-    // gateway (sprint-1 hardening) so we don't append one.
+    // withCredentials.
     const params = new URLSearchParams()
     if (agentIdRef.current) params.set('agent_id', String(agentIdRef.current))
     const qs = params.toString()
@@ -164,6 +163,15 @@ export function useSSE({
     }
 
     es.onerror = () => {
+      // Snapshot session metadata BEFORE any state-clear race window. A
+      // concurrent reconnect/logout/clearSessionMetadata() can wipe
+      // localStorage mid-handler — if we re-read tenant_id/expiry from
+      // localStorage further down, an auth_expired failure can be
+      // misclassified as 'network' because the cleanup just ran.
+      const prevSessionMetadata = {
+        tenant_id: localStorage.getItem("tenant_id"),
+        expiry: parseInt(localStorage.getItem("acp_token_expiry") || "0", 10),
+      }
       // Classify the failure reason for the UI badge. EventSource onerror
       // doesn't expose the underlying HTTP status, so we use heuristics:
       // - never reached 'open' AND session is still valid (cookie/token
@@ -172,7 +180,7 @@ export function useSSE({
       // - never reached 'open' AND no session signal → genuine auth_expired.
       // - was open before erroring → network drop.
       const wasOpen = es.readyState === EventSource.OPEN
-      const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10)
+      const expiry = prevSessionMetadata.expiry
       const sessionLooksValid = expiry > Date.now()
       // Snapshot the previous error reason BEFORE we overwrite it — the
       // fast-reconnect branch needs to know that we weren't already in an
@@ -183,7 +191,7 @@ export function useSSE({
         nextError = 'network'
       } else if (sessionLooksValid) {
         nextError = 'network'
-      } else if (localStorage.getItem("tenant_id")) {
+      } else if (prevSessionMetadata.tenant_id) {
         // Session metadata present but expiry past → really expired.
         // (Was previously `getCurrentToken() || localStorage…` but
         // getCurrentToken was never imported — it threw a ReferenceError
