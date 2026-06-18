@@ -6,6 +6,13 @@ import { attachClerkAuth, getFreshClerkToken, hasClerkAuth } from "./clerkAuth";
 // In production (Docker/k8s): set VITE_GATEWAY_URL=https://your-gateway or leave empty for nginx proxy.
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || "";
 
+// Refresh-on-401 mutex. N concurrent requests that simultaneously 401 must
+// not spawn N parallel Clerk refresh roundtrips: coalesce them onto a single
+// in-flight refresh so the SDK only burns one rotation slot and the gateway
+// only sees one /auth/refresh call per real expiry event.
+let refreshInFlight = false;
+let refreshWaiters = [];
+
 /**
  * ACP API Client
  *
@@ -135,12 +142,10 @@ const _handleResponse = async (res, url) => {
       // currently-active workspace. Killing the session here is the
       // single biggest source of "Authentication boundary violated"
       // overlay flashes during normal usage.
-      console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", {
-        sessionTenant, responseTenant, url,
-      });
+      console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", "[redacted]");
       try { localStorage.setItem("tenant_id", responseTenant); } catch (_) {}
     } else {
-      console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
+      console.error("TENANT_MISMATCH: response tenant differs from session", "[redacted]");
       emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
       throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
     }
@@ -199,24 +204,41 @@ const request = async (url, options = {}, retry = 1) => {
       const isClerkSession = hasClerkAuth();
       if (isClerkSession && !options._authRetried) {
         try {
-          const freshToken = await getFreshClerkToken();
-          if (freshToken) {
-            const retryHeaders = {
-              ...headers,
-              Authorization: `Bearer ${freshToken}`,
-            };
-            const retryRes = await fetch(finalUrl, {
-              ...options,
-              headers: retryHeaders,
-              credentials: "include",
-            });
-            if (retryRes.status !== 401) {
-              // Quiet success — the first 401 is a Clerk-rotation artifact,
-              // not a real auth failure; the user's network panel still
-              // shows it, but the application path is OK so no console
-              // noise here.
-              return await _handleResponse(retryRes, url);
+          let freshToken = null;
+          // Mutex: if another request already triggered a refresh, wait for
+          // it to settle instead of issuing a parallel Clerk call. Once the
+          // leader resolves, every waiter falls through to attachClerkAuth()
+          // on its retry fetch and picks up the now-current token.
+          if (refreshInFlight) {
+            await new Promise(resolve => refreshWaiters.push(resolve));
+          } else {
+            refreshInFlight = true;
+            try {
+              freshToken = await getFreshClerkToken();
+            } finally {
+              refreshInFlight = false;
+              refreshWaiters.splice(0).forEach(r => r());
             }
+          }
+          // Waiters skip the explicit Authorization override and let
+          // attachClerkAuth handle it on the retry headers below.
+          const retryHeaders = { ...headers };
+          if (freshToken) {
+            retryHeaders.Authorization = `Bearer ${freshToken}`;
+          } else {
+            await attachClerkAuth(retryHeaders);
+          }
+          const retryRes = await fetch(finalUrl, {
+            ...options,
+            headers: retryHeaders,
+            credentials: "include",
+          });
+          if (retryRes.status !== 401) {
+            // Quiet success — the first 401 is a Clerk-rotation artifact,
+            // not a real auth failure; the user's network panel still
+            // shows it, but the application path is OK so no console
+            // noise here.
+            return await _handleResponse(retryRes, url);
           }
         } catch (refreshErr) {
           console.warn("Clerk refresh-on-401 failed", refreshErr);
@@ -377,7 +399,7 @@ export const voiceService = {
 // Auth Service
 export const authService = {
   login: async (data) => {
-    console.info("AUTHENTICATION_ATTEMPT", { email: data.email });
+    console.info("AUTHENTICATION_ATTEMPT", "[redacted]");
 
     const headers = { "Content-Type": "application/json" };
     // Always send X-Tenant-ID. Browser login never knows the tenant upfront,
@@ -414,7 +436,7 @@ export const authService = {
 
     setSessionMetadata({ tenant_id: tenantId, expires_in: expiresIn, role });
 
-    console.info("AUTHENTICATION_SUCCESS", { tenantId, role });
+    console.info("AUTHENTICATION_SUCCESS", "[redacted]");
 
     return {
       data: {
@@ -429,6 +451,33 @@ export const authService = {
   logout: async () => {
     try {
       await fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "include" });
+      // Server-side revocation validation: a successful POST /auth/logout
+      // SHOULD have killed the session cookie + revoked the Clerk session,
+      // but if the gateway returns 200 while leaving the cookie intact
+      // (mis-set Domain attribute, proxy strip, etc.) the next tab navigation
+      // would walk straight back into /dashboard. Probe /auth/session (fall
+      // back to /auth/me) to confirm we really are logged out; if not, force
+      // a hard navigation to /login to break stale in-memory state.
+      let probeUrl = `${API_BASE}/auth/session`;
+      let probe = await fetch(probeUrl, { credentials: "include" }).catch(() => null);
+      if (probe && probe.status === 404) {
+        probeUrl = `${API_BASE}/auth/me`;
+        probe = await fetch(probeUrl, { credentials: "include" }).catch(() => null);
+      }
+      if (probe && probe.ok) {
+        const body = await probe.json().catch(() => ({}));
+        const stillAuthed =
+          body?.authenticated === true ||
+          !!(body?.data?.user_id || body?.user_id || body?.data?.user || body?.user);
+        if (stillAuthed) {
+          console.warn("LOGOUT_INCOMPLETE: server reports session still active after /auth/logout; forcing redirect");
+          window.location.href = "/login";
+        }
+      } else if (!probe) {
+        console.warn(
+          "LOGOUT_PROBE_UNAVAILABLE: backend should expose /auth/session or /auth/me; relying on cookie clearing + normal redirect"
+        );
+      }
     } finally {
       clearSessionMetadata();
     }
