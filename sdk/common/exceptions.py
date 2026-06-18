@@ -42,10 +42,17 @@ class ACPError(Exception):
 
 
 class ACPAuthError(ACPError):
-    """Raised when authentication fails (bad token, expired, revoked)."""
+    """Raised when authentication fails (bad token, expired, revoked).
 
-    def __init__(self, message: str = "Authentication failed") -> None:
+    The optional ``reason`` slug is propagated to the WWW-Authenticate header
+    on 401 responses (`Bearer realm="<reason>"`) so the UI can render a
+    targeted message instead of a generic "Authentication failed" toast.
+    Known reasons: ``session_expired``, ``invalid_token``.
+    """
+
+    def __init__(self, message: str = "Authentication failed", reason: str = "invalid_token") -> None:
         super().__init__(message, status_code=status.HTTP_401_UNAUTHORIZED)
+        self.reason = reason
 
 
 class ACPPermissionError(ACPError):

@@ -18,6 +18,7 @@ from fastapi import HTTPException, Request
 from starlette.responses import Response
 
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.exceptions import ACPAuthError
 from sdk.utils import IDEMPOTENCY_HITS_TOTAL
 from services.gateway.auth import REDIS_REVOKE_PREFIX
 from services.gateway.client import service_client
@@ -231,14 +232,20 @@ class _AuthMixin:
                         else:
                             from services.gateway.auth import LocalTokenValidator
                             auth_data = LocalTokenValidator()._validate_signature(token)
-                    except Exception:
+                    except Exception as _validation_exc:
                         try:
                             await self.redis.incr(auth_fail_key)
                             await self.redis.expire(auth_fail_key, 300)
                         except Exception as _re:
                             logger.debug("auth_fail_counter_error", error=str(_re))
 
-                        raise HTTPException(status_code=401, detail="Invalid or expired token")
+                        reason = getattr(_validation_exc, "reason", None) if isinstance(_validation_exc, ACPAuthError) else None
+                        reason = reason or "invalid_token"
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Invalid or expired token",
+                            headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
+                        )
 
                     # Active RBAC Mapping
                     # Sprint 1 — Role enum extended (OWNER + SECURITY_ANALYST + DEVELOPER + READ_ONLY).
@@ -271,6 +278,7 @@ class _AuthMixin:
                                 raise HTTPException(
                                     status_code=403,
                                     detail="Write operations require OWNER, ADMIN, or SECURITY_ANALYST role",
+                                    headers={"WWW-Authenticate": 'Bearer realm="insufficient_role"'},
                                 )
 
                     # Enterprise JTI Atomic Burst Lock — tool executions only.
@@ -344,11 +352,19 @@ class _AuthMixin:
                 request.state.jwt_claims = {}
 
         if not tenant_id:
-            raise HTTPException(status_code=401, detail="Authentication required")
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+            )
 
         x_tenant = request.headers.get("X-Tenant-ID") or tenant_id_str
         if not x_tenant:
-            raise HTTPException(status_code=401, detail="Tenant ID required")
+            raise HTTPException(
+                status_code=401,
+                detail="Tenant ID required",
+                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+            )
 
         if x_tenant != tenant_id_str:
             logger.critical("tenant_isolation_violation", token_tenant=tenant_id_str, header_tenant=x_tenant)
