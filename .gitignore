@@ -84,7 +84,14 @@ DEPLOY_REPORT_*.md
 SPRINT_*_REPORT.md
 SOAK_REPORT_*.md
 session_*/
-reports/
+# Ignore every direct child of reports/ — historical CSVs, JSON dumps,
+# soak outputs, etc. v2.0 production load-test evidence is committed
+# per SPRINT.md §7 D3; re-include that one directory and let Git walk
+# into it, then re-exclude any dated sub-directories within (which hold
+# raw locust CSVs the SRE produces during a run).
+reports/*
+!reports/load-test-2026-Q3/
+reports/load-test-2026-Q3/*/
 brutal_*.md
 debug_*.txt
 
