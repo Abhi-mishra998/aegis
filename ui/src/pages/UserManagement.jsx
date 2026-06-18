@@ -2,10 +2,19 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   Users, Plus, RefreshCw, Loader2, Check, X,
   Shield, ChevronDown, Mail, UserCheck, UserX, Trash2,
+  AlertCircle,
 } from 'lucide-react'
+import { z } from 'zod'
 import { userService } from '../services/api'
+import { useRole } from '../hooks/useRole'
+import useUnsavedChanges from '../hooks/useUnsavedChanges'
 
 const ROLES = ['ADMIN', 'SECURITY', 'ANALYST', 'VIEWER']
+
+const inviteSchema = z.object({
+  email: z.string().trim().min(1, 'Email is required').email('Enter a valid email address'),
+  role: z.enum(ROLES, { message: 'Pick a role' }),
+})
 
 const ROLE_COLORS = {
   ADMIN:    'text-red-400 bg-red-500/10 border-red-500/20',
@@ -22,19 +31,30 @@ function RoleBadge({ role }) {
   )
 }
 
+const INVITE_INITIAL = { email: '', role: 'VIEWER' }
+
 function InviteModal({ onClose, onInvited }) {
-  const [email, setEmail] = useState('')
-  const [role,  setRole]  = useState('VIEWER')
+  const [form, setForm] = useState(INVITE_INITIAL)
+  const [touched, setTouched] = useState({})
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
+  const dirty = form.email !== INVITE_INITIAL.email || form.role !== INVITE_INITIAL.role
+  useUnsavedChanges(dirty && !saving)
+
+  const parsed = inviteSchema.safeParse(form)
+  const fieldErrors = parsed.success ? {} : parsed.error.flatten().fieldErrors
+  const isValid = parsed.success
+  const markTouched = (key) => setTouched(t => t[key] ? t : { ...t, [key]: true })
+
   const submit = async (e) => {
     e.preventDefault()
-    if (!email.trim() || !email.includes('@')) { setError('Valid email required.'); return }
+    setTouched({ email: true, role: true })
+    if (!isValid) return
     setSaving(true)
     setError('')
     try {
-      await userService.invite({ email: email.trim().toLowerCase(), role })
+      await userService.invite({ email: form.email.trim().toLowerCase(), role: form.role })
       onInvited()
       onClose()
     } catch (err) {
@@ -55,6 +75,7 @@ function InviteModal({ onClose, onInvited }) {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <form
         onSubmit={submit}
+        noValidate
         className="relative bg-[var(--bg-surface-elevated)] border border-[var(--border-default)] rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4 space-y-4"
         onClick={e => e.stopPropagation()}
       >
@@ -68,41 +89,59 @@ function InviteModal({ onClose, onInvited }) {
         )}
 
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Email address</label>
+          <label htmlFor="invite_email" className="block text-xs text-neutral-400 mb-1">Email address</label>
           <input
+            id="invite_email"
             type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
+            value={form.email}
+            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+            onBlur={() => markTouched('email')}
             placeholder="user@company.com"
             autoFocus
-            className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
+            aria-invalid={!!fieldErrors.email}
+            aria-describedby={fieldErrors.email ? 'invite_email_err' : undefined}
+            className={`w-full bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none ${touched.email && fieldErrors.email ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
           />
+          {touched.email && fieldErrors.email && (
+            <p id="invite_email_err" className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+              <AlertCircle size={11} /> {fieldErrors.email[0]}
+            </p>
+          )}
         </div>
 
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Role</label>
+          <label htmlFor="invite_role" className="block text-xs text-neutral-400 mb-1">Role</label>
           <div className="relative">
             <select
-              value={role}
-              onChange={e => setRole(e.target.value)}
-              className="w-full appearance-none bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+              id="invite_role"
+              value={form.role}
+              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+              onBlur={() => markTouched('role')}
+              aria-invalid={!!fieldErrors.role}
+              aria-describedby={fieldErrors.role ? 'invite_role_err' : undefined}
+              className={`w-full appearance-none bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white focus:outline-none ${touched.role && fieldErrors.role ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
             >
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
             <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
           </div>
+          {touched.role && fieldErrors.role && (
+            <p id="invite_role_err" className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+              <AlertCircle size={11} /> {fieldErrors.role[0]}
+            </p>
+          )}
           <p className="text-[10px] text-neutral-600 mt-1">
-            {role === 'ADMIN' && 'Full platform access including user management and kill switch.'}
-            {role === 'SECURITY' && 'Can manage policies, incidents, and agents.'}
-            {role === 'ANALYST' && 'Read access to audit logs, forensics, and analytics.'}
-            {role === 'VIEWER' && 'Read-only dashboard access.'}
+            {form.role === 'ADMIN' && 'Full platform access including user management and kill switch.'}
+            {form.role === 'SECURITY' && 'Can manage policies, incidents, and agents.'}
+            {form.role === 'ANALYST' && 'Read access to audit logs, forensics, and analytics.'}
+            {form.role === 'VIEWER' && 'Read-only dashboard access.'}
           </p>
         </div>
 
         <button
           type="submit"
-          disabled={saving}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
+          disabled={saving || !isValid || !dirty}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
           {saving ? 'Sending invite…' : 'Send invitation'}
@@ -112,7 +151,7 @@ function InviteModal({ onClose, onInvited }) {
   )
 }
 
-function UserRow({ user, onUpdate, onDeactivate }) {
+function UserRow({ user, onUpdate, onDeactivate, canMutate }) {
   const [editRole, setEditRole] = useState(false)
   const [saving,   setSaving]   = useState(false)
 
@@ -166,7 +205,7 @@ function UserRow({ user, onUpdate, onDeactivate }) {
 
       {/* Role */}
       <div className="shrink-0">
-        {editRole ? (
+        {canMutate && editRole ? (
           <div className="flex items-center gap-1">
             <select
               autoFocus
@@ -178,10 +217,12 @@ function UserRow({ user, onUpdate, onDeactivate }) {
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
-        ) : (
+        ) : canMutate ? (
           <button onClick={() => setEditRole(true)} title="Click to change role">
             <RoleBadge role={user.role} />
           </button>
+        ) : (
+          <RoleBadge role={user.role} />
         )}
       </div>
 
@@ -189,7 +230,7 @@ function UserRow({ user, onUpdate, onDeactivate }) {
       <div className="flex items-center gap-1 shrink-0">
         {saving ? (
           <Loader2 size={14} className="animate-spin text-neutral-500" />
-        ) : (
+        ) : canMutate ? (
           <button
             onClick={toggleActive}
             title={user.is_active ? 'Deactivate user' : 'Reactivate user'}
@@ -197,13 +238,15 @@ function UserRow({ user, onUpdate, onDeactivate }) {
           >
             {user.is_active ? <UserX size={13} /> : <UserCheck size={13} />}
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   )
 }
 
 export default function UserManagement() {
+  const { isOwner, isAdmin } = useRole()
+  const canMutate = isOwner || isAdmin
   const [users,    setUsers]    = useState([])
   const [loading,  setLoading]  = useState(true)
   const [inviting, setInviting] = useState(false)
@@ -256,12 +299,14 @@ export default function UserManagement() {
           <button onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
-          <button
-            onClick={() => setInviting(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
-          >
-            <Plus size={13} /> Invite user
-          </button>
+          {canMutate && (
+            <button
+              onClick={() => setInviting(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+            >
+              <Plus size={13} /> Invite user
+            </button>
+          )}
         </div>
       </header>
 
@@ -333,6 +378,7 @@ export default function UserManagement() {
               user={u}
               onUpdate={handleUpdate}
               onDeactivate={handleDeactivate}
+              canMutate={canMutate}
             />
           ))
         )}
@@ -343,7 +389,7 @@ export default function UserManagement() {
         Click a role badge to change it; click the user icon to toggle active status.
       </p>
 
-      {inviting && <InviteModal onClose={() => setInviting(false)} onInvited={load} />}
+      {inviting && canMutate && <InviteModal onClose={() => setInviting(false)} onInvited={load} />}
     </div>
   )
 }
