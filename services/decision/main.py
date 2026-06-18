@@ -85,7 +85,11 @@ async def _rehydrate_kill_switches() -> None:
             async_sessionmaker,
             create_async_engine,
         )
-        engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        engine = create_async_engine(
+            settings.DATABASE_URL,
+            pool_pre_ping=True,
+            connect_args={"statement_cache_size": 0},
+        )
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as session:
             result = await session.execute(
