@@ -3,7 +3,7 @@ services:
   # DATABASE
   # ─────────────────────────────────────────
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:36d089cd37838927a34708483301d8c227ee7d6cf4b64d96006c1d36ec0ff5f6
     container_name: acp_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -45,7 +45,7 @@ services:
     # pull` and break the userlist/pgbouncer.ini contract silently.
     # D1/D2 closure 2026-06-18: real tag + arm64-compatible variant.
     # TODO pin: 2026-Q3 — revisit and bump to current stable.
-    image: edoburu/pgbouncer:v1.23.1-p3
+    image: edoburu/pgbouncer:v1.23.1-p3@sha256:174221d3e4bef4bd4f1e7d9c624e0107cd21f42112a8ac07f619dd081e78d313
     container_name: acp_pgbouncer
     # Using mounted config for production reliability
     volumes:
@@ -65,7 +65,7 @@ services:
   # REDIS
   # ─────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:084f4bcb3fedf990ba43d26774f58ed4697a2c044156544ac4717934ad1d57c8
     container_name: acp_redis
     # AS-2 FIX: Enable AOF persistence so audit chain heads survive restarts
     command: redis-server --appendonly yes --appendfsync everysec --save 60 1000
@@ -84,7 +84,7 @@ services:
   # OPA (Distributed Policy Architecture)
   # ─────────────────────────────────────────
   bundle-server:
-    image: python:3.11-slim
+    image: python:3.11-slim@sha256:11fbbde301e357effc172532adeccb017877be3ddda77db1511d42f292c97047
     container_name: acp_bundle_server
     working_dir: /app
     volumes:
@@ -110,7 +110,7 @@ services:
     # OPA versions. 0.69.0 is the current stable line.
     # D1/D2 closure 2026-06-18: real tag + arm64-compatible variant.
     # TODO pin: 2026-Q3 — revisit and bump to current stable.
-    image: openpolicyagent/opa:1.17.1-debug
+    image: openpolicyagent/opa:1.17.1-debug@sha256:aae3b0301311232d975f5b696b994c234893ec239c109e3a128682b0ed487267
 
     container_name: acp_opa
     ports:
@@ -509,6 +509,9 @@ services:
       # behavior in the UI service grid even though the container was healthy.
       - BEHAVIOR_SERVICE_URL=http://behavior:8000
       - REDIS_CLUSTER_ENABLED=false
+      # M3 closure 2026-06-18: hide /openapi.json + /docs + /redoc in prod
+      # so anonymous attackers can't enumerate 246 paths.
+      - ENVIRONMENT=production
       # P0-2 FIX: no weak fallback — JWT_SECRET_KEY MUST be set and must match identity service
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       # shadow_eval_hook.py is the ONLY DB consumer in the gateway and it
@@ -785,7 +788,7 @@ services:
   # replaced with managed equivalents (e.g. AWS Managed Grafana).
   # ─────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:v2.55.1
+    image: prom/prometheus:v2.55.1@sha256:f4def6b3b61109a6eeea59945d578bb7e926c36cb0e036a23e3ceb8b6de024ad
     container_name: acp_prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -809,7 +812,7 @@ services:
       retries: 3
 
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.27.0@sha256:2fbdd4c66d91e740fe3fd462d8f52fc3d305a5b403bab3a58feb62be237a84fb
     container_name: acp_alertmanager
     ports:
       - "127.0.0.1:9093:9093"
@@ -843,7 +846,7 @@ services:
       retries: 3
 
   grafana:
-    image: grafana/grafana:11.3.0
+    image: grafana/grafana:11.3.0@sha256:93bcb52aa68c86c86b03c9175584fced4e4627ce22000006272e8c5b4e7db151
     container_name: acp_grafana
     ports:
       - "127.0.0.1:3000:3000"
@@ -870,7 +873,7 @@ services:
     restart: unless-stopped
 
   jaeger:
-    image: jaegertracing/all-in-one:1.57
+    image: jaegertracing/all-in-one:1.57@sha256:84d2b9664cea496af47fb58077319b55569542804884041a87b175475e183628
     container_name: acp_jaeger
     ports:
       - "127.0.0.1:16686:16686"   # Jaeger UI
