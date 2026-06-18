@@ -493,8 +493,12 @@ _wire_above_hard_cap if {
 # resulting deny into an `escalate (approval_required)` outcome so the
 # request can be approved by an operator instead of permanently blocked.
 _wire_external_escalate if {
+	# B1 closure: aligned with services/policy/local_action_semantics.py
+	# _WIRE_ESCALATE_EXTERNAL_USD = 100_000 and gateway pattern detector at
+	# services/gateway/escalation_patterns.py:39-52. Closes the $100k-$199k
+	# routing gap where the pattern fired (202) but Rego allowed.
 	amount := object.get(input, ["metadata", "arguments", "amount_usd"], 0)
-	amount >= 200000
+	amount >= 100000
 	kind := lower(object.get(input, ["metadata", "arguments", "recipient_kind"], ""))
 	kind in {"external", "offshore", "unknown"}
 }
