@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Shield, ShieldCheck, Clock, CheckCircle2, XCircle,
-  RefreshCw, Filter, ChevronRight, Zap, User, Bot, FileBadge2,
+  AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
+  RefreshCw, Filter, ChevronRight, Zap, User,
   Activity, TrendingDown, Eye, Lock, Slash, ArrowUpRight,
   Download, Crosshair, PlayCircle,
 } from 'lucide-react';
@@ -10,6 +10,8 @@ import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
 import SkeletonLoader from '../components/Common/SkeletonLoader';
 import Modal from '../components/Common/Modal';
+import DataTable from '../components/Common/DataTable';
+import ErrorBoundary from '../components/Common/ErrorBoundary';
 import { incidentService, socService } from '../services/api';
 import { AgentContext } from '../context/AgentContext';
 // Sprint 5 — orphan-endpoint surfacing inside the incident detail modal.
@@ -425,7 +427,18 @@ function SocFeed() {
 const SEVERITY_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const STATUS_OPTIONS   = ['', 'OPEN', 'INVESTIGATING', 'ESCALATED', 'MITIGATED', 'RESOLVED'];
 
-export default function Incidents() {
+function _relTime(iso) {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (diffSec < 60)    return `${diffSec}s ago`;
+  if (diffSec < 3600)  return `${Math.round(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
+  return `${Math.round(diffSec / 86400)}d ago`;
+}
+
+function IncidentsPage() {
   const { addToast } = useContext(AuthContext);
   const { selectedAgentId, selectedAgent } = useContext(AgentContext);
 
@@ -442,6 +455,20 @@ export default function Incidents() {
   const [filterSeverity, setFilterSeverity] = useState('');
   const [page,           setPage]           = useState(0);
   const PAGE_SIZE = 25;
+
+  // Bulk-resolve selection — set of incident ids checked in the table.
+  const [selectedIds,   setSelectedIds]   = useState(() => new Set());
+  const [bulkResolving, setBulkResolving] = useState(false);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const toggleId = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -466,6 +493,34 @@ export default function Incidents() {
       setLoading(false);
     }
   }, [filterStatus, filterSeverity, page, selectedAgentId, addToast]);
+
+  // Bulk resolve — issues a PATCH per selected id sequentially. Failures are
+  // collected per-id so operators see exactly which transition was rejected;
+  // successes still surface in a single aggregate toast.
+  const handleBulkResolve = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkResolving(true);
+    let ok = 0;
+    const failures = [];
+    for (const id of ids) {
+      try {
+        await incidentService.update(id, {
+          status: 'RESOLVED',
+          note:   'Bulk resolved from Incidents grid',
+        });
+        ok += 1;
+      } catch (err) {
+        const detail = err?.response?.data?.detail || err?.message || 'unknown';
+        failures.push(`${id.slice(0, 8)}: ${detail}`);
+      }
+    }
+    if (ok > 0) addToast(`Resolved ${ok} incident${ok === 1 ? '' : 's'}`, 'success');
+    for (const f of failures) addToast(`Failed — ${f}`, 'error');
+    clearSelection();
+    setBulkResolving(false);
+    await fetchAll();
+  }, [selectedIds, addToast, clearSelection, fetchAll]);
 
   useEffect(() => {
     fetchAll();
@@ -494,6 +549,112 @@ export default function Incidents() {
   const trendIcon = trend === 'improving' ? '↑' : trend === 'degrading' ? '↓' : '→';
   const trendCls  = trend === 'improving' ? 'text-green-400' : trend === 'degrading' ? 'text-red-400' : 'text-neutral-500';
 
+  // Header-row checkbox state: indeterminate when partial, checked when all.
+  const allOnPageSelected = items.length > 0 && items.every((i) => selectedIds.has(i.id));
+  const someOnPageSelected = items.some((i) => selectedIds.has(i.id));
+
+  const toggleAllOnPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        for (const i of items) next.delete(i.id);
+      } else {
+        for (const i of items) next.add(i.id);
+      }
+      return next;
+    });
+  };
+
+  // DataTable columns. The select column owns its own header checkbox; the
+  // body cells stopPropagation so a checkbox click does not also fire the
+  // row's onRowClick (which would open the IncidentOverlay modal).
+  const columns = useMemo(() => [
+    {
+      key: '_select',
+      width: '36px',
+      label: (
+        <input
+          type="checkbox"
+          aria-label="Select all incidents on this page"
+          checked={allOnPageSelected}
+          ref={(el) => { if (el) el.indeterminate = !allOnPageSelected && someOnPageSelected; }}
+          onChange={toggleAllOnPage}
+          onClick={(e) => e.stopPropagation()}
+          className="accent-indigo-500 cursor-pointer"
+        />
+      ),
+      render: (_v, row) => (
+        <input
+          type="checkbox"
+          aria-label={`Select incident ${row.incident_number || row.id}`}
+          checked={selectedIds.has(row.id)}
+          onChange={() => toggleId(row.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="accent-indigo-500 cursor-pointer"
+        />
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      width: '140px',
+      render: (status) => <StatusBadge status={status} />,
+    },
+    {
+      key: 'title',
+      label: 'Title',
+      render: (_t, row) => (
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-neutral-600 shrink-0">
+              {row.incident_number}
+            </span>
+            <span className="text-xs text-white font-medium truncate">{row.title}</span>
+          </div>
+          <p className="text-[10px] text-neutral-600 mt-0.5 font-mono truncate">
+            {row.tool || 'N/A'} · Risk {((row.risk_score ?? 0) * 100).toFixed(0)}%
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'agent_id',
+      label: 'Agent',
+      width: '120px',
+      render: (agentId) => (
+        <code className="text-[11px] font-mono text-neutral-400">
+          {agentId ? agentId.slice(0, 8) : '—'}
+        </code>
+      ),
+    },
+    {
+      key: 'created_at',
+      label: 'Opened',
+      width: '110px',
+      render: (createdAt) => (
+        <span className="text-[11px] text-neutral-500" title={createdAt ? new Date(createdAt).toLocaleString() : ''}>
+          {_relTime(createdAt)}
+        </span>
+      ),
+    },
+    {
+      key: 'severity',
+      label: 'Severity',
+      width: '110px',
+      render: (severity) => <SeverityBadge severity={severity} />,
+    },
+    {
+      key: 'owner',
+      label: 'Owner',
+      width: '110px',
+      render: (_o, row) => (
+        <span className="text-[11px] text-neutral-500">
+          {row.owner || row.assigned_to || '—'}
+        </span>
+      ),
+    },
+  ], [selectedIds, allOnPageSelected, someOnPageSelected, items, toggleId]);
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -507,7 +668,7 @@ export default function Incidents() {
               </span>
             )}
           </div>
-          <p className="text-xs text-neutral-500 mt-0.5">Security incidents auto-created from policy denials and agent kills</p>
+          <p className="text-xs text-neutral-500 mt-0.5">All security events — open and resolved</p>
         </div>
         <Button variant="secondary" size="sm" onClick={fetchAll} disabled={loading}>
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
@@ -669,156 +830,60 @@ export default function Incidents() {
         );
       })()}
 
-      {/* Incident list */}
-      <Card>
-        {loading ? (
-          <div className="p-4"><SkeletonLoader count={6} /></div>
-        ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <CheckCircle2 size={32} className="text-green-500 mb-3" />
-            <p className="text-sm text-neutral-400">No incidents in this window.</p>
-            <p className="text-xs text-neutral-600 mt-1 max-w-sm">
-              The Incidents grid lights up when the gateway denies, kills, or
-              escalates a tool call. Trigger one from the <a href="/live-demo" className="underline">Live Demo</a> page —
-              try the <code className="font-mono text-neutral-400">cat /etc/passwd</code> prompt — to populate this view.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-white/[0.04]">
-            {items.map((inc) => {
-              // Sprint 14 — evidence-forward row. Six fields shown on
-              // the card (was: title + agent slice + risk %). Layout
-              // intentionally renders the founder's mandate vocabulary
-              // (User / Agent / Policy / Time / Decision / Verified)
-              // so a CISO, auditor, and platform engineer all read
-              // the same line.
-              //
-              // Decision is derived from status: OPEN/INVESTIGATING →
-              // DENIED (block was the original action), ESCALATED →
-              // ESCALATED, MITIGATED/RESOLVED → REVIEWED. Severity
-              // remains the colored side rail so list scanning stays
-              // identical to pre-Sprint-14.
-              const status = (inc.status || '').toUpperCase();
-              const decision =
-                status === 'ESCALATED' ? 'ESCALATED'
-                : status === 'MITIGATED' || status === 'RESOLVED' ? 'REVIEWED'
-                : 'DENIED';
-              const decisionCls =
-                decision === 'DENIED'    ? 'text-red-400 bg-red-500/10 border-red-500/20'
-                : decision === 'ESCALATED' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
-                : 'text-blue-400 bg-blue-500/10 border-blue-500/20';
-              const policyId = inc.blocking_policy_id || inc.policy_id || inc.trigger || '';
-              const mitre    = inc.mitre_technique_id || inc.mitre_technique || '';
-              const userTag  = inc.user_email || inc.actor || inc.subject_email || '';
-              const hasProof = Boolean(inc.request_id || inc.related_audit_ids?.length);
+      {/* Bulk-actions toolbar — appears only when one or more incidents are
+          checked. Resolve issues a PATCH per id; clearing wipes the set. */}
+      {selectedIds.size > 0 && (
+        <Card className="px-4 py-2.5 flex items-center gap-3 border-indigo-500/30 bg-indigo-500/[0.04]">
+          <span className="text-xs text-neutral-300">
+            <strong className="text-white">{selectedIds.size}</strong> incident{selectedIds.size === 1 ? '' : 's'} selected
+          </span>
+          <Button size="sm" onClick={handleBulkResolve} disabled={bulkResolving}>
+            {bulkResolving ? 'Resolving…' : 'Mark resolved'}
+          </Button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            disabled={bulkResolving}
+            className="text-xs text-neutral-500 hover:text-white transition-colors disabled:opacity-40"
+          >
+            Clear selection
+          </button>
+        </Card>
+      )}
 
-              return (
-                <button
-                  key={inc.id}
-                  onClick={() => setSelected(inc)}
-                  className="w-full flex items-stretch gap-4 px-4 py-3.5 hover:bg-white/[0.03] transition-colors text-left group"
-                >
-                  {/* Severity rail */}
-                  <div className={`w-1 self-stretch rounded-full shrink-0 ${SEV_CONFIG[inc.severity]?.dot || 'bg-neutral-600'}`} />
+      {/* Incident list — DataTable replaces the custom div list. The
+          empty-state hint that used to live inline now sits below the table
+          when there are zero rows. */}
+      <DataTable
+        columns={columns}
+        data={items}
+        isLoading={loading}
+        onRowClick={(row) => setSelected(row)}
+        emptyMessage="No incidents in this window."
+      />
 
-                  {/* Body — two rows: (a) decision + ID + title, (b) 6 evidence chips */}
-                  <div className="flex-1 min-w-0 space-y-2">
-                    {/* Row A — decision verdict + incident number + headline */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`status-badge text-[10px] font-semibold ${decisionCls}`}>
-                        {decision}
-                      </span>
-                      <span className="text-xs font-mono text-neutral-500 shrink-0">{inc.incident_number}</span>
-                      <SeverityBadge severity={inc.severity} />
-                      <StatusBadge status={inc.status} />
-                      <p className="text-xs text-white font-medium truncate flex-1 min-w-0">{inc.title}</p>
-                    </div>
+      {!loading && items.length === 0 && (
+        <p className="text-xs text-neutral-600 text-center max-w-md mx-auto -mt-3">
+          The Incidents grid lights up when the gateway denies, kills, or
+          escalates a tool call. Trigger one from the <a href="/live-demo" className="underline">Live Demo</a> page —
+          try the <code className="font-mono text-neutral-400">cat /etc/passwd</code> prompt — to populate this view.
+        </p>
+      )}
 
-                    {/* Row B — six evidence chips in CISO/auditor vocabulary */}
-                    <div className="flex items-center gap-3 flex-wrap text-[10px] text-neutral-400 font-mono">
-                      <span className="inline-flex items-center gap-1" title="User who triggered the agent action">
-                        <User size={10} className="text-neutral-600" />
-                        {userTag || <span className="text-neutral-700">—</span>}
-                      </span>
-                      <span className="text-neutral-800">·</span>
-                      <span className="inline-flex items-center gap-1" title="Agent that attempted the action">
-                        <Bot size={10} className="text-neutral-600" />
-                        {inc.agent_id?.slice(0, 8) || <span className="text-neutral-700">—</span>}
-                      </span>
-                      <span className="text-neutral-800">·</span>
-                      <span className="inline-flex items-center gap-1" title="Action / tool target">
-                        <Crosshair size={10} className="text-neutral-600" />
-                        {inc.tool || <span className="text-neutral-700">N/A</span>}
-                      </span>
-                      <span className="text-neutral-800">·</span>
-                      <span className="inline-flex items-center gap-1" title="Policy that fired">
-                        <Shield size={10} className="text-neutral-600" />
-                        {policyId
-                          ? <span className="text-neutral-300">{policyId}</span>
-                          : <span className="text-neutral-700">no policy id</span>}
-                      </span>
-                      {mitre && (
-                        <>
-                          <span className="text-neutral-800">·</span>
-                          <span className="inline-flex items-center gap-1" title="MITRE ATT&CK technique">
-                            <FileBadge2 size={10} className="text-neutral-600" />
-                            <span className="text-neutral-300">{String(mitre).slice(0, 24)}</span>
-                          </span>
-                        </>
-                      )}
-                      <span className="text-neutral-800">·</span>
-                      <span className="inline-flex items-center gap-1" title="Decision timestamp">
-                        <Clock size={10} className="text-neutral-600" />
-                        {new Date(inc.created_at).toLocaleString(undefined, {
-                          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                        })}
-                      </span>
-                      <span className="text-neutral-800">·</span>
-                      <span
-                        className={`inline-flex items-center gap-1 ${hasProof ? 'text-green-400' : 'text-neutral-700'}`}
-                        title="Merkle-chain proof — every audited request is signed nightly with an ed25519 root and mirrored to a public S3 bucket"
-                      >
-                        <ShieldCheck size={10} />
-                        {hasProof ? 'Merkle proof: Verified' : 'no receipt'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Sprint 15 — quick Replay deep-link on every incident.
-                      Click bubbles up; the Link's stopPropagation prevents the
-                      row drawer from also opening. */}
-                  {inc.request_id && (
-                    <Link
-                      to={`/replay/${encodeURIComponent(inc.request_id)}`}
-                      onClick={(e) => e.stopPropagation()}
-                      title="Open replay timeline for this request"
-                      className="hidden sm:inline-flex items-center gap-1 text-[11px] text-blue-300 hover:text-white px-2 py-1 rounded-md border border-blue-500/30 bg-blue-500/[0.06] hover:bg-blue-500/[0.12] transition-colors shrink-0 self-center"
-                    >
-                      <PlayCircle size={12} /> Replay
-                    </Link>
-                  )}
-                  <ChevronRight size={14} className="text-neutral-700 group-hover:text-neutral-400 transition-colors shrink-0 self-center" />
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Pagination */}
-        {total > PAGE_SIZE && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.04]">
-            <Button size="sm" variant="secondary" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
-              Previous
-            </Button>
-            <span className="text-xs text-neutral-500">
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
-            </span>
-            <Button size="sm" variant="secondary" onClick={() => setPage((p) => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total}>
-              Next
-            </Button>
-          </div>
-        )}
-      </Card>
+      {/* Pagination */}
+      {total > PAGE_SIZE && (
+        <Card className="flex items-center justify-between px-4 py-3">
+          <Button size="sm" variant="secondary" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
+            Previous
+          </Button>
+          <span className="text-xs text-neutral-500">
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => setPage((p) => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total}>
+            Next
+          </Button>
+        </Card>
+      )}
 
       </> /* end incidents tab */}
 
@@ -832,5 +897,13 @@ export default function Incidents() {
         />
       )}
     </div>
+  );
+}
+
+export default function Incidents() {
+  return (
+    <ErrorBoundary>
+      <IncidentsPage />
+    </ErrorBoundary>
   );
 }
