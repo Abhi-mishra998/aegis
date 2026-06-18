@@ -180,7 +180,7 @@ export default function AgentTopology() {
 
       {apiNodes.length === 0 && !loading && (
         <p className="px-6 py-4 text-sm text-neutral-400">
-          No identity-graph nodes for this tenant yet. Nodes are created
+          No identity-graph nodes for this workspace yet. Nodes are created
           from real <code>/execute</code> traffic — the topology fills in
           as agents call tools.
         </p>
@@ -205,7 +205,7 @@ export default function AgentTopology() {
           Legend: <span className="text-sky-300">●</span> agent &nbsp;
                   <span className="text-emerald-300">●</span> tool &nbsp;
                   <span className="text-amber-300">●</span> resource &nbsp;
-                  <span className="text-violet-300">●</span> tenant
+                  <span className="text-violet-300">●</span> workspace
         </span>
       </div>
     </div>

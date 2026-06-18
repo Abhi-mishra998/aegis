@@ -95,8 +95,8 @@ export default function Fleet() {
         <div>
           <h1 className="text-xl font-semibold">Fleet</h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Live KPIs across every agent in your tenant. The same data the
-            audit log carries — no nightly batch, no cross-tenant aggregation.
+            Live KPIs across every agent in your workspace. The same data the
+            audit log carries — no nightly batch, no cross-workspace aggregation.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -189,7 +189,7 @@ export default function Fleet() {
 
       <div className="px-6 pb-6">
         <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 text-xs text-neutral-400 flex justify-between">
-          <span>Tenant-scoped via JWT. No cross-tenant aggregation.</span>
+          <span>Workspace-scoped via JWT. No cross-workspace aggregation.</span>
           <span>
             <Link to="/agent-cost"     className="text-emerald-400 hover:underline mr-3">FinOps burn-down →</Link>
             <Link to="/agent-topology" className="text-emerald-400 hover:underline">Agent Topology →</Link>

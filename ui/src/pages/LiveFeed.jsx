@@ -571,7 +571,7 @@ export default function LiveFeed() {
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-neutral-500">
-                  <Filter size={9} /> Scope: All agents (tenant-wide)
+                  <Filter size={9} /> Scope: All agents (workspace-wide)
                 </span>
               )}
               {backfillLoading && (

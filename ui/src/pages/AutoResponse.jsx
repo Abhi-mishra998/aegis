@@ -1128,7 +1128,7 @@ export default function AutoResponse() {
         <div className="flex items-center gap-3 p-4 rounded-xl bg-amber-500/[0.04] border border-amber-500/15">
           <AlertTriangle size={14} className="text-amber-400 shrink-0" />
           <p className="text-xs text-amber-300/70">
-            ARE is globally disabled for this tenant. Rules will not fire until re-enabled.
+            ARE is globally disabled for this workspace. Rules will not fire until re-enabled.
           </p>
         </div>
       )}
