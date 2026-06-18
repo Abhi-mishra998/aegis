@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search, Activity, Shield, FileText, Users,
-  Zap, BarChart2, Terminal, CreditCard, Code2,
+  BarChart2, Terminal, CreditCard, Code2,
   Power, Radio, HeartPulse, GitMerge, Lock,
   Command, AlertTriangle,
 } from 'lucide-react'
@@ -20,7 +20,6 @@ const COMMANDS = [
   { id: 'autonomy',        label: 'Autonomy Contracts',path: '/autonomy',         icon: FileText,   group: 'Navigate' },
   { id: 'observability',   label: 'Observability',     path: '/observability',    icon: Radio,      group: 'Navigate' },
   { id: 'system',          label: 'System Health',     path: '/system-health',    icon: HeartPulse, group: 'Navigate' },
-  { id: 'risk',            label: 'Risk Engine',       path: '/risk',             icon: Zap,        group: 'Navigate' },
   { id: 'security',        label: 'Security Ops',      path: '/security',         icon: Shield,     group: 'Navigate' },
   { id: 'rbac',            label: 'RBAC Manager',      path: '/rbac',             icon: Lock,       group: 'Navigate' },
   { id: 'billing',         label: 'Usage & Billing',   path: '/billing',          icon: CreditCard, group: 'Navigate' },
@@ -37,7 +36,6 @@ const COMMANDS = [
   { id: 'users',           label: 'User Management',   path: '/users',            icon: Activity,   group: 'Navigate' },
   { id: 'policy-sim',      label: 'Policy Simulation', path: '/policy-sim',       icon: Activity,   group: 'Navigate' },
   { id: 'kill-switch',     label: 'Kill Switch',       path: '/kill-switch',      icon: Power,      group: 'Danger',  danger: true },
-  { id: 'attack-sim',      label: 'Attack Simulation', path: '/attack-sim',       icon: Power,      group: 'Danger',  danger: true },
 ]
 
 export default function CommandPalette({ isOpen, onClose }) {
