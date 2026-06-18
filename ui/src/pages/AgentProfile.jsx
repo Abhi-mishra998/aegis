@@ -176,7 +176,7 @@ function PeerBenchmarkPanel({ benchmark }) {
           <BarChart2 size={14} className="text-neutral-500" />
           Peer Benchmark
         </h2>
-        <span className="text-[10px] text-neutral-600">vs. {peer_count} agent{peer_count !== 1 ? 's' : ''} in tenant</span>
+        <span className="text-[10px] text-neutral-600">vs. {peer_count} agent{peer_count !== 1 ? 's' : ''} in workspace</span>
       </div>
       <div className="space-y-4">
         {BENCHMARK_METRICS.map(({ key, label, refKey, fmt }) => (
@@ -195,7 +195,7 @@ function PeerBenchmarkPanel({ benchmark }) {
         ))}
       </div>
       <p className="text-[10px] text-neutral-700">
-        Tick marks: tenant p50 · p75 · p95. Higher percentile = more extreme than peers.
+        Tick marks: workspace p50 · p75 · p95. Higher percentile = more extreme than peers.
       </p>
     </div>
   )

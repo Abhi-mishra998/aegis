@@ -204,7 +204,7 @@ export default function AdminConsole() {
         <div>
           <h1 className="text-2xl font-semibold text-white mb-1">Admin Console</h1>
           <p className="text-sm text-neutral-400">
-            Platform-wide health, tenant activity, and governance metrics.
+            Platform-wide health, workspace activity, and governance metrics.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -318,12 +318,12 @@ export default function AdminConsole() {
         <div className="px-5 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
           <h2 className="text-sm font-medium text-white flex items-center gap-2">
             <Globe size={14} className="text-neutral-500" />
-            Tenant Activity
+            Workspace Activity
           </h2>
-          <span className="text-xs text-neutral-500">{tenants.length} tenant{tenants.length !== 1 ? 's' : ''}</span>
+          <span className="text-xs text-neutral-500">{tenants.length} workspace{tenants.length !== 1 ? 's' : ''}</span>
         </div>
         {tenants.length === 0 ? (
-          <div className="px-5 py-8 text-center text-xs text-neutral-600">No tenant data available.</div>
+          <div className="px-5 py-8 text-center text-xs text-neutral-600">No workspace data available.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">

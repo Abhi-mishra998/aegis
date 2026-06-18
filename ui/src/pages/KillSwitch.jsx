@@ -101,7 +101,7 @@ export default function KillSwitch() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white tracking-tight">Emergency Kill Switch</h1>
-              <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this tenant</p>
+              <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this workspace</p>
             </div>
           </div>
         </div>
@@ -113,7 +113,7 @@ export default function KillSwitch() {
             <h2 className="text-lg font-bold text-white">Access Restricted</h2>
             <p className="text-sm text-neutral-500 max-w-sm">
               Kill Switch controls are restricted to administrators only.
-              Contact your tenant admin if you need emergency access.
+              Contact your workspace admin if you need emergency access.
             </p>
           </div>
         </div>
@@ -136,7 +136,7 @@ export default function KillSwitch() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white tracking-tight">Emergency Kill Switch</h1>
-            <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this tenant</p>
+            <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this workspace</p>
           </div>
         </div>
         <button
@@ -188,7 +188,7 @@ export default function KillSwitch() {
                 </h2>
                 <div className="flex items-center justify-center gap-3 flex-wrap">
                   <span className="px-3 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-neutral-400">
-                    Tenant: {tenant_id || 'SYS_GLOBAL'}
+                    Workspace: {tenant_id || 'SYS_GLOBAL'}
                   </span>
                   <span className="px-3 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-neutral-400 flex items-center gap-1.5">
                     <Lock size={10} aria-hidden="true" /> AES-256
@@ -199,7 +199,7 @@ export default function KillSwitch() {
               {/* Description */}
               <p className="text-xs text-neutral-500 max-w-md leading-relaxed">
                 {isActive
-                  ? 'Isolation is active across all microservices. The gateway is returning 403 for all tenant ingress.'
+                  ? 'Isolation is active across all microservices. The gateway is returning 403 for all workspace ingress.'
                   : 'Activating the kill switch sends a high-priority interrupt to the OPA cluster, instantly suspending all agent behaviors.'}
               </p>
 
@@ -302,7 +302,7 @@ export default function KillSwitch() {
         {isActive ? (
           <>
             <p className="text-sm text-neutral-300">
-              This will lift the isolation barrier and restore connectivity for all agents in this tenant.
+              This will lift the isolation barrier and restore connectivity for all agents in this workspace.
             </p>
             <p className="text-xs text-neutral-500 mt-2">
               Agents will resume normal operation. Verify that the threat has been resolved before proceeding.
@@ -313,11 +313,11 @@ export default function KillSwitch() {
             <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/15 mb-4">
               <AlertTriangle size={15} className="text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
               <p className="text-xs text-red-400">
-                This will immediately block all AI agent traffic for this tenant across all services.
+                This will immediately block all AI agent traffic for this workspace across all services.
               </p>
             </div>
             <p className="text-sm text-neutral-300">
-              Confirm global isolation for tenant <span className="font-bold text-white">{tenant_id || 'SYS_GLOBAL'}</span>?
+              Confirm global isolation for workspace <span className="font-bold text-white">{tenant_id || 'SYS_GLOBAL'}</span>?
             </p>
             <p className="text-xs text-neutral-500 mt-2">
               This action requires admin intervention to reverse. It will be logged in the audit chain.
