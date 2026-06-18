@@ -6,13 +6,14 @@ import { AgentContext } from '../context/AgentContext'
 import { eventBus } from '../lib/eventBus'
 import {
   ShieldCheck, ShieldAlert, AlertCircle, Search, RefreshCw,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Activity, FileText, Hash, Clock, Filter, Eye,
+  ChevronDown, ChevronUp,
+  Activity, FileText, FileSearch, Hash, Clock, Filter, Eye,
   ToggleLeft, ToggleRight, CheckCircle2, XCircle, Download,
-  HelpCircle, Loader2, AlertTriangle, MessageSquare, Plus, Send,
+  HelpCircle, Loader2, AlertTriangle, MessageSquare, Send,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
+import EmptyStateV2 from '../components/Common/EmptyStateV2'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 /* ── Display helpers ───────────────────────────────────────────────────────── */
@@ -325,7 +326,7 @@ function ExpandedRow({ log }) {
 }
 
 /* ── Constants ─────────────────────────────────────────────────────────────── */
-const PAGE_SIZE = 20
+const PAGE_SIZE = 50
 const AUTO_REFRESH_MS = 30_000
 const DECISION_OPTIONS = ['all', 'allow', 'deny', 'monitor', 'throttle', 'escalate', 'kill']
 
@@ -363,6 +364,8 @@ export default function AuditLogs() {
   const [integrityMessage, setIntegrityMessage] = useState('')
   const [autoRefresh,      setAutoRefresh]      = useState(false)
   const [exporting,        setExporting]        = useState(false)
+  const [hasMore,          setHasMore]          = useState(false)
+  const [loadingMore,      setLoadingMore]      = useState(false)
 
   const autoRefreshRef = useRef(null)
   const mountedRef     = useRef(true)
@@ -376,25 +379,28 @@ export default function AuditLogs() {
     }
   }, [effectiveAgentId])
 
-  const fetchLogs = useCallback(async (currentPage = 0) => {
-    setLogsLoading(true)
+  const fetchLogs = useCallback(async (currentPage = 0, append = false) => {
+    if (append) setLoadingMore(true); else setLogsLoading(true)
     setLogsError('')
     try {
       const res = await auditService.getLogs(PAGE_SIZE, currentPage * PAGE_SIZE, effectiveAgentId || undefined)
       if (!mountedRef.current) return
       const data  = res?.data || res || {}
       const items = Array.isArray(data) ? data : (data.logs || data.items || [])
-      setLogs(items)
-      setTotalCount(data.total || items.length)
+      setLogs(prev => append ? [...prev, ...items] : items)
+      const total = data.total || items.length
+      setTotalCount(total)
+      setHasMore(items.length === PAGE_SIZE && (currentPage + 1) * PAGE_SIZE < total)
     } catch (err) {
       if (mountedRef.current) setLogsError(err.message || 'Failed to load audit logs.')
     } finally {
-      if (mountedRef.current) setLogsLoading(false)
+      if (!mountedRef.current) return
+      if (append) setLoadingMore(false); else setLogsLoading(false)
     }
   }, [effectiveAgentId])
 
-  const handleSearch = useCallback(async (currentPage = 0) => {
-    setIsSearching(true)
+  const handleSearch = useCallback(async (currentPage = 0, append = false) => {
+    if (append) setLoadingMore(true); else setIsSearching(true)
     setLogsError('')
     setHasSearched(true)
     try {
@@ -409,14 +415,24 @@ export default function AuditLogs() {
       if (!mountedRef.current) return
       const data  = res?.data || res || {}
       const items = Array.isArray(data) ? data : (data.logs || data.items || [])
-      setLogs(items)
-      setTotalCount(data.total || items.length)
+      setLogs(prev => append ? [...prev, ...items] : items)
+      const total = data.total || items.length
+      setTotalCount(total)
+      setHasMore(items.length === PAGE_SIZE && (currentPage + 1) * PAGE_SIZE < total)
     } catch (err) {
       if (mountedRef.current) setLogsError(err.message || 'Search failed.')
     } finally {
-      if (mountedRef.current) setIsSearching(false)
+      if (!mountedRef.current) return
+      if (append) setLoadingMore(false); else setIsSearching(false)
     }
   }, [effectiveAgentId, filterDecision, filterTool, filterFrom, filterTo])
+
+  const handleLoadMore = useCallback(() => {
+    const next = page + 1
+    setPage(next)
+    if (hasSearched) handleSearch(next, true)
+    else fetchLogs(next, true)
+  }, [page, hasSearched, handleSearch, fetchLogs])
 
   const handleVerifyIntegrity = async () => {
     setIntegrityStatus('checking')
@@ -464,13 +480,6 @@ export default function AuditLogs() {
         setIntegrityMessage(err.message || 'Verification failed.')
       }
     }
-  }
-
-  const handlePageChange = (newPage) => {
-    setPage(newPage)
-    hasSearched ? handleSearch(newPage) : fetchLogs(newPage)
-    setExpandedId(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const refreshTick = useCallback(() => {
@@ -556,7 +565,6 @@ export default function AuditLogs() {
   const totalDenials = s.total_denials ?? 0
   const activeAgents = s.active_agents ?? 0
   const avgRiskScore = typeof s.avg_risk_score === 'number' ? s.avg_risk_score.toFixed(1) : '—'
-  const totalPages   = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -632,24 +640,26 @@ export default function AuditLogs() {
           )}
 
           {/* Export */}
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              loading={exporting}
               onClick={() => handleExport('csv')}
-              disabled={exporting}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-l-lg border border-r-0 border-white/5 bg-white/[0.02] text-xs text-neutral-400 hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
+              aria-label="Export audit log as CSV"
             >
               <Download size={13} aria-hidden="true" />
-              {exporting ? 'Exporting…' : 'CSV'}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('json')}
+              Export CSV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={exporting}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-r-lg border border-white/5 bg-white/[0.02] text-xs text-neutral-400 hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
+              onClick={() => handleExport('json')}
+              aria-label="Export audit log as JSON"
             >
               JSON
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -781,7 +791,7 @@ export default function AuditLogs() {
             )}
           </div>
           <span className="text-xs text-neutral-600">
-            Page {page + 1} / {totalPages}
+            Showing {logs.length.toLocaleString()} of {totalCount.toLocaleString()}
           </span>
         </div>
 
@@ -801,11 +811,12 @@ export default function AuditLogs() {
                 <tbody>
                   {logs.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-14 text-center">
-                        <div className="flex flex-col items-center gap-3 opacity-40">
-                          <FileText size={32} className="text-neutral-700" aria-hidden="true" />
-                          <p className="text-xs text-neutral-500">No audit records found</p>
-                        </div>
+                      <td colSpan={9} className="p-0">
+                        <EmptyStateV2
+                          icon={FileSearch}
+                          title="No audit events match these filters"
+                          body="Adjust the time range or filters above to see more events."
+                        />
                       </td>
                     </tr>
                   ) : (
@@ -881,53 +892,17 @@ export default function AuditLogs() {
           </div>
         )}
 
-        {/* ── Pagination ── */}
-        {totalPages > 1 && !logsLoading && !isSearching && (
-          <div className="flex items-center justify-between pt-1">
+        {/* ── Load More ── */}
+        {hasMore && !logsLoading && !isSearching && logs.length > 0 && (
+          <div className="flex items-center justify-center pt-2">
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
-              disabled={page === 0}
-              onClick={() => handlePageChange(page - 1)}
-              aria-label="Previous page"
+              loading={loadingMore}
+              onClick={handleLoadMore}
+              aria-label="Load more audit events"
             >
-              <ChevronLeft size={14} aria-hidden="true" /> Prev
-            </Button>
-
-            <div className="flex items-center gap-1" role="navigation" aria-label="Pagination">
-              {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                let p
-                if (totalPages <= 7)       p = i
-                else if (page < 4)         p = i
-                else if (page > totalPages - 5) p = totalPages - 7 + i
-                else                       p = page - 3 + i
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => handlePageChange(p)}
-                    aria-label={`Page ${p + 1}`}
-                    aria-current={p === page ? 'page' : undefined}
-                    className={`w-7 h-7 rounded text-xs font-bold transition-colors ${
-                      p === page
-                        ? 'bg-white text-black'
-                        : 'text-neutral-600 hover:text-white hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    {p + 1}
-                  </button>
-                )
-              })}
-            </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={page >= totalPages - 1}
-              onClick={() => handlePageChange(page + 1)}
-              aria-label="Next page"
-            >
-              Next <ChevronRight size={14} aria-hidden="true" />
+              Load more
             </Button>
           </div>
         )}

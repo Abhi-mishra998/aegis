@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { notificationService } from '../services/api'
 import { AuthContext } from '../context/AuthContext'
+import EmptyStateV2 from '../components/Common/EmptyStateV2'
 
 const LEVEL_CONFIG = {
   info:    { icon: Info,          color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/20' },
@@ -193,14 +194,11 @@ export default function Notifications() {
           <Loader2 className="animate-spin text-neutral-500" size={24} />
         </div>
       ) : visible.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16">
-          <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center mb-4">
-            <Bell size={20} className="text-neutral-600" />
-          </div>
-          <div className="text-sm text-neutral-500">
-            {filter === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
-          </div>
-        </div>
+        <EmptyStateV2
+          icon={Bell}
+          title="All caught up"
+          body="Alerts about agent decisions, escalations, and system events will appear here."
+        />
       ) : (
         <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
           {visible.map(n => (
