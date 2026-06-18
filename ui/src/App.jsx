@@ -35,7 +35,6 @@ const KillSwitch         = lazy(() => import('./pages/KillSwitch'));
 const Forensics          = lazy(() => import('./pages/Forensics'));
 const AuditLogs          = lazy(() => import('./pages/AuditLogs'));
 const Billing            = lazy(() => import('./pages/Billing'));
-const RiskEngine         = lazy(() => import('./pages/RiskEngine'));
 const AgentPlayground    = lazy(() => import('./pages/AgentPlayground'));
 const DeveloperPanel     = lazy(() => import('./pages/DeveloperPanel'));
 const SystemHealth       = lazy(() => import('./pages/SystemHealth'));
@@ -43,7 +42,6 @@ const IdentityGraph      = lazy(() => import('./pages/IdentityGraph'));
 const FlightRecorder     = lazy(() => import('./pages/FlightRecorder'));
 const RBAC               = lazy(() => import('./pages/RBAC'));
 const Incidents          = lazy(() => import('./pages/Incidents'));
-const AttackSimulation   = lazy(() => import('./pages/AttackSimulation'));
 const AutoResponse       = lazy(() => import('./pages/AutoResponse'));
 const Compliance         = lazy(() => import('./pages/Compliance'));
 const WebhookSettings    = lazy(() => import('./pages/WebhookSettings'));
@@ -362,7 +360,6 @@ function App() {
                   app per PRODUCT_PLAN §12.3. External links land on dashboard. */}
               <Route path="/open-source" element={<Navigate to="/dashboard" replace />} />
               <Route path="/pricing"     element={<Navigate to="/dashboard" replace />} />
-              <Route path="/attack-sim"      element={<ProtectedRoute><AttackSimulation /></ProtectedRoute>} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
 
               {/* Admin / surfaced via Settings hub (hidden from sidebar) */}
@@ -375,7 +372,6 @@ function App() {
               <Route path="/system-health"   element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />
               <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
-              <Route path="/risk"            element={<ProtectedRoute><RiskEngine /></ProtectedRoute>} />
               <Route path="/webhook-settings" element={<ProtectedRoute><WebhookSettings /></ProtectedRoute>} />
               <Route path="/admin"           element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
               <Route path="/siem"            element={<ProtectedRoute><SiemSettings /></ProtectedRoute>} />
