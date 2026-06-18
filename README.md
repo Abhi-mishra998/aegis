@@ -91,6 +91,7 @@ Canonical references at the root:
 
 | File | Scope |
 |---|---|
+| [`agies-bussiness.md`](agies-bussiness.md) | What Aegis is, what it isn't, live evidence, gaps — context briefing v1.3.0 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Service map, request pipeline, data model |
 | [`API.md`](API.md) | HTTP surface — auth, /execute, /storylines, /iag, /remediation, /threat-intel |
 | [`SECURITY.md`](SECURITY.md) | Threat model, crypto, secret handling, vuln reporting |
@@ -100,6 +101,19 @@ Canonical references at the root:
 
 Deeper reference under [`docs/`](docs/) (GitBook layout; see
 [`docs/SUMMARY.md`](docs/SUMMARY.md) for the table of contents).
+
+### Procurement & audit docs
+
+For CISOs, Principal Security Architects, and customer privacy counsel:
+
+| File | Scope |
+|---|---|
+| [`docs/security/threat-model.md`](docs/security/threat-model.md) | Formal STRIDE-per-asset model, top-10 ranked threats with file:line mitigation citations |
+| [`docs/security/dpa-template.md`](docs/security/dpa-template.md) | Data Processing Agreement template (engineering-drafted, legal review pending) |
+| [`docs/security/baa-template.md`](docs/security/baa-template.md) | HIPAA Business Associate Agreement template (engineering-drafted, legal review pending) |
+| [`docs/operations/incident-response.md`](docs/operations/incident-response.md) | Sev-0..3 classes, 72-hour customer-notify SLO, 14-day postmortem SLA |
+| [`docs/operations/retention-policy.md`](docs/operations/retention-policy.md) | 10-year audit / 90-day op-log / 24-month PII / 30-day offboarding windows |
+| [`docs/operations/disaster-recovery.md`](docs/operations/disaster-recovery.md) | Customer-facing RTO 4h / RPO 15m posture + drill log |
 
 ## Repository layout
 
