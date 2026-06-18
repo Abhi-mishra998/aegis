@@ -31,10 +31,10 @@ import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
 
 const PROVIDER_CATALOG = [
-  { id: 'anthropic', label: 'Anthropic Claude', icon: Brain, blurb: 'Drop-in for `from anthropic import Anthropic`.', sdk: 'aegis-anthropic' },
-  { id: 'openai', label: 'OpenAI', icon: Sparkles, blurb: 'Drop-in for `from openai import OpenAI`.', sdk: 'aegis-openai' },
-  { id: 'bedrock', label: 'AWS Bedrock', icon: Cpu, blurb: 'Drop-in for boto3 bedrock-agent-runtime.', sdk: 'aegis-bedrock' },
-  { id: 'langchain', label: 'LangChain', icon: Code2, blurb: 'Wraps every Tool so Aegis sees the tool calls.', sdk: 'aegis-langchain' },
+  { id: 'anthropic', label: 'Anthropic Claude', icon: Brain, blurb: 'Drop-in for `from anthropic import Anthropic`.', sdk: 'pip install aegis-anthropic==1.1.0' },
+  { id: 'openai', label: 'OpenAI', icon: Sparkles, blurb: 'Drop-in for `from openai import OpenAI`.', sdk: 'pip install aegis-openai==1.1.0' },
+  { id: 'bedrock', label: 'AWS Bedrock', icon: Cpu, blurb: 'Drop-in for boto3 bedrock-agent-runtime.', sdk: 'pip install aegis-bedrock==1.1.0' },
+  { id: 'langchain', label: 'LangChain', icon: Code2, blurb: 'Wraps every Tool so Aegis sees the tool calls.', sdk: 'pip install aegis-langchain==1.1.0' },
   { id: 'cursor', label: 'Cursor', icon: Bot, blurb: 'Cursor MCP server — paste into settings.', sdk: 'npx @aegis/mcp-server' },
   { id: 'claude-code', label: 'Claude Code', icon: Terminal, blurb: 'Claude Code MCP server.', sdk: 'npx @aegis/mcp-server' },
   { id: 'openhands', label: 'OpenHands', icon: Wand2, blurb: 'Routes OpenHands tool calls through Aegis.', sdk: 'aegis-openhands' },
