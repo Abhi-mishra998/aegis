@@ -139,7 +139,8 @@ class _ResponseMixin:
               explanation: str | None = None,
               security: dict | None = None,
               governance: dict | None = None,
-              mitre: dict | None = None) -> JSONResponse:
+              mitre: dict | None = None,
+              headers: dict | None = None) -> JSONResponse:
         ctx = structlog.contextvars.get_contextvars()
 
         logger.warning("security_rejection", **{
@@ -237,7 +238,12 @@ class _ResponseMixin:
         # Sprint 1 2026-06-15 — MITRE ATT&CK mapping for the primary finding.
         if mitre:
             body["mitre"] = mitre
-        return JSONResponse(status_code=status_code, content=body)
+        # H1-deeper closure 2026-06-18: surface upstream-attached headers
+        # (WWW-Authenticate realm hints, X-ACP-Audit-Action, Retry-After)
+        # that _handle_http_exception in middleware.py passes through.
+        # Without this, the chokepoint dropped them and the UI's targeted
+        # error vocabulary never reached the client.
+        return JSONResponse(status_code=status_code, content=body, headers=headers)
 
     async def _record_runaway_failure(self, tenant_id: str, agent_id: str, tool: str,
                                        reason: str = "") -> None:

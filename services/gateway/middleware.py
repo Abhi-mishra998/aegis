@@ -2167,7 +2167,10 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         except Exception as _runx:
             logger.warning("runaway_loop_record_failed", error=str(_runx))
 
-        return self._deny(e.detail, e.status_code)
+        # H1-deeper closure 2026-06-18: forward e.headers (WWW-Authenticate
+        # realm hints set in _mw_auth.py:247/281/358/366) into _deny so the
+        # UI receives "Bearer realm=session_expired|invalid_token|insufficient_role".
+        return self._deny(e.detail, e.status_code, headers=e.headers)
 
     async def _enforce_bounded_autonomy(
         self,
