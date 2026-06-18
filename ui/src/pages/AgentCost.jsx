@@ -174,7 +174,7 @@ export default function AgentCost() {
       {data && (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
-            <ScopePanel title="Tenant" scope={data.tenant} />
+            <ScopePanel title="Workspace" scope={data.tenant} />
             <ScopePanel title="Agent"  scope={data.agent} />
           </div>
           <div className="px-6 pb-6">

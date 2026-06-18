@@ -51,12 +51,12 @@ const PROVIDER_CATALOG = [
 // matches what's in the back-of-the-CISO's-mind.
 const CAPABILITIES = [
   { id: 'filesystem',     label: 'Filesystem',       blurb: 'Read or write files on disk.',          icon: FileText  },
-  { id: 'database',       label: 'Database (SQL)',   blurb: 'Query / mutate tenant databases.',      icon: Database  },
+  { id: 'database',       label: 'Database (SQL)',   blurb: 'Query / mutate workspace databases.',   icon: Database  },
   { id: 'infrastructure', label: 'Infrastructure',   blurb: 'kubectl / terraform / cloud control.',  icon: Server    },
   { id: 'payments',       label: 'Payments',         blurb: 'Wire transfers, refunds, treasury.',    icon: DollarSign },
   { id: 'email',          label: 'Email (outbound)', blurb: 'Send email on behalf of users.',        icon: Mail      },
-  { id: 'external_apis',  label: 'External APIs',    blurb: 'HTTP / webhooks to non-tenant hosts.',  icon: Globe     },
-  { id: 'internal_apis',  label: 'Internal APIs',    blurb: 'RPC to other tenant-internal services.',icon: Network   },
+  { id: 'external_apis',  label: 'External APIs',    blurb: 'HTTP / webhooks to non-workspace hosts.',icon: Globe     },
+  { id: 'internal_apis',  label: 'Internal APIs',    blurb: 'RPC to other workspace-internal services.',icon: Network   },
 ];
 
 const RISK_LABEL_STYLES = {

@@ -241,7 +241,7 @@ export default function ThreatGraph() {
               }
               setRefreshTick((t) => t + 1);
             }}
-            title="Re-ingest the tenant's tool surface from the audit log"
+            title="Re-ingest the workspace's tool surface from the audit log"
           >
             <RefreshCw size={12} aria-hidden="true" />
             Re-ingest
