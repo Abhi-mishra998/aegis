@@ -4,9 +4,11 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Date,
     DateTime,
     Float,
+    Identity,
     Index,
     Integer,
     PrimaryKeyConstraint,
@@ -49,6 +51,20 @@ class AuditLog(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     # derive shard = hash(request_id) % AUDIT_CHAIN_SHARD_COUNT.
     chain_shard: Mapped[int] = mapped_column(
         SmallInteger, default=0, server_default="0", nullable=False
+    )
+
+    # B-001 closure 2026-06-18 (Enterprise Security Review):
+    # Monotonic, database-assigned insertion sequence. External verifiers
+    # walk the chain via `ORDER BY tenant_id, chain_shard, chain_sequence
+    # ASC` — unambiguous even under concurrent writes (created_at can tie
+    # at the microsecond and gave a misleading "5,845 chain breaks" reading
+    # under the prior methodology). NULL on rows inserted before the
+    # migration; new rows always carry a value.
+    chain_sequence: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(always=False, start=1, cycle=False),
+        nullable=True,
+        index=True,
     )
 
     # P0 FIX (2026-05-04): Changed default to "completed" since billing is now processed

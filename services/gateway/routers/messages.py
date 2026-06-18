@@ -583,14 +583,55 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         except Exception:  # noqa: BLE001
             pass
 
-        # 9. return upstream verbatim so the Anthropic SDK can't tell
-        # we're in the middle.
+        # 9. B-006 closure 2026-06-18 (Enterprise Security Review):
+        # Happy-path (2xx) returns upstream verbatim so the Anthropic
+        # SDK keeps working unchanged. Error-path (4xx/5xx) is wrapped
+        # in the Aegis APIResponse envelope so Aegis-SDK consumers see
+        # a uniform shape ({success:false, error, meta:{code, upstream:...}})
+        # regardless of whether the failure came from Aegis (rate-limit,
+        # budget cap, policy block) or from Anthropic (rate-limit, key
+        # invalid, model unavailable). The raw upstream body is still
+        # available under meta.upstream_body for SDKs that want to
+        # passthrough Anthropic-specific error details.
+        if 200 <= upstream_resp.status_code < 300:
+            return Response(
+                content=upstream_resp.content,
+                status_code=upstream_resp.status_code,
+                media_type=upstream_resp.headers.get(
+                    "content-type", "application/json",
+                ),
+            )
+
+        # Non-2xx: wrap in Aegis envelope.
+        try:
+            _upstream_body = upstream_resp.json()
+        except Exception:  # noqa: BLE001
+            _upstream_body = {"raw": upstream_resp.text[:500]}
+        _upstream_error_type = None
+        _upstream_message = None
+        if isinstance(_upstream_body, dict):
+            _err = _upstream_body.get("error")
+            if isinstance(_err, dict):
+                _upstream_error_type = _err.get("type")
+                _upstream_message = _err.get("message")
+        _aegis_envelope = {
+            "success": False,
+            "data": None,
+            "error": _upstream_message or f"Anthropic upstream returned {upstream_resp.status_code}",
+            "meta": {
+                "code": upstream_resp.status_code,
+                "upstream": "anthropic",
+                "upstream_error_type": _upstream_error_type,
+                "upstream_body": _upstream_body,
+                "decision": _sse_decision,
+                "reject_reason": _reject_reason,
+            },
+        }
+        import json as _json
         return Response(
-            content=upstream_resp.content,
+            content=_json.dumps(_aegis_envelope).encode(),
             status_code=upstream_resp.status_code,
-            media_type=upstream_resp.headers.get(
-                "content-type", "application/json",
-            ),
+            media_type="application/json",
         )
     finally:
         try:
