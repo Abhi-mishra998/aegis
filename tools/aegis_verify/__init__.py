@@ -13,7 +13,7 @@ Usage:
     python -m aegis_verify --bundle evidence_bundle.json
     aegis-verify --bundle evidence_bundle.json --verbose
 """
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # AEVF specification this implementation conforms to. See `docs/AEVF/spec.md`
 # for the canonical definition. The bundle format version (recorded as
