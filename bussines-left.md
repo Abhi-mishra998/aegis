@@ -5,17 +5,53 @@
 **Auditor:** code review + 3 runtime probes (HTTPS curl, S3 list, PyPI metadata)
 
 > **CLOSURE LEDGER (sprint v2.0 in progress — see `sprint.md`):**
-> - **B1 — RESOLVED 2026-06-18.** Wire-transfer enforcement aligned at $100k across
->   `services/policy/local_action_semantics.py:101`, `services/security/objectives/impact.py:28`,
->   `services/policy/policies/action_semantics_deny.rego:501`, `services/security/signal_registry.py:456`.
->   $100k–$199k routing gap closed.
-> - **B4 — RESOLVED IN SOURCE 2026-06-18.** `aegis-bedrock.__version__` and
->   `aegis-langchain.__version__` bumped to `1.1.0`. PyPI re-publish as 1.1.1
->   pending (sprint Track B).
-> - **L1 / L2 / L3 — RESOLVED 2026-06-18.** `agies-bussiness.md` published as
->   v1.3.0 with §3 latency reconciliation, S3 public-witness live evidence
->   added, `/status` JSON sample added.
-> - Remaining items (B2, B3, B5-B10) carry forward into the active sprint.
+> - **B1 — RESOLVED 2026-06-18 (commits `943d83c` + `cad227c`).** Wire-transfer
+>   enforcement aligned at $100k across `services/policy/local_action_semantics.py:101`,
+>   `services/security/objectives/impact.py:28`,
+>   `services/policy/policies/action_semantics_deny.rego:501`,
+>   `services/security/signal_registry.py:456`. Regression guard at
+>   `tests/policy/test_wire_threshold.py` (10 cases, includes $150k external
+>   gap-closure assertion). $100k–$199k routing gap closed end-to-end.
+> - **B2 — SOURCE-PREP RESOLVED 2026-06-18 (commit `25b2810`).** `aegis-aevf`
+>   source `__version__` bumped from `1.0.0` to `1.1.0` at
+>   `tools/aegis_verify/__init__.py:16` and `tools/aegis_verify/pyproject.toml:7`;
+>   `tools/aegis_verify/CHANGELOG.md` added with 1.0.0 + 1.1.0 entries
+>   (version-sync release, no functional changes, AEVF spec unchanged at
+>   `aevf/0.1.0`). PyPI publish itself remains gated on Track B1 release-engineer
+>   ops (`python -m build` + `twine upload`).
+> - **B3 — ALREADY RESOLVED IN v1.3.0.** Doc no longer claims "50k rows"; line 187
+>   reads "Bulk PII export: deny tier ≥ 10k rows (risk-level-dependent: critical=0,
+>   high=100, medium=1k, low=10k)" with citation to `local_action_semantics.py:81-86`.
+> - **B4 — RESOLVED IN SOURCE 2026-06-18 (commit `ec84e22`).** `aegis-bedrock.__version__`
+>   and `aegis-langchain.__version__` bumped to `1.1.0`. PyPI re-publish as 1.1.1
+>   pending (sprint Track B2/B3 — release-engineer ops).
+> - **B5 — ALREADY RESOLVED IN v1.3.0.** §3 point 8 reconciled per L1 to cite the
+>   only measured number (21.49ms p95 synthetic dry-run) and defer production
+>   numbers to sprint Track D. Line 418 carries a behavioral rule against citing
+>   "27ms" or "150ms" as a production SLA.
+> - **B6 — ALREADY RESOLVED IN v1.3.0.** Line 270 reads "Advanced surfaces (15 total,
+>   per `ui/src/components/Layout/Sidebar.jsx:62-78`...)" with an explicit
+>   "earlier versions said 16 — code count is 15" parenthetical.
+> - **B7 — ALREADY RESOLVED IN v1.3.0.** Lines 251–255 carry a "Pricing note: Dollar
+>   amounts live in Stripe Price IDs (`STRIPE_PRO_PRICE_ID`,
+>   `STRIPE_ENTERPRISE_PRICE_ID` env vars) — figures reflect current Stripe
+>   dashboard configuration. State as 'subject to current pricing' when sending
+>   to a VC or enterprise buyer."
+> - **B8 — ALREADY RESOLVED IN v1.3.0.** Line 208 reads "Tenant-isolated at the
+>   policy-bundle layer (per-tenant OPA bundle paths + `X-Tenant-ID` header)"
+>   instead of the previous imprecise "tenant-isolated Rego policies".
+> - **B9 — ALREADY RESOLVED IN v1.3.0.** Lines 54 and 285 both state "A DBA with full
+>   RDS credentials cannot mutate a row without dropping the trigger first — that
+>   DDL is itself an audited event. This is storage-layer immutability, not
+>   application-layer immutability." Superuser caveat is disclosed.
+> - **B10 — ALREADY RESOLVED IN v1.3.0.** Line 59 states "**Public verification
+>   path is `aws s3 cp` + `aegis-verify` CLI, NOT any `aegisagent.in/transparency/*`
+>   endpoint** (those are JWT-gated UI routes)."
+> - **L1 / L2 / L3 — RESOLVED 2026-06-18 (commit `3c26088`).** `agies-bussiness.md`
+>   published as v1.3.0 with §3 latency reconciliation, S3 public-witness live
+>   evidence added, `/status` JSON sample added.
+> - **All B-items resolved in code, source, or doc.** Only deferred items are the
+>   PyPI publishes (B1/B2/B3 of `sprint.md` §5) which are release-engineer ops.
 
 ---
 
