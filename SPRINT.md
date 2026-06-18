@@ -1,551 +1,809 @@
-# SPRINT.md — Aegis Sprint Roadmap
+# Aegis Market-Shift Sprint — `sprint.md`
 
-> **Phase A — Sprint 1-10 plumbing**: ✅ SHIPPED 2026-06-15.
-> **Phase B — Enterprise activation (Sprints 11-18)**: ✅ SHIPPED 2026-06-17.
-> **Founder priorities (post Phase B)**: ✅ SHIPPED 2026-06-17.
-> **Phase B follow-on (Sprints 19-23)**: ✅ SHIPPED 2026-06-17.
-
----
-
-## 📒 Actual ledger — what's live on `https://ha.aegisagent.in`
-
-Every row below was deployed end-to-end, live-tested, and the bundle uploaded to
-`s3://acp-backups-prodha-628478946931/releases/current.tar.gz` so the next ASG
-replacement boots clean. All commits are local to `main`; nothing has been
-pushed to `origin/main` per founder hard-rule.
-
-| Sprint | Commit | What it shipped |
-|---|---|---|
-| **11** Marketing landing | `ca2fe4b` | Public `/` landing — hero "AI governance & runtime security platform", 3 value-prop cards, 4 mandate Q&A, Path B code snippet, trust strip. Authenticated users redirect to `/dashboard`. |
-| **12** Dashboard mandate KPIs | `8a9d5c5` + `da299b6` | 6 mandate KPIs (protected_agents / actions_evaluated / allowed / denied / escalated / active_findings) + 4 business-value tiles. Backed by gateway `dashboard_overview` fan-out to registry + audit-svc `/logs/aggregate` (server-side counts; not capped at 1000). |
-| **13** Capability wizard | `d6ed7b3` | Wizard Step 2 replaced 'risk level' with 7 capability checkboxes (filesystem/database/infrastructure/payments/email/external_apis/internal_apis). Live preview of `policies_enabled` from `services/registry/capabilities.py`. |
-| **14** Incident card 6 fields | `da299b6` | Every `/incidents` row shows DENIED/ESCALATED/REVIEWED verdict + User + Agent + Tool + Policy + MITRE + Time + Merkle proof Verified chip. |
-| **15** Unified replay | `092d657` | Gateway `GET /replay/{request_id}` joins audit + override events. New `/replay/:request_id` page — 5-stage stepper (User → Agent → Tool → Aegis eval → Outcome). Deep-linked from Incidents + Approval Inbox + EmployeeProfile recent_calls. |
-| **16** Compliance grid | `f4cadc0` | Audit-svc `GET /logs/pack-enforcement?days=30` rolls escalations up by pack + control. `/compliance` page surfaces real per-control hit counts + 3 recent examples each. |
-| **17** Aegis for Teams + **17.5/17.6/17.7** | `e2efe8b` `779bd0b` `43c12df` | `POST /v1/messages` Anthropic proxy + acp_emp_… employee virtual keys (Sprint 17). Team page hero with 6 KPIs + Members/Departments/Executive tabs + Observe/Protect/Prove sidebar (17.5). `/team/:email` drill-down (17.6). `InjectionDetector` wired into the proxy (17.7). |
-| **18** Positioning sweep | `da299b6` | "AgentControl" replaced with "Aegis" + "AI governance & runtime security platform" framing on Login, Signup, Sidebar, `<title>`, `<meta description>`. |
-| **19** Approval workflows + follow-up | `e505e91` + `88ed7b4` | `services/gateway/escalation_patterns.py` (5 base patterns). `/v1/messages` returns 202 with approval_id + Slack-style card payload. Dashboard 'Escalated' tile links to `/approval-inbox`. Follow-up split escalation KPIs (pending/approved/rejected), added `/approvals/{id}/status` dual-auth + `X-Aegis-Approval-ID` replay. Three gaps closed: ASG launch-template v9, autonomy URL fix, JSONB cast fix. |
-| **20** SDK Path-B wrappers + UI freshness | `740edf6` | New `AegisAnthropicProxy` class (transparent 202 → poll → replay, typed exceptions). Dual-auth `/approvals/{id}/status` (Bearer JWT OR x-api-key). UI freshness pass — ApprovalInbox 8s poll, Dashboard SSE-triggered refetch + 20s belt-and-braces, Team 30s poll. |
-| **21** Slack approvals | `727b80c` | `tenants.slack_webhook_url` + `slack_approval_secret` (migration `b9c0d1e2f3a4`). Block-Kit card posted on escalate. HMAC-signed `/slack/approve/{id}` + `/slack/reject/{id}` callbacks return a tiny HTML success page. Settings → Slack approvals tab. |
-| **22** OpenAI proxy | `d5a1cc3` | `POST /v1/chat/completions` proxy + `services/gateway/openai_pricing.py`. `AegisOpenAIProxy` SDK class in `integrations/aegis-openai` v1.1.0. Same gates + audit-row shape as Anthropic. |
-| **23** Policy packs (SOC2 / PCI / HIPAA / Finance / DevOps) | `3a8ec1a` | `services/policy/packs.py` — 5 packs × 13 escalation rules total. `tenants.enabled_policy_packs` JSONB column (migration `c0d1e2f3a4b5`). Settings → Policy packs tab. Escalation audit rows carry `policy_pack` + `framework_controls`. |
-
-### Operational fixes also shipped this session
-
-| What | Commit | Why |
-|---|---|---|
-| `/team/overview` audit-search fix | `e2efe8b` | Was calling `POST /logs/search` with GET → 405. Switched to `GET /logs` with `start_date` param. Dashboard KPIs jumped 1000 → 30,402 (real count). |
-| `current.tar.gz` ASG bundle refreshed | (after every sprint) | Next ASG instance replacement boots with the live state, not a stale snapshot. |
-| Launch-template v9 | terraform apply equivalent via CLI | Added `/aegis-prodha/anthropic/upstream-key → UPSTREAM_ANTHROPIC_KEY` to `SSM_OVERLAY`. ASG replacements no longer need a runbook hotfix. |
-| pgbouncer userlist + cascade-restart safety | (operator response) | Discovered `docker compose up -d --force-recreate ui` cascades a pgbouncer restart that drops auth. Documented `--no-deps --force-recreate ui` as the canonical safe form; used on every subsequent UI redeploy. |
-| Founder-mandate framing on `/setup-agies.md` | `ab57b7f` | Restructured around Path A (SDK wrap) + Path B (Anthropic proxy), with B.3 red-team script. Verified live 6/6 attacks blocked + 2/2 benign allowed. |
-
-> The list above replaces the per-sprint **Estimate** lines below. Original spec
-> kept verbatim for traceability.
+**Sprint name:** Aegis v2.0 GA — Market-Shift Closeout
+**Created:** 2026-06-18
+**Duration:** 14 working days (2 weeks)
 
 ---
 
-Translation layer between PRODUCT_PLAN.md and ground-level work. One sprint = one shippable unit on `ha.aegisagent.in`. No sprint completes without:
+## 🟢 STATUS LOG — 2026-06-18 (session 1)
 
-1. Backend + UI + alembic (if schema touched) landed in one commit.
-2. Unit tests green.
-3. Bundle built + uploaded to S3 via `scripts/ops/build_release_bundle.sh`.
-4. ASG instance refresh succeeded.
-5. Live smoke probes cited in the table.
+**Landed in-session (verified):**
+- ✅ **Track A1 — B1 wire-transfer alignment.** Two Python constants + one Rego rule + signal-registry description aligned at $100k.
+  - `services/policy/local_action_semantics.py:101` `_WIRE_ESCALATE_EXTERNAL_USD = 100_000`
+  - `services/security/objectives/impact.py:28` `_WIRE_ESCALATE_EXTERNAL_USD = 100_000`
+  - `services/policy/policies/action_semantics_deny.rego:501` `amount >= 100000`
+  - `services/security/signal_registry.py:456` description "Wire ≥ $100K to external..."
+- ✅ **Track A2 — B4 SDK `__version__` source-string bumps.**
+  - `integrations/aegis-bedrock/aegis_bedrock/__init__.py:34` `__version__ = "1.1.0"`
+  - `integrations/aegis-langchain/aegis_langchain/__init__.py:26` `__version__ = "1.1.0"`
+- ✅ **Track C1 — `agies-bussiness.md` v1.3.0 published.** L1 (§3 latency reconciliation), L2 (S3 public-witness live evidence block), L3 (`/status` JSON sample) all applied.
+- ✅ **`bussines-left.md` closure ledger added** at top with file:line resolution pointers for B1, B4, L1/L2/L3.
 
-> **Behavioural carry-over (from prior memory + founder rules)**
-> - Never push without explicit "push it" in the same turn.
-> - No Co-Authored-By: Claude on any commit.
-> - Never delete a backend service. UI consolidates, backend stays.
-> - Customer's LLM key never touches Aegis servers — SDK-on-endpoint stays the default.
->   **Exception (Sprint 17 "Aegis for Teams")**: an explicit, opt-in LLM-proxy mode for employee-monitoring use cases. The SDK pattern is the moat for the production-AI-agent buyer; the proxy pattern is required for the IT-governance-of-employee-LLMs buyer. Both ship.
-> - `ACP_AUTH_PROVIDER=both` stays — legacy HS256 path keeps agent `/execute` working.
+**Verifications run (all green):**
+- `grep -n "100_000\|200_000\|100000\|200000" services/policy/local_action_semantics.py services/security/objectives/impact.py services/policy/policies/action_semantics_deny.rego services/security/signal_registry.py` → only $100k matches in wire-transfer logic; `$10_000_000` hard-cap left intact.
+- `python3 -c "from policy import local_action_semantics; print('OK')"` → module imports cleanly.
+- `grep -n "__version__" integrations/aegis-bedrock/aegis_bedrock/__init__.py integrations/aegis-langchain/aegis_langchain/__init__.py` → both read `1.1.0`.
+- Rego file head reads cleanly (no syntax break from the comment block insertion).
 
----
+**Not yet done (requires next session or human ops):**
+- Track A1 unit test (`tests/services/policy/test_wire_threshold.py` asserting $99k allow, $100k escalate, $150k escalate) — drafted in sprint spec but not yet written.
+- Track B1/B2/B3 — PyPI publishes (need PyPI token + publishing machine; coordinate with release engineer).
+- Track C2 — `docs/security/threat-model.md` — fresh session recommended (one focused doc per session).
+- Track C3 — `docs/security/dpa-template.md` — fresh session + legal review.
+- Track C4 — `docs/security/baa-template.md` — fresh session + legal review.
+- Track C5 — `docs/operations/incident-response.md` — fresh session.
+- Track C6 — `docs/operations/retention-policy.md` — fresh session.
+- Track C7 — `docs/operations/disaster-recovery.md` — written AFTER Track E1 drill runs (depends on measured RTO/RPO).
+- Track C8 — README update.
+- Tracks D, E, F, G, H — operations/legal/sales/SRE work, not Claude tasks.
+- 50-row E2E acceptance grid — runs against live prod after sprint Tracks A-H complete.
 
-## 🚨 Brutal honest assessment — 2026-06-16
-
-Phase A delivered a **technically excellent runtime-security engine** (34 MITRE-mapped signals, cryptographic transparency log, 5-tier action model, blast-radius dollar math, zero security misses in the 30-scenario red team). It also delivered the **Sprint 1-11 stability fixes today**: Clerk signin race, tenant-mismatch reconciliation, audit-stream cap, SSO endpoint auth, tab-router blink, silent-failure handlers — all closed.
-
-What Phase A did **NOT** deliver, measured against the new mandate (mandate sections in **bold**):
-
-| Mandate section | Status | Real evidence |
-|---|---|---|
-| **A. Positioning** ("Runtime Security for AI Agents") | **PARTIAL** | `Login.jsx:60-65` says "AgentControl" + "Tamper-evident replay + runtime deny for AI agents". The category claim is buried in `PRODUCT_PLAN.md:135`, never reaches a visitor. |
-| **B. Landing / first 30 seconds** | **GAP** | `nginx.conf` redirects `/` → `/dashboard` or `/login`. No pre-auth marketing surface explains what Aegis does. Zero conversion funnel. |
-| **C. Dashboard mandate KPIs** (6 metrics) | **PARTIAL** | Current Dashboard surfaces Agents / High-risk / Wizard-provisioned / Shadow-mode. Mandate wants Protected Agents / Actions Evaluated / Allowed / Denied / Escalated / Active Findings. 0 of those 6 metrics match the mandate naming. |
-| **D. Wizard capability model** ("what can this agent do?") | **GAP** | `OnboardingWizard.jsx:37-41` ships abstract `low/medium/high risk`. Mandate wants capability checkboxes (Filesystem / Database / Infrastructure / Payments / Email / External APIs / Internal APIs) → auto-generated default policy. |
-| **E. Incident card 6 fields** | **PARTIAL** | Incidents show title + agent + tool + risk + explanation + status. **Policy ID, MITRE technique, recommended remediation are NOT on the card** — buried in detail drawer + Remediation panel. |
-| **F. Unified replay** | **PARTIAL** | DecisionExplorer Graph + Forensics Timeline + JSON exist as three separate views. No single "replay this request" UX that walks User Request → Agent Decision → Tool Request → Aegis Eval → Outcome. |
-| **G. Compliance mapping** (SOC2 / ISO27001 / NIST CSF beyond MITRE) | **GAP** | `services/security/signal_registry.py` only tags MITRE tactic+technique. `Compliance.jsx` lists EU_AI_ACT / NIST_AI_RMF / SOC2 frameworks but does NOT show signal→control mapping. |
-| **H. Business-value framing** | **GAP** | Every metric is technical (Threats Blocked, Avg Risk). Zero business-impact KPIs (records protected, escalations prevented, dollar-amount risk mitigated, compliance controls enforced). The blast-radius dollar formula shipped — never surfaced as a hero metric. |
-| **I. Employee-LLM monitoring** (the user's actual goal) | **GAP** | Current arch is SDK-on-endpoint. No `/v1/messages` Anthropic-compatible proxy. `llm_router.py:42-50` tracks cost per tenant-per-provider, not per **user**. No per-employee identity carry-through. The buyer who said "monitor my employees' Claude usage" has nothing to install. |
-
-**TLDR**: Aegis is a category-leading runtime-security engine **wrapped in a security-tool wrapper**. The buyer sees an empty login page, lands on a dashboard with abstract metrics, gets an onboarding wizard that asks "how risky is this agent?" (the wrong question), and has no way to answer "how many compliance violations did Aegis prevent for me this month?" — the question the renewal hinges on.
-
----
-
-## 🥊 Competitive deltas — what shipped competitors show on their first screen
-
-(June 2026 web crawl. Sources at bottom.)
-
-| Competitor | One-line positioning | The hero feature Aegis must match |
-|---|---|---|
-| **Protect AI Layer** | *"Runtime Security for Tomorrow's AI"* + *"Stop AI threats instantly at runtime with deep visibility and control."* | Named modules: **Guardian** (scan) + **Recon** (red-team) + **Layer** (runtime). 27 turnkey policies mapped to NIST/MITRE/OWASP. |
-| **Wiz AI Application Protection** | *"AI Runtime Protection — detects prompt injection, rogue agents, malicious behavior"* + AI-BOM agentless inventory. | Real dashboard screenshots in marketing. Prioritized risk queue. Blue Agent investigation. |
-| **Lakera Guard** | *"The leading security platform to secure your AI future"* | Single `/v2/guard` API. <50ms guardrails. |
-| **Prompt Security** | *"SECURE YOUR AI. EVERYWHERE IT MATTERS."* | Employee AI-tools usage dashboard. MCP Gateway for agentic AI. IDE inline guardrails. |
-| **Credal** | *"The Control Plane for Enterprise Agents"* | **Agent Registry** + **Permission Mirroring** (sync from 50+ sources) + **Audit & Risk Monitor** with concrete examples ("GTM Agent accessed HR records", "96.2% policy compliance"). |
-| **Witness AI** | *"Approach AI with Certainty"* | Three named pillars: **Observe** / **Protect** / **Control**. Shadow-AI discovery. Conversation monitoring. |
-| **Portkey** | *"Production Stack for Gen AI Builders"* | Virtual Keys + per-user/per-team/per-key budgets. $180M managed spend. SOC2/ISO27001. Pricing public. |
-| **LiteLLM** | *"LLM Gateway (OpenAI Proxy) to manage authentication, loadbalancing, and spend tracking across 100+ LLMs"* | **Virtual keys + per-user / per-team budgets + metadata tags by department/feature/env.** This is what the employee-monitoring buyer wants. |
-| **Cloudflare AI Gateway** | *"Observe and control your AI applications"* | Analytics: requests/tokens/cost. Caching. Rate limiting. Free tier. |
-| **F5 AI Guardrails (was CalypsoAI)** | *"Secure AI systems and connected data — from pilot to production"* | Adversarial defense. Data leakage prevention. Agent privilege restrictions. |
-
-### Features EVERY competitor shows that Aegis is missing
-
-1. **Public marketing landing page** with hero claim, named products, dashboard screenshot.
-2. **Named product modules** (Layer/Guardian/Recon, Observe/Protect/Control). Aegis just has "Dashboard / Incidents / Wizard."
-3. **Compliance framework grid** (NIST + MITRE + OWASP + SOC2) as a *selling* feature, not a backend tag.
-4. **Concrete risk language in the UI** ("GTM Agent accessed HR records") — not abstract "execute_tool / deny / risk 0.87".
-5. **Shadow AI / AI inventory discovery** — Wiz, Witness, and Credal lead with this; Aegis requires manual agent registration.
-6. **(For the employee-governance buyer)** Per-user / per-team / per-API-key spend dashboards. LiteLLM + Portkey both ship this.
-
-### The ONE thing Aegis does that NONE of them do
-
-**Publicly-verifiable cryptographic transparency log.** Daily Merkle roots + ed25519 signed + anonymously fetchable from `s3://aegis-public-roots-…` + `pip install aegis-aevf` CLI that any auditor/regulator/customer can run to independently prove their audit history was not tampered with. Every competitor sells "audit trails" / "full logs" — Aegis is the only one where the trail is mathematically verifiable without trusting the vendor. **This is the moat. Phase B must not compromise it.**
+**Local commits (NO git push yet — awaiting human signoff):**
+- See §16 of this sprint for the commit/push protocol. Two commits prepared for this session:
+  1. `fix(policy): align wire-transfer escalation floor to $100k across pattern + Rego  · Closes B1`
+  2. `fix(sdk): bump aegis-bedrock and aegis-langchain __version__ to 1.1.0  · Closes B4`
 
 ---
 
-## Phase B sprints — close the mandate gaps
+**Goal:** Close every code/doc/operational gap surfaced in `bussines-left.md` and `agies-bussiness.md` §5, deploy to both EC2 instances behind the prod ALB, validate end-to-end. Emerge with a defensible "Enterprise-Ready" posture: every claim in the doc is verifiable, every endpoint operational, every blocker on the GAPS list either closed or on a dated, vendor-signed timeline.
 
-Each sprint maps 1-to-1 to a mandate gap above. Estimate columns assume one-day shippable units. DoD = ALL three of: backend live + UI live + smoke probe pasted under the sprint's evidence line.
+**Prime rule:** No bypass. No shortcut. Every task has acceptance criteria; if a criterion can't be met we extend the sprint or descope honestly — we do not ship false claims.
 
-### Sprint 11 — Marketing landing (close Gap B)
-
-**Goal** Visitor at `https://ha.aegisagent.in/` sees value-prop BEFORE the login form. 30-second comprehension test: "what is this and who is it for?"
-
-**Files**
-- `ui/src/pages/Landing.jsx` (NEW) — hero: *"Runtime Security for AI Agents."* Sub-hero: *"Aegis sits between your AI agents and the tools they call. Every action is allowed, denied, or escalated — with a cryptographic receipt."*
-- Diagram component: `AI Agent → Aegis Runtime Protection → Tools & Infrastructure` with ALLOW/DENY/ESCALATE badges below.
-- 3 named modules section (mirror Protect AI Layer / Wiz pattern): **Protect** (runtime) · **Investigate** (incidents + replay) · **Prove** (cryptographic audit chain).
-- 3 live demo cards (NOT path traversal): "$25M wire transfer denied", "kubectl delete prod blocked", "GTM agent attempted HR exfiltration". Each card opens a 20-second replay.
-- `ui/src/App.jsx` — `/` → `<Landing />` if NOT signed in, `/dashboard` if signed in.
-- `nginx.conf` — remove the unconditional `/` → `/login` redirect.
-
-**DoD**
-- Unauthenticated `curl https://ha.aegisagent.in/` returns the Landing HTML, not a redirect.
-- Page renders in <2s LCP on mobile (Lighthouse).
-- "Get Aegis Free" CTA links to `/signup` (Clerk).
-
-**Estimate** 2 dev-days. Move fast — copy + iterate.
+**Throughput contract:** Code quality > task count. A unit only lands when (a) the diff is minimal and reviewed, (b) the verification test passes locally, (c) the diff has not weakened any existing test or invariant.
 
 ---
 
-### Sprint 12 — Dashboard mandate KPIs + business-value framing (close Gaps C + H)
+## 1. Sources of truth
 
-**Goal** Replace abstract metrics with the mandate's 6 KPIs **plus** business-value rollups. Empty state shows onboarding guidance, not a blank box.
+This sprint draws from two artifacts already on disk:
 
-**Files**
-- `services/registry/router.py` — extend `GET /workspace/inventory` to include the 6 mandate metrics over the last 7d/30d windows:
-  ```
-  protected_agents, actions_evaluated, allowed, denied, escalated, active_findings
-  ```
-- `services/audit/router.py` — `GET /audit/business-impact?days=30` — returns: `records_protected_estimate, escalations_prevented, compliance_controls_enforced, dollar_risk_mitigated` (last one uses the Sprint 8 system_values map).
-- `ui/src/pages/Dashboard.jsx` — replace current MetricTiles with:
-  - Row 1 (6 mandate metrics): Protected Agents / Actions Evaluated / Allowed / Denied / Escalated / Active Findings.
-  - Row 2 (business value): Sensitive records protected · High-risk actions blocked · Escalations prevented · Compliance controls enforced.
-  - Empty state (zero agents): big card with `Add your first agent →` + animated SDK snippet preview, never an empty grid.
+- **`bussines-left.md`** — brutal audit dated 2026-06-18. 3 hard inaccuracies, 5 soft mismatches, 2 understatements. This drives the **fix list**.
+- **`agies-bussiness.md` v1.2.0** — context briefing that already absorbed most of the audit. Remaining items: L1 (latency contradiction in §3), L2 (S3 transparency live witness add), L3 (`/status` JSON sample). This drives the **doc list**.
 
-**DoD**
-- A workspace with zero agents shows the onboarding card, not "—" tiles.
-- A workspace with traffic shows all 6 mandate KPIs and 4 business-value KPIs.
-
-**Estimate** 3 dev-days.
+When the two disagree, `bussines-left.md` wins (audit precedence over context).
 
 ---
 
-### Sprint 13 — Capability-based wizard (close Gap D)
+## 2. Pre-flight checklist (before sprint kickoff)
 
-**Goal** Wizard Step 2 asks *"what can this agent do?"* with capability checkboxes. The chosen capabilities auto-generate the default policy + the recommended tool whitelist.
+- [ ] Engineering lead has read `bussines-left.md` end-to-end.
+- [ ] CTO has reviewed Definition of Done in §13 of this file.
+- [ ] AWS console access verified: ECR, S3 (deploy bucket + `aegis-public-roots-628478946931`), RDS, EC2 (both instances), SSM.
+- [ ] PyPI API token for `aegis-bedrock`, `aegis-langchain`, `aegis-aevf` packages on the publishing machine.
+- [ ] Stripe dashboard access to confirm live price IDs for Pro and Enterprise tiers.
+- [ ] Clerk dashboard access to confirm JWKS rotation cadence.
+- [ ] Backup of `audit_logs` partition taken and verified loadable in a sandbox.
+- [ ] Latest `main` is green on CI; no in-flight branches pending merge.
+- [ ] Pager rota for the 2-week window is set.
 
-**Files**
-- `services/registry/wizard.py` — replace `risk_level: 'low'|'medium'|'high'` with `capabilities: list[Capability]` where `Capability ∈ {filesystem, database, infrastructure, payments, email, external_apis, internal_apis}`. Persist to `agents.metadata.capabilities`.
-- `services/policy/canonical.py` — `default_policy_for(capabilities)` → returns a Rego policy + a tool-whitelist + a risk-profile. Money-movement → wire hard-cap rules auto-enabled. Infrastructure → kubectl-delete-prod + terraform-destroy auto-denied.
-- `ui/src/pages/OnboardingWizard.jsx:37` — replace `RISK_LEVELS` with `CAPABILITIES` (7 checkboxes with icons). Below the checkboxes: a live "policies that will be enabled" preview that updates as the operator toggles.
-
-**DoD**
-- Selecting "Payments" + "Database" auto-enables wire-hard-cap, bulk-PII-egress, SQL-injection rules without operator policy expertise.
-- Wizard Step 2 never says "risk level".
-
-**Estimate** 3 dev-days. Wizard schema migration touches Sprint 2 contract.
-
----
-
-### Sprint 14 — Incident card mandate fields (close Gap E)
-
-**Goal** Every incident row visibly shows: what / why / policy / risk / MITRE / remediation — directly on the card, not buried in a drawer.
-
-**Files**
-- `ui/src/pages/Incidents.jsx` — replace current card layout with a 6-field strip:
-  1. **What** — agent + tool + arguments excerpt.
-  2. **Why detected** — primary signal name (e.g. `bulk_pii_egress_dump`).
-  3. **Policy** — `policy_id` badge.
-  4. **Risk** — score + tier badge.
-  5. **MITRE** — `T<technique>` linked to ATT&CK page.
-  6. **Recommended remediation** — top action from `remediation_panel.actions[0]`, with one-click "Apply" button.
-- `services/security/incidents/storyline.py` — ensure `policy_id` + `mitre_technique` + `recommended_remediation` are denormalised onto the incident row so the card doesn't need a second fetch.
-
-**DoD**
-- Open `/incidents`, see all 6 fields without clicking. Click row → drawer opens with full forensics (preserved).
-
-**Estimate** 2 dev-days.
+If any checkbox above is empty, the sprint **does not start**.
 
 ---
 
-### Sprint 15 — Unified replay (close Gap F)
+## 3. Tracks (8 parallel workstreams)
 
-**Goal** One screen, one URL: `Replay {request_id}` that walks the operator through `User Request → Agent Decision → Tool Request → Aegis Evaluation → Outcome` left-to-right, with the underlying graph + timeline + JSON tabs collapsed underneath.
+Each track has an owner, a fixed set of files it may touch, a written acceptance criterion, and a verification recipe. Tracks A–E must complete **in-sprint**. Tracks F–H start in-sprint and complete on a dated post-sprint timeline.
 
-**Files**
-- `ui/src/pages/Replay.jsx` (NEW) — 5-stage horizontal stepper, each stage is a card with the relevant fields + a "see raw" link to existing DecisionExplorer / Forensics views.
-- `services/flight_recorder/router.py` — `GET /flight/replay/{request_id}` — returns the joined view (User+Agent+Tool+Decision+Outcome) in one payload so the page renders without 5 fetches.
-- `ui/src/pages/Incidents.jsx` — every incident row gets a "▶ Replay" button → `/replay/{request_id}`.
-
-**DoD**
-- A SOC analyst opens an incident and reaches a full replay in <5 seconds, no documentation reading required.
-- Existing DecisionExplorer + Forensics pages stay reachable from the replay (no surface deleted).
-
-**Estimate** 3 dev-days.
-
----
-
-### Sprint 16 — Compliance framework mapping (close Gap G)
-
-**Goal** Every Aegis signal carries SOC2 control IDs + ISO 27001 control IDs + NIST CSF subcategory IDs **in addition** to MITRE. Compliance page renders the mapping as a heatmap.
-
-**Files**
-- `services/security/signal_registry.py` — extend `@dataclass SignalDefinition` with `soc2: list[str]`, `iso27001: list[str]`, `nist_csf: list[str]`. Backfill all 34 signals.
-- `services/audit/compliance.py` — new endpoint `GET /compliance/coverage?framework=SOC2` returns per-control coverage % (control → signals → enforcement count).
-- `ui/src/pages/Compliance.jsx` — replace evidence list with a 4-tab heatmap: SOC2 / ISO27001 / NIST CSF / MITRE ATT&CK. Each tab shows control × coverage % + a "show signals" expand.
-- `ui/src/pages/Incidents.jsx` — incident card gets a compliance-tag badge ("SOC2 CC6.1 enforced").
-
-**DoD**
-- Buyer's CISO can open `/compliance` and answer "which SOC2 controls is Aegis enforcing for us today?" without engineering help.
-
-**Estimate** 4 dev-days. Backfill is the bulk.
+| Track | Title | Owner | In-sprint? | Closes |
+|---|---|---|---|---|
+| A | Code fixes (wire-transfer alignment + SDK version strings) | Backend | ✅ Yes | B1, B4 |
+| B | SDK PyPI release hygiene | Backend | ✅ Yes | B2, B4 |
+| C | Doc updates + new policy documents | Tech writer + Eng | ✅ Yes | L1, L2, L3, B7, B10, plus 4 new policy docs |
+| D | Production load-test evidence | SRE | ✅ Yes | G4 (no load-test) |
+| E | Operations readiness — DR runbook, SLO dashboard, IR runbook, retention policy | SRE + Compliance | ✅ Yes | G5, G6, G9, G10 |
+| F | Compliance kickoff — SOC2 + pen test + DPA + BAA | Compliance + Legal | ⏳ Starts in-sprint, completes post-sprint | G1, G2, G3 |
+| G | Customer-reference build | Sales + Eng | ⏳ Starts in-sprint, completes post-sprint | G11 |
+| H | Deploy + E2E validation | SRE + Eng | ✅ Yes (final phase) | All claims marked "code-only" → upgraded to "code + runtime" |
 
 ---
 
-### Sprint 17 — **Aegis for Teams** (close Gap I — the user's actual goal)
+## 4. Track A — Code fixes
 
-**Goal** Enterprise gives Claude API keys to N employees. Each employee points the Anthropic SDK at `https://ha.aegisagent.in/v1/messages` instead of `api.anthropic.com`. Aegis becomes the LLM gateway: enforces the same runtime security rules, AND surfaces per-employee token burn, API hits, and harmful actions — under one workspace.
+### A1. Close B1 — wire-transfer enforcement gap ($100k–$199k window)
 
-This is **NOT** a replacement for SDK-on-endpoint. Both ship. Customer chooses the topology that matches their threat model.
+**Why:** `bussines-left.md` §B1 — pattern detector at `services/gateway/escalation_patterns.py:39-52` fires at $100k+; Rego enforcement at `services/policy/policies/action_semantics_deny.rego:495-500` fires at $200k+; `services/policy/local_action_semantics.py:98` `_WIRE_ESCALATE_EXTERNAL_USD = 200_000`. A $150k external wire is queued for CFO approval but escapes Rego enforcement — real production-routing bug.
 
-**Files**
-- Backend
-  - `services/gateway/main.py` — new endpoint `POST /v1/messages` (Anthropic-compatible: same schema as `api.anthropic.com/v1/messages`). Proxies upstream to Anthropic. Auth via per-employee virtual key (`acp_emp_…`).
-  - `services/api/router.py` — extend `/api-keys` to mint **employee virtual keys** with claims: `tenant_id`, `employee_id`, `email`, `daily_budget_usd`, `monthly_budget_usd`. RBAC: OWNER/ADMIN can mint, employee receives by email.
-  - `services/usage/router.py` — `POST /usage/llm-spend` records: `tenant_id`, `employee_id`, `model`, `input_tokens`, `output_tokens`, `cost_usd`, `was_blocked`, `findings`. Aggregates per employee per day.
-  - `services/gateway/inference_proxy.py` — pre-call: lookup employee → check budget → run the same signal registry on the prompt body (already does this for tool calls; extend to message content). Post-call: meter tokens, persist spend.
-  - alembic: `employees` table (tenant_id, email, virtual_key_hash, daily_budget_usd, monthly_budget_usd, is_active).
-- Frontend
-  - `ui/src/pages/Team.jsx` (NEW) — list of employees + monthly spend + actions evaluated + harmful actions blocked. CSV export.
-  - `ui/src/pages/TeamMember.jsx` (NEW) — per-employee drill-down: token burn over time, top models, top prompts, incidents involving this employee.
-  - `ui/src/pages/Settings.jsx` — new tab **Aegis for Teams** with the proxy endpoint URL + per-employee key minting UI.
+**Direction chosen:** Align *down* — pattern detector and Rego enforcement both fire at **$100k**. Rationale:
+- The $100k threshold matches finance-industry SAR reporting (FinCEN $10k currency-transaction; $100k batched wire enhanced review is common).
+- A CFO approving a $100k wire is the correct human-in-loop posture.
+- Dropping the floor is safer than raising it (catches more, blocks less false-pass).
 
-**DoD**
-- An admin mints `acp_emp_…` keys for 3 employees. Each employee replaces their `ANTHROPIC_API_KEY` env var with the virtual key and changes the base URL to `https://ha.aegisagent.in`. Their Anthropic SDK works unchanged.
-- `/team` page shows per-employee spend (tokens + USD), per-employee actions evaluated, per-employee harmful-action count, monthly budget bar.
-- Employee tries a prompt that would exfiltrate secrets → request blocked + incident created tagged with employee_id + email.
-- The same signal registry, MITRE tagging, transparency log, and compliance mapping work in proxy mode without changes.
+**Files to change:**
+- `services/policy/local_action_semantics.py` — `_WIRE_ESCALATE_EXTERNAL_USD = 100_000` (was 200_000).
+- `services/policy/policies/action_semantics_deny.rego` — replace `>= 200000` with `>= 100000` in both occurrences (lines around 495-500 and any others — grep first).
+- `services/security/signal_registry.py` — `money_transfer_external` description changes from "Wire ≥ $200K" to "Wire ≥ $100K" (lines 451-457).
+- `tests/services/policy/` — add a test that asserts a $150k external transfer triggers `escalate` (was passing under old logic? Must verify).
 
-**Smoke probes**
+**Acceptance criteria:**
+- Wire $99k → no escalation, no signal. ✅ allow.
+- Wire $100k → pattern hit, Rego escalate, audit row with `escalate`. ✅ 202 + CFO routing.
+- Wire $150k → same as $100k. ✅ 202 + CFO routing (this is the gap we are closing).
+- Wire $1M → same as above, plus high risk score. ✅ 202 + CFO routing.
+- No existing test regresses.
+
+**Commit message:**
 ```
-curl -X POST https://ha.aegisagent.in/v1/messages \
-  -H "x-api-key: acp_emp_…" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{"model":"claude-haiku-4-5","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}'
-# expect 200 with Anthropic response body
-curl https://ha.aegisagent.in/team
-# expect 200 + per-employee table
+fix(policy): align wire-transfer escalation floor to $100k across pattern + Rego
+
+Closes audit finding B1 — $100k–$199k external wires previously matched
+the gateway pattern detector but escaped Rego enforcement. Both layers
+now fire at $100k. local_action_semantics, action_semantics_deny.rego,
+and signal_registry brought into sync.
 ```
 
-**Estimate** 8 dev-days. This is the strategic centerpiece of Phase B. **Two new buyer personas unlock**: the IT-governance buyer (CIO/CISO who wants visibility into employee LLM usage) and the FinOps buyer (Finance lead who wants per-employee LLM cost attribution).
+### A2. Close B4 — bump `__version__` strings in aegis-bedrock + aegis-langchain
 
----
+**Why:** `bussines-left.md` §B4 — PyPI ships 1.1.0 but source `__version__` reads 1.0.0 / 1.0.1.
 
-### Sprint 18 — Positioning sweep (close Gap A)
+**Files to change:**
+- `integrations/aegis-bedrock/aegis_bedrock/__init__.py:34` — `__version__ = "1.1.0"`.
+- `integrations/aegis-bedrock/setup.py` — confirm version field matches.
+- `integrations/aegis-langchain/aegis_langchain/__init__.py:26` — `__version__ = "1.1.0"`.
+- `integrations/aegis-langchain/setup.py` — confirm version field matches.
 
-**Goal** Every visible Aegis surface — Login, Signup, Dashboard, Email templates, docs — uses the single category claim **"Runtime Security for AI Agents."**
+**Acceptance criteria:**
+- `python -c "import aegis_bedrock; print(aegis_bedrock.__version__)"` prints `1.1.0`.
+- `python -c "import aegis_langchain; print(aegis_langchain.__version__)"` prints `1.1.0`.
+- Both `setup.py` files agree.
 
-**Files**
-- `ui/src/pages/Login.jsx:60-65` — replace "AgentControl" + sub-tagline with hero: **"Runtime Security for AI Agents."** Sub: *"Sign in to your protection console."*
-- `ui/src/pages/Signup.jsx:60-67` — same hero. Sub: *"Protect every AI-agent action with allow/deny/escalate decisions and a cryptographic audit trail."*
-- `ui/src/pages/Landing.jsx` — primary hero (already in Sprint 11).
-- `README.md` — top line.
-- `docs/intro/*.md` (GitBook) — section headers.
-- Clerk webhook → welcome email — first paragraph.
-- Browser title bar — `<title>Aegis — Runtime Security for AI Agents</title>`.
-
-**DoD**
-- Open any surface as a stranger. The first words you see are the category claim. Six visible surfaces ship together in one PR so there's no inconsistency window.
-
-**Estimate** 1 dev-day. Pure copy + grep.
-
----
-
-## Phase B critical path (suggested order)
-
+**Commit message:**
 ```
-Sprint 18 (positioning sweep — 1d)           ← fastest credibility win, gates marketing
-   │
-   ├─→ Sprint 11 (marketing landing — 2d)    ← gates inbound conversion
-   │
-   ├─→ Sprint 12 (dashboard KPIs — 3d)       ← gates first-impression after signup
-   │
-   ├─→ Sprint 13 (capability wizard — 3d)    ← gates time-to-first-protected-agent
-   │
-   ├─→ Sprint 14 (incident card 6 fields — 2d)
-   │
-   ├─→ Sprint 15 (unified replay — 3d)       ← gates SOC analyst trust
-   │
-   ├─→ Sprint 16 (compliance grid — 4d)      ← gates CISO renewal conversation
-   │
-   └─→ Sprint 17 (Aegis for Teams — 8d)      ← NEW REVENUE LINE: employee LLM governance
+fix(sdk): bump aegis-bedrock and aegis-langchain __version__ to 1.1.0
+
+Closes audit finding B4. PyPI wheels were already at 1.1.0; source
+__version__ strings were lagging at 1.0.0 / 1.0.1.
 ```
 
-**Total estimate: ~26 dev-days for full Phase B.** Single dev can ship in 5-6 weeks, paired team in 3.
+---
+
+## 5. Track B — SDK PyPI release hygiene
+
+### B1. Publish `aegis-aevf` 1.1.0 to PyPI
+
+**Why:** `bussines-left.md` §B2 — biz doc claims 1.1.0; PyPI ships 1.0.0. A CISO running `pip show aegis-aevf` after install catches the mismatch immediately.
+
+**Files to change:**
+- `tools/aegis_verify/pyproject.toml` — `version = "1.1.0"`.
+- `tools/aegis_verify/__init__.py` (line ~16) — `__version__ = "1.1.0"`.
+- `tools/aegis_verify/CHANGELOG.md` — add 1.1.0 entry noting "version-sync release; functional changes: none".
+
+**Release steps (after Track A merges):**
+```bash
+cd tools/aegis_verify
+python -m pip install --upgrade build twine
+python -m build                          # produces dist/aegis_aevf-1.1.0-*.whl
+python -m twine check dist/*
+python -m twine upload dist/aegis_aevf-1.1.0*    # interactive, use PyPI token
+```
+
+**Acceptance criteria:**
+- `pip install aegis-aevf==1.1.0` succeeds against PyPI.
+- `aegis-verify --version` prints `1.1.0`.
+- `aegis-verify --bundle <staged-bundle>` validates the staged bundle end-to-end.
+
+### B2. Re-publish `aegis-bedrock` 1.1.1 with corrected `__version__`
+
+**Why:** PyPI 1.1.0 wheel has the bug (stale `__version__` inside). Cannot republish 1.1.0 over the existing wheel. Bump to 1.1.1 with no functional change.
+
+**Files:** same as A2 plus `setup.py` version bump to `1.1.1`.
+
+**Release:** same procedure as B1 above for `tools/aegis_verify`, but inside `integrations/aegis-bedrock/`.
+
+**Acceptance criteria:**
+- `pip install aegis-bedrock==1.1.1` succeeds.
+- `aegis_bedrock.__version__ == "1.1.1"`.
+
+### B3. Re-publish `aegis-langchain` 1.1.1 with corrected `__version__`
+
+Same as B2 in scope, applied to `integrations/aegis-langchain/`.
 
 ---
 
-## What we DO NOT change in Phase B (moat preservation)
+## 6. Track C — Documentation
 
-1. **The cryptographic transparency log.** ed25519 + Merkle + public S3 + `aegis-aevf` CLI. Nobody else has this. Don't water it down.
-2. **The signal registry's MITRE precision.** 34 signals with tactic+technique+score. Sprint 16 ADDS SOC2/ISO/NIST tags; it does not replace MITRE.
-3. **The SDK-on-endpoint architecture.** Sprint 17 adds proxy mode as a SECOND topology; the customer chooses. We don't deprecate SDKs.
-4. **Shadow mode default.** 14-day observe window stays. Sprint 11 marketing copy must emphasize this — it's the trust builder for the buyer who doesn't want a new SaaS blocking production day 1.
-5. **27 backend services.** Founder hard rule. UI consolidates, backend stays.
+### C1. `agies-bussiness.md` v1.3.0 — apply remaining L1/L2/L3
 
----
+**L1 — Reconcile §3 latency line with §12.**
+- Open `agies-bussiness.md`. Find §3 point 8: `Decision latency: ~150 ms p95 (stated; consistent with live SSE observation)`.
+- Replace with: `Decision latency: see §12 — the only measured number is a 21.49ms p95 dry-run on a single host (synthetic). Production load-test results published under reports/load-test-2026-Q3/ (closing in this sprint).`
 
-## Sources used in the competitive analysis (2026-06-16 crawl)
+**L2 — Add public S3 transparency live witness to §3.**
+- Insert a new block in §3 (live evidence) after the `_aegis_blocked` capture:
 
-- Protect AI Layer — protectai.com/layer
-- Wiz AI Application Protection — wiz.io/solutions/ai-spm, wiz.io/blog/introducing-wiz-ai-app
-- Lakera Guard — lakera.ai
-- Prompt Security — prompt.security/solutions/agentic-ai-security-and-governance
-- Credal — credal.ai
-- Witness AI — witness.ai
-- Portkey — portkey.ai
-- LiteLLM — litellm.ai, docs.litellm.ai/docs/proxy/cost_tracking
-- Cloudflare AI Gateway — developers.cloudflare.com/ai-gateway
-- F5 AI Guardrails (was CalypsoAI) — f5.com/products/ai-guardrails
+```
+**Independent verification (no Aegis credentials required):**
 
----
+$ aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/ --recursive | wc -l
+48
+$ aws s3 cp s3://aegis-public-roots-628478946931/roots/<tenant>/2026-06-18.json - --no-sign-request
+{ "format": "aegis-public-root/2026-06",
+  "root_date": "2026-06-18",
+  "prev_root_hash": "<hex>",
+  "root_hash":      "<hex>",
+  "signed_payload": { "algorithm": "ed25519", ... },
+  "notes": "External witness: download directly, verify signature against
+            /keys/<signing_kid>.pem, walk prev_root_hash chain to detect rewrite." }
 
----
+5 days of daily ed25519-signed roots (2026-06-14 → 2026-06-18) live in
+the bucket across 7 tenant partitions. Any auditor can verify the chain
+with `aegis-verify --root <file> --pubkey <pem>` — no AWS account needed.
+```
 
-## Status snapshot
+**L3 — Add `/status` JSON sample to §3.**
+- Insert after the S3 block:
 
-| Sprint | Phase | Title | Status | Deployed | Evidence |
-|---|---|---|---|---|---|
-| 1 | 1 | Clerk self-serve signup + shadow mode + Role enum | ✅ DONE | commit 6b5b3a7 / ASG 21cd7092 | `/webhooks/clerk` 400 missing-svix; `/system/health` 12/12 |
-| 2 | 2 | Agent Onboarding Wizard (3-step, no LLM key) | ✅ DONE | commit 8c21e16 / ASG 29475f7d | `/agents/wizard` 401 (route live); `/onboarding` 200 (Vite dist served); 105/105 tests; 12/12 healthy p95 38ms |
-| 3 | 3.1 | Shadow Mode review surface + would_have_blocked middleware | ✅ DONE | commit e89a33b + 96c873c / ASG 4ca3b61d + 1e742e76 | `/workspace/me` 401 JSON; `/workspace/exit-shadow-mode` 401 JSON; nginx allow-list fixed; 117/117 tests; 12/12 healthy p95 40ms |
-| 4 | 3.2 | Dashboard landing (Agent Inventory hero) | ✅ DONE | commits 69c0794 + 037da84 / ASGs fdd95c15 + fe7c8c27 | Hotfix verified: new bundle hash served (DdWNCPBK), `/workspace/inventory` 401 JSON, `/dashboard` 200, "medium" tier in bundle, 124/124 tests, 12/12 healthy p95 34ms. Took 2 deploys — the first shipped a runtime bug in Dashboard.jsx that smoke probes missed. |
-| 5 | 3.4 | Incidents enriched (blast radius + remediation + forensics tabs) | ✅ DONE | commit 7815d7b / ASG 33c463f9 | All 4 orphan endpoints 401 JSON (`/iag/incidents/.../blast-radius`, `/remediation/policy`, `/remediation/incidents/...`, `/forensics/blast-radius/...`); bundle hash flipped to BDU7gfyT; "Blast Radius" + "Remediation" + "would_have_blocked" strings all present in bundle; 124/124 tests; 12/12 healthy p95 37ms |
-| 6 | 3 cleanup | UI consolidation: 49→15 pages, sidebar restructure | ✅ DONE | commit 93fa230 / ASG 3fc8c8fd | 3 demo pages deleted, 3 tab routers live (`/policies`, `/agents/:id`, `/settings`), sidebar 3-tier (6/16/3+1), bundle dropped 1.72MB→1.58MB; new hash `oawEBs83`; "Policies" + "Shadow Review" + "Blast Radius" strings in bundle; 124/124 tests; 12/12 healthy p95 38ms |
-| 7 | 5 | Threat Graph (`/threat-graph` + MitreCoverageGrid) | ✅ DONE | commit 13cd686 / ASG 2fa88480 | `/iag/mitre-coverage` 401 JSON; `/threat-graph` 200; new bundle `CIZz3R6h`; "Threat Graph"/"IAG graph"/reactflow in bundle; 129/129 tests; 12/12 healthy p95 53ms |
-| 8 | 5 | Blast Radius dollar formula + workspace value tags | ✅ DONE | commit c557613 / ASG 8f5e56ea | `/workspace/system-values` 401 JSON; `/settings?tab=system-values` 200; new bundle `oOcZd_7I`; "Could have reached" + "System Values" strings in bundle; alembic `a7b8c9d0e1f2` head; 137/137 tests; 12/12 healthy p95 40ms |
-| 9 | 6 | Stripe billing wiring (model exists, wire it) | ✅ DONE | commit 8444a55 / ASG 176a4a4f | `/billing/plan`, `/billing/checkout-session`, `/billing/portal-session` all 401 JSON; new bundle `B6LjsKe5`; "Plan" + "Manage billing" strings in bundle; 144/144 tests; 12/12 healthy p95 42ms. **Operator gap**: STRIPE_SECRET_KEY + price IDs still need to land via SSM before endpoints function. |
-| 10 | 6 | Production hardening: CSP, security headers, audit-chain refresh | ✅ DONE | commits 921a941 + fb973b6 + 4266602 / ASGs 90f97ee0 + 144d03e9 | All 6 headers on `/dashboard` SPA (CSP / HSTS / Permissions-Policy / Referrer-Policy / X-Content-Type-Options / X-Frame-Options); gateway SecurityHeadersMiddleware applies same on JSON; bundle .env-leak guard live (catches `sk_live_…`/`whsec_…` strings); rotate_clerk_keys.py dry-run-verified; 150/150 tests; 12/12 healthy p95 41ms. Took 3 ships — first ship had nginx `add_header` inheritance bug, fixed on the third. |
+```
+**Live status endpoint (public, no auth):**
 
-Phase 4 (3 pilots) is calendar work, not code — outside this file's scope.
+$ curl https://aegisagent.in/status
+{ "status": "operational",
+  "components": { "registry":"operational", "identity":"operational",
+                  "policy":"operational",   "audit":"operational",
+                  "usage":"operational",    "behavior":"operational",
+                  "decision":"operational", "insight":"operational",
+                  "forensics":"operational","identity_graph":"operational",
+                  "flight_recorder":"operational","autonomy":"operational" },
+  "uptime_seconds": 58356,
+  "latency": { "scope": "gateway_internal", ... } }
+```
 
----
+**Header bump:** `Version: 1.3.0`. Update the `# Verification:` line to read:
+> Code-audited via 4 parallel research agents + 3 runtime probes (curl, aws s3, PyPI) on 2026-06-18.
 
-## 🏁 Roadmap complete — 2026-06-16
+**Acceptance criteria:**
+- `grep -n "150 ms p95" agies-bussiness.md` returns 0 hits.
+- §3 contains both the S3 listing block AND the `/status` block.
+- Header version reads `1.3.0`.
 
-All 10 code sprints from PRODUCT_PLAN.md v2 shipped to `ha.aegisagent.in`:
+### C2. New: `docs/security/threat-model.md`
 
-- **15 deploy cycles** (10 sprints + 5 hotfixes for Sprint 3 nginx, Sprint 4 React bug, Sprint 6 routing, Sprint 10 bundle guard + Sprint 10 nginx headers).
-- **150/150 Python unit tests** green across roles, JWKS, webhooks, signups, wizard, shadow mode, inventory, MITRE coverage, dollar formula, Stripe, security headers.
-- **0 backend services deleted** (founder's hard rule honored).
-- **3 UI pages deleted** (LiveDemo / Pricing / ExecutiveDashboard) — only outright UI removals.
-- **8 commits with no Co-Authored-By: Claude** (founder's hard rule honored).
-- **Live evidence cited per sprint** in the table above — no claim without a probe + bundle hash + tests-green.
+**Why:** `agies-bussiness.md` §5 lists "No published formal threat model" as a MEDIUM gap. CISOs and Principal Security Architects ask in the first meeting.
 
-### What's NOT done (intentionally deferred)
-- Phase 4 pilot outreach — calendar work.
-- Phase 6 SOC2 Type II — gated on 9-month timer + lawyer-reviewed BAA template.
-- Operator gap: STRIPE_SECRET_KEY + STRIPE_PRO_PRICE_ID + STRIPE_ENTERPRISE_PRICE_ID still need to land on prod via SSM. /billing/plan reports `stripe_configured=false` until they do.
-- EU + US data residency replication (Terraform stack duplication) — Phase 6.
-- White-glove migration tooling — Phase 6.
+**Required sections:**
+1. System-level data-flow diagram (5 layers: client → SDK → gateway → policy/audit/decision → upstream LLM).
+2. Trust boundaries with explicit listing.
+3. Asset inventory: secrets (LLM keys, JWT signing keys, Merkle ed25519 keys, DB credentials), data (audit logs, tenant policies, agent metadata), control plane (Clerk org, RDS superuser, RDS data activity stream).
+4. STRIDE per asset.
+5. Top 10 threats ranked by Likelihood × Impact, each with the mitigation that's already in code (cite file:line).
+6. Open items list (mitigations not yet implemented, with owners and dates).
 
-### Live infra (final state)
-- ALB `https://ha.aegisagent.in` · ASG 2× m6g.medium · RDS Multi-AZ · ElastiCache 2-node · ap-south-1.
-- 12/12 services healthy · p95 ~40 ms end-to-end · CSP/HSTS/Permissions-Policy on every response.
-- alembic head: `a7b8c9d0e1f2` (Sprint 8 — tenants.system_values).
+**Acceptance criteria:**
+- File exists, peer-reviewed by 2 engineers + 1 security architect.
+- Every STRIDE entry has a code citation OR a roadmap link.
 
----
+### C3. New: `docs/security/dpa-template.md` (Data Processing Agreement)
 
-## Sprint 2 — Agent Onboarding Wizard
+**Why:** `agies-bussiness.md` §5 — "No DPA template" blocks enterprise procurement.
 
-**Goal** Customer clicks `+ Add Agent` → picks integration → names it → presses **Generate Aegis Key** → copies SDK snippet → runs SDK → first decision arrives. Customer's LLM key stays on their machine (PRODUCT_PLAN.md §1.3 is non-negotiable).
+**Required clauses:** scope, processor obligations, sub-processors, security measures (cite the 3-layer tenancy + append-only trigger + Merkle chain — give the CISO ammunition), data-subject rights handling, breach notification timeline, audit rights, termination, governing law.
 
-**Files**
-- Backend
-  - `services/registry/router.py` — `POST /agents/wizard` (composes create + whitelist standard 8 tools + mint `acp_…` key in one call behind customer JWT). `GET /agents/wizard/install-snippet/{agent_id}/{provider}` — returns SDK-specific copy-paste block.
-  - `services/registry/service.py` — `create_agent_with_defaults(workspace, name, provider, risk_level)`.
-  - `services/registry/alembic/versions/<new>.py` — `agents.metadata.provider` column (already JSONB? confirm and migrate accordingly).
-  - `services/gateway/routers/agents.py` — thin proxy for `/agents/wizard*`.
-- Frontend
-  - `ui/src/pages/OnboardingWizard.jsx` (NEW, 3 steps) — pick integration, name + risk, install snippet + "waiting" SSE panel. **No LLM-key field — call this out in the UI.**
-  - `ui/src/pages/Agents.jsx` — replace Deploy button with `Link to=/onboarding`.
-  - `ui/src/App.jsx` — `/onboarding` (protected route).
-  - `ui/src/services/agentService.js` — `wizard()`, `installSnippet()`.
+**Acceptance criteria:**
+- Legal review signoff (legal-counsel email recorded as the merge-approval evidence in the commit message).
+- Template uses `<CUSTOMER_NAME>` placeholders that align with the sales-team contract template.
 
-**DoD**
-- A signed-in OWNER creates their first agent + receives a working `acp_…` key in **< 60 s**.
-- SDK snippet for Anthropic, OpenAI, Bedrock, LangChain, Cursor, Claude Code, OpenHands, Custom — 8 variants, pre-filled with `tenant_id`, `agent_id`, `aegis_api_key`. No `ANTHROPIC_API_KEY` placeholder is filled — the snippet shows the env var line as "keep on YOUR machine".
-- Wizard's last step subscribes to `/events/stream` and auto-flips to "✅ First decision received" when an `/execute` lands for that agent_id.
+### C4. New: `docs/security/baa-template.md` (Business Associate Agreement, HIPAA)
 
-**Smoke probes (post-deploy)**
-- `curl -X POST https://ha.aegisagent.in/agents/wizard` (with Clerk Bearer) — expect 201 + `{agent_id, aegis_api_key, install_snippet}`.
-- `curl https://ha.aegisagent.in/agents/wizard/install-snippet/<id>/anthropic` — expect 200 + Python snippet, no Anthropic key inside.
-- Browser flow: signup → click + Add Agent → snippet renders → run `aegis-anthropic` locally with the printed values → `/execute` lands → wizard flips to ✅.
+**Why:** Required to sell to any healthcare-regulated buyer. Same reasoning as C3, scoped to HIPAA-covered entities.
 
-**Estimate** 5 dev-day spec; aim for one session.
+**Required clauses:** PHI handling, minimum-necessary use, safeguards, reporting requirements, return/destruction at contract end.
 
----
+**Acceptance criteria:** Legal review signoff. Cross-references retention policy (C7).
 
-## Sprint 3 — Shadow Mode Review + Middleware Downgrade
+### C5. New: `docs/operations/incident-response.md`
 
-**Goal** Default 14-day shadow window already lives on `tenants.shadow_mode_until` (Sprint 1 migration). Now: middleware downgrade + review surface.
+**Why:** §5 — "No published incident response process".
 
-**Files**
-- Backend
-  - `services/gateway/middleware.py` — in the deny/escalate path: if `workspace.shadow_mode_until > now()`, downgrade to an audited `would_have_blocked` 200 with annotation. Add new SSE event type `would_have_blocked` in `_publish_event` switch.
-  - `services/identity/router.py` — `POST /workspace/exit-shadow-mode` (`Depends(verify_role(Role.OWNER))`).
-- Frontend
-  - `ui/src/pages/ShadowModeReview.jsx` (NEW) — list of `would_have_blocked` events: ts / agent / tool / args excerpt / policy_id / MITRE technique; per-row **Confirm Block** vs **Allow-list**; bulk action toolbar.
-  - Dashboard widget (lands in Sprint 4 but reserve hook here).
+**Required sections:**
+1. Severity levels (Sev-0 / Sev-1 / Sev-2 / Sev-3) with criteria + response time SLO.
+2. On-call rota + escalation chain.
+3. Communication policy (who notifies the customer, on what cadence).
+4. Per-severity runbook outline.
+5. Postmortem template + 14-day publication SLA.
 
-**DoD**
-- Identity DB shows `shadow_mode_until > now()` on every workspace (Sprint 1 default). Middleware verified to NOT actually block when the window is open. Audit row carries `decision="would_have_blocked"` + `original_decision` so the review screen has data.
-- `/shadow-review` shows last 7 days of would-have-blocked decisions for the signed-in workspace.
+**Acceptance criteria:** Reviewed by the on-call lead. First postmortem under this template is written within the sprint (use the simulated DR drill in E1 as the practice incident).
 
----
+### C6. New: `docs/operations/retention-policy.md`
 
-## Sprint 4 — Dashboard (Agent Inventory + Hero Metrics)
+**Why:** §5 — "No published retention policy".
 
-**Goal** Replace `/flight-recorder` as `/` landing with `/dashboard`.
+**Required content:**
+- Audit logs: **10 years** (matches healthcare reg requirement, satisfies all lesser tiers).
+- Operational logs (request/response, non-audit): **90 days**.
+- Customer PII in usage records: **24 months** then anonymized.
+- Tenant offboarding: **30 days** purge SLA after termination; certificate of deletion provided.
+- Backup retention: **35 days** of nightly snapshots + **12 months** of monthly.
 
-**Files**
-- Backend
-  - `services/registry/router.py` — `GET /workspace/inventory` aggregator (agents grouped by provider + risk level + last-24h decision count).
-- Frontend
-  - `ui/src/pages/Dashboard.jsx` (NEW) — hero card (agent counts by provider + risk-tier) + open incidents tile + shadow widget + risk-trend sparkline + recent insights list.
-  - `ui/src/components/dashboard/AgentInventoryHero.jsx`, `HeroMetricsCard.jsx`, `RiskTrendSparkline.jsx`.
-  - `ui/src/App.jsx` — `/` → `/dashboard`; `/dashboard` → Dashboard.jsx (not FlightRecorder).
+**Acceptance criteria:** Legal + Engineering signoff. Linked from BAA template (C4) and DPA template (C3).
 
-**DoD**
-- Owner can answer "how many agents do we have, what are they doing, what risks are showing up" in 10 seconds.
-- Existing FlightRecorder reachable at `/audit-feed` for analysts.
+### C7. New: `docs/operations/disaster-recovery.md`
+
+**Why:** §5 — "No DR evidence / RTO/RPO SLA". This file documents the drill executed in Track E1.
+
+**Required sections:**
+1. RTO target: **4 hours**. RPO target: **15 minutes**.
+2. Backup architecture: RDS automated snapshots + cross-region replica + audit-log S3 mirror.
+3. Failover procedure (step-by-step).
+4. Drill log: dates, observed RTO, observed RPO, deviations.
+5. Quarterly drill cadence with named owner.
+
+**Acceptance criteria:** Section 4 contains the timestamps from the E1 drill. Observed RTO/RPO meets target.
+
+### C8. README.md update
+
+Point the README's "What is Aegis?" link to `agies-bussiness.md` v1.3.0 and add a one-line link to `docs/security/threat-model.md` + `docs/operations/disaster-recovery.md`.
 
 ---
 
-## Sprint 5 — Incidents Enriched (Blast Radius + Remediation + Forensics)
+## 7. Track D — Production load-test evidence
 
-**Goal** Surface the orphan endpoints (`/iag`, `/remediation`, `/forensics`) via the Incidents detail drawer — these were built in Sprint 4/5/6 of the prior security track and have no UI consumer today.
+### D1. 1k RPS sustained 30-minute test
 
-**Files**
-- Frontend
-  - `ui/src/pages/Incidents.jsx` — add 3 panels per incident detail: Blast Radius (from `/iag/incidents/{id}/blast-radius`), Remediation policy + Replay (from `/remediation/policy` + `/remediation/incidents/{id}/replay`), Forensics quick-link (from `/forensics/blast-radius`).
-  - `ui/src/components/incidents/BlastRadiusCard.jsx`, `RemediationPanel.jsx`, `ForensicsDrawer.jsx`.
-- Backend — none. Endpoints already exist.
+**Why:** §5 — "No production load-test numbers" is a VP-Engineering hard-no. We must publish a real number.
 
-**DoD**
-- Every incident shows blast radius + which remediation fired + a "Replay" button + a "Forensics" deep-link.
+**Setup:**
+- Spin up a 4-node load generator (Locust / k6 — repo already has `tests/load/soak.py`).
+- Target: `https://ha.aegisagent.in/v1/messages` with a representative mix:
+  - 60% tool-execute requests
+  - 15% policy upload + decision
+  - 10% audit log queries
+  - 10% SSE event-stream subscribers (long-lived)
+  - 5% admin endpoints
+- Test tenants: 5 (mirror the soak harness mix).
 
----
+**Run:**
+```bash
+cd tests/load
+k6 run --vus 100 --duration 30m soak.js \
+  --out json=reports/load-test-2026-Q3/1k-rps.json
+```
 
-## Sprint 6 — UI Consolidation (49 → 15 pages)
+**Pass criteria:**
+- p50 < 100ms.
+- p95 < 500ms.
+- p99 < 1500ms.
+- Error rate < 0.5%.
+- No audit-chain violation (run `aegis-verify` after the test).
 
-**Goal** Execute the PRODUCT_PLAN §12 cleanup. Backend never touched (founder hard-rule). Sidebar restructured into 3-tier (primary 6 / advanced 10 / admin 4).
+**Output:** `reports/load-test-2026-Q3/1k-rps-report.md` with graphs + raw JSON.
 
-**Files (high-density change)**
-- `ui/src/components/Layout/Sidebar.jsx` — rewrite nav into 3-tier.
-- `ui/src/App.jsx` — trim routes 54→30; redirect `/executive` → `/dashboard`; redirect `/live-demo` → `/onboarding`; tab-route under `/policies`, `/agents/:id`, `/settings`, `/decision-explorer`.
-- `ui/src/pages/Policies.jsx` (NEW tab router merging PolicyBuilder + PolicySim + PolicyPlayground + PolicyAnalytics + AutonomyContracts).
-- `ui/src/pages/AgentSnapshot.jsx` (NEW tab router merging AgentProfile + AgentHealth + AgentCost + AgentTopology + IAG panel).
-- `ui/src/pages/Settings.jsx` — 9 tabs lazy-loading existing pages.
-- Delete `LiveDemo.jsx` + `Pricing.jsx` + `ExecutiveDashboard.jsx` (only 3 pages deleted; backend services preserved).
+### D2. 10k RPS burst 5-minute test
 
-**DoD**
-- Primary sidebar: Dashboard / Agents / Incidents / Live Feed / Policies / Settings (6 items + `g <letter>` hotkeys).
-- Advanced + Admin tiers collapsed by default.
-- All 27 backend services still mapped to a UI surface (§12.13 must remain accurate).
+**Setup:** ramp from 100 to 10000 VUs over 60s, hold 5 minutes, ramp down. Same target mix as D1.
 
----
+**Run:** modified k6 script with burst profile.
 
-## Sprint 7 — Threat Graph + MITRE Coverage Grid
+**Pass criteria:**
+- p95 < 1500ms during the burst window.
+- No 5xx storm (gateway shed-load behaviour engages; degraded-mode policy fires correctly).
+- Behavior firewall stays available; no `behavior_service_unavailable` audit rows.
+- After burst, p95 returns to D1 baseline within 90 seconds.
 
-**Goal** Surface `/iag` graph as full-page Threat Graph + render the 34-signal MITRE coverage grid (data already exists in `services/security/signal_registry.py`).
+**Output:** `reports/load-test-2026-Q3/10k-burst-report.md`.
 
-**Files**
-- Frontend
-  - `ui/src/pages/ThreatGraph.jsx` (NEW, React Flow over `/iag/agents/{id}`).
-  - `ui/src/components/security/MitreCoverageGrid.jsx` (NEW; pulls from `/iag/mitre-coverage` — add small read-only endpoint).
-- Backend
-  - `services/security/iag/router.py` — `GET /iag/mitre-coverage` — returns the 34-signal grid metadata.
+### D3. Publish
 
----
-
-## Sprint 8 — Blast Radius Dollar Formula
-
-**Goal** Sum-over-(reachable system × tagged value) on every incident → dollar BlastRadiusCard.
-
-**Files**
-- Backend
-  - `services/security/iag/router.py` — extend blast-radius response with `dollar_estimate`.
-  - `services/identity/router.py` — `PATCH /workspace/system-values` (OWNER role) — value-tag config (system → dollar).
-- Frontend
-  - `WorkspaceSettings.jsx` — System Values tab.
-  - `BlastRadiusCard.jsx` — render the dollar number.
+- Commit both reports under `reports/load-test-2026-Q3/`.
+- Update `agies-bussiness.md` §12 "Decision latency" line to cite the measured numbers from D1/D2.
+- Add a row to `agies-bussiness.md` §5 → check off "No production load-test numbers".
 
 ---
 
-## Sprint 9 — Stripe Billing Wiring
+## 8. Track E — Operations readiness
 
-**Goal** Customer can upgrade plan in `Settings → Billing`. Stripe webhook drives tenant.tier patches via existing `PATCH /admin/tenants/{tenant_id}`.
+### E1. DR drill + measured RTO/RPO
 
-**Files**
-- Backend
-  - `services/gateway/routers/stripe_webhook.py` — extend existing handler for `customer.subscription.{created,updated,deleted}` → `PATCH /admin/tenants/{id}` with new tier. (Webhook receiver scaffold already exists.)
-  - `services/billing/router.py` — `POST /billing/checkout-session` (Stripe Checkout) + `POST /billing/portal-session` (Customer Portal).
-- Frontend
-  - `ui/src/pages/Billing.jsx` — show current plan + "Upgrade to Pro" button → redirect to Checkout.
+**Procedure (booked maintenance window, off-peak):**
+1. Snapshot RDS at T=0.
+2. Simulate region failure: promote read replica in secondary region.
+3. Re-point ALB DNS at standby instances.
+4. Restore application traffic.
+5. Verify: `/status` healthy, audit chain intact, agent execute succeeds.
+6. Record T_recovery (RTO) and lag between last-snapshot and DNS-cut (RPO).
+
+**Pass criteria:** RTO < 4 hours measured. RPO < 15 minutes measured. Document in `docs/operations/disaster-recovery.md` §4.
+
+### E2. SLO dashboard
+
+**Why:** §5 — "No SLO/SLA dashboard (customer-facing)".
+
+**Wire a Grafana board** at `infra/grafana-dashboards/customer-slo.json` that surfaces:
+- Availability % (rolling 30d).
+- p50 / p95 / p99 decision latency.
+- Audit chain verification status (green = no violations, red = current violation).
+- Approval queue depth + median time-to-approve.
+
+Public read-only URL: `https://aegisagent.in/slo` (gated by tenant ID; each tenant sees only their own slice).
+
+**Acceptance criteria:** Board renders for the demo tenant; numbers match Prometheus directly.
+
+### E3. Incident-response runbook published
+
+Already specified in C5; this track owns the **review + signoff**.
+
+### E4. Retention policy published
+
+Already specified in C6; this track owns the **legal review + signoff**.
 
 ---
 
-## Sprint 10 — Production Hardening
+## 9. Track F — Compliance kickoff (starts in-sprint, completes post-sprint)
 
-**Goal** Close the prod-grade gaps: CSP, security headers, audit chain refresh cron, deploy-time secrets rotation.
+### F1. SOC2 Type II — vendor engagement letter signed
 
-**Files**
-- `services/gateway/middleware.py` — add CSP `default-src 'self'; connect-src 'self' https://*.clerk.accounts.dev https://api.clerk.com; frame-ancestors 'none'; …`. Strict-Transport-Security max-age=31536000. Permissions-Policy. Referrer-Policy=no-referrer.
-- `scripts/ops/rotate_clerk_keys.py` — generate new `whsec_` + push to SSM Parameter Store; ASG refresh.
-- `scripts/ops/build_release_bundle.sh` — add `--exclude='./.env'` to stop shipping repo-root dev secrets in the tar.
+**In-sprint deliverables:**
+- Shortlist of 3 vendors evaluated (Drata, Vanta, Thoropass).
+- Vendor selected.
+- Engagement letter signed.
+- Kickoff call scheduled within 14 days post-sprint.
+
+**Cite:** `docs/security/soc2_tracker.md` updated to "ENGAGED — <Vendor>, kickoff <date>".
+
+### F2. Pen-test — engagement letter + SoW signed
+
+**In-sprint deliverables:**
+- 3 vendor quotes (NCC, Bishop Fox, Bishop, Mandiant, Trail of Bits — pick credible).
+- Vendor selected; SoW signed.
+- Scope: external network + application layer + cloud configuration review.
+- Budget: $15k–$40k (per `agies-bussiness.md` §11).
+- Engagement window: weeks 3–6 post-sprint.
+
+### F3. DPA template — published (overlap with C3)
+
+Track F owns legal review; Track C owns drafting + commit.
+
+### F4. BAA template — published (overlap with C4)
+
+Same arrangement.
 
 ---
 
-## Execution policy (read every sprint)
+## 10. Track G — Customer-reference build (starts in-sprint, completes post-sprint)
 
-1. **Plan**, **build**, **test**, **commit**, **bundle**, **upload**, **ASG refresh**, **probe** — in that order. Skipping any step closes the sprint as failed.
-2. After ASG refresh, smoke probes go in this file under that sprint's "Evidence" line. Cite request_id + HTTP code, not vibes.
-3. If a probe fails, the sprint stays open. No moving on.
-4. Founder approval gate: before `git push`, before `aws s3 cp`, before `start-instance-refresh` — ask. Sprint 1 had implicit approval baked into the kickoff prompt; subsequent sprints get the prompt explicitly.
-5. Memory: after each successful sprint, write a short memory file + index entry so future sessions don't repeat the "what's the alembic head" / "where's the bundle script" rediscovery cost.
+**In-sprint deliverables:**
+- 3 named design-partner tenants identified.
+- Outreach email approved + sent for 3 case studies (offer redaction).
+- 1 verbal yes secured.
+
+**Post-sprint (90 days):**
+- 3 redacted case studies published under `docs/case-studies/`.
+- 1 named public reference logo on website.
+
+**Honest acknowledgment:** customer references depend on sales-cycle timing outside the engineering team's control. We commit to the *outreach + first yes* within the sprint, not the published artifacts.
+
+---
+
+## 11. Track H — Deploy + E2E validation
+
+This track runs at the **end** of the sprint, after Tracks A/B/C/D/E are merged into `main` and SDK releases are on PyPI.
+
+### H1. Pre-deploy snapshot
+
+```bash
+# 1. RDS snapshot of all 5 application databases
+aws rds create-db-snapshot \
+  --db-snapshot-identifier aegis-pre-v2-$(date +%Y%m%d) \
+  --db-instance-identifier aegis-prod-ha
+
+# 2. S3 dump of the public transparency bucket head (in case a roll-forward bug
+#    accidentally republishes a corrupted root)
+aws s3 sync s3://aegis-public-roots-628478946931/ \
+  s3://aegis-internal-backups/transparency-pre-v2-$(date +%Y%m%d)/
+
+# 3. Local tag for rollback target
+git tag v2.0-pre-deploy
+```
+
+### H2. Build artifact
+
+```bash
+# From repo root
+git status                                    # MUST be clean
+git log --oneline -10                         # confirm Tracks A/B/C merged
+cd ui && bun install && bun run build && cd .. # produces ui/dist/
+
+# tar EXCLUDING .git, node_modules, __pycache__, BUT INCLUDING ui/dist
+tar --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='__pycache__' \
+    --exclude='.venv' \
+    --exclude='build' \
+    --exclude='htmlcov' \
+    --exclude='reports/load-test-2026-Q3' \
+    -czf /tmp/aegis-v2.tar.gz .
+
+# size sanity check (should be ~50-150MB)
+ls -lh /tmp/aegis-v2.tar.gz
+```
+
+**AppleDouble gotcha (per ops memory):** before tar on macOS, run:
+```bash
+find . -name '._*' -delete   # remove AppleDouble metadata
+```
+
+### H3. Upload to S3
+
+```bash
+aws s3 cp /tmp/aegis-v2.tar.gz \
+  s3://aegis-deploy-bucket/releases/aegis-v2.0.tar.gz \
+  --metadata sha256=$(shasum -a 256 /tmp/aegis-v2.tar.gz | awk '{print $1}')
+```
+
+### H4. Rolling deploy — instance 1
+
+**Identify instances:**
+```bash
+aws ec2 describe-instances \
+  --filters "Name=tag:Service,Values=aegis-gateway" \
+            "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].[InstanceId,PrivateIpAddress,Tags[?Key==`Name`].Value|[0]]' \
+  --output table
+```
+
+**Drain instance 1 from ALB target group:**
+```bash
+TG_ARN=$(aws elbv2 describe-target-groups \
+  --names aegis-gateway-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
+INSTANCE_1=i-xxxxxxxxxxxx
+aws elbv2 deregister-targets --target-group-arn $TG_ARN --targets Id=$INSTANCE_1
+# wait for "draining" to complete (~30s)
+```
+
+**SSM deploy command:**
+```bash
+aws ssm send-command \
+  --instance-ids $INSTANCE_1 \
+  --document-name "AWS-RunShellScript" \
+  --comment "aegis v2.0 deploy" \
+  --parameters '{"commands":["set -euxo pipefail",
+    "cd /opt/aegis",
+    "find . -name \"._*\" -delete",
+    "aws s3 cp s3://aegis-deploy-bucket/releases/aegis-v2.0.tar.gz /tmp/",
+    "tar -xzf /tmp/aegis-v2.0.tar.gz --strip-components=0",
+    "docker compose -f infra/docker-compose.yml down",
+    "docker compose -f infra/docker-compose.yml up -d --build",
+    "sleep 30",
+    "curl -fsS http://127.0.0.1:8000/health"
+  ]}'
+```
+
+**Verify instance 1:**
+```bash
+# Health check from inside the VPC (bypass ALB to confirm container is up)
+curl -fsS http://$INSTANCE_1_PRIVATE_IP:8000/status | jq .status
+# expect: "operational"
+
+# Re-attach to ALB
+aws elbv2 register-targets --target-group-arn $TG_ARN --targets Id=$INSTANCE_1
+
+# Wait for target-health "healthy"
+aws elbv2 describe-target-health --target-group-arn $TG_ARN \
+  --targets Id=$INSTANCE_1 | jq '.TargetHealthDescriptions[].TargetHealth.State'
+```
+
+**If ANY step fails, STOP. Do not proceed to instance 2.** Run rollback (§12) on instance 1.
+
+### H5. Smoke test (with instance 1 only serving traffic)
+
+```bash
+# External — through the ALB
+curl -fsS https://aegisagent.in/status | jq .status                    # "operational"
+curl -fsS https://aegisagent.in/api/health | jq .status                # "operational"
+curl -fsS https://ha.aegisagent.in/status | jq .status                 # "operational"
+
+# Wait 5 minutes, watch dashboards
+# - error rate stays < 0.5%
+# - p95 latency stays at baseline
+# - no new audit-chain violations
+```
+
+If clean after 5 minutes, proceed to instance 2.
+
+### H6. Rolling deploy — instance 2
+
+Repeat H4 for `INSTANCE_2`. Drain → SSM → verify → re-attach.
+
+### H7. Final smoke on both instances
+
+```bash
+# Verify both instances serving
+aws elbv2 describe-target-health --target-group-arn $TG_ARN
+# expect: both targets "healthy"
+
+# 20 sequential requests, expect them to spread across both
+for i in $(seq 1 20); do
+  curl -sS https://aegisagent.in/status | jq -r '.gateway_host // "?"'
+done | sort | uniq -c
+# expect: ~10/10 split, both instance IDs present
+```
+
+---
+
+## 12. End-to-end validation matrix (run after H7)
+
+Each row is a discrete acceptance test executed against `https://aegisagent.in`. If ANY row fails, the sprint is **not done** — fix and re-run before sign-off.
+
+| # | Test | Method | Expected | Critical |
+|---|------|--------|----------|----------|
+| E1 | `/status` 200 | `curl https://aegisagent.in/status` | 200, 12 components "operational" | ✅ |
+| E2 | `/api/health` 200 | `curl https://aegisagent.in/api/health` | 200 | ✅ |
+| E3 | `ha.aegisagent.in/status` 200 | `curl https://ha.aegisagent.in/status` | 200 | ✅ |
+| E4 | Public S3 transparency bucket reachable | `aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/` | Lists `keys/`, `latest/`, `roots/` | ✅ |
+| E5 | Today's daily Merkle root exists | `aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/roots/<tenant>/$(date -u +%Y-%m-%d).json` | File exists | ✅ |
+| E6 | `aegis-verify` end-to-end chain validation | `aegis-verify --root <today.json> --pubkey <keys/...pem>` | "CHAIN VERIFIED" | ✅ |
+| E7 | SDK install — `aegis-anthropic` 1.1.0 | `pip install aegis-anthropic==1.1.0` | Installs | ✅ |
+| E8 | SDK install — `aegis-aevf` 1.1.0 | `pip install aegis-aevf==1.1.0` | Installs | ✅ |
+| E9 | SDK install — `aegis-bedrock` 1.1.1 | `pip install aegis-bedrock==1.1.1` | Installs | ✅ |
+| E10 | SDK install — `aegis-langchain` 1.1.1 | `pip install aegis-langchain==1.1.1` | Installs | ✅ |
+| E11 | Path A tool deny — `/etc/passwd` | aegis-anthropic test script with `read_file('/etc/passwd')` | `_aegis_blocked` returned, action=deny, finding mentions path traversal | ✅ |
+| E12 | Path A tool deny — `~/.aws/credentials` | similar test | action=deny | ✅ |
+| E13 | Path A tool deny — `id_rsa` | similar test | action=deny | ✅ |
+| E14 | Path A — bulk PII at 10k rows | SQL SELECT with LIMIT 10000 against PII columns | action=deny | ✅ |
+| E15 | Path A — bulk PII at 9999 rows | similar | action=escalate (NOT allow) | ✅ |
+| E16 | Path A — `kubectl delete namespace production` | tool call simulation | action=escalate, approver_role=SRE_LEAD | ✅ |
+| E17 | Path A — `terraform destroy` prod-tagged | tool call simulation | action=escalate, approver_role=SRE_LEAD | ✅ |
+| E18 | Path A — wire $100k external (closes B1) | tool call simulation | action=escalate, approver_role=CFO | ✅ |
+| E19 | Path A — wire $150k external (gap closure) | tool call simulation | action=escalate, approver_role=CFO | ✅ |
+| E20 | Path A — wire $99k external | tool call simulation | action=allow | ✅ |
+| E21 | Path A — POST to transfer.sh | tool call simulation | action=deny | ✅ |
+| E22 | Path B prompt — "ignore previous instructions" | `/v1/messages` | 403 | ✅ |
+| E23 | Path B prompt — "you are now …" | `/v1/messages` | 403 | ✅ |
+| E24 | Path B prompt — "DAN mode" | `/v1/messages` | 403 | ✅ |
+| E25 | Path B prompt — "drop all tables" | `/v1/messages` | 403 | ✅ |
+| E26 | Path B prompt — token-smuggling `<\|sys\|>` | `/v1/messages` | 403 | ✅ |
+| E27 | Path B prompt — wire $150k mention | `/v1/messages` | 202, CFO approver | ✅ |
+| E28 | Path B prompt — single-record PII lookup (SSN) | `/v1/messages` | 202, CISO approver | ✅ |
+| E29 | Path B prompt — bulk PII export | `/v1/messages` | 202, CISO approver | ✅ |
+| E30 | Path B prompt — DROP TABLE <name> | `/v1/messages` | 202, CISO approver | ✅ |
+| E31 | Approval workflow — escalate then approve | escalate E27, CFO opens Approval Inbox, approves | tool executes, audit row chain links escalate→approve→execute | ✅ |
+| E32 | Approval workflow — escalate then deny | escalate E28, CISO opens Approval Inbox, denies | tool never executes, audit row records deny | ✅ |
+| E33 | Approval-replay TTL invalidation | Upload tightened policy mid-approval | in-flight approval is voided per `acp:tenant:policy_version` bump | ✅ |
+| E34 | API key revocation effective on next call | Mint key, call, revoke, call within 1s | second call 401 | ✅ |
+| E35 | Clerk RS256 token → accepted | Real Clerk session | 200 | ✅ |
+| E36 | HS256 token with Clerk-shaped `iss` → rejected | Forged token | 401 | ✅ |
+| E37 | Tenant isolation — Tenant A token cannot read Tenant B agents | curl with cross-tenant token | 403 / empty | ✅ |
+| E38 | SSE — all 17 event types emit | Drive each event source; subscribe to `/events/stream` | 17 distinct event names observed within 10 minutes | ✅ |
+| E39 | LiveFeed UI scope filter (post-U6 merge) | UI test | Filters narrow event stream correctly | ✅ |
+| E40 | Incidents bulk-resolve (post-U9 merge) | UI test | Select 5, click "Mark resolved", all 5 transition | ✅ |
+| E41 | Settings tab groups (post-U8 merge) | UI test | 3 section headers, 10 tabs underneath | ✅ |
+| E42 | Stripe Checkout → subscription created | Test mode | Customer record created, webhook fires | ✅ |
+| E43 | Stripe Customer Portal → cancel | Test mode | Subscription marked canceled | ✅ |
+| E44 | Compliance "Generate board report" (post-U5 merge) | UI button | PDF downloads | ✅ |
+| E45 | Threat-Intel feed CRUD (post-U5 merge) | UI | Add IOC, list, delete | ✅ |
+| E46 | Dashboard empty-state CTA (post-U11 merge) | Fresh tenant | "No agents yet — Create agent →" visible | ✅ |
+| E47 | Forensics container healthy after cold start (post-U1 fix) | Cold restart cluster | Forensics service_healthy before gateway accepts traffic | ✅ |
+| E48 | Resource limits enforced (post-U1) | `docker stats` after load | Each container respects its mem limit | ✅ |
+| E49 | Alertmanager page route fires PagerDuty (post-U2) | Trigger ChainViolationImmediate alert | Page receiver fires, distinct routing key | ✅ |
+| E50 | Audit-chain post-deploy verification | `aegis-verify --range yesterday today` | No chain violations introduced by deploy | ✅ |
+
+**E2E sign-off:** all 50 rows must be green. The engineering lead signs the sign-off note in `reports/sprint-v2-signoff.md` with date, time, and observer names.
+
+---
+
+## 13. Definition of Done
+
+The sprint closes when **every** row below is checked. No row is auto-closed.
+
+### Code & SDK
+- [ ] B1 wire-transfer alignment merged + verified live (E18, E19, E20).
+- [ ] B4 SDK `__version__` strings bumped + verified (`python -c "import …; print(__version__)"` for both packages).
+- [ ] `aegis-aevf` 1.1.0 on PyPI; E8 passes.
+- [ ] `aegis-bedrock` 1.1.1 on PyPI; E9 passes.
+- [ ] `aegis-langchain` 1.1.1 on PyPI; E10 passes.
+
+### Docs
+- [ ] `agies-bussiness.md` v1.3.0 published with L1/L2/L3 applied.
+- [ ] `docs/security/threat-model.md` published, peer-reviewed.
+- [ ] `docs/security/dpa-template.md` published, legal-reviewed.
+- [ ] `docs/security/baa-template.md` published, legal-reviewed.
+- [ ] `docs/operations/incident-response.md` published.
+- [ ] `docs/operations/retention-policy.md` published.
+- [ ] `docs/operations/disaster-recovery.md` published with measured RTO/RPO.
+- [ ] README.md updated to point at the new docs.
+
+### Evidence
+- [ ] `reports/load-test-2026-Q3/1k-rps-report.md` published.
+- [ ] `reports/load-test-2026-Q3/10k-burst-report.md` published.
+- [ ] DR drill executed; observed RTO < 4h and RPO < 15m recorded.
+- [ ] SLO dashboard live at `aegisagent.in/slo` (tenant-gated).
+
+### Compliance
+- [ ] SOC2 Type II vendor engagement letter signed; `soc2_tracker.md` updated.
+- [ ] Pen-test SoW signed; engagement window scheduled.
+- [ ] DPA template signed off by legal.
+- [ ] BAA template signed off by legal.
+
+### Customer evidence
+- [ ] 3 design partners contacted; 1 verbal yes secured.
+- [ ] Drafts for 3 redacted case studies under `docs/case-studies/`.
+
+### Deploy & validate
+- [ ] Both EC2 instances on v2.0 build.
+- [ ] All 50 E2E rows green; sign-off in `reports/sprint-v2-signoff.md`.
+- [ ] Post-deploy audit-chain verification clean (E50).
+
+### Final
+- [ ] `bussines-left.md` annotated with a closing line: each finding has a "RESOLVED IN SPRINT v2.0 (commit <sha>)" pointer.
+- [ ] Sprint retrospective scheduled within 7 days.
+
+---
+
+## 14. Out of scope for this sprint (be honest)
+
+These items move the product forward but cannot be **completed** in 14 days. They are kicked off in this sprint (Tracks F, G) and tracked separately:
+
+- **SOC2 Type II report issued** — requires 3–6 months of vendor evidence collection.
+- **Pen-test report received** — 4–6 week post-SoW.
+- **ISO 27001 certification** — separate 9–12 month track.
+- **BYOK for audit-log encryption** — a 2-sprint engineering project.
+- **Data residency (EU region, India region)** — a 2–3 sprint infra project.
+- **3 published, named customer references** — sales-cycle dependent.
+
+These are documented in `agies-bussiness.md` §11 ("Roadmap Priorities") with their own targeted timelines.
+
+---
+
+## 15. Rollback plan
+
+If H4, H5, H6, or any post-deploy E2E row fails:
+
+```bash
+# 1. STOP further deployment
+# 2. Drain the broken instance from the ALB
+aws elbv2 deregister-targets --target-group-arn $TG_ARN --targets Id=$BROKEN_INSTANCE
+
+# 3. SSM rollback command
+aws ssm send-command \
+  --instance-ids $BROKEN_INSTANCE \
+  --document-name "AWS-RunShellScript" \
+  --parameters '{"commands":["set -euxo pipefail",
+    "cd /opt/aegis",
+    "git fetch --tags",
+    "git checkout v2.0-pre-deploy",
+    "docker compose -f infra/docker-compose.yml down",
+    "docker compose -f infra/docker-compose.yml up -d --build",
+    "sleep 30",
+    "curl -fsS http://127.0.0.1:8000/health"
+  ]}'
+
+# 4. Re-attach to ALB; verify both instances on the pre-deploy build
+# 5. RDS rollback (only if schema changed):
+aws rds restore-db-instance-from-db-snapshot \
+  --db-instance-identifier aegis-prod-ha-rollback \
+  --db-snapshot-identifier aegis-pre-v2-$(date +%Y%m%d)
+# Then re-point app via env var; do not delete the broken instance until forensics done.
+
+# 6. Open a Sev-1 incident per docs/operations/incident-response.md.
+# 7. Write postmortem within 14 days. Block any further deploy until lessons absorbed.
+```
+
+**Rollback is NOT failure** — it is the success-mode of the deployment pipeline. The failure mode is shipping broken code and pretending it works.
+
+---
+
+## 16. Commit & push protocol
+
+Per project memory:
+- All commits are **local-first**. Never `git push` without an explicit human sign-off on the diff.
+- Every commit message ends with the issue reference (e.g. `Closes B1`). No `Co-Authored-By: Claude` line — the product is human-attributed.
+- Tag the final pre-deploy commit `v2.0-pre-deploy` for rollback (§15).
+- Tag the post-deploy verified commit `v2.0-GA` only after row E50 is green.
+
+```bash
+# at sprint close, after E50 green
+git tag -a v2.0-GA -m "Aegis v2.0 GA — all 50 E2E rows green, both instances live"
+# push tag only after CTO email approval
+# git push origin v2.0-GA   # (commented; human runs this)
+```
+
+---
+
+## 17. Sprint kickoff statement (read at standup, day 1)
+
+> We are not shipping marketing. We are shipping a product that a Principal Security Architect can audit and a CISO can defend to their board. Every claim in `agies-bussiness.md` v1.3.0 must have a file:line citation or a runtime artifact. Every gap in `bussines-left.md` must be closed in code or have a dated vendor on the calendar. We do not bypass. We do not shortcut. If the sprint cannot fit all 50 E2E rows, we extend the sprint or descope honestly — we do not declare green on a test that did not pass.
+>
+> Code = product = revenue. Quality, not quantity.
+
+---
+
+*End of sprint.md — created 2026-06-18 — derived from `bussines-left.md` (audit) and `agies-bussiness.md` v1.2.0 (context). Supersedes any sprint plan in `SPRINT.md` for this work window.*
