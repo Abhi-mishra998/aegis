@@ -1,14 +1,45 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Webhook, Slack, Bell, Globe,
   Save, Play, Loader2, AlertCircle,
   AlertTriangle, RefreshCw,
 } from 'lucide-react'
+import { z } from 'zod'
 import { webhookService } from '../services/api'
 import { SecretInput, StatusBadge, IntegrationCard } from '../components/Common/ConnectorPrimitives'
+import { useRole } from '../hooks/useRole'
+import useUnsavedChanges from '../hooks/useUnsavedChanges'
+
+const INITIAL_CFG = { slack_url: '', pagerduty_key: '', generic_url: '' }
+
+const isMasked = (v) => typeof v === 'string' && v.startsWith('***')
+
+const optionalUrl = z.union([
+  z.literal(''),
+  z.string().trim().url('Must be a valid URL'),
+])
+
+const webhookSchema = z.object({
+  slack_url: z.union([
+    z.literal(''),
+    z.string()
+      .trim()
+      .url('Must be a valid URL')
+      .refine(v => v.startsWith('https://hooks.slack.com/'), 'Must be a hooks.slack.com URL'),
+  ]),
+  pagerduty_key: z.union([
+    z.literal(''),
+    z.string().trim().min(32, 'Routing key must be at least 32 characters'),
+  ]),
+  generic_url: optionalUrl,
+})
 
 export default function WebhookSettings() {
-  const [cfg, setCfg] = useState({ slack_url: '', pagerduty_key: '', generic_url: '' })
+  const { isOwner, isAdmin } = useRole()
+  const canMutate = isOwner || isAdmin
+  const [cfg, setCfg] = useState(INITIAL_CFG)
+  const [initialCfg, setInitialCfg] = useState(INITIAL_CFG)
+  const [touched, setTouched] = useState({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -23,11 +54,14 @@ export default function WebhookSettings() {
     webhookService.getConfig()
       .then(d => {
         const c = d?.data || d || {}
-        setCfg(prev => ({
-          slack_url: c.slack_url ?? prev.slack_url,
-          pagerduty_key: c.pagerduty_key ?? prev.pagerduty_key,
-          generic_url: c.generic_url ?? prev.generic_url,
-        }))
+        const merged = {
+          slack_url: c.slack_url ?? '',
+          pagerduty_key: c.pagerduty_key ?? '',
+          generic_url: c.generic_url ?? '',
+        }
+        setCfg(merged)
+        setInitialCfg(merged)
+        setTouched({})
       })
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
@@ -35,11 +69,32 @@ export default function WebhookSettings() {
 
   useEffect(() => { loadConfig() }, [loadConfig])
 
+  const cfgForValidation = useMemo(() => ({
+    slack_url: isMasked(cfg.slack_url) ? '' : cfg.slack_url,
+    pagerduty_key: isMasked(cfg.pagerduty_key) ? 'x'.repeat(32) : cfg.pagerduty_key,
+    generic_url: isMasked(cfg.generic_url) ? '' : cfg.generic_url,
+  }), [cfg])
+
+  const parsed = webhookSchema.safeParse(cfgForValidation)
+  const fieldErrors = parsed.success ? {} : parsed.error.flatten().fieldErrors
+  const isValid = parsed.success
+  const showError = (key) => touched[key] && fieldErrors[key]?.[0]
+  const markTouched = (key) => setTouched(t => t[key] ? t : { ...t, [key]: true })
+
+  const dirty = useMemo(
+    () => JSON.stringify(cfg) !== JSON.stringify(initialCfg),
+    [cfg, initialCfg]
+  )
+  useUnsavedChanges(dirty && !saving)
+
   const save = async () => {
+    setTouched({ slack_url: true, pagerduty_key: true, generic_url: true })
+    if (!isValid) return
     setSaving(true)
     setError('')
     try {
       await webhookService.saveConfig(cfg)
+      setInitialCfg(cfg)
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch {
@@ -86,14 +141,16 @@ export default function WebhookSettings() {
             Configure alert delivery for playbook SEND_ALERT and WEBHOOK steps.
           </p>
         </div>
-        <button
-          onClick={save}
-          disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
-        >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          {saved ? 'Saved!' : 'Save Changes'}
-        </button>
+        {canMutate && (
+          <button
+            onClick={save}
+            disabled={saving || !isValid || !dirty}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {saved ? 'Saved!' : 'Save Changes'}
+          </button>
+        )}
       </header>
 
       {error && (
@@ -120,13 +177,23 @@ export default function WebhookSettings() {
 
       <IntegrationCard icon={Slack} title="Slack" description="Post alerts to a Slack channel via incoming webhook">
         <div className="space-y-3">
-          <SecretInput
-            id="slack_url"
-            label="Incoming Webhook URL"
-            placeholder="https://hooks.slack.com/services/T…/B…/…"
-            value={cfg.slack_url}
-            onChange={v => setCfg(c => ({ ...c, slack_url: v }))}
-          />
+          <div>
+            <SecretInput
+              id="slack_url"
+              label="Incoming Webhook URL"
+              placeholder="https://hooks.slack.com/services/T…/B…/…"
+              value={cfg.slack_url}
+              onChange={v => {
+                setCfg(c => ({ ...c, slack_url: v }))
+                markTouched('slack_url')
+              }}
+            />
+            {showError('slack_url') && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('slack_url')}
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => test('slack')}
@@ -147,13 +214,23 @@ export default function WebhookSettings() {
 
       <IntegrationCard icon={Bell} title="PagerDuty" description="Trigger PagerDuty incidents via Events API v2">
         <div className="space-y-3">
-          <SecretInput
-            id="pd_key"
-            label="Integration Routing Key"
-            placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            value={cfg.pagerduty_key}
-            onChange={v => setCfg(c => ({ ...c, pagerduty_key: v }))}
-          />
+          <div>
+            <SecretInput
+              id="pd_key"
+              label="Integration Routing Key"
+              placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              value={cfg.pagerduty_key}
+              onChange={v => {
+                setCfg(c => ({ ...c, pagerduty_key: v }))
+                markTouched('pagerduty_key')
+              }}
+            />
+            {showError('pagerduty_key') && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('pagerduty_key')}
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => test('pagerduty')}
@@ -180,13 +257,17 @@ export default function WebhookSettings() {
               type="url"
               value={cfg.generic_url}
               onChange={e => setCfg(c => ({ ...c, generic_url: e.target.value }))}
+              onBlur={() => markTouched('generic_url')}
               placeholder="https://your-service.example.com/hook"
-              className="
-                w-full bg-white/[0.04] border border-[var(--border-subtle)]
-                rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600
-                focus:outline-none focus:border-white/20
-              "
+              aria-invalid={!!showError('generic_url')}
+              aria-describedby={showError('generic_url') ? 'generic_url_err' : undefined}
+              className={`w-full bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none ${showError('generic_url') ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
             />
+            {showError('generic_url') && (
+              <p id="generic_url_err" className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
+                <AlertCircle size={11} /> {showError('generic_url')}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
