@@ -31,7 +31,7 @@ from typing import Any, Iterable
 
 import httpx
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["AegisBedrockAgentRuntime", "AegisClient", "__version__"]
 
 
