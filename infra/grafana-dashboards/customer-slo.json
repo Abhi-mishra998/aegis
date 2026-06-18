@@ -76,7 +76,7 @@
       "title": "Pending approvals",
       "type": "stat",
       "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
-      "description": "Approval-queue depth. Backed by acp_autonomy_pending_approvals gauge. NOTE: gauge wiring is owed by Track E2 follow-up; until the gauge is exported by services/autonomy/, the panel reports N/A. Mapping is configured so 0 reads as 'EMPTY' (green) and >0 as the integer (yellow above 5, red above 25).",
+      "description": "Approval-queue depth — in-flight approvals with no recorded override decision. Backed by acp_autonomy_pending_approvals gauge, refreshed every 30s by services/autonomy/metrics.gauge_refresh_loop over the trailing 24h window. 0 reads as 'EMPTY' (green); yellow above 5, red above 25.",
       "targets": [
         { "expr": "max(acp_autonomy_pending_approvals{tenant=\"$tenant\"})", "legendFormat": "depth" }
       ],
@@ -93,8 +93,7 @@
           },
           "mappings": [
             { "type": "value", "options": { "0": { "text": "EMPTY", "color": "green" } } }
-          ],
-          "noValue": "N/A — metric not yet exported"
+          ]
         }
       }
     },
@@ -152,15 +151,14 @@
       "title": "Approval time-to-approve — median + p95 (seconds)",
       "type": "timeseries",
       "gridPos": { "h": 5, "w": 8, "x": 16, "y": 9 },
-      "description": "Wall-clock from escalate emit to operator decision. Backed by acp_autonomy_approval_resolution_seconds_bucket. Like panel 3, the histogram is owed by Track E2 follow-up wiring; until then this panel is empty.",
+      "description": "Wall-clock from violation detection to the human override decision. Backed by acp_autonomy_approval_resolution_seconds_bucket — observed inline in services/autonomy/router.py add_override (event_type='approval').",
       "targets": [
         { "expr": "histogram_quantile(0.50, sum(rate(acp_autonomy_approval_resolution_seconds_bucket{tenant=\"$tenant\"}[1h])) by (le))", "legendFormat": "median" },
         { "expr": "histogram_quantile(0.95, sum(rate(acp_autonomy_approval_resolution_seconds_bucket{tenant=\"$tenant\"}[1h])) by (le))", "legendFormat": "p95" }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "noValue": "N/A — metric not yet exported"
+          "unit": "s"
         }
       }
     },

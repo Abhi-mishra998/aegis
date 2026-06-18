@@ -393,6 +393,19 @@ async def add_override(
     db.add(ev)
     await db.commit()
 
+    # Observe wall-clock-to-resolve into the customer-SLO histogram. No-op
+    # when event_type is not "approval" or when the request_id has no matching
+    # autonomy_contract_violation. Lookup failures are swallowed inside
+    # observe_approval_resolution so they cannot roll back the override the
+    # DB already committed.
+    from services.autonomy.metrics import observe_approval_resolution
+    await observe_approval_resolution(
+        db,
+        tenant_id=tenant_id,
+        request_id=payload.request_id,
+        event_type=payload.event_type,
+    )
+
     # Emit `approval_resolved` on the per-tenant pubsub channel so the
     # LiveFeed + pending-approvals inbox reflect the human action in
     # real time. Uses the same channel naming as
