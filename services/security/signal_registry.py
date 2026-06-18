@@ -453,7 +453,7 @@ _register(SignalDefinition(
     severity=Severity.HIGH,
     mitre_technique="T1657 Financial Theft",
     default_score=50, default_response="escalate",
-    description="Wire ≥ $200K to external / offshore / unknown destination.",
+    description="Wire ≥ $100K to external / offshore / unknown destination.",
 ))
 
 

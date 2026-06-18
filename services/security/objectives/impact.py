@@ -23,7 +23,9 @@ from __future__ import annotations
 
 
 _WIRE_HARD_DENY_USD       = 10_000_000
-_WIRE_ESCALATE_EXTERNAL_USD = 200_000
+# B1 closure (2026-06-18): aligned with services/policy/local_action_semantics.py
+# and gateway pattern detector at services/gateway/escalation_patterns.py:39-52.
+_WIRE_ESCALATE_EXTERNAL_USD = 100_000
 _EXTERNAL_DEST_KINDS = ("external", "offshore", "unknown")
 
 

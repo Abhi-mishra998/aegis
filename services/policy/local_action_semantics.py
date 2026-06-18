@@ -95,7 +95,10 @@ _PII_TABLES = ("customer", "customers", "user", "users",
 # (10M USD) so legitimate corporate sweeps pass; tenants tune via metadata.
 # ---------------------------------------------------------------------------
 _WIRE_HARD_DENY_USD       = 10_000_000
-_WIRE_ESCALATE_EXTERNAL_USD = 200_000
+# B1 closure (2026-06-18): aligned to pattern-detector floor at
+# services/gateway/escalation_patterns.py:39-52 so $100k-$199k external wires
+# can no longer match the pattern (202 returned) while escaping Rego enforcement.
+_WIRE_ESCALATE_EXTERNAL_USD = 100_000
 
 
 # ===========================================================================
