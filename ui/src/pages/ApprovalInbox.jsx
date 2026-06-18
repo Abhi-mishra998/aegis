@@ -13,9 +13,19 @@ import {
 } from 'lucide-react'
 import { auditService, autonomyService } from '../services/api'
 import ErrorBoundary from '../components/Common/ErrorBoundary'
+import Button from '../components/Common/Button'
+
+const PAGE_SIZE = 25
 
 function unwrap(resp) { return resp?.data ?? resp }
 function fmtTs(s) { if (!s) return '—'; try { return new Date(s).toLocaleString() } catch { return s } }
+
+function parsePage(resp, prevCount = 0) {
+  const data = unwrap(resp)
+  const items = Array.isArray(data) ? data : (data?.items || [])
+  const total = Array.isArray(data) ? items.length + prevCount : (data?.total ?? prevCount + items.length)
+  return { items, total: total || 0 }
+}
 
 const WINDOWS = [
   { label: 'Last 1h',  minutes: 60 },
@@ -42,23 +52,23 @@ function ApprovalInboxPage() {
   const [error, setError]         = useState('')
   const [msg, setMsg]             = useState('')
   const [loading, setLoading]     = useState(false)
+  const [pagesLoaded, setPagesLoaded] = useState(1)
+  const [totalEscalations, setTotalEscalations] = useState(0)
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (pages = 1) => {
     setLoading(true); setError('')
     try {
-      // 1. Pull escalated audit rows (the queue of pending approvals).
+      // Refetch every page the operator has already paged through so the
+      // 8s poll doesn't silently wipe paginated history.
       const esc = await auditService.searchLogs({
         decision: 'escalate',
-        limit: 200,
+        limit: PAGE_SIZE * pages,
+        offset: 0,
       })
-      const data = unwrap(esc)
-      const escItems = Array.isArray(data) ? data : (data?.items || [])
-      setEscalations(escItems)
+      const { items, total } = parsePage(esc)
+      setEscalations(items)
+      setTotalEscalations(total)
 
-      // 2. Pull human override events so we know which escalations have
-      // already been actioned. We index by request_id; an event with
-      // event_type=approval OR event_type=override on a given request_id
-      // means the queue should hide it.
       const ovrs = unwrap(await autonomyService.listOverrides({
         minutes: windowMinutes, limit: 500,
       })) || []
@@ -70,7 +80,14 @@ function ApprovalInboxPage() {
     }
   }, [windowMinutes])
 
-  useEffect(() => { fetchAll() }, [fetchAll])
+  const hasMore = escalations.length < totalEscalations
+
+  const loadMore = useCallback(() => {
+    if (loading || !hasMore) return
+    setPagesLoaded((n) => n + 1)
+  }, [loading, hasMore])
+
+  useEffect(() => { fetchAll(pagesLoaded) }, [fetchAll, pagesLoaded])
 
   // Sprint 20 UX pass — the Approval Inbox is the founder's "Pending
   // CFO approval" surface. If a new escalation lands and the inbox
@@ -78,9 +95,9 @@ function ApprovalInboxPage() {
   // manually hit Refresh. Poll every 8s while the page is mounted —
   // cheap (single GET + one GET on the overrides table).
   useEffect(() => {
-    const id = setInterval(() => { fetchAll() }, 8_000)
+    const id = setInterval(() => { fetchAll(pagesLoaded) }, 8_000)
     return () => clearInterval(id)
-  }, [fetchAll])
+  }, [fetchAll, pagesLoaded])
 
   const resolvedRequestIds = useMemo(() => {
     const set = new Set()
@@ -134,7 +151,7 @@ function ApprovalInboxPage() {
       setMsg(`Request ${selected.request_id} recorded as ${decision === 'approval' ? 'APPROVED' : 'REJECTED'}.`)
       setReason('')
       setSelected(null)
-      await fetchAll()
+      await fetchAll(pagesLoaded)
     } catch (e) {
       setError(e?.message || 'Failed to record decision')
     } finally {
@@ -170,7 +187,7 @@ function ApprovalInboxPage() {
             ))}
           </select>
           <button
-            onClick={fetchAll}
+            onClick={() => fetchAll(pagesLoaded)}
             disabled={loading}
             className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 rounded-md text-sm inline-flex items-center gap-2"
           >
@@ -196,10 +213,11 @@ function ApprovalInboxPage() {
             <Clock size={12} /> Pending ({pending.length})
           </div>
           <div className="divide-y divide-neutral-900 max-h-[60vh] overflow-y-auto">
-            {pending.length === 0 && (
-              <div className="p-6 text-sm text-neutral-500 text-center">
-                No pending approvals. Either no ESCALATE in the window, or
-                everything's been actioned.
+            {pending.length === 0 && !loading && (
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-8 text-center">
+                <Inbox size={32} className="mx-auto mb-3 text-neutral-600" aria-hidden="true" />
+                <h3 className="text-sm font-semibold text-neutral-300 mb-1">No pending approvals</h3>
+                <p className="text-xs text-neutral-500">All escalations have been resolved. Live escalations will appear here as agents request approval.</p>
               </div>
             )}
             {pending.map((row) => {
@@ -223,6 +241,19 @@ function ApprovalInboxPage() {
                 </button>
               )
             })}
+            {hasMore && (
+              <div className="p-3 text-center">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={loadMore}
+                  disabled={loading}
+                  loading={loading}
+                >
+                  Load more ({escalations.length} of {totalEscalations})
+                </Button>
+              </div>
+            )}
           </div>
 
           {resolved.length > 0 && (
@@ -308,20 +339,22 @@ function ApprovalInboxPage() {
                 </div>
 
                 <div className="mt-3 flex justify-end gap-2">
-                  <button
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={() => decide('override')}
                     disabled={!!busy}
-                    className="px-3 py-1.5 bg-rose-700 hover:bg-rose-600 disabled:bg-neutral-700 rounded-md text-sm inline-flex items-center gap-2"
                   >
-                    <XCircle size={14} /> {busy === 'override' ? 'Rejecting…' : 'Reject'}
-                  </button>
-                  <button
+                    <XCircle size={14} aria-hidden="true" /> {busy === 'override' ? 'Rejecting…' : 'Reject'}
+                  </Button>
+                  <Button
+                    variant="success"
+                    size="sm"
                     onClick={() => decide('approval')}
                     disabled={!!busy}
-                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-neutral-700 rounded-md text-sm inline-flex items-center gap-2"
                   >
-                    <CheckCircle2 size={14} /> {busy === 'approval' ? 'Approving…' : 'Approve'}
-                  </button>
+                    <CheckCircle2 size={14} aria-hidden="true" /> {busy === 'approval' ? 'Approving…' : 'Approve'}
+                  </Button>
                 </div>
               </div>
 
