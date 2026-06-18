@@ -251,4 +251,49 @@ curl -i -X POST https://aegisagent.in/v1/messages \
 
 ---
 
-*End — 2026-06-18 ~17:55 IST. No bypass, no shortcuts. Probe transcripts above are real curl invocations against the live site at the time of writing.*
+*End of original handoff — 2026-06-18 ~17:55 IST.*
+
+---
+
+## 11. Post-handoff hotfix — 2026-06-18 21:05 IST
+
+**Issue reported by client browsing /incidents (incident `26a2c49a-eca1-43f0…`):**
+
+```
+System Integrity Violation
+ReferenceError: useMemo is not defined
+  at Incidents-BQ52_EsO.js:1:27328
+```
+
+**Root cause:** U10 (the a11y sprint) added `INFO` to the Incidents page's `SEVERITY_OPTIONS` filter (a `useMemo`-ed array) but never extended the React import. The Incidents page crashed on mount; the ErrorBoundary's "System Integrity Violation" modal isolated the failure (working as designed — no data corruption).
+
+**Fix:** one-line — add `useMemo` to the React named imports at `ui/src/pages/Incidents.jsx:1`. Commit `3314e46`.
+
+**Sanity sweep:** wrote a Python script that walks every `.jsx`/`.tsx`/`.js` in `ui/src`, parses React imports, and flags every used hook that isn't imported. Only Incidents.jsx surfaced. Then loaded all 45 live lazy-loaded chunks via curl and scanned each for `is not defined` / `undefined is not` patterns in minified text — zero matches. No other React-hook bugs in the live bundle.
+
+**Hotfix deploy log:**
+
+```
+20:39:51 IST  Client reports ReferenceError in browser at /incidents
+20:51    IST  Root cause located (one-line missing import); fix committed (3314e46)
+20:53    IST  npm run build → ✓ built in 4s; postbuild sourcemap check → ✓
+20:54    IST  bundle 3 built (609 MB) + uploaded to S3
+20:56    IST  drain inst-1 → SSM tar-pull + --no-cache UI rebuild → re-attach (healthy)
+21:01    IST  drain inst-2 → SSM tar-pull + --no-cache UI rebuild → re-attach (healthy)
+21:05    IST  live verification: aegisagent.in serves index-CuSGf982.js
+              which references Incidents-xFJT9x0O.js (the fixed chunk).
+              grep useMemo in the live JS → match found = hook is in the bundle.
+```
+
+**Why --no-cache was needed:** docker compose's regular `--build` caches the `COPY ui/dist /usr/share/nginx/html` layer based on tarball content hashes. The dev tree had the new file but the COPY layer cache wasn't invalidated automatically. `build --no-cache ui` forces a fresh image.
+
+**Live now serves:**
+- `assets/index-CuSGf982.js` (new main bundle)
+- `assets/Incidents-xFJT9x0O.js` (Incidents page with `useMemo` properly imported)
+- All 45 lazy chunks scanned: zero `ReferenceError`-shaped strings
+
+**Client action:** hard-refresh the browser (Cmd+Shift+R / Ctrl+Shift+R) to bust any cached service-worker or local browser cache. The new index.html ships `cache-control: no-store` so subsequent loads pick up the fix automatically.
+
+---
+
+*Final end — 2026-06-18 ~21:05 IST. One hotfix landed post-handoff, fully deployed + verified live.*
