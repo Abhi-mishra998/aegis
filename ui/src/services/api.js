@@ -95,9 +95,15 @@ const _handleResponse = async (res, url) => {
   if (!res.ok) {
     const errorText = await res.text();
     let parsedError = errorText;
+    let parsedBody = null;
     try {
-      const parsed = JSON.parse(errorText);
-      parsedError = parsed.error || parsed.detail || parsed.message || errorText;
+      parsedBody = JSON.parse(errorText);
+      parsedError = parsedBody.error || parsedBody.detail || parsedBody.message || errorText;
+      // pydantic 422 — detail is usually an array of {loc, msg, type}; collapse
+      // to a `;`-joined string so the toast reads as a single line.
+      if (Array.isArray(parsedError)) {
+        parsedError = parsedError.map((e) => e?.msg || JSON.stringify(e)).join("; ");
+      }
     } catch (e) {
       // Non-JSON body. If it looks like an HTML error page (nginx default,
       // load-balancer block, WAF rejection), collapse it to a short string so
@@ -109,6 +115,8 @@ const _handleResponse = async (res, url) => {
     console.error(`API_ERROR [${res.status}] ${url}:`, parsedError);
     const apiErr = new Error(parsedError || "API Error");
     apiErr._status = res.status;
+    apiErr._body = parsedBody;
+    apiErr._wwwAuth = res.headers.get("WWW-Authenticate") || "";
     if (res.status >= 400 && res.status < 500) apiErr._noRetry = true;
     throw apiErr;
   }
@@ -223,8 +231,12 @@ const request = async (url, options = {}, retry = 1) => {
       if (window.location.pathname !== "/login") {
         emitAuthFailure({ reason: "unauthorized", url, statusCode: 401 });
       }
+      // Throw a special sentinel so the catch block knows NOT to retry.
+      // parseApiError() reads _status + _wwwAuth to map to a user-facing string.
       const authErr = new Error("UNAUTHORIZED: Session expired or credentials invalid.");
       authErr._noRetry = true;
+      authErr._status = 401;
+      authErr._wwwAuth = res.headers.get("WWW-Authenticate") || "";
       throw authErr;
     }
 
@@ -271,6 +283,96 @@ const blobRequest = async (url, options = {}) => {
   return res.blob();
 };
 
+
+/**
+ * parseApiError(error, fallback) — turn a thrown error from request() into a
+ * user-facing string. Reads _status, _wwwAuth (Bearer realm="<reason>"), and
+ * _body to classify common HTTP failure modes so pages don't have to.
+ *
+ * Callers that already have a friendly message can pass it as `fallback`; it
+ * is only used when the error has no clearer signal.
+ */
+export const parseApiError = (error, fallback = "Something went wrong. Please try again.") => {
+  if (!error) return fallback;
+
+  const status = error._status;
+  const body = error._body;
+  const wwwAuth = error._wwwAuth || "";
+
+  // 401 — try to read the realm slug the gateway sets on WWW-Authenticate.
+  if (status === 401) {
+    const realmMatch = /realm="([^"]+)"/i.exec(wwwAuth);
+    const realm = realmMatch ? realmMatch[1] : "";
+    if (realm === "session_expired") return "Session expired — please sign in again.";
+    if (realm === "invalid_token")   return "Authentication failed — please sign in again.";
+    if (realm === "insufficient_role") return "Access denied — your role does not permit this.";
+    return "Authentication required.";
+  }
+
+  if (status === 403) {
+    return "Access denied — your role does not permit this action.";
+  }
+
+  if (status === 409) {
+    return "Conflict — this resource was modified by someone else. Refresh and try again.";
+  }
+
+  if (status === 422) {
+    // pydantic-style detail is already collapsed into error.message in
+    // request(), but fall back to body.detail array if it's still raw.
+    if (body && Array.isArray(body.detail)) {
+      const msgs = body.detail
+        .map(e => e?.msg || (typeof e === "string" ? e : ""))
+        .filter(Boolean);
+      if (msgs.length) return msgs.join("; ");
+    }
+    return error.message || fallback;
+  }
+
+  if (status === 429) {
+    return "Rate limit exceeded — try again in a moment.";
+  }
+
+  if (typeof status === "number" && status >= 500) {
+    return error.message && error.message !== "API Error"
+      ? error.message
+      : "Server error — try again, or contact support.";
+  }
+
+  return error.message || fallback;
+};
+
+// Voice Agent — LiveKit token mint. Wraps the gateway /voice/token endpoint
+// behind the same fetch convention as the other services so auth headers,
+// credentials, and 401 surfacing stay consistent. Previously the panel did a
+// raw fetch() that bypassed Clerk token attachment.
+export const voiceService = {
+  getToken: async () => {
+    const headers = {};
+    await attachClerkAuth(headers);
+    const res = await fetch(`${API_BASE}/voice/token`, {
+      credentials: "include",
+      headers,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      let parsedBody = null;
+      let parsedError = txt;
+      try {
+        parsedBody = JSON.parse(txt);
+        parsedError = parsedBody.error || parsedBody.detail || parsedBody.message || txt;
+      } catch (_) { /* non-JSON body */ }
+      const err = new Error(parsedError || `Voice token request failed (${res.status})`);
+      err._status = res.status;
+      err._body = parsedBody;
+      err._wwwAuth = res.headers.get("WWW-Authenticate") || "";
+      err._noRetry = true;
+      throw err;
+    }
+    const body = await res.json();
+    return body.data || body;
+  },
+};
 
 // Auth Service
 export const authService = {
