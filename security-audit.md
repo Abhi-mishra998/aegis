@@ -329,3 +329,64 @@ The remaining items on the "not enterprise-grade" list (SOC2, ISO 27001, pen tes
 ---
 
 *End of audit — 2026-06-18 ~15:20 IST. Auditor: AWS-admin-equipped Claude session; non-privileged probes against live prod; full audit-chain verification via aegis-verify 1.1.0 from PyPI. No bypasses, no shortcuts, no claims I can't back with a probe transcript.*
+
+---
+
+# Appendix A — UI Hardening Sprint (2026-06-18 PM)
+
+**Trigger:** User asked: *"do like ui backend inspection /security-preview so that both are aligned … make it enterprise grade got it don't do bypass things think deeper and do these make it ui clean and easy to understand and use … if any feature is extra or something and remove it"*.
+
+**Method:** Three Explore agents inspected `ui/` end-to-end (feature inventory, security posture, UX clarity). Findings cross-checked against actual file:line citations. Decomposed into 12 file-ownership-exclusive units. Launched 12 parallel worker agents in isolated git worktrees with `run_in_background:true`. Coordinator (this session) consolidated all 12 worker branches into `main`, plus 1 follow-up commit.
+
+**Verdict counts (UI):**
+
+| Severity | Closed in this sprint | Notes |
+|---|---|---|
+| 🔴 HIGH | 0 (none found in UI) | The cross-cutting H1 was the backend WWW-Authenticate strip — already fixed by `7790223` |
+| 🟡 MEDIUM | 5 | SSE error-classification race, refresh-on-401 dedup mutex, logout revocation validation, client-side RBAC gating, sourcemap CI guard |
+| 🟢 LOW | 1 | console.error PII redaction sweep |
+| 🏆 STRENGTH | 5 | Token storage correct (httpOnly only), CSP strict, COOP/CORP/HSTS already shipped, keyboard shortcuts Datadog-grade, navigation semantically grouped (Observe/Protect/Prove) |
+| ✂️  CRUFT REMOVED | 5 | `/risk` (RiskEngine) + `/attack-sim` (AttackSimulation) orphan routes + 2 page files (1,164 LOC); `components/VoiceAgent/` (3 files, 692 LOC) + `@livekit/components-react` + `livekit-client` deps (~140 KB gzipped); hardcoded `demo@aegisagent.in` / `demo1234` + `DEMO_AGENT` UUID in DeveloperPanel.jsx; dangling `/risk` + `/attack-sim` entries from CommandPalette.jsx; `Zap` orphaned import |
+
+## What landed (12 worker units + 1 coordinator follow-up)
+
+| Merge | Subject | Scope |
+|---|---|---|
+| `da75a0a` | **U2** — remove orphan /risk + /attack-sim pages | 3 files, 1,164 deletions. App.jsx route + lazy import cleanup; deleted RiskEngine.jsx + AttackSimulation.jsx. |
+| `f41cbdb` | **U1** — Topbar kill-switch + escalations badge; remove VoiceAgent | Topbar.jsx adds red Power kill-switch button (gated on `useRole().canViewKillSwitch`, opens ConfirmDialog → `/kill-switch`) + amber Inbox escalations badge (polls every 30s). Sidebar.jsx drops `killSwitchItem`. `components/VoiceAgent/` (3 files) deleted. |
+| `ef7ff3b` | **U12** — pin deps exact + drop @livekit + sourcemap check | package.json: stripped all `^`/`~`, removed `@livekit/components-react` + `livekit-client`. New `scripts/check-no-sourcemaps.sh` (postbuild hook): asserts no `*.map` and no `sourceMappingURL=` in dist/assets. |
+| `1ee7bc9` | **U3** — ApprovalInbox Button + pagination + empty state | Raw HTML approve/reject → `<Button variant="danger\|success">`. Cursor pagination with `PAGE_SIZE=25` + "Load more". Refresh preserves pages loaded (bug fix). Inbox empty-state panel. |
+| `5cf1339` | **U4** — Agents Actions header + RBAC + last-seen | "Actions" column header label visible. Quarantine/Reactivate gated `canMutate`, Delete gated `canDelete` (ADMIN/OWNER only), "Deploy Agent" CTA gated `canMutate`. Inline LastSeenCell with `TODO U7` shim. |
+| `ea67930` | **U5** — API client hardening (SSE race + refresh mutex + logout + PII) | (a) `prevSessionMetadata` snapshot in `onerror` — kills auth_expired↔network misclassification race. (b) Module-scope `refreshInFlight` + `refreshWaiters` mutex coalesces concurrent 401s onto one Clerk refresh. (c) Logout probes `/auth/session` or `/auth/me` — `window.location.href = '/login'` if response still authenticated. (d) All `console.error` calls with `{tenant_id, email, role, ...}` redacted to `"[redacted]"`. |
+| `5a9d71e` | **U6** — DeveloperPanel placeholder creds | `demo@aegisagent.in`/`demo1234` → `<YOUR_EMAIL>`/`<YOUR_PASSWORD>` (4 sites). 4 hardcoded agent UUIDs → `<YOUR_AGENT_ID>`. `tenant_id` fallback `00000000-…-001` preserved (documented placeholder per code). |
+| `15fb595` | **U7** — DataFreshness primitive + Dashboard + LiveFeed | New `Common/DataFreshness.jsx` (auto-ticks every 15s, ISO tooltip). Dashboard tracks `lastFetchAt`, shows next to Refresh button. LiveFeed derives from `events[0].ts` via useMemo. |
+| `e29b08b` | **U8** — EmptyStateV2 + Compliance/Notifications/AuditLogs + audit pagination | New `Common/EmptyStateV2.jsx` (icon + title + body + optional primary/secondary CTAs). Wired to Compliance ("Go to Agents"), Notifications ("All caught up"), AuditLogs (filters CTA). AuditLogs cursor "Load more" with PAGE_SIZE=50; Export promoted to header `variant="primary"` button (CSV + ghost JSON; PDF removed since backend doesn't support it). |
+| `1a9eed1` | **U10** — a11y text+color status + skip-to-content | KillSwitch.jsx adds "SAFE"/"ISOLATED" text inside main status ring + Redis-sync text labels. Incidents.jsx severity badges contrast bumped `*-400→*-300` for WCAG AA + INFO severity added. MainLayout.jsx confirmed skip-link already present. |
+| `b977319` | **U11** — forms zod validation + unsaved-changes + admin RBAC | New `hooks/useUnsavedChanges.js` (beforeunload guard). UserManagement, SsoSettings, WebhookSettings, SiemSettings each: Zod schema + inline `AlertCircle` errors next to fields + dirty diff + Save gated on `valid && dirty`. All admin-mutating buttons hidden when `role` not ADMIN/OWNER. |
+| `806d5b8` | **U9** — tenant → workspace terminology codemod | 32 user-facing replacements across 15 files. Preserved: `tenant_id`, `X-Tenant-ID`, `tenantId`, `tenantService`, `tenant_wide` JSON payload, `TenantRow`, `affected_tenants` backend field, all comments. Skipped DeveloperPanel.jsx + services/api.js entirely. |
+| `f647cc1` | **coord follow-up** — CommandPalette dangling refs | Removed `{ id: 'risk', ... }` and `{ id: 'attack-sim', ... }` entries flagged by U2; removed now-orphaned `Zap` lucide import. |
+
+## Verification
+
+- `cd ui && npm install --silent && npm run build` from `main`: **passes clean** (`✓ built in 7.30s`).
+- `npm run postbuild` (sourcemap CI check): **passes** (`✓ no source maps in dist/`).
+- `grep -rn "VoiceAgent\|VoiceAgentButton" ui/src`: zero matches.
+- `grep -rn "RiskEngine\|AttackSimulation" ui/src`: zero matches.
+- `grep -rn "demo@aegisagent\|demo1234\|a245cc68-19aa-48a7-8862-f3d7f0332ff6" ui/src`: zero matches.
+- `grep -n "@livekit\|livekit-client" ui/package.json`: zero matches.
+- `grep -nE '"\^|"~' ui/package.json`: zero matches (all deps exact-pinned).
+
+## What did NOT get addressed in this sprint
+
+- **`unsafe-inline` / `unsafe-eval` in script-src CSP** — acknowledged Sprint-11 nonce work; out of scope.
+- **`/openapi.json` + `/docs` public exposure** — backend M3 already closed (`7790223`); not a UI issue.
+- **Notification polling → SSE/WebSocket** — large refactor, separate sprint.
+- **Settings tab consolidation / IA redesign** — would change too many user mental models in one drop.
+- **Push to remote** — all 12 worker commits + the coordinator follow-up are on local `main`. The active `gh` token belongs to `Abhishek-Mishra-ai` which has read-only access to `Abhi-mishra998/aegis`. Repo owner must `git push` from a session with write access, OR re-auth `gh` with an account that has push rights. None of the work is on a remote PR.
+
+## Coordinator notes for the next session
+
+1. **Push the 13 commits to GitHub** (12 merges + 1 cleanup). Repo owner must do this manually or re-auth `gh`.
+2. **Rebuild + redeploy bundle to prod-ha** — `bash scripts/ops/build_release_bundle.sh` then SSM tar-pull on inst-1 + inst-2, same procedure as the backend security-fix deploy on `7790223`.
+3. **Manual smoke test in browser** post-deploy: open `https://aegisagent.in` → confirm Kill Switch button visible in Topbar (top-right, red), Escalations badge populates, no console errors. Run through the four CISO flows from the audit (find blocked action, approve escalation, revoke API key, export audit logs) and time them.
+4. **Update `next-session-prompt.md`** — the only file in `git status` not committed (untracked); decide whether to keep or delete.
