@@ -42,7 +42,8 @@ def get_engine() -> AsyncEngine:
             "server_settings": {
                 "application_name": "acp-service",
                 "statement_timeout": "10000",   # 10s safety kill-switch
-            }
+            },
+            "statement_cache_size": 0,   # D4 closure 2026-06-18: asyncpg+pgbouncer-transaction race
         },
     )
 
