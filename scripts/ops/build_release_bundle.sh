@@ -85,6 +85,8 @@ tar \
     --exclude='._*' \
     --exclude='infra/.env' \
     --exclude='infra/.env.local' \
+    --exclude='infra/userlist.txt' \
+    --exclude='infra/pgbouncer.aws.ini' \
     --exclude='./.env' \
     --exclude='./.env.local' \
     --exclude='./.env.aws*' \
