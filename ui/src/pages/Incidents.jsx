@@ -34,10 +34,11 @@ import { eventBus } from '../lib/eventBus';
 // ── Severity helpers ──────────────────────────────────────────────────────────
 
 const SEV_CONFIG = {
-  CRITICAL: { cls: 'text-red-400 bg-red-500/10 border-red-500/30',   dot: 'bg-red-500',    label: 'Critical' },
-  HIGH:     { cls: 'text-orange-400 bg-orange-500/10 border-orange-500/30', dot: 'bg-orange-500', label: 'High' },
-  MEDIUM:   { cls: 'text-amber-400 bg-amber-500/10 border-amber-500/30',  dot: 'bg-amber-500',  label: 'Medium' },
-  LOW:      { cls: 'text-green-400 bg-green-500/10 border-green-500/30',   dot: 'bg-green-500',  label: 'Low' },
+  CRITICAL: { cls: 'text-red-300 bg-red-500/15 border-red-500/40',         dot: 'bg-red-500',     label: 'Critical' },
+  HIGH:     { cls: 'text-orange-300 bg-orange-500/15 border-orange-500/40', dot: 'bg-orange-500',  label: 'High' },
+  MEDIUM:   { cls: 'text-amber-300 bg-amber-500/15 border-amber-500/40',    dot: 'bg-amber-500',   label: 'Medium' },
+  LOW:      { cls: 'text-green-300 bg-green-500/15 border-green-500/40',    dot: 'bg-green-500',   label: 'Low' },
+  INFO:     { cls: 'text-blue-300 bg-blue-500/15 border-blue-500/40',       dot: 'bg-blue-500',    label: 'Info' },
 };
 
 const STATUS_CONFIG = {
@@ -424,7 +425,7 @@ function SocFeed() {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-const SEVERITY_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+const SEVERITY_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const STATUS_OPTIONS   = ['', 'OPEN', 'INVESTIGATING', 'ESCALATED', 'MITIGATED', 'RESOLVED'];
 
 function _relTime(iso) {

@@ -168,13 +168,16 @@ export default function KillSwitch() {
             )}
 
             <div className="relative flex flex-col items-center text-center space-y-8 py-6">
-              {/* Status indicator */}
-              <div className={`w-32 h-32 rounded-full border-2 flex items-center justify-center transition-all duration-700 ${
+              {/* Status indicator — icon + text so colorblind users do not depend on the ring colour. */}
+              <div className={`w-32 h-32 rounded-full border-2 flex flex-col items-center justify-center gap-1 transition-all duration-700 ${
                 isActive
                   ? 'border-red-500 bg-red-500/15 text-red-400'
-                  : 'border-white/[0.08] bg-white/[0.02] text-neutral-600'
+                  : 'border-green-500/60 bg-green-500/[0.06] text-green-400'
               }`}>
-                <Power size={52} className={isActive ? 'animate-pulse' : ''} aria-hidden="true" />
+                <Power size={40} className={isActive ? 'animate-pulse' : ''} aria-hidden="true" />
+                <span className="text-sm font-semibold uppercase tracking-wider">
+                  {isActive ? 'Isolated' : 'Safe'}
+                </span>
               </div>
 
               {/* Status text */}
