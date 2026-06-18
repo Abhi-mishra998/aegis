@@ -131,8 +131,15 @@ run find "${REPO_ROOT}" -name '._*' -delete
 
 TARBALL="/tmp/aegis-v2.0-${TS}.tar.gz"
 log "2.e tar to ${TARBALL}"
+# D3 closure: .env / .env.local / .env.* carry per-instance DB passwords and
+# must NEVER ship in the deploy tarball. A prior deploy clobbered the EC2
+# /opt/aegis/.env with a dev-machine .env, breaking asyncpg auth on RDS.
+# Keep these excludes adjacent to the others below.
 run tar \
   --exclude='./.git' \
+  --exclude='./.env' \
+  --exclude='./.env.local' \
+  --exclude='./.env.*' \
   --exclude='./node_modules' \
   --exclude='./__pycache__' \
   --exclude='./.venv' \
