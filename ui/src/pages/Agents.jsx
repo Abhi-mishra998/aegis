@@ -3,6 +3,7 @@ import { registryService } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
 import { useAuth } from '../hooks/useAuth';
+import { useRole } from '../hooks/useRole';
 import {
   Bot,
   Plus,
@@ -50,12 +51,24 @@ function StatusBadge({ status }) {
   return <span className={`status-badge ${style}`}>{s}</span>;
 }
 
+/* ── Last seen freshness ──────────────────────────────────────────────────── */
+// TODO U7 — replace inline with shared/DataFreshness.jsx when it lands
+function LastSeenCell({ ts }) {
+  if (!ts) return <span className="text-neutral-500 text-xs">—</span>;
+  const ago = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  const label = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.floor(ago/60)}m ago` : ago < 86400 ? `${Math.floor(ago/3600)}h ago` : `${Math.floor(ago/86400)}d ago`;
+  return <span className="text-xs text-neutral-400" title={new Date(ts).toISOString()}>{label}</span>;
+}
+
 /* ── Main component ────────────────────────────────────────────────────────── */
 export default function Agents() {
   const navigate = useNavigate();
   const formId = useId();
   const { refreshAgents, setSelectedAgentId } = useAgents();
   const { addToast } = useAuth();
+  const { role } = useRole();
+  const canMutate = role !== 'VIEWER' && role !== 'READ_ONLY';
+  const canDelete = role === 'ADMIN' || role === 'OWNER';
 
   const [agents,  setAgents]  = useState([]);
   const [summary, setSummary] = useState(null);
@@ -222,8 +235,13 @@ export default function Agents() {
       render: (val) => <RiskBadge score={val} />,
     },
     {
+      key: 'last_seen_at',
+      label: 'Last seen',
+      render: (val, row) => <LastSeenCell ts={val || row.updated_at} />,
+    },
+    {
       key: 'actions',
-      label: '',
+      label: 'Actions',
       width: '80px',
       render: (_, row) => (
         <div className="flex items-center gap-1 justify-end">
@@ -245,7 +263,7 @@ export default function Agents() {
           >
             <ExternalLink size={13} aria-hidden="true" />
           </Button>
-          {(row.status ?? '').toLowerCase() !== 'quarantined' && (row.status ?? '').toLowerCase() !== 'terminated' && (
+          {canMutate && (row.status ?? '').toLowerCase() !== 'quarantined' && (row.status ?? '').toLowerCase() !== 'terminated' && (
             <Button
               variant="ghost"
               size="icon"
@@ -257,7 +275,7 @@ export default function Agents() {
               <ShieldAlert size={13} aria-hidden="true" />
             </Button>
           )}
-          {['quarantined', 'inactive', 'suspended'].includes((row.status ?? '').toLowerCase()) && (
+          {canMutate && ['quarantined', 'inactive', 'suspended'].includes((row.status ?? '').toLowerCase()) && (
             <Button
               variant="ghost"
               size="icon"
@@ -269,15 +287,17 @@ export default function Agents() {
               <RotateCcw size={13} aria-hidden="true" />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={`Delete agent ${row.name}`}
-            className="hover:text-red-400 hover:bg-red-500/10"
-            onClick={(e) => { e.stopPropagation(); confirmDelete(row); }}
-          >
-            <Trash2 size={13} aria-hidden="true" />
-          </Button>
+          {canDelete && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Delete agent ${row.name}`}
+              className="hover:text-red-400 hover:bg-red-500/10"
+              onClick={(e) => { e.stopPropagation(); confirmDelete(row); }}
+            >
+              <Trash2 size={13} aria-hidden="true" />
+            </Button>
+          )}
         </div>
       ),
     },
@@ -403,15 +423,17 @@ export default function Agents() {
                 />
               </div>
               <div className="sm:col-span-2 flex justify-end">
-                <Button
-                  type="submit"
-                  loading={creating}
-                  disabled={creating || !newName.trim()}
-                  size="sm"
-                >
-                  <Plus size={14} aria-hidden="true" />
-                  Deploy Agent
-                </Button>
+                {canMutate && (
+                  <Button
+                    type="submit"
+                    loading={creating}
+                    disabled={creating || !newName.trim()}
+                    size="sm"
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                    Deploy Agent
+                  </Button>
+                )}
               </div>
             </form>
           </Card>
