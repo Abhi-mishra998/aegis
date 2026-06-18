@@ -1,0 +1,122 @@
+# Customer-SLO alert rules — paired with infra/grafana-dashboards/customer-slo.json.
+#
+# Each rule below maps to a panel on the customer-facing SLO board. The
+# pre-existing `ChainViolationImmediate` rule (in prometheus-rules.yml)
+# already covers the audit-chain panel; we don't redefine it here.
+#
+# Severity vocabulary matches the receiver routing in infra/alertmanager.yml:
+#   page    -> PagerDuty (Sev-0 on-call interrupt)
+#   warning -> Slack #aegis-incidents (Sev-1, business-hours triage)
+#   info    -> log only
+#
+# `for:` durations are set so a brief blip does not page; sustained
+# breaches do. Tune in conversation with the on-call rota during the
+# C5 sign-off (`docs/operations/incident-response.md`).
+
+groups:
+  - name: customer-slo
+    interval: 30s
+    rules:
+
+      # ── Panel 1 — Availability rolling 30d ────────────────────────────
+      - alert: AvailabilitySLOBreach30d
+        expr: |
+          (
+            100 * (1 - (sum by (tenant) (increase(acp_slo_availability_total{service="gateway",status="error"}[30d]))
+                       / sum by (tenant) (increase(acp_slo_availability_total{service="gateway"}[30d]))))
+          ) < 99.9
+        for: 1h
+        labels:
+          severity: warning
+          dashboard: aegis-customer-slo
+          panel: "1"
+        annotations:
+          summary: "Customer-facing availability < 99.9% for tenant {{ $labels.tenant }} (rolling 30d)"
+          description: "30-day availability for tenant {{ $labels.tenant }} dropped below the 99.9% SLO threshold. Customer notification may be required per docs/operations/incident-response.md §3.2."
+          runbook_url: "https://github.com/Abhi-mishra998/aegis/blob/main/docs/operations/incident-response.md#1-severity-levels"
+
+      # ── Panel 5 — Error rate trailing 5m ──────────────────────────────
+      - alert: ErrorRateAboveBudget5m
+        expr: |
+          100 * sum by (tenant) (rate(acp_slo_availability_total{service="gateway",status="error"}[5m]))
+              / sum by (tenant) (rate(acp_slo_availability_total{service="gateway"}[5m]))
+          > 0.5
+        for: 5m
+        labels:
+          severity: page
+          dashboard: aegis-customer-slo
+          panel: "5"
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} error rate > 0.5% sustained 5m"
+          description: "5-minute error rate for tenant {{ $labels.tenant }} above the 0.5% SLO. This is a customer-visible regression — Sev-1 or higher per docs/operations/incident-response.md."
+          runbook_url: "https://github.com/Abhi-mishra998/aegis/blob/main/docs/operations/incident-response.md"
+
+      # ── Panel 3 — Pending approvals depth ─────────────────────────────
+      - alert: PendingApprovalsBacklog
+        expr: max by (tenant) (acp_autonomy_pending_approvals) > 25
+        for: 10m
+        labels:
+          severity: warning
+          dashboard: aegis-customer-slo
+          panel: "3"
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} has > 25 pending approvals for 10m"
+          description: "Approval queue depth above the yellow threshold for {{ $labels.tenant }}. Check the Approval Inbox at https://aegisagent.in/approvals and the on-call rota for the approver role bound to the queued items."
+          runbook_url: "https://github.com/Abhi-mishra998/aegis/blob/main/docs/operations/incident-response.md"
+
+      # ── Panel 6 — Approval time-to-resolve ────────────────────────────
+      - alert: ApprovalResolutionSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (tenant, le) (rate(acp_autonomy_approval_resolution_seconds_bucket[1h]))
+          ) > 14400
+        for: 30m
+        labels:
+          severity: warning
+          dashboard: aegis-customer-slo
+          panel: "6"
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} approval p95 resolution > 4h"
+          description: "p95 approval resolution time for {{ $labels.tenant }} above 4 hours over the trailing hour. Likely cause: stale approver on rota, escalation card not posted to Slack, or the approver role mapping in services/gateway/escalation_patterns.py is misrouted."
+
+      # ── Panel 4 — Decision-pipeline latency (paired with D1 SLO) ──────
+      - alert: DecisionLatencyP95Breach
+        expr: |
+          histogram_quantile(0.95,
+            sum by (tenant, le) (rate(acp_slo_latency_seconds_bucket{service="gateway",route=~"/execute.*"}[5m]))
+          ) * 1000 > 500
+        for: 10m
+        labels:
+          severity: warning
+          dashboard: aegis-customer-slo
+          panel: "4"
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} /execute p95 > 500ms for 10m"
+          description: "Customer-facing decision p95 above the D1 pass-line (500ms) for tenant {{ $labels.tenant }}. Inspect the Decision-pipeline p95 panel on this dashboard + the behavior-firewall consult latency."
+
+      - alert: DecisionLatencyP99Breach
+        expr: |
+          histogram_quantile(0.99,
+            sum by (tenant, le) (rate(acp_slo_latency_seconds_bucket{service="gateway",route=~"/execute.*"}[5m]))
+          ) * 1000 > 1500
+        for: 10m
+        labels:
+          severity: page
+          dashboard: aegis-customer-slo
+          panel: "4"
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} /execute p99 > 1500ms for 10m"
+          description: "p99 above the hard SLA line — customer-visible. Customer notification may be required per docs/operations/incident-response.md."
+
+      # ── Behavior firewall pairing (defense-in-depth for panel 4) ──────
+      - alert: BehaviorFirewallSlow
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(acp_behavior_firewall_latency_seconds_bucket[5m]))
+          ) * 1000 > 250
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Behavior firewall consult p99 > 250ms"
+          description: "Behavior consult is now the long pole in the decision pipeline. Tail latency above 250ms triggers the per-tenant degraded-mode policy at services/behavior/service.py:78-115 — verify which policy fired."
