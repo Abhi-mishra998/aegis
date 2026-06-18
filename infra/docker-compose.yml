@@ -110,7 +110,7 @@ services:
     # OPA versions. 0.69.0 is the current stable line.
     # D1/D2 closure 2026-06-18: real tag + arm64-compatible variant.
     # TODO pin: 2026-Q3 — revisit and bump to current stable.
-    image: openpolicyagent/opa:1.17.1-static-debug
+    image: openpolicyagent/opa:1.17.1-debug
 
     container_name: acp_opa
     ports:
