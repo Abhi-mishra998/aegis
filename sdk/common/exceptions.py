@@ -127,10 +127,20 @@ def setup_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ACPError)
     async def acp_error_handler(_: Request, exc: ACPError) -> JSONResponse:
+        # ACPAuthError carries a `reason` slug that must be surfaced as a
+        # WWW-Authenticate realm so the UI can render targeted error text
+        # ("Session expired" vs "Invalid token" vs "Insufficient role").
+        # Live probe 2026-06-18 showed the prior fix only covered the
+        # HTTPException paths in services/gateway/auth.py:421+; the
+        # ACPAuthError paths (auth.py:249,267,271,276,301,315,320,322)
+        # raise without headers, so the handler had to translate.
+        headers = getattr(exc, "headers", None)
+        if headers is None and isinstance(exc, ACPAuthError):
+            headers = {"WWW-Authenticate": f'Bearer realm="{exc.reason}"'}
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse(success=False, error=exc.message).model_dump(),
-            headers=getattr(exc, "headers", None),
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)
