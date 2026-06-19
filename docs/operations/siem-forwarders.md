@@ -26,9 +26,10 @@ Two environment variables select the dispatcher path:
 
 When `SIEM_CRED_SOURCE=ssm`, the forwarder reads every parameter under
 `{prefix}/{target}/` at boot. Parameter names are normalized to UPPER_SNAKE
-(matching the `/aegis-voice-guide/*` convention already in the account).
-The IAM role on the audit container needs `ssm:GetParametersByPath` plus
-`kms:Decrypt` on the CMK that encrypts the SecureStrings.
+(consistent with the `/aegis-prodha/*` SSM convention used elsewhere in
+the account). The IAM role on the audit container needs
+`ssm:GetParametersByPath` plus `kms:Decrypt` on the CMK that encrypts
+the SecureStrings.
 
 ## Sprint 2b account state (ap-south-1)
 

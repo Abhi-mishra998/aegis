@@ -11,9 +11,8 @@ Each path stores one SecureString per credential:
     /aegis-alerts/SLACK_WEBHOOK_URL
     /aegis-alerts/PAGERDUTY_ROUTING_KEY
 
-This matches the existing ``/aegis-voice-guide/*`` + ``/aegis-siem/*``
-conventions in the account so an operator only needs to remember one
-ssm:put-parameter command shape.
+This matches the existing ``/aegis-siem/*`` convention in the account so an
+operator only needs to remember one ssm:put-parameter command shape.
 """
 from __future__ import annotations
 

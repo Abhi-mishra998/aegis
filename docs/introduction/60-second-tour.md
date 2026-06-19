@@ -106,13 +106,8 @@ sequenceDiagram
     SSE-->>UI: live-feed pushes the same event
 ```
 
-## Beyond the UI — the Voice Agent
-
-The Aegis navbar has a **Voice Agent** button (top-right of every page once you're signed in). Click it, allow the microphone, and you're talking to the Aegis Voice Guide — a docs-grounded cybersecurity advisor hosted on a sibling EC2. Pipeline: Deepgram nova-3 → Groq llama-3.3-70b (Gemini fallback) → Cartesia sonic-3, with hybrid BM25 + dense + cross-encoder retrieval over **1,794 chunks from 103 docs**. p50 end-to-end is ~1.3 s in `ap-south-1`. The worker is outbound-only — no inbound port on the EC2 — and registers with LiveKit Cloud, which dispatches sessions to it. Sessions are capped at five minutes by three independent layers (gateway JWT TTL, agent asyncio guard, UI countdown). See [Voice Guide](../voice-guide/_index.md).
-
 ## Next
 
 - [Quickstart](quickstart.md) — credentials, your first call from curl, your first receipt.
 - [System Overview](../architecture/system-overview.md) — the same sequence with code references and infrastructure topology.
 - [UI Map](../ui/_index.md) — index of every page and its backing service.
-- [Voice Guide](../voice-guide/_index.md) — the spoken interface to this documentation, embedded in the Aegis navbar.
