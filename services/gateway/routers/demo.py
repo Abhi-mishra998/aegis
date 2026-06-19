@@ -344,7 +344,15 @@ async def _execute_step(
     Returns the decision + signed receipt info shaped for the UI.
     """
     client = request.app.state.client
-    base = "http://localhost:8000"  # call the gateway's own /execute
+    # The gateway calls its own /execute pipeline. INTERNAL_GATEWAY_URL is
+    # set in docker-compose to the in-network container DNS name; in
+    # production it's the ALB-private endpoint. Falls back to localhost
+    # only when neither is configured (single-process dev).
+    base = (
+        os.environ.get("INTERNAL_GATEWAY_URL")
+        or os.environ.get("GATEWAY_URL")
+        or "http://localhost:8000"
+    )
     started = time.monotonic()
     try:
         resp = await client.post(
