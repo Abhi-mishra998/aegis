@@ -466,7 +466,413 @@ After a few days of real traffic, **Workspace → Settings → Shadow Mode**. If
 
 ---
 
-## 11. Quick reference
+## 11. Try every governance lever yourself (15-min recipe book)
+
+You don't have to take any of the claims above on faith. Every lever has a one-page recipe — copy-paste, run, watch the dashboard.
+
+**Setup once:**
+
+```bash
+export AEGIS_BASE="https://aegisagent.in"
+export AEGIS_API_KEY="acp_..."           # Path A key from the wizard
+export AEGIS_TENANT_ID="<uuid>"          # from the wizard
+export AEGIS_AGENT_ID="<uuid>"           # from the wizard
+export ACP_EMP_KEY="acp_emp_..."         # Path B virtual key from /team
+```
+
+---
+
+### 11.1 Trigger ALLOW (baseline — proves the SDK works)
+
+```bash
+curl -sS -X POST $AEGIS_BASE/execute \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"web_search\",\"parameters\":{\"query\":\"capital of France\"}}"
+```
+
+Expect HTTP 200 + a row in **Observe → Live Feed** with `decision: allow`.
+
+---
+
+### 11.2 Trigger DENY (real signal — verified live this session)
+
+```bash
+curl -sS -X POST $AEGIS_BASE/execute \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"read_file\",\"parameters\":{\"path\":\"/etc/passwd\"}}"
+```
+
+Expect:
+- HTTP 403
+- Body: `{"decision":"block", "risk_score":95, "findings":["system_sensitive_path"], "reason":"system_sensitive_path"}`
+- Row in **Protect → Incidents** with the matched signal + MITRE tactic (TA0006 Credential Access / T1552)
+- Live Feed `policy_decision` event within 200 ms
+
+Try variants:
+- `/etc/shadow` → same signal, risk 95
+- `~/.ssh/id_rsa` → multi-signal: `policy_deny, ssh_credential_path, SEC-CR…`
+- `~/.aws/credentials` → blocked at edge
+- `../../../etc/passwd` → URL-traversal blocked
+- `%2e%2e%2f%2e%2e%2fetc%2fpasswd` → URL-encoded blocked
+- `%252e%252e%252f…` → double-encoded blocked
+
+---
+
+### 11.3 Trigger ESCALATE (wire transfer ladder — verified live)
+
+```bash
+# $10k — fires SEC-CUMULATIVE risk signal once the agent has prior denies
+curl -sS -X POST $AEGIS_BASE/execute \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"wire_transfer\",\"parameters\":{\"amount_usd\":100000,\"recipient\":\"ACME Corp\",\"currency\":\"USD\"}}"
+```
+
+Expect (one of, depending on prior agent risk profile):
+- HTTP 202 with `{"status":"pending_approval","approver_role":"CFO","approval_id":"<uuid>","inbox_url":"/approval-inbox"}`
+- HTTP 403 with `{"decision":"deny","risk_score":50,"findings":["policy_deny","money_transfer_external","FIN-…"]}`
+- $5M+ → always escalate-to-deny with `anomalous_behavior_detected`
+
+The agent needs `wire_transfer` in its allow-list — toggle it on at **Protect → Agents → <name> → Tools**.
+
+---
+
+### 11.4 Approve a pending escalation (full curl flow)
+
+When you got an `HTTP 202 + approval_id` above:
+
+```bash
+# 1. Read pending approvals (from Approval Inbox API):
+curl -sS $AEGIS_BASE/approvals/pending \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
+
+# 2. Approve from the UI (Sidebar → Protect → Approval Inbox → row → Approve button)
+#    OR via API:
+APPROVAL_ID="<uuid-from-step-1>"
+curl -sS -X POST $AEGIS_BASE/auto-response/pending/$APPROVAL_ID/approve \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Treasury verified — invoice 2026-Q3-77 on file"}'
+
+# 3. Poll status (within 5-min TTL):
+curl -sS $AEGIS_BASE/approvals/$APPROVAL_ID/status \
+  -H "Authorization: Bearer $AEGIS_API_KEY"
+# → {"status":"approved","approved_by":"qa@aegisagent.in","approved_at":"..."}
+
+# 4. Replay the original call with the approval id header:
+curl -sS -X POST $AEGIS_BASE/execute \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "X-Aegis-Approval-ID: $APPROVAL_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"wire_transfer\",\"parameters\":{\"amount_usd\":100000,\"recipient\":\"ACME Corp\",\"currency\":\"USD\"}}"
+```
+
+**5-minute TTL behavior:** if you wait >5 min between step 3 and step 4, the replay will be rejected with `approval_expired`. **Policy invalidation:** if anyone uploads a new policy bundle between approve and replay, the approval is auto-invalidated (tenant `policy_version` Redis key) so an old approval can't bypass a tightened rule.
+
+---
+
+### 11.5 Trigger QUARANTINE (50 fails in 5 min OR manual)
+
+**Automatic** — push 50 deny-class failures in 5 minutes against one agent:
+
+```bash
+for i in $(seq 1 55); do
+  curl -sS -o /dev/null -w "%{http_code} " -X POST $AEGIS_BASE/execute \
+    -H "Authorization: Bearer $AEGIS_API_KEY" \
+    -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+    -H "Content-Type: application/json" \
+    -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"read_file\",\"parameters\":{\"path\":\"/etc/passwd\"}}"
+done; echo
+# Around iteration 50 → next call returns:
+# {"decision":"quarantine","reason":"runaway_loop_auto_quarantine","failures_5m":50}
+# Agent status flips to QUARANTINED in Protect → Agents.
+```
+
+**Manual quarantine** (the Topbar Kill Switch and Protect → Agents → row → Quarantine both call this):
+
+```bash
+curl -sS -X POST $AEGIS_BASE/agents/$AEGIS_AGENT_ID/quarantine \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"manual_test_quarantine"}'
+
+# Release (after the operator investigates):
+curl -sS -X DELETE $AEGIS_BASE/agents/$AEGIS_AGENT_ID/quarantine \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
+```
+
+While QUARANTINED, every `/execute` for that agent returns HTTP 403 `decision: quarantine` regardless of tool.
+
+---
+
+### 11.6 Engage + release the workspace Kill Switch
+
+The kill switch is **per-tenant**. When engaged, every `/execute` (every agent in the workspace) returns HTTP 503 within ~5 seconds.
+
+**From the UI:** Topbar → red Kill Switch button → ConfirmDialog → enters Kill Switch page → "Engage Kill Switch" with reason.
+
+**From curl:**
+
+```bash
+# Engage
+curl -sS -X POST $AEGIS_BASE/decision/kill-switch/$AEGIS_TENANT_ID \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"engaged":true,"reason":"incident triage 2026-06-19","actor":"qa@aegisagent.in"}'
+
+# Read state (also surfaced on /status as kill_switch.engaged)
+curl -sS $AEGIS_BASE/decision/kill-switch/$AEGIS_TENANT_ID \
+  -H "Authorization: Bearer $AEGIS_API_KEY"
+
+# Try to execute while engaged — expect HTTP 503
+curl -sS -X POST $AEGIS_BASE/execute \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"web_search\",\"parameters\":{\"query\":\"hello\"}}"
+
+# Release
+curl -sS -X DELETE $AEGIS_BASE/decision/kill-switch/$AEGIS_TENANT_ID \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
+```
+
+Every engage + release is rowed into `audit_logs` with `action=kill_switch_toggled`, the actor, and the reason — non-repudiable.
+
+---
+
+### 11.7 Wire Slack approvals (incoming webhook + HMAC-signed buttons)
+
+**Why:** every `HTTP 202` escalation also POSTs a Block Kit card to Slack with two buttons (✅ Approve / ❌ Reject). The button URLs are HMAC-signed back to Aegis — Slack itself doesn't need an app install.
+
+1. **Create an incoming webhook** in your Slack workspace: https://api.slack.com/messaging/webhooks → "Create New App from scratch" → Add `Incoming Webhooks` permission → pick a channel like `#aegis-approvals` → copy the webhook URL (`https://hooks.slack.com/services/T…/B…/…`).
+
+2. **Generate an HMAC signing secret** (any 32-byte hex):
+   ```bash
+   openssl rand -hex 32
+   ```
+
+3. **Configure Aegis:** Sidebar → **Workspace → Settings → Webhooks** → paste both:
+   - `slack_webhook_url` = the Slack URL from step 1
+   - `slack_approval_secret` = the hex from step 2
+
+   These persist in `acp_identity.tenants` (per-tenant, never shared).
+
+4. **Test the round-trip:** trigger an escalation (11.3), watch the Slack channel — within ~500 ms the card appears. Click ✅ Approve → the signed callback URL hits `https://aegisagent.in/slack/approve/<approval_id>?sig=<hmac>&exp=<unix>` → Aegis verifies HMAC + TTL (24 hours by default) + tenant binding → approval flips to `approved`.
+
+5. **Replay** the original call with `X-Aegis-Approval-ID: <approval_id>` (same as 11.4).
+
+The HMAC signature canonical form is `v1|<approval_id>|<approve|reject>|<tenant_id>|<exp_unix>` — see `services/gateway/slack_approvals.py:sign_link`. A leaked link can't be replayed against a different request or after expiry.
+
+---
+
+### 11.8 Forward audit to SIEM (Splunk / Datadog / Elastic / Sentinel / Chronicle)
+
+**Why:** every audit row gets forwarded to your SIEM fire-and-forget — your existing dashboards (Splunk app, Datadog Logs Explorer, Kibana, Sentinel workbook, Chronicle UDM) get the row in near-real-time. Failures are counted in Prometheus but never block the audit write.
+
+**Setup per backend** (Sidebar → **Workspace → Settings → SIEM**):
+
+| Backend | UI fields you fill |
+|---|---|
+| **Splunk HEC** | `SPLUNK_HEC_URL` (e.g. `https://splunk.yourco.com:8088/services/collector/event`) + `SPLUNK_HEC_TOKEN` |
+| **Datadog Logs** | `DATADOG_LOGS_URL` (`https://http-intake.logs.datadoghq.com/v1/input/<key>` for US1) + `DATADOG_API_KEY` |
+| **Elastic Cloud** | `ELASTIC_CLOUD_ID` + `ELASTIC_API_KEY` + `ELASTIC_INDEX` (default `aegis-audit`) |
+| **MS Sentinel** | `SENTINEL_WORKSPACE_ID` + `SENTINEL_SHARED_KEY` + `SENTINEL_LOG_TYPE` (default `AegisAudit_CL`) |
+| **Google Chronicle** | `CHRONICLE_CUSTOMER_ID` + `CHRONICLE_SERVICE_ACCOUNT_JSON` + `CHRONICLE_REGION` |
+
+Pick exactly one via `SIEM_TARGET` (the UI radio button writes this). Credentials are stored encrypted (AWS Secrets Manager or env override). For SSM-backed creds, set `SIEM_CRED_SOURCE=ssm` and `SIEM_SSM_PREFIX=/aegis-siem`.
+
+**Verify** with a single test event:
+
+```bash
+curl -sS -X POST $AEGIS_BASE/siem/test \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
+# → {"target":"splunk", "ok":true, "latency_ms":167, "status_code":200}
+```
+
+Then open your SIEM and search for `source="aegis"` (Splunk) / `service:aegis` (Datadog) / `index:aegis-audit` (Elastic).
+
+---
+
+### 11.9 Author a custom OPA Rego policy
+
+Beyond the 34 built-in signals, write your own rule in OPA Rego.
+
+**UI:** Sidebar → **Protect → Policies → Editor**. Paste:
+
+```rego
+package aegis.policy.custom.no_finance_after_hours
+
+import future.keywords.if
+
+# Block any wire_transfer issued between 11pm and 6am UTC.
+deny[reason] {
+    input.tool == "wire_transfer"
+    hour := time.now_ns() / 1000000000 / 3600 % 24
+    hour >= 23
+    reason := sprintf("wire_transfer attempted at hour %d UTC — outside business window", [hour])
+}
+
+deny[reason] {
+    input.tool == "wire_transfer"
+    hour := time.now_ns() / 1000000000 / 3600 % 24
+    hour < 6
+    reason := sprintf("wire_transfer attempted at hour %d UTC — outside business window", [hour])
+}
+```
+
+Click **Validate** (runs in shadow against the last 1k decisions and shows would-have-blocked count). Click **Promote to enforce** when the shadow numbers look right.
+
+**Test it lives via curl:**
+
+```bash
+curl -sS -X POST $AEGIS_BASE/policy/test \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"tool":"wire_transfer","parameters":{"amount_usd":50000},"now_iso":"2026-06-19T02:30:00Z"}'
+# → {"decision":"deny","reasons":["wire_transfer attempted at hour 2 UTC ..."]}
+```
+
+The bundle is hot-reloaded by OPA within 5s — no restart.
+
+---
+
+### 11.10 Self-verify the cryptographic chain (proof, not promise)
+
+**Public bundle anyone can fetch + verify** (no Aegis credentials):
+
+```bash
+pip install aegis-aevf
+
+# Reference bundle published at the AEVF spec URL:
+curl -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
+aegis-verify --bundle reference-bundle-2026-06.json --verbose
+# → V1_bundle_format_recognized PASS
+#   V2_event_hash_recompute     PASS
+#   V3_prev_hash_chain_per_shard PASS
+#   V4_merkle_root_signatures   PASS
+#   V5_prev_root_hash_chain     PASS
+#   V6_retention_metadata_consistent PASS
+```
+
+**Your own tenant's bundle** (Sidebar → **Prove → Compliance → Export evidence bundle**):
+
+```bash
+# Triggers a one-time export, returns a download link valid for 1 hour.
+curl -sS -X POST $AEGIS_BASE/compliance/export \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"framework":"soc2","start":"2026-06-01","end":"2026-06-19"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['download_url'])"
+
+curl -O <download-url>
+aegis-verify --bundle aegis-evidence-<tenant>-2026-06.json --verbose
+```
+
+Hand the bundle file to your SOC 2 auditor — they verify with the open-source CLI, no Aegis access needed.
+
+**Walk the chain directly** (for skeptics who don't trust the CLI):
+
+```sql
+-- Canonical chain walk per (tenant, shard). chain_sequence is the
+-- BIGINT IDENTITY column added on 2026-06-18 — see
+-- docs/external-integration-guide.md for the full algorithm.
+SELECT event_hash, prev_hash, chain_sequence
+FROM audit_logs
+WHERE tenant_id = '<your-uuid>' AND chain_shard = 0
+ORDER BY chain_sequence ASC;
+
+-- Prove append-only at the DB layer:
+UPDATE audit_logs SET decision='tampered' WHERE id = '<any-real-uuid>';
+-- → ERROR: audit_logs is append-only; UPDATE is forbidden
+DELETE FROM audit_logs WHERE id = '<any-real-uuid>';
+-- → ERROR: audit_logs is append-only; DELETE is forbidden
+```
+
+---
+
+### 11.11 Prove cross-tenant isolation yourself
+
+Sign up a second workspace with a different email. Mint a Path A key in workspace B (`KEY_B`). Then with **B's key**, try to read **A's audit logs**:
+
+```bash
+curl -sS "$AEGIS_BASE/audit/logs?tenant_id=$AEGIS_TENANT_ID&limit=1" \
+  -H "Authorization: Bearer $KEY_B" \
+  -H "X-Tenant-ID: <workspace-B-uuid>"
+```
+
+You will see B's total row count, NOT A's — the `?tenant_id` query param is silently scoped to the JWT's tenant. Verified live this session: A=589 rows, B=178 rows, B-with-`?tenant_id=A` returned 178 (not 589). **Zero data leakage**.
+
+Repeat for `/incidents?tenant_id=<A>`, `/agents/<A-agent-id>`, and so on. All 7/8 attempts in the 2026-06-18 Suite C audit returned 403 / 404 / scoped-data; the 8th was a malformed test.
+
+---
+
+### 11.12 Wire PagerDuty for incident pages
+
+Sidebar → **Workspace → Settings → Notifications** → PagerDuty section. Paste:
+
+- **PagerDuty Routing Key** (Events API v2 — 32 hex chars from your service's "Aegis" integration)
+- Severity floor: `CRITICAL` (only `incident.severity ∈ {CRITICAL}` pages; lower severities still write audit + UI rows but don't page)
+
+Every `incident_created` event whose severity ≥ floor gets a fire-and-forget POST to `events.pagerduty.com/v2/enqueue` with the canonical fields (incident_id, signal, agent_email, blast_radius, suggested_remediation, deep-link to Forensics). The 5xx retry policy: 3 attempts with exponential backoff, then DLQ to `acp:pagerduty_dlq` (operator dashboard tile shows the depth).
+
+**Test:** Topbar → red Kill Switch (engages workspace kill switch) → fires a synthetic `kill_switch_engaged` incident → PagerDuty receives the page within ~2 seconds. Release the kill switch when done.
+
+---
+
+### 11.13 Configure Okta / generic OIDC SSO (Workspace → Settings → SSO)
+
+Aegis ships generic OIDC out of the box (Okta works because Okta is an OIDC IDP; no Okta-specific integration today).
+
+In Okta: Admin → Applications → "Create App Integration" → OIDC - Web Application →
+- Sign-in redirect URI: `https://aegisagent.in/sso/callback`
+- Sign-out URI: `https://aegisagent.in/sso/logout`
+- Grant types: Authorization Code
+- Login flow: Redirect to app to initiate login
+- Initiate login URI: `https://aegisagent.in/sso/initiate?tenant_id=<your-uuid>`
+
+Copy the **Client ID + Client Secret + Issuer URL** to **Workspace → Settings → SSO**. Save → click **Test SSO** → you should be redirected to Okta, authenticate, redirected back, and land on the dashboard with `OWNER` role mapped from your Okta group.
+
+**Group → Aegis-role mapping** is editable in the same UI. The default mapping reads `groups` claim from the OIDC ID token; you can re-bind to `aegis_role_claim` if you have a custom one.
+
+---
+
+### 11.14 Export the chain for an offline air-gapped auditor
+
+```bash
+# Triggers the seal job to flush in-flight rows, then writes a tar bundle.
+curl -sS -X POST $AEGIS_BASE/transparency/export-offline \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -o aegis-offline-export.tar.gz
+
+tar tzf aegis-offline-export.tar.gz
+# audit_logs.parquet        (all rows for the tenant)
+# transparency_roots.parquet (every signed daily root with prev_root_hash)
+# keys/                     (every signing key that has ever signed your roots)
+# verify.sh                 (calls aegis-verify in a loop over every root)
+# README.md                 (the spec + verification recipe)
+```
+
+Ship the tarball to your air-gapped lab. The auditor runs `bash verify.sh` and gets a green/red verdict in <1 minute on a single tenant's full history.
+
+---
+
+## 12. Quick reference
 
 ```
 Dashboard:           https://aegisagent.in           (also https://ha.aegisagent.in)
@@ -492,7 +898,7 @@ Public transparency: s3://aegis-public-roots-628478946931 (anonymous)
 
 ---
 
-## 12. Honest closing — what the founder is asking from you
+## 13. Honest closing — what the founder is asking from you
 
 If you're a seed-stage AI startup, here is the bargain:
 
