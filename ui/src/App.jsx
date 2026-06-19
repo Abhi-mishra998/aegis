@@ -56,6 +56,8 @@ const LiveFeed           = lazy(() => import('./pages/LiveFeed'));
 const UserManagement     = lazy(() => import('./pages/UserManagement'));
 const Playbooks          = lazy(() => import('./pages/Playbooks'));
 const Team               = lazy(() => import('./pages/Team'));
+// Sprint S5 — Hierarchical Teams admin page.
+const TeamSettings       = lazy(() => import('./pages/TeamSettings'));
 const EmployeeProfile    = lazy(() => import('./pages/EmployeeProfile'));
 const Replay             = lazy(() => import('./pages/Replay'));
 const Landing            = lazy(() => import('./pages/Landing'));
@@ -387,6 +389,8 @@ function App() {
               <Route path="/team"              element={<ProtectedRoute><Team /></ProtectedRoute>} />
               {/* Sprint 17.6 — per-employee drill-down (token burn + recent calls) */}
               <Route path="/team/:email"       element={<ProtectedRoute><EmployeeProfile /></ProtectedRoute>} />
+              {/* Sprint S5 — hierarchical Teams admin (create/rename/move/budget caps) */}
+              <Route path="/settings/teams"    element={<ProtectedRoute><TeamSettings /></ProtectedRoute>} />
               {/* Sprint 15 — Unified replay (single-URL audit timeline) */}
               <Route path="/replay/:request_id" element={<ProtectedRoute><Replay /></ProtectedRoute>} />
 

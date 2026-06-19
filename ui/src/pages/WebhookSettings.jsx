@@ -64,7 +64,7 @@ export default function WebhookSettings() {
 
   const connectSlack = useCallback(() => {
     // Full-page redirect — Slack's OAuth screen does not embed in iframes.
-    window.location.assign('/sso/slack/initiate?return_to=/settings/webhooks')
+    window.location.assign('/sso/slack/initiate?return_to=/webhook-settings')
   }, [])
 
   const disconnectSlack = useCallback(async () => {

@@ -91,7 +91,7 @@ def _verify_state(state: str) -> dict | None:
 @router.get("/initiate")
 async def slack_initiate(
     request: Request,
-    return_to: str = Query(default="/settings/webhooks", alias="return_to"),
+    return_to: str = Query(default="/webhook-settings", alias="return_to"),
 ) -> RedirectResponse:
     """Bounce the browser to Slack's OAuth consent screen.
 
@@ -143,7 +143,7 @@ async def slack_callback(
         raise HTTPException(status_code=400, detail="Invalid or expired state.")
 
     tenant_id = payload["t"]
-    return_to = payload.get("r") or "/settings/webhooks"
+    return_to = payload.get("r") or "/webhook-settings"
 
     client_id = os.environ.get("SLACK_OAUTH_CLIENT_ID") or getattr(
         settings, "SLACK_OAUTH_CLIENT_ID", "",

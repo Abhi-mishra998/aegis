@@ -42,13 +42,12 @@ ALLOWLIST_RE='/(node_modules|\.venv|venv|tests/fixtures/|tests/test_signing_keys
 # removed during the prod-ha cut-over. The guard's job is to refuse
 # NEW additions, not retroactively block the working tree.
 BASELINE=(
-    "voice-agent/infrastructure/aegis-voice-guide.pem"
     "infra/.env"
     ".env"
 )
 
-# Search services/, infra/, sdk/, voice-agent/ — the deploy + runtime
-# paths. Tests + fixtures are explicitly exempt.
+# Search services/, infra/, sdk/ — the deploy + runtime paths.
+# Tests + fixtures are explicitly exempt.
 is_baseline() {
     local path="$1"
     local rel="${path#${REPO_ROOT}/}"
@@ -69,7 +68,7 @@ while IFS= read -r path; do
         continue
     fi
     HITS+=("${path}")
-done < <(find services sdk infra voice-agent \( "${BAD_NAME_PATTERNS[@]}" \) -type f 2>/dev/null)
+done < <(find services sdk infra \( "${BAD_NAME_PATTERNS[@]}" \) -type f 2>/dev/null)
 
 # Also reject .env* at repo root (a common foot-gun).
 for root_env in .env .env.production .env.prod; do

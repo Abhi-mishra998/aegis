@@ -5,7 +5,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  UsersRound, Plus, Trash2, Save, Loader2, AlertCircle,
+  Users, Plus, Trash2, Save, Loader2, AlertCircle,
   ChevronRight, RefreshCw, Settings2,
 } from 'lucide-react'
 import { teamsService } from '../services/api'
@@ -81,7 +81,7 @@ export default function TeamSettings() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-white mb-1 flex items-center gap-2">
-            <UsersRound size={22} /> Teams
+            <Users size={22} /> Teams
           </h1>
           <p className="text-sm text-neutral-500">
             Hierarchical teams replace the free-text department field. A CFO
