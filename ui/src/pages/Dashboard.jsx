@@ -28,12 +28,18 @@ import {
   registryService,
   auditService,
   dashboardService,
+  slackOAuthService,
+  siemService,
+  webhookService,
 } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
 import { useAuth } from '../hooks/useAuth';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
 import DataFreshness from '../components/Common/DataFreshness';
+import { IntegrationCard } from '../components/IntegrationCard';
+// Sprint S7 — vendor icons for the IntegrationsRow tiles.
+import { Slack, Database, Bell, Webhook, KeyRound, Activity as ActivityIcon } from 'lucide-react';
 
 const PROVIDER_META = {
   anthropic:   { label: 'Anthropic',   icon: Brain    },
@@ -181,6 +187,43 @@ export default function Dashboard() {
   // error banner uses below).
   const [lastFetchAt, setLastFetchAt] = useState(null);
 
+  // Sprint S7 — IntegrationsRow connect-state. Six tiles render on the
+  // Dashboard above the KPI grid; each tile shows Connected or "Connect"
+  // and click-throughs to the right Settings page. Fetched once on
+  // mount; not refreshed because connection state changes rarely.
+  const [integrationsStatus, setIntegrationsStatus] = useState({
+    slack: false, splunk: false, datadog: false,
+    sentinel: false, pagerduty: false, webhook: false,
+  });
+  useEffect(() => {
+    let cancelled = false;
+    Promise.allSettled([
+      slackOAuthService.status().then((d) => Boolean((d?.data || d || {}).connected)).catch(() => false),
+      siemService.getConfig().then((d) => {
+        const cfg = d?.data || d || {};
+        return {
+          splunk:   Boolean(cfg.splunk_url || cfg.vendors?.splunk),
+          datadog:  Boolean(cfg.datadog_key || cfg.vendors?.datadog),
+          sentinel: Boolean(cfg.vendors?.sentinel),
+        };
+      }).catch(() => ({ splunk: false, datadog: false, sentinel: false })),
+      webhookService.getConfig().then((d) => {
+        const cfg = d?.data || d || {};
+        return {
+          pagerduty: Boolean(cfg.pagerduty_key),
+          webhook:   Boolean(cfg.generic_url),
+        };
+      }).catch(() => ({ pagerduty: false, webhook: false })),
+    ]).then((results) => {
+      if (cancelled) return;
+      const slack = results[0].status === 'fulfilled' ? results[0].value : false;
+      const siem  = results[1].status === 'fulfilled' ? results[1].value : { splunk: false, datadog: false, sentinel: false };
+      const wh    = results[2].status === 'fulfilled' ? results[2].value : { pagerduty: false, webhook: false };
+      setIntegrationsStatus({ slack, ...siem, ...wh });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // Refetch when tenant_id changes (e.g., ClerkAuthBridge mirrors session
   // *after* this page mounted — without re-deriving on tenant_id, the user
   // sees a permanent "—" / "Failed to load" until they manually click
@@ -315,6 +358,29 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Sprint S7 (2026-06-19) — IntegrationsRow.
+          Six tiles for the connect-it-yourself integrations every
+          tenant wants on day-1. Each tile click-throughs to the
+          appropriate Settings page. Status is fetched once on mount
+          and reflects whether anything is persisted server-side.
+          On a fresh workspace (nothing connected) the row is the
+          loudest CTA on the page; once at least one integration
+          is wired it stays as a quiet status strip. */}
+      <div>
+        <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
+          <ShieldCheck size={11} aria-hidden="true" />
+          <span>Integrations</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <IntegrationCard icon={Slack}        label="Slack"             to="/settings/webhooks"  connected={integrationsStatus.slack}    accentColor="#4A154B" />
+          <IntegrationCard icon={Database}     label="Splunk"            to="/settings/siem"      connected={integrationsStatus.splunk}   accentColor="#65A637" />
+          <IntegrationCard icon={ActivityIcon} label="Datadog"           to="/settings/siem"      connected={integrationsStatus.datadog}  accentColor="#632CA6" />
+          <IntegrationCard icon={Database}     label="Microsoft Sentinel" to="/settings/siem"     connected={integrationsStatus.sentinel} accentColor="#0078D4" />
+          <IntegrationCard icon={Bell}         label="PagerDuty"         to="/settings/webhooks"  connected={integrationsStatus.pagerduty} accentColor="#06AC38" />
+          <IntegrationCard icon={Webhook}      label="Webhook (generic)"  to="/settings/webhooks" connected={integrationsStatus.webhook}  accentColor="#94A3B8" />
+        </div>
+      </div>
 
       {/* Sprint 12 — Row 1: the six mandate KPIs every CISO buyer
           evaluates Aegis against. Numbers are 30-day totals from the
