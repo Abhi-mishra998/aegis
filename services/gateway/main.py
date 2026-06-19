@@ -595,6 +595,8 @@ from services.gateway.routers.transparency import (
     router as _transparency_router,  # noqa: E402
 )
 from services.gateway.routers.users import router as _users_router  # noqa: E402
+# Sprint S2 (2026-06-19) — One-click Slack OAuth Connect button.
+from services.gateway.routers.slack_oauth import router as _slack_oauth_router  # noqa: E402
 # Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
 from services.gateway.routers.messages import router as _messages_router  # noqa: E402
 # Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
@@ -626,6 +628,7 @@ app.include_router(_risk_router)
 app.include_router(_policy_router)
 app.include_router(_forensics_router)
 app.include_router(_users_router)
+app.include_router(_slack_oauth_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_clerk_router)

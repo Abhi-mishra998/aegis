@@ -1276,6 +1276,13 @@ export const demoService = {
 // new keys here too. The /v1/messages Anthropic-proxy endpoint that
 // uses these keys is server-only — the browser never calls it
 // directly.
+// Sprint S2 — Slack OAuth status + disconnect. The /sso/slack/initiate
+// redirect is full-page (assigned via window.location), not fetched here.
+export const slackOAuthService = {
+  status: () => request('/sso/slack/status'),
+  disconnect: () => request('/sso/slack/disconnect', { method: 'POST' }),
+};
+
 export const teamService = {
   // List every employee virtual key for the current tenant joined with
   // their Redis-tracked spend.
