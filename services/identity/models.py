@@ -310,6 +310,49 @@ class User(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
         String(64), unique=True, nullable=True, index=True,
     )
 
+    # Sprint S5 (2026-06-19) — Replace free-text department with a Team
+    # FK. Null = unassigned (legacy users + signup-pre-team-assignment).
+    # ON DELETE SET NULL on the Team side: deleting a team un-assigns
+    # its members but does not cascade-delete user rows.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True,
+    )
+
+
+class Team(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
+    """Sprint S5 (2026-06-19) — Hierarchical Teams.
+
+    Replaces the free-text `department` field with a formal tree
+    structure: every team has an optional parent_team_id (self-FK)
+    and an optional manager_user_id. The Team page rolls spend +
+    harmful-blocked counts up the parent chain so a CFO can see All,
+    Engineering Lead can see only Engineering + children.
+
+    Per-team budget caps live in `daily_budget_usd_cap` /
+    `monthly_budget_usd_cap` — the gateway consults them on every
+    /v1/messages alongside the per-tenant cap so a runaway agent in
+    one team can't burn the whole tenant budget.
+    """
+
+    __tablename__ = "teams"
+
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent_team_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True,
+    )
+    manager_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+    )
+
+    # Per-team budget caps (in USD). Null = inherit from tenant cap.
+    daily_budget_usd_cap: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+    )
+    monthly_budget_usd_cap: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # HARDENED INVARIANTS (SQLAlchemy Events)
 # ---------------------------------------------------------------------------

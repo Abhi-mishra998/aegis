@@ -1288,6 +1288,17 @@ export const slackOAuthService = {
   disconnect: () => request('/sso/slack/disconnect', { method: 'POST' }),
 };
 
+// Sprint S5 — Hierarchical Teams CRUD. Backs TeamSettings.jsx; the
+// existing /team page (per-employee + per-department rollups) keeps
+// its own teamService below.
+export const teamsService = {
+  list:    ()                          => request('/teams'),
+  create:  (body)                      => request('/teams', { method: 'POST', body: JSON.stringify(body) }),
+  update:  (teamId, body)              => request(`/teams/${teamId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  remove:  (teamId)                    => request(`/teams/${teamId}`, { method: 'DELETE' }),
+  assign:  (teamId, user_ids)          => request(`/teams/${teamId}/assign`, { method: 'POST', body: JSON.stringify({ user_ids }) }),
+};
+
 export const teamService = {
   // List every employee virtual key for the current tenant joined with
   // their Redis-tracked spend.

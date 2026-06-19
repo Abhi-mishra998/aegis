@@ -599,6 +599,8 @@ from services.gateway.routers.users import router as _users_router  # noqa: E402
 from services.gateway.routers.slack_oauth import router as _slack_oauth_router  # noqa: E402
 # Sprint S3 (2026-06-19) — SIEM vendor wizard + per-vendor /siem/test probe.
 from services.gateway.routers.siem import router as _siem_router  # noqa: E402
+# Sprint S5 (2026-06-19) — Hierarchical Teams CRUD.
+from services.gateway.routers.teams import router as _teams_router  # noqa: E402
 # Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
 from services.gateway.routers.messages import router as _messages_router  # noqa: E402
 # Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
@@ -632,6 +634,7 @@ app.include_router(_forensics_router)
 app.include_router(_users_router)
 app.include_router(_slack_oauth_router)
 app.include_router(_siem_router)
+app.include_router(_teams_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_clerk_router)
