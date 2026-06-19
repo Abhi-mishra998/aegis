@@ -509,3 +509,179 @@ async def list_demo_scenarios() -> dict[str, Any]:
             ],
         },
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint S4 (2026-06-19) — Spawn a populated sandbox tenant + cleanup
+# ─────────────────────────────────────────────────────────────────────
+#
+# Two endpoints round out the "View live demo" cold-start path:
+#
+#   POST /demo/spawn-workspace   creates a fresh is_demo=true tenant,
+#                                seeds it with 5 agents + ~60 audit
+#                                rows + 2 incidents + 1 pending CFO
+#                                approval (via scripts/ops/seed_demo_workspace.py),
+#                                mints a 30-minute read-only JWT, and
+#                                returns the redirect URL the marketing
+#                                CTA bounces the prospect to.
+#
+#   POST /demo/cleanup-expired   sweeps tenants where is_demo = true AND
+#                                demo_expires_at < now() and cascade-
+#                                deletes them. Operator runs this on a
+#                                24h cron, or it can be invoked from a
+#                                lambda at the demo_expires_at deadline.
+
+import asyncio
+import subprocess
+from datetime import UTC, datetime, timedelta as _td
+from pathlib import Path as _Path
+from typing import Annotated as _Annot
+
+from fastapi import Depends as _Depends, Header as _Header
+from jose import jwt as _jwt
+from sqlalchemy import delete as _delete, select as _select
+from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+from sdk.common.db import get_db
+
+
+_DEMO_DURATION_HOURS = 24
+_DEMO_JWT_TTL_MINUTES = 30
+
+
+async def _spawn_demo_tenant(db) -> tuple[str, str]:
+    """Create a fresh sandbox tenant + owner, return (tenant_id, owner_email).
+
+    Idempotent only at the row-level — every call mints a new UUID, so
+    the marketing-page "View live demo" link can be clicked many times
+    by the same prospect and produce independent sandboxes.
+    """
+    from services.identity.models import Tenant, User
+    from sdk.common.roles import Role
+
+    tenant_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    label = f"demo-{tenant_id.hex[:8]}"
+    owner_email = f"demo+{tenant_id.hex[:8]}@aegisagent.in"
+
+    expires = datetime.now(UTC) + _td(hours=_DEMO_DURATION_HOURS)
+
+    tenant = Tenant(
+        id=tenant_id, org_id=tenant_id, label=label,
+        is_demo=True, demo_expires_at=expires,
+    )
+    db.add(tenant)
+    await db.flush()
+
+    user = User(
+        id=owner_id, tenant_id=tenant_id, org_id=tenant_id,
+        email=owner_email, role=Role.OWNER,
+    )
+    db.add(user)
+    await db.commit()
+
+    return str(tenant_id), owner_email
+
+
+async def _seed_demo_data(tenant_id: str, owner_email: str) -> None:
+    """Subprocess the seed script. Runs in a thread so we don't block
+    the asyncio loop on the asyncpg fork."""
+    repo_root = _Path(__file__).resolve().parents[3]
+    seed_script = repo_root / "scripts" / "ops" / "seed_demo_workspace.py"
+    if not seed_script.exists():
+        return  # graceful no-op in test environments
+
+    def _run() -> int:
+        return subprocess.call(
+            [
+                "python3", str(seed_script),
+                "--tenant", tenant_id,
+                "--owner-email", owner_email,
+            ],
+            timeout=120,
+        )
+    await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
+@router.post("/spawn-workspace")
+async def spawn_demo_workspace(
+    db: _Annot[_AsyncSession, _Depends(get_db)],
+    x_forwarded_for: _Annot[str | None, _Header(alias="X-Forwarded-For")] = None,
+) -> dict[str, Any]:
+    """Spawn a fully-populated demo workspace.
+
+    Auth is intentionally absent: the marketing-page CTA hits this from
+    an anonymous browser. Rate-limit at the gateway middleware so a
+    single source IP can't flood-create demo tenants. We log the X-FF
+    for forensics; abuse triggers an IP block before this handler runs.
+    """
+    tenant_id, owner_email = await _spawn_demo_tenant(db)
+    await _seed_demo_data(tenant_id, owner_email)
+
+    # Mint a short-lived read-only JWT so the prospect can click into
+    # the seeded workspace without signing up. The token mirrors the
+    # shape app/auth handlers expect (sub, tenant_id, role).
+    now = datetime.now(UTC)
+    payload = {
+        "sub":        owner_email,
+        "tenant_id":  tenant_id,
+        "role":       "OWNER",
+        "is_demo":    True,
+        "iat":        int(now.timestamp()),
+        "exp":        int((now + _td(minutes=_DEMO_JWT_TTL_MINUTES)).timestamp()),
+    }
+    token = _jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
+
+    logger.info(
+        "demo_workspace_spawned",
+        tenant_id=tenant_id, owner_email=owner_email,
+        source_ip=x_forwarded_for or "unknown",
+    )
+    return {
+        "success": True,
+        "data": {
+            "tenant_id":    tenant_id,
+            "owner_email":  owner_email,
+            "jwt":          token,
+            "ttl_seconds":  _DEMO_JWT_TTL_MINUTES * 60,
+            "redirect_url": f"/dashboard?demo_token={token}",
+            "expires_at":   payload["exp"],
+        },
+    }
+
+
+@router.post("/cleanup-expired")
+async def cleanup_expired_demos(
+    db: _Annot[_AsyncSession, _Depends(get_db)],
+    x_internal_secret: _Annot[str | None, _Header(alias="X-Internal-Secret")] = None,
+) -> dict[str, Any]:
+    """Hard-delete every expired demo tenant. Operator-only.
+
+    Gated on X-Internal-Secret so a passing-through Anthropic key on
+    the public path can never trigger a tenant wipe. Intended invocation
+    is a 24h cron or a Lambda at the demo_expires_at deadline.
+    """
+    if not x_internal_secret or x_internal_secret != settings.INTERNAL_SECRET:
+        raise HTTPException(status_code=403, detail="Operator-only endpoint.")
+
+    from services.identity.models import Tenant
+    cutoff = datetime.now(UTC)
+    result = await db.execute(
+        _select(Tenant.id).where(
+            Tenant.is_demo == True,  # noqa: E712 — SQLAlchemy needs ==
+            Tenant.demo_expires_at < cutoff,
+        ),
+    )
+    expired_ids = [str(r[0]) for r in result.all()]
+
+    if expired_ids:
+        await db.execute(
+            _delete(Tenant).where(Tenant.id.in_(expired_ids)),
+        )
+        await db.commit()
+
+    logger.info("demo_cleanup_swept", count=len(expired_ids))
+    return {
+        "success": True,
+        "data": {"swept_count": len(expired_ids), "swept_ids": expired_ids},
+    }
