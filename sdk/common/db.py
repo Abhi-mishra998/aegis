@@ -43,39 +43,16 @@ def get_engine() -> AsyncEngine:
                 "application_name": "acp-service",
                 "statement_timeout": "10000",   # 10s safety kill-switch
             },
-            # D4 closure 2026-06-18 (revised): asyncpg+pgbouncer-transaction race
-            #
-            # The two flags together cover both layers of prepared-statement
-            # collision that SQLAlchemy 2.0's asyncpg adapter can trip on a
-            # pgbouncer pool in transaction mode:
-            #
-            #   statement_cache_size=0
-            #     → disables asyncpg's CLIENT-side cache of (sql → prepared
-            #       statement object). Each call goes through prepare()
-            #       again instead of reusing a stale handle.
-            #
-            #   prepared_statement_name_func: unique hex per call
-            #     → every prepare() now picks a unique name (e.g.
-            #       __asyncpg_e2f1ab…__) instead of the default
-            #       __asyncpg_stmt_1__. Without this, the FIRST prepared
-            #       statement on a recycled pgbouncer backend would collide
-            #       with the leftover statement from the previous client's
-            #       FIRST statement. Surfaced as
-            #       DuplicatePreparedStatementError on acp_audit startup
-            #       during the Enterprise Security Review session.
+            # D4 closure 2026-06-18: asyncpg+pgbouncer-transaction race.
+            # statement_cache_size=0 has been live + healthy on inst-2 for
+            # 6+ hours; the prepared_statement_name_func variant attempted
+            # on 2026-06-18 broke ASG-launched instances on health checks
+            # so it's been reverted. If we see DuplicatePreparedStatementError
+            # again, the right fix is pgbouncer pool_mode=session for the
+            # audit service, not a connect_args change.
             "statement_cache_size": 0,
-            "prepared_statement_name_func": _unique_psname,
         },
     )
-
-
-import secrets as _secrets
-
-
-def _unique_psname() -> str:
-    """Per-call unique prepared-statement name to defeat pgbouncer-rotation
-    collisions. See connect_args comment in get_engine()."""
-    return f"__asyncpg_{_secrets.token_hex(8)}__"
 
 
 @functools.lru_cache
