@@ -1,121 +1,113 @@
-# Four security groups in a layered topology:
-#   alb  : public 80/443 ingress
-#   ec2  : ingress from alb on gateway_port + ui_port; optional SSH
-#   rds  : 5432 ingress from ec2 only
-#   redis: 6379 ingress from ec2 only
+# 4 security groups composing the zero-trust network policy:
+#
+#   alb   ingress: 80 + 443 from 0.0.0.0/0
+#         egress:  all to ec2_sg only
+#   ec2   ingress: 8000 from alb_sg only (gateway port)
+#         egress:  all (need NAT for AWS APIs + Anthropic + npm)
+#   rds   ingress: 5432 from ec2_sg only
+#         egress:  none
+#   redis ingress: 6379 from ec2_sg only
+#         egress:  none
 
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
-  description = "Internet-facing ALB"
+  description = "ALB — public 80/443 in; egress to EC2 only."
   vpc_id      = var.vpc_id
 
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP (redirected to HTTPS)"
+  tags = {
+    Name = "${var.name_prefix}-alb-sg"
   }
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS"
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+}
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-alb-sg" })
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTP from anywhere (redirected to HTTPS at the listener)."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_https" {
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTPS from anywhere."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_ec2" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "ALB → EC2 gateway port only."
+  referenced_security_group_id = aws_security_group.ec2.id
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
 }
 
 resource "aws_security_group" "ec2" {
   name        = "${var.name_prefix}-ec2-sg"
-  description = "Application EC2 instances"
+  description = "EC2 — gateway port from ALB; egress for AWS APIs + upstream LLM + npm."
   vpc_id      = var.vpc_id
 
-  ingress {
-    from_port       = var.gateway_port
-    to_port         = var.gateway_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-    description     = "ALB to gateway"
+  tags = {
+    Name = "${var.name_prefix}-ec2-sg"
   }
-  ingress {
-    from_port       = var.ui_port
-    to_port         = var.ui_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-    description     = "ALB to UI nginx"
-  }
+}
 
-  # Optional SSH - only enabled when ssh_allowed_cidrs is non-empty.
-  # Prefer SSM Session Manager over SSH where possible.
-  dynamic "ingress" {
-    for_each = length(var.ssh_allowed_cidrs) > 0 ? [1] : []
-    content {
-      from_port   = 22
-      to_port     = 22
-      protocol    = "tcp"
-      cidr_blocks = var.ssh_allowed_cidrs
-      description = "SSH from operator IPs"
-    }
-  }
+resource "aws_vpc_security_group_ingress_rule" "ec2_from_alb" {
+  security_group_id            = aws_security_group.ec2.id
+  description                  = "Gateway port 8000 from ALB only."
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
+}
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-ec2-sg" })
+# Egress all — EC2 needs to reach SSM, S3, Secrets Manager, Anthropic,
+# OpenAI, npm.  Filtered upstream by NAT + WAF on inbound, not by SG egress.
+resource "aws_vpc_security_group_egress_rule" "ec2_all" {
+  security_group_id = aws_security_group.ec2.id
+  description       = "All egress for AWS APIs + upstream LLMs + npm."
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
 }
 
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds-sg"
-  description = "RDS PostgreSQL - only EC2 may connect"
+  description = "RDS — Postgres port from EC2 only; no egress."
   vpc_id      = var.vpc_id
 
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2.id]
-    description     = "EC2 to Postgres"
+  tags = {
+    Name = "${var.name_prefix}-rds-sg"
   }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+}
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-rds-sg" })
+resource "aws_vpc_security_group_ingress_rule" "rds_from_ec2" {
+  security_group_id            = aws_security_group.rds.id
+  description                  = "Postgres 5432 from EC2 only."
+  referenced_security_group_id = aws_security_group.ec2.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
 }
 
 resource "aws_security_group" "redis" {
   name        = "${var.name_prefix}-redis-sg"
-  description = "ElastiCache Redis - only EC2 may connect"
+  description = "Redis — TLS port from EC2 only; no egress."
   vpc_id      = var.vpc_id
 
-  ingress {
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2.id]
-    description     = "EC2 to Redis"
+  tags = {
+    Name = "${var.name_prefix}-redis-sg"
   }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+}
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-redis-sg" })
+resource "aws_vpc_security_group_ingress_rule" "redis_from_ec2" {
+  security_group_id            = aws_security_group.redis.id
+  description                  = "Redis 6379 from EC2 only."
+  referenced_security_group_id = aws_security_group.ec2.id
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
 }

@@ -1,95 +1,86 @@
-# Internet-facing ALB with HTTPS listener + HTTP→HTTPS redirect.
+# Internet-facing ALB + HTTP→HTTPS redirect listener + HTTPS listener
+# + target group (port 8000, /healthz health check). Access logs ship
+# to the S3 bucket created by the s3 module.
 #
-# Target group health checks the UI nginx's `/healthz` route, which proxies
-# to gateway:8000/health with a 2s upstream timeout (see ui/nginx.conf).
-# U13 — the previous default `/health` was a STATIC nginx 200, so a dead
-# gateway behind a healthy nginx kept the instance registered and the ALB
-# routed live traffic to a dead backend.
+# Target attachment is owned by the ASG (target_group_arns), NOT by
+# this module — the ALB and ASG must be loosely coupled so an ASG
+# refresh doesn't touch the ALB resource graph.
 
-resource "aws_lb" "this" {
-  name               = var.alb_name
+resource "aws_lb" "main" {
+  name               = "${var.name_prefix}-alb"
   internal           = false
   load_balancer_type = "application"
+  security_groups    = [var.alb_security_group]
+  subnets            = var.public_subnet_ids
 
-  subnets         = var.subnet_ids
-  security_groups = var.security_group_ids
+  # Drop in-flight requests within 60 s when an instance deregisters.
+  idle_timeout = 60
 
-  enable_deletion_protection = var.enable_deletion_protection
-  enable_http2               = true
-  idle_timeout               = 65
+  enable_deletion_protection = false
   drop_invalid_header_fields = true
 
-  dynamic "access_logs" {
-    for_each = length(var.access_logs_bucket) > 0 ? [1] : []
-    content {
-      bucket  = var.access_logs_bucket
-      prefix  = "alb"
-      enabled = true
-    }
+  access_logs {
+    bucket  = var.alb_log_bucket
+    enabled = true
+    prefix  = "alb"
   }
 
-  tags = merge(var.tags, { Name = var.alb_name })
+  tags = {
+    Name = "${var.name_prefix}-alb"
+  }
 }
 
-resource "aws_lb_target_group" "this" {
+resource "aws_lb_target_group" "main" {
   name        = "${var.name_prefix}-tg"
-  port        = var.target_port
+  port        = 8000
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
   target_type = "instance"
 
-  # U13 — health check probes `/healthz` (default) which nginx proxies to
-  # gateway:8000/health with a 2s upstream timeout. timeout=5 gives the
-  # round trip ~3s of headroom over the nginx-upstream cap, and
-  # unhealthy_threshold=3 with interval=15 means a dead gateway is
-  # deregistered in ~45s (3 consecutive failed checks).
+  deregistration_delay = 30
+
   health_check {
-    path                = var.health_check_path
-    interval            = 15
-    timeout             = 5
+    enabled             = true
+    path                = "/healthz"
+    port                = "traffic-port"
+    protocol            = "HTTP"
     healthy_threshold   = 2
     unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
     matcher             = "200"
   }
 
-  # Match scripts/ops/deploy_staggered.sh DRAIN_WAIT_SECONDS=60 — ALB
-  # waits 60s for in-flight requests to drain before forcibly closing.
-  deregistration_delay = 60
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-tg" })
-}
-
-resource "aws_lb_target_group_attachment" "instances" {
-  count            = length(var.target_instance_ids)
-  target_group_arn = aws_lb_target_group.this.arn
-  target_id        = var.target_instance_ids[count.index]
-  port             = var.target_port
-}
-
-resource "aws_lb_listener" "https" {
-  load_balancer_arn = aws_lb.this.arn
-  port              = 443
-  protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = var.certificate_arn
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.this.arn
+  tags = {
+    Name = "${var.name_prefix}-tg"
   }
 }
 
 resource "aws_lb_listener" "http_redirect" {
-  load_balancer_arn = aws_lb.this.arn
+  load_balancer_arn = aws_lb.main.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
     type = "redirect"
+
     redirect {
-      protocol    = "HTTPS"
       port        = "443"
+      protocol    = "HTTPS"
       status_code = "HTTP_301"
     }
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.acm_certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
   }
 }

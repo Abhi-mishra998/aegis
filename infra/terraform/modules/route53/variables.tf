@@ -1,18 +1,19 @@
 variable "zone_id" {
-  description = "Existing hosted zone ID (we do NOT manage zone creation here — the zone pre-existed Aegis)"
+  description = "Existing Route 53 hosted zone id."
   type        = string
 }
 
-variable "alias_records" {
-  description = "Map of hostname → ALB target (alias A record)"
-  type = map(object({
-    target_dns_name = string
-    target_zone_id  = string
-  }))
-  default = {}
+variable "domain" {
+  description = "Apex domain — must match the hosted zone."
+  type        = string
 }
 
-variable "tags" {
-  type    = map(string)
-  default = {}
+variable "alb_dns_name" {
+  description = "ALB DNS name (alias target)."
+  type        = string
+}
+
+variable "alb_zone_id" {
+  description = "ALB Route 53 zone id."
+  type        = string
 }

@@ -1,27 +1,28 @@
-# EC2 instance role with the minimum permissions Aegis needs:
-#   - SSM Session Manager access (replaces SSH)
-#   - CloudWatch Agent write access for logs + custom metrics
-#   - Scoped S3 read/write for the backup buckets only (NOT *FullAccess)
-#
-# This module intentionally does NOT attach `AmazonS3FullAccess` even
-# though the live prod role has it — that attachment is a sprint-8.5
-# follow-up to scope down. See environments/prod/IMPORT.md.
+# EC2 instance role + profile. Policies:
+#   - AmazonSSMManagedInstanceCore  (Session Manager + SSM agent)
+#   - CloudWatchAgentServerPolicy   (push logs)
+#   - inline: read bundle bucket + public-roots write + ssm bundle param
+#             + Secrets Manager read for db_password + jwt signing
+# All scoped tightly — no s3:*, no secretsmanager:*.
 
-data "aws_iam_policy_document" "assume_ec2" {
+data "aws_iam_policy_document" "ec2_trust" {
   statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
+    effect = "Allow"
     principals {
       type        = "Service"
       identifiers = ["ec2.amazonaws.com"]
     }
+    actions = ["sts:AssumeRole"]
   }
 }
 
 resource "aws_iam_role" "ec2" {
   name               = "${var.name_prefix}-ec2-role"
-  assume_role_policy = data.aws_iam_policy_document.assume_ec2.json
-  tags               = merge(var.tags, { Name = "${var.name_prefix}-ec2-role" })
+  assume_role_policy = data.aws_iam_policy_document.ec2_trust.json
+
+  tags = {
+    Name = "${var.name_prefix}-ec2-role"
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "ssm" {
@@ -29,107 +30,171 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
+resource "aws_iam_role_policy_attachment" "cw_agent" {
   role       = aws_iam_role.ec2.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
-# Scoped S3 access — only the listed backup buckets, not *FullAccess.
-data "aws_iam_policy_document" "s3_backup" {
-  count = length(var.s3_backup_bucket_arns) > 0 ? 1 : 0
-
+# Bundle bucket — EC2 reads release tarballs.
+data "aws_iam_policy_document" "bundle_bucket" {
   statement {
-    sid    = "ListBackupBuckets"
-    effect = "Allow"
-    actions = [
-      "s3:ListBucket",
-      "s3:GetBucketLocation",
-    ]
-    resources = var.s3_backup_bucket_arns
+    sid       = "ListBundleBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = ["arn:aws:s3:::${var.bundle_bucket}"]
   }
-
   statement {
-    sid    = "ReadWriteBackupObjects"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:GetObjectVersion",
-    ]
-    resources = [for arn in var.s3_backup_bucket_arns : "${arn}/*"]
+    sid       = "ReadBundleObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::${var.bundle_bucket}/releases/*"]
   }
 }
 
-resource "aws_iam_role_policy" "s3_backup" {
-  count  = length(var.s3_backup_bucket_arns) > 0 ? 1 : 0
-  name   = "${var.name_prefix}-s3-backup"
-  role   = aws_iam_role.ec2.id
-  policy = data.aws_iam_policy_document.s3_backup[0].json
+resource "aws_iam_policy" "bundle_bucket" {
+  name   = "${var.name_prefix}-bundle-read"
+  policy = data.aws_iam_policy_document.bundle_bucket.json
 }
 
-# Sprint 9 — bundle-launch reads: RDS endpoint, Redis endpoint, Secrets,
-# SSM parameters. Scoped to the prod-ha resources by name prefix.
-data "aws_caller_identity" "current" {}
+resource "aws_iam_role_policy_attachment" "bundle_bucket" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = aws_iam_policy.bundle_bucket.arn
+}
 
-data "aws_iam_policy_document" "bundle_launch" {
+# Public roots bucket — audit service writes daily Merkle roots.
+data "aws_iam_policy_document" "public_roots" {
   statement {
-    sid    = "DescribeInfra"
-    effect = "Allow"
-    actions = [
-      "rds:DescribeDBInstances",
-      "elasticache:DescribeReplicationGroups",
-      "elasticache:DescribeCacheClusters",
-    ]
-    resources = ["*"]
+    sid       = "ListPublicRoots"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = ["arn:aws:s3:::${var.public_roots_bucket}"]
   }
-
   statement {
-    sid    = "ReadSecretsManager"
-    effect = "Allow"
-    actions = [
-      "secretsmanager:GetSecretValue",
-      "secretsmanager:DescribeSecret",
-    ]
-    resources = [
-      "arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*",
-    ]
+    sid       = "WritePublicRoots"
+    effect    = "Allow"
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["arn:aws:s3:::${var.public_roots_bucket}/*"]
   }
+}
 
+resource "aws_iam_policy" "public_roots" {
+  name   = "${var.name_prefix}-public-roots-rw"
+  policy = data.aws_iam_policy_document.public_roots.json
+}
+
+resource "aws_iam_role_policy_attachment" "public_roots" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = aws_iam_policy.public_roots.arn
+}
+
+# SSM Parameters — EC2 reads bundle SHA + all app config (Clerk, Stripe, etc.).
+data "aws_iam_policy_document" "ssm_param" {
   statement {
-    sid    = "ReadSSMParameters"
-    effect = "Allow"
-    actions = [
-      "ssm:GetParameter",
-      "ssm:GetParameters",
-    ]
-    resources = [
-      "arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:parameter/${var.name_prefix}/*",
-    ]
+    sid     = "ReadBundleSHAParameter"
+    effect  = "Allow"
+    actions = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+    resources = concat(
+      [var.ssm_bundle_parameter_arn],
+      var.app_param_arns,
+    )
   }
-
+  # Application also needs to decrypt SecureString parameters; the default
+  # AWS-managed key for SSM is used (we don't ship a CMK for params).
   statement {
-    sid       = "KmsDecryptForSecretsAndSsm"
+    sid       = "DecryptSSMSecureString"
     effect    = "Allow"
     actions   = ["kms:Decrypt"]
     resources = ["*"]
     condition {
-      test     = "StringLike"
-      variable = "kms:EncryptionContext:aws:secretsmanager:arn"
-      values   = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"]
+      test     = "ForAnyValue:StringEquals"
+      variable = "kms:ResourceAliases"
+      values   = ["alias/aws/ssm"]
     }
   }
 }
 
-resource "aws_iam_role_policy" "bundle_launch" {
-  name   = "${var.name_prefix}-bundle-launch"
-  role   = aws_iam_role.ec2.id
-  policy = data.aws_iam_policy_document.bundle_launch.json
+resource "aws_iam_policy" "ssm_param" {
+  name   = "${var.name_prefix}-ssm-read"
+  policy = data.aws_iam_policy_document.ssm_param.json
 }
 
-# Instance profile — what EC2 actually receives.
+resource "aws_iam_role_policy_attachment" "ssm_param" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = aws_iam_policy.ssm_param.arn
+}
+
+# Audit-envelope KMS key — Encrypt/Decrypt/GenerateDataKey on the CMK
+# managed by modules/audit_kms.
+data "aws_iam_policy_document" "audit_kms" {
+  statement {
+    sid    = "AuditEnvelopeKeyOps"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey",
+    ]
+    resources = [var.audit_kms_key_arn]
+  }
+}
+
+resource "aws_iam_policy" "audit_kms" {
+  name   = "${var.name_prefix}-audit-kms"
+  policy = data.aws_iam_policy_document.audit_kms.json
+}
+
+resource "aws_iam_role_policy_attachment" "audit_kms" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = aws_iam_policy.audit_kms.arn
+}
+
+# CloudWatch Logs — Write to the managed log groups (CWAgentServerPolicy
+# is broader; this scopes writes to our groups only).
+data "aws_iam_policy_document" "logs_write" {
+  statement {
+    sid     = "WriteAegisLogStreams"
+    effect  = "Allow"
+    actions = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = concat(
+      var.log_group_arns,
+      [for arn in var.log_group_arns : "${arn}:*"],
+    )
+  }
+}
+
+resource "aws_iam_policy" "logs_write" {
+  name   = "${var.name_prefix}-logs-write"
+  policy = data.aws_iam_policy_document.logs_write.json
+}
+
+resource "aws_iam_role_policy_attachment" "logs_write" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = aws_iam_policy.logs_write.arn
+}
+
+# Secrets Manager — only the named secrets.
+data "aws_iam_policy_document" "secrets" {
+  statement {
+    sid       = "ReadAegisSecrets"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = var.secrets_arns
+  }
+}
+
+resource "aws_iam_policy" "secrets" {
+  name   = "${var.name_prefix}-secrets-read"
+  policy = data.aws_iam_policy_document.secrets.json
+}
+
+resource "aws_iam_role_policy_attachment" "secrets" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = aws_iam_policy.secrets.arn
+}
+
 resource "aws_iam_instance_profile" "ec2" {
-  name = "${var.name_prefix}-ec2-role"
+  name = "${var.name_prefix}-ec2-profile"
   role = aws_iam_role.ec2.name
-  tags = var.tags
 }

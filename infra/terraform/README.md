@@ -1,112 +1,98 @@
-# Aegis Terraform
+# Aegis Terraform — operator quickstart
 
-Production state at `aegisagent.in` was originally created via the AWS
-console. This module set captures the live state, declares it as code,
-and supplies a downscaled **`dev`** environment sized for a 10-user
-test portal at < ~$50 / month.
+Right-sized AWS stack for 10–50 concurrent users, ~$300/mo all-in.
+Spec lives at `terraform.md` (repo root). Migration playbook at `MIGRATION.md`.
 
 ## Layout
 
 ```
 infra/terraform/
-├── bootstrap/                   # one-time: creates the S3 backend bucket
-│                                #            + DynamoDB lock table
-├── modules/                     # reusable building blocks (one concern each)
-│   ├── network/                 # VPC, subnets, IGW, route tables
-│   ├── security_groups/         # ALB, EC2, RDS, Redis SGs
-│   ├── iam/                     # EC2 instance role + policies
-│   ├── compute/                 # EC2 instances (count + type + AZ-mapped subnets)
-│   ├── rds/                     # PostgreSQL Multi-AZ-capable
-│   ├── elasticache/             # Redis replication group
-│   ├── alb/                     # ALB + listeners + target group
-│   ├── s3/                      # backups + statuspage + ALB-logs buckets
-│   ├── acm/                     # certificate + DNS validation records
-│   ├── route53/                 # apex + subdomain alias records
-│   └── secrets/                 # Secrets Manager entries (DB password, JWT, ...)
-└── environments/
-    ├── prod/                    # mirrors the actual live deployment
-    └── dev/                     # downscaled — 1 EC2 t3.small, single-AZ RDS,
-                                 # 1× cache.t3.micro, no ElastiCache replica
+├── bootstrap/          one-time S3 state bucket setup (already applied)
+├── envs/prod/          terraform.tfvars (20 inputs)
+└── modules/            13 modules, exactly 3 files each
+    network/ security_groups/ iam/ secrets/ route53/ waf/
+    alb/ asg/ rds/ elasticache/ s3/ cloudwatch/ ssm/
 ```
 
-## Quickstart
+## Backend
 
-### 1. Bootstrap the state backend (once per account)
+S3 native locking (`use_lockfile = true`). No DynamoDB table.
+Bucket `aegis-terraform-state-628478946931`, key `prod/terraform.tfstate`.
+
+## The three commands you actually run
 
 ```bash
-cd infra/terraform/bootstrap
+cd infra/terraform
+
+# 1. download providers, configure backend
 terraform init
-terraform apply        # creates s3://aegis-terraform-state + DDB lock table
+
+# 2. catch type/ref errors locally (no AWS call)
+terraform validate
+
+# 3. preview every resource change (calls AWS read-only)
+terraform plan -var-file=envs/prod/terraform.tfvars -out=tfplan
 ```
 
-### 2. Initialize an environment
+When you're satisfied with the plan:
 
 ```bash
-cd infra/terraform/environments/dev    # or environments/prod
-terraform init
-terraform plan
-terraform apply
+terraform apply tfplan
 ```
 
-### 3. Import existing live resources into `prod` (one-time)
+## Security scan (optional but recommended pre-apply)
 
-See [`environments/prod/IMPORT.md`](environments/prod/IMPORT.md). Each
-existing resource is mapped to a `terraform import` command that brings
-the live ID under management without recreating it.
+```bash
+tfsec .                # static security analysis
+tflint --recursive     # lint check
+```
 
-## Budget envelope
+## Promote a new bundle (post-deploy lifecycle)
 
-The `dev` environment is sized for a 10-user test portal:
+```bash
+SHA=$(git rev-parse --short HEAD)
 
-| Resource | dev (10 users) | prod (current live) | dev monthly cost (ap-south-1) |
-|----------|----------------|---------------------|-------------------------------|
-| EC2      | 1× t3.small, single AZ | 2× t3.2xlarge, 2 AZs | ~$15 |
-| RDS      | db.t4g.micro, single AZ, 20 GB gp3 | db.t3.micro Multi-AZ, 20 GB gp3 | ~$13 |
-| Redis    | cache.t3.micro, 1 node | cache.t3.micro, 1 node | ~$11 |
-| ALB      | 1 | 1 | ~$16 (fixed) |
-| Data tx  | <1 GB/month assumed | n/a | ~$0 |
-| **Total** |  |  | **~$55 / month** |
+# build + upload (see scripts/ops/build_release_bundle.sh)
+bash scripts/ops/build_release_bundle.sh
+aws s3 cp /tmp/aegis-bundle-*.tar.gz \
+  s3://acp-backups-prodha-628478946931/releases/bundle-${SHA}.tar.gz
 
-Hard ceiling: a budget alert at $60 / month fires via SNS → email
-(`modules/secrets` writes a placeholder; operator sets the real address).
+# flip SSM pointer
+aws ssm put-parameter --name /aegis/prod/current_bundle_sha \
+  --value "${SHA}" --overwrite
 
-To stay under $50, drop the ALB and expose the gateway directly on the
-EC2 public IP via a CloudFront distribution instead. See
-`environments/dev/README.md` § "Even cheaper".
+# zero-downtime instance refresh
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name aegis-prod-asg \
+  --preferences MinHealthyPercentage=100,InstanceWarmup=300
+```
 
-## Conventions
+## Rollback in 5 minutes
 
-- **One module per concern.** No module declares resources outside its
-  domain. Module boundaries match the AWS team that owns each.
-- **Modules take inputs, return outputs.** No module reads `data` sources
-  for cross-module state — that's the environment's job (composition).
-- **`required_version`** pinned to `>= 1.6.0` everywhere.
-- **`required_providers`** pinned to a specific minor (currently `5.4x`).
-- **Tags** are environment-prefixed (`acp-dev-*`, `acp-prod-*`) so AWS
-  Cost Explorer can split spend per environment.
-- **State** lives in `s3://aegis-terraform-state/{env}/terraform.tfstate`
-  with DynamoDB lock at `aegis-terraform-locks`.
+```bash
+aws ssm put-parameter --name /aegis/prod/current_bundle_sha \
+  --value "<earlier_sha>" --overwrite
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name aegis-prod-asg
+```
 
-## Discovered live state (snapshot from `aws describe-*` at sprint-8 time)
+## Pre-existing resources NOT created by this stack
 
-| Resource | ID / name |
-|----------|-----------|
-| VPC | `vpc-0b86b702b936fc905` (`10.0.0.0/16`) |
-| Public subnets | `subnet-00ce70dbbbe9602f1` (1a), `subnet-0b808f72efc46dff2` (1b) |
-| Private subnets | `subnet-01baf8689d58a521d` (1a), `subnet-0a32990f24a17d8a2` (1b) |
-| ALB | `acp-alb` (DNS: `acp-alb-357872136.ap-south-1.elb.amazonaws.com`) |
-| Target group | `acp-ui-tg` (port 5173, /healthz — U13: proxies to gateway:8000/health, 2s timeout) |
-| EC2 | 2× `acp-server-prod` (t3.2xlarge), 1 per AZ |
-| RDS | `acp-postgres-prod` (db.t3.micro, Multi-AZ, gp3, postgres 15.18) |
-| Redis | `acp-redis-prod` (cache.t3.micro, single node, redis 7.1) |
-| Route53 | `Z033117538JKIIKDBDPUJ` (`aegisagent.in`) |
-| ACM | `74f2f769-...` (aegisagent.in + api + www) |
-| IAM role | `acp-ec2-role` (SSM, CloudWatchAgent, S3FullAccess) |
-| S3 buckets | `acp-backups-abhishek-prod`, `acp-backups-prod-am`, `acp-fix-1779860735` |
-| EC2 SG | `sg-0e8b5bdd4d4a0d9b0` (`acp-ec2-sg`) |
-| ALB SG | `sg-0c50d69ba3de40bf3` (`acp-alb-sg`) |
-| RDS SG | `sg-0e72625fc48706b98` (`acp-rds-sg`) |
-| Redis SG | `sg-00e47aee22e90ae33` (`acp-redis-sg`) |
+| Resource                     | Why preserved                                                |
+|------------------------------|--------------------------------------------------------------|
+| ACM cert `aegisagent.in`     | Re-validating takes 24h; pulled via `data "aws_acm_certificate"`. |
+| Route 53 zone `aegisagent.in.` | Authoritative for the apex; pulled via `data "aws_route53_zone"`. |
+| `aegis-public-roots-628478946931` S3 | Customer-visible cryptographic archive. `lifecycle { prevent_destroy = true }`. |
+| `aegis-terraform-state-628478946931` S3 | This stack's state lives here. Bootstrap dir manages. |
+| `acp-backups-prodha-628478946931` S3 | Existing bundle/snapshot bucket. Referenced as `bundle_bucket`. |
 
-The prod environment mirrors this exactly so `terraform import` reproduces
-the live state without drift.
+## What `terraform destroy` does NOT touch
+
+The four PRESERVE rows above. Everything else (VPC, ALB, ASG, RDS,
+Redis, alarms, etc.) is destroyed on `terraform destroy`. Solo founder,
+zero customers, design-partner stage — destroying + rebuilding is a
+valid recovery mode. Do not destroy without taking a final RDS snapshot.
+
+## Migration from the old `infra/terraform.old/` codebase
+
+See `MIGRATION.md`. Zero-downtime swap via Route 53 cutover.

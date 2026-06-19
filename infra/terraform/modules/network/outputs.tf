@@ -1,32 +1,24 @@
 output "vpc_id" {
-  value = aws_vpc.this.id
+  description = "VPC id."
+  value       = aws_vpc.main.id
 }
 
-output "vpc_cidr" {
-  value = aws_vpc.this.cidr_block
+output "vpc_cidr_block" {
+  description = "VPC CIDR (used by SG rules)."
+  value       = aws_vpc.main.cidr_block
 }
 
 output "public_subnet_ids" {
-  value = aws_subnet.public[*].id
+  description = "Public subnet ids (ALB + NAT)."
+  value       = aws_subnet.public[*].id
 }
 
 output "private_subnet_ids" {
-  value = aws_subnet.private[*].id
+  description = "Private subnet ids (EC2 + RDS + Redis)."
+  value       = aws_subnet.private[*].id
 }
 
-output "internet_gateway_id" {
-  value = aws_internet_gateway.this.id
-}
-
-output "availability_zones" {
-  value = var.availability_zones
-}
-
-output "nat_gateway_public_ips" {
-  description = "Per-AZ NAT EIPs — pin in vendor allowlists for egress from private subnets."
-  value       = [for eip in aws_eip.nat : eip.public_ip]
-}
-
-output "private_route_table_ids" {
-  value = aws_route_table.private[*].id
+output "nat_gateway_ids" {
+  description = "NAT Gateway ids (1 when single_nat_gateway = true)."
+  value       = aws_nat_gateway.main[*].id
 }

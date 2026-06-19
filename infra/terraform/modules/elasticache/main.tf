@@ -1,30 +1,53 @@
-# Single-node Redis cluster.
-# Multi-AZ failover requires switching to `aws_elasticache_replication_group`
-# with >= 2 cache_clusters — that's a deliberate prod-only choice when
-# downtime tolerance shrinks. For dev (10 users) a single node is fine.
+# ElastiCache Redis — primary + N-1 replicas, NO cluster mode.
+# TLS in-transit and at-rest encryption.
 
-resource "aws_elasticache_subnet_group" "this" {
-  name       = "${var.name_prefix}-redis-subnet-group"
-  subnet_ids = var.subnet_ids
-  tags       = merge(var.tags, { Name = "${var.name_prefix}-redis-subnet-group" })
+resource "aws_elasticache_subnet_group" "main" {
+  name       = "${var.name_prefix}-redis-subnets"
+  subnet_ids = var.private_subnet_ids
+
+  tags = {
+    Name = "${var.name_prefix}-redis-subnets"
+  }
 }
 
-resource "aws_elasticache_cluster" "this" {
-  cluster_id           = var.cluster_id
+resource "aws_elasticache_parameter_group" "main" {
+  name   = "${var.name_prefix}-redis7"
+  family = "redis7"
+
+  # Aegis uses Redis lists (event streams) + sorted sets (cumulative
+  # risk windows) + sets (revoked api keys). No need for cluster-mode
+  # at design-partner scale.
+
+  tags = {
+    Name = "${var.name_prefix}-redis7"
+  }
+}
+
+resource "aws_elasticache_replication_group" "main" {
+  replication_group_id = "${var.name_prefix}-redis"
+  description          = "Aegis Redis replication group — primary + ${var.num_nodes - 1} replica(s)."
   engine               = "redis"
-  engine_version       = var.engine_version
+  engine_version       = "7.1"
   node_type            = var.node_type
-  num_cache_nodes      = var.num_cache_nodes
-  parameter_group_name = "default.redis7"
+  num_cache_clusters   = var.num_nodes
+  parameter_group_name = aws_elasticache_parameter_group.main.name
+  subnet_group_name    = aws_elasticache_subnet_group.main.name
+  security_group_ids   = [var.redis_security_group]
   port                 = 6379
 
-  subnet_group_name  = aws_elasticache_subnet_group.this.name
-  security_group_ids = var.security_group_ids
+  automatic_failover_enabled = var.num_nodes > 1
+  multi_az_enabled           = var.num_nodes > 1
 
-  snapshot_retention_limit = var.snapshot_retention_limit_days
-  snapshot_window          = var.snapshot_retention_limit_days > 0 ? "21:00-22:00" : null
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  # auth_token not set — TLS + private subnets + SG already restrict to
+  # EC2 only. Auth token adds rotation burden without raising the bar
+  # at this stage. Add when first F500 customer asks.
 
-  apply_immediately = false
+  snapshot_retention_limit = 7
+  snapshot_window          = "20:30-21:30" # UTC 20:30-21:30 = 02:00-03:00 IST
 
-  tags = merge(var.tags, { Name = var.cluster_id })
+  tags = {
+    Name = "${var.name_prefix}-redis"
+  }
 }
