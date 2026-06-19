@@ -364,38 +364,6 @@ export const parseApiError = (error, fallback = "Something went wrong. Please tr
   return error.message || fallback;
 };
 
-// Voice Agent — LiveKit token mint. Wraps the gateway /voice/token endpoint
-// behind the same fetch convention as the other services so auth headers,
-// credentials, and 401 surfacing stay consistent. Previously the panel did a
-// raw fetch() that bypassed Clerk token attachment.
-export const voiceService = {
-  getToken: async () => {
-    const headers = {};
-    await attachClerkAuth(headers);
-    const res = await fetch(`${API_BASE}/voice/token`, {
-      credentials: "include",
-      headers,
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      let parsedBody = null;
-      let parsedError = txt;
-      try {
-        parsedBody = JSON.parse(txt);
-        parsedError = parsedBody.error || parsedBody.detail || parsedBody.message || txt;
-      } catch (_) { /* non-JSON body */ }
-      const err = new Error(parsedError || `Voice token request failed (${res.status})`);
-      err._status = res.status;
-      err._body = parsedBody;
-      err._wwwAuth = res.headers.get("WWW-Authenticate") || "";
-      err._noRetry = true;
-      throw err;
-    }
-    const body = await res.json();
-    return body.data || body;
-  },
-};
-
 // Auth Service
 export const authService = {
   login: async (data) => {

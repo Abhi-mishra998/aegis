@@ -299,7 +299,7 @@ Sprint 1.3 introduces a `SigningKeyProvider` abstraction. Three providers ship:
 Env-var selection:
 
 ```bash
-# Production default — matches the existing /aegis-voice-guide/* convention
+# Production default — SSM SecureString parameter under /aegis-audit/
 RECEIPT_SIGNING_PROVIDER=ssm
 RECEIPT_SIGNING_SSM_PARAMETER=/aegis-audit/receipt-signing-key
 AWS_REGION=ap-south-1

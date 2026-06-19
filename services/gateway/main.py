@@ -595,7 +595,6 @@ from services.gateway.routers.transparency import (
     router as _transparency_router,  # noqa: E402
 )
 from services.gateway.routers.users import router as _users_router  # noqa: E402
-from services.gateway.routers.voice import router as _voice_router  # noqa: E402
 # Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
 from services.gateway.routers.messages import router as _messages_router  # noqa: E402
 # Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
@@ -632,7 +631,6 @@ app.include_router(_auth_router)
 app.include_router(_clerk_router)
 app.include_router(_workspace_router)
 app.include_router(_tenant_router)
-app.include_router(_voice_router)
 app.include_router(_demo_router)
 app.include_router(_messages_router)
 app.include_router(_openai_messages_router)

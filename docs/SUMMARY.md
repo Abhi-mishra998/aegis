@@ -96,13 +96,6 @@
   * [Threat Intelligence](ui/settings/threat-intel.md)
   * [Scheduled Reports](ui/settings/scheduled-reports.md)
 
-## Voice Guide
-
-* [Overview](voice-guide/_index.md)
-* [UI Integration](voice-guide/ui-integration.md)
-* [RAG and LLM Strategy](voice-guide/rag-and-llm.md)
-* [Deployment and Operations](voice-guide/deployment.md)
-
 ## Integrations
 
 * [SDK Wrappers (PyPI)](integrations/sdk-wrappers.md)

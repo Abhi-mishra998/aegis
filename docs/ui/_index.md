@@ -19,7 +19,6 @@ Some entry points live in the topbar rather than the sidebar:
 | Surface | Source | Purpose |
 |---|---|---|
 | Agent scope picker | `ui/src/components/Layout/AgentScopePicker.jsx` | Tenant / agent scope, mirrored from the sidebar on wide layouts |
-| **Voice Agent button** | `ui/src/components/VoiceAgent/VoiceAgentButton.jsx` | Opens the [Voice Guide](../voice-guide/_index.md) panel — full-viewport animated orb + live transcript. Lazy-loads ~152 KB gzipped of LiveKit JS only on click. |
 | SSE live/syncing pill | inline in `Topbar.jsx` | Live indicator for the Server-Sent Events stream |
 | Command palette trigger (`Cmd-K`) | `ui/src/components/Common/CommandPalette.jsx` | Fuzzy nav over every page |
 | Incidents badge | inline in `Topbar.jsx` | Red count + glow when open incidents > 0 |

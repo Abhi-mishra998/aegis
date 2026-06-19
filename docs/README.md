@@ -102,7 +102,6 @@ docs/
 ├── operations/          # 6 main + 3 runbooks
 ├── integrations/        # SDK + evidence-export adapter docs
 ├── api/                 # 4 pages
-├── voice-guide/         # 4 pages
 ├── SUMMARY.md           # GitBook navigation
 └── README.md            # this page
 ```

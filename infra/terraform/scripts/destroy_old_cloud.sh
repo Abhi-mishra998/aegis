@@ -8,9 +8,6 @@
 #   - s3://aegis-terraform-state-628478946931          state bucket
 #   - ACM cert aegisagent.in                           24h to re-validate
 #   - Route 53 zone Z033117538JKIIKDBDPUJ              authoritative for apex
-#   - i-059ed91510dee24e0 (aegis-voice-guide)          separate workload
-#   - Lambda aegis-voice-guide-autostop                voice-guide pair
-#   - aegis-voice-guide-* IAM roles                    voice-guide pair
 #   - SSM /aegis-alerts/* /aegis-playwright/* /aegis-siem/* (cross-cutting)
 #
 # DESTROY (in this order):
@@ -302,7 +299,7 @@ phase "19. SNS"
 run aws --region "${AWS_REGION}" sns delete-topic \
   --topic-arn "arn:aws:sns:${AWS_REGION}:$(aws sts get-caller-identity --query Account --output text):acp-prod-alerts"
 
-# ─── 20. Orphan EIPs (NOT the voice-guide one) ─────────────────────────
+# ─── 20. Orphan EIPs ───────────────────────────────────────────────────
 phase "20. Orphan EIPs"
 ORPHANS=$(aws --region "${AWS_REGION}" ec2 describe-addresses \
   --query 'Addresses[?AssociationId==null].AllocationId' --output text || echo "")
@@ -317,7 +314,6 @@ echo "  s3://aegis-public-roots-628478946931"
 echo "  s3://aegis-terraform-state-628478946931"
 echo "  ACM cert aegisagent.in"
 echo "  Route 53 zone Z033117538JKIIKDBDPUJ"
-echo "  i-059ed91510dee24e0 (aegis-voice-guide)"
 echo
 echo "NEXT:"
 echo "  cd infra/terraform"

@@ -61,7 +61,7 @@ flowchart LR
 | S3 — deploys + backups | `acp-backups-prodha-…` (versioned, 30-day expiry, age-encrypted nightly `pg_dump`) | `ap-south-1` | — |
 | S3 — ALB access logs | `acp-alb-logs-prodha-…` (14-day expiry) | `ap-south-1` | — |
 | KMS CMK | `alias/aegis-audit-envelope` (annual rotation) | `ap-south-1` | — |
-| SSM SecureString | `/aegis-audit/receipt-signing-key`, `/aegis-audit/root-signing-key`, `/aegis-siem/*`, `/aegis-voice-guide/*` | `ap-south-1` | — |
+| SSM SecureString | `/aegis-audit/receipt-signing-key`, `/aegis-audit/root-signing-key`, `/aegis-siem/*` | `ap-south-1` | — |
 | ACM cert | DNS-validated cert for `ha.aegisagent.in` | `ap-south-1` | — |
 | Route 53 | hosted zone `aegisagent.in`; alias record `ha → ALB` | global | — |
 | Terraform state | `s3://aegis-terraform-state-…/ha/terraform.tfstate` with DynamoDB lock `aegis-terraform-locks-ha` | `ap-south-1` | — |
@@ -184,7 +184,6 @@ annual rotation:
 | `/aegis-audit/receipt-signing-key` | Per-row ed25519 receipt signing |
 | `/aegis-audit/root-signing-key` | Daily Merkle root signing (independent key) |
 | `/aegis-siem/{target}/...` | SIEM forwarder credentials (Splunk HEC, Datadog, Elastic, Sentinel, Chronicle) |
-| `/aegis-voice-guide/*` | Voice Agent provider keys (Deepgram, Groq, Cartesia) |
 
 The audit container calls `ssm:GetParameter(WithDecryption=True)` once at
 boot. CloudTrail records every access. The plaintext PEM lives only in

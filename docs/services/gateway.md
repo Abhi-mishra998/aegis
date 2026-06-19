@@ -81,7 +81,6 @@ The gateway used to live in a 4,000+ line `main.py`. The 2026-05 audit pass (com
 | `routers/policy.py` | 4 | `/policy/*` |
 | `routers/forensics.py` | 6 | `/forensics/*` |
 | `routers/auto_response.py` | 16 | `/auto-response/*` |
-| `routers/voice.py` | 2 | `/voice/token`, `/voice/status` — mints short-lived LiveKit JWTs that dispatch the Aegis Voice Guide worker on its sibling EC2 (see [Voice Guide](../voice-guide/_index.md)) |
 | `routers/proxies.py`, `routers/dashboard.py`, `routers/admin.py`, `routers/tenant.py`, `routers/tenant_admin.py`, `routers/stripe_webhook.py` | misc | system + admin paths |
 
 Each sub-router file owns its Pydantic models and any router-local helpers. Shared dependencies (auth dependency, internal-secret guard, ResilientClient injection) come from `services/gateway/_helpers.py` and `services/gateway/main.py` only. Adding a route means modifying one sub-router, not the main.py wiring.
