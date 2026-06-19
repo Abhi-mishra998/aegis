@@ -245,6 +245,18 @@ class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
         default=list,
     )
 
+    # Sprint S4 (2026-06-19) — Demo workspace lifecycle. is_demo=true marks
+    # a tenant as a sandbox spawned by POST /demo/spawn-workspace for
+    # cold-start prospects. demo_expires_at is the cleanup deadline; the
+    # operator sweeps these via POST /demo/cleanup-expired (or a 24h cron)
+    # and hard-deletes the identity row + cascades agent/audit/usage.
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False,
+    )
+    demo_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+
 
 class AgentCredential(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Stores hashed secrets + status for agent authentication."""
