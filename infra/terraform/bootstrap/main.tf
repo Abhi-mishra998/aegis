@@ -1,64 +1,59 @@
-# One-time bootstrap for the Terraform state backend.
-# Apply this once per AWS account before initialising any environment.
-# It creates:
-#   - S3 bucket for tfstate (versioned, encrypted, public access blocked)
-#   - DynamoDB table for state lock
+# One-time state-bucket bootstrap.
 #
-# After apply: switch every environment's backend.tf to `bucket = ...`
-# pointing here, then `terraform init`.
+# The bucket already exists (created manually 2026-05); this file
+# documents the canonical configuration and lets `terraform import`
+# adopt it under management without recreating.
+#
+# Usage to import an existing bucket:
+#
+#   cd infra/terraform/bootstrap
+#   terraform init
+#   terraform import aws_s3_bucket.tf_state aegis-terraform-state-628478946931
+#   terraform plan         # should be no-op or only tag drift
+#   terraform apply        # to converge tags/lifecycle/versioning
+#
+# State here is LOCAL (bootstrap.tfstate) — it can't itself live in
+# the bucket it manages.
 
 terraform {
-  required_version = ">= 1.6.0"
-
+  required_version = ">= 1.10, < 2.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = "~> 5.70"
     }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+
   default_tags {
     tags = {
-      Project   = "Aegis"
-      ManagedBy = "Terraform"
-      Component = "bootstrap"
+      Project     = var.project
+      Environment = "bootstrap"
+      ManagedBy   = "terraform"
     }
   }
 }
 
-variable "aws_region" {
-  type    = string
-  default = "ap-south-1"
+resource "aws_s3_bucket" "tf_state" {
+  bucket = var.state_bucket_name
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
-variable "state_bucket_name" {
-  description = "Globally unique S3 bucket name for Terraform state. Default includes the account ID to avoid collisions."
-  type        = string
-  default     = "aegis-terraform-state-628478946931"
-}
-
-variable "lock_table_name" {
-  type    = string
-  default = "aegis-terraform-locks"
-}
-
-resource "aws_s3_bucket" "tfstate" {
-  bucket        = var.state_bucket_name
-  force_destroy = false
-}
-
-resource "aws_s3_bucket_versioning" "tfstate" {
-  bucket = aws_s3_bucket.tfstate.id
+resource "aws_s3_bucket_versioning" "tf_state" {
+  bucket = aws_s3_bucket.tf_state.id
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
-  bucket = aws_s3_bucket.tfstate.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state" {
+  bucket = aws_s3_bucket.tf_state.id
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -66,28 +61,29 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "tfstate" {
-  bucket                  = aws_s3_bucket.tfstate.id
+resource "aws_s3_bucket_public_access_block" "tf_state" {
+  bucket                  = aws_s3_bucket.tf_state.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
 
-resource "aws_dynamodb_table" "locks" {
-  name         = var.lock_table_name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-  attribute {
-    name = "LockID"
-    type = "S"
+resource "aws_s3_bucket_lifecycle_configuration" "tf_state" {
+  bucket = aws_s3_bucket.tf_state.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
-}
-
-output "state_bucket" {
-  value = aws_s3_bucket.tfstate.id
-}
-
-output "lock_table" {
-  value = aws_dynamodb_table.locks.name
 }

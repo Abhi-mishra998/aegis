@@ -1,26 +1,35 @@
-# N S3 buckets configured by a single map. Same hardening on every bucket:
-# AES256 SSE, versioning by default, public-access-block on (unless the
-# bucket is explicitly public_read = true, which only applies to the
-# statuspage bucket).
+# S3 buckets:
+#   - aws_s3_bucket.alb_logs       NEW (ALB access logs, 30-day TTL)
+#   - aws_s3_bucket.backups        NEW (Aegis app backups + RDS export targets)
+#   - aws_s3_bucket.cloudtrail     NEW (CloudTrail multi-region trail)
+#   - aws_s3_bucket.public_roots   IMPORTED (existing, prevent_destroy)
+#
+# The deploy-bundle bucket (acp-backups-prodha-628478946931) is
+# referenced by name only — it predates this stack and EC2 reads it
+# via the IAM policy in modules/iam.
 
-resource "aws_s3_bucket" "this" {
-  for_each      = var.buckets
-  bucket        = each.value.bucket_name
+# ELB account id for ap-south-1 — needed for ALB log delivery permissions.
+data "aws_elb_service_account" "main" {}
+
+# ─── ALB access logs ───────────────────────────────────────────────────
+resource "aws_s3_bucket" "alb_logs" {
+  bucket        = "${var.name_prefix}-alb-logs-${var.account_id}"
   force_destroy = false
-  tags          = merge(var.tags, { Name = each.value.bucket_name })
-}
 
-resource "aws_s3_bucket_versioning" "this" {
-  for_each = var.buckets
-  bucket   = aws_s3_bucket.this[each.key].id
-  versioning_configuration {
-    status = lookup(each.value, "versioning_enabled", true) ? "Enabled" : "Disabled"
+  tags = {
+    Name = "${var.name_prefix}-alb-logs"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
-  for_each = var.buckets
-  bucket   = aws_s3_bucket.this[each.key].id
+resource "aws_s3_bucket_versioning" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -28,72 +37,223 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "this" {
-  for_each                = var.buckets
-  bucket                  = aws_s3_bucket.this[each.key].id
-  block_public_acls       = !lookup(each.value, "public_read", false)
-  block_public_policy     = !lookup(each.value, "public_read", false)
-  ignore_public_acls      = !lookup(each.value, "public_read", false)
-  restrict_public_buckets = !lookup(each.value, "public_read", false)
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  bucket                  = aws_s3_bucket.alb_logs.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "this" {
-  for_each = { for k, v in var.buckets : k => v if lookup(v, "expiration_days", 0) > 0 }
-  bucket   = aws_s3_bucket.this[each.key].id
+resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
   rule {
-    id     = "expire-old"
+    id     = "expire-alb-logs"
     status = "Enabled"
-    filter {} # apply to whole bucket
+    filter {}
     expiration {
-      days = each.value.expiration_days
+      days = var.alb_log_retention
     }
-    noncurrent_version_expiration {
-      noncurrent_days = max(30, floor(each.value.expiration_days / 2))
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 }
 
-# ALB log delivery — for any bucket marked alb_log_delivery=true, attach
-# the well-known AWS-managed bucket policy. Per the regional ELB account
-# mapping (see https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html),
-# the principal differs per region.
-
-# ap-south-1 ELB log-delivery account id is 718504428378. Other regions
-# documented in the official AWS doc; extend this map if you deploy elsewhere.
-locals {
-  elb_log_delivery_account_id_by_region = {
-    "ap-south-1"     = "718504428378"
-    "us-east-1"      = "127311923021"
-    "us-east-2"      = "033677994240"
-    "us-west-1"      = "027434742980"
-    "us-west-2"      = "797873946194"
-    "eu-west-1"      = "156460612806"
-    "eu-central-1"   = "054676820928"
-    "ap-southeast-1" = "114774131450"
-    "ap-southeast-2" = "783225319266"
-    "ap-northeast-1" = "582318560864"
-  }
-  elb_log_account_id = lookup(local.elb_log_delivery_account_id_by_region, var.aws_region, "718504428378")
-}
-
-data "aws_iam_policy_document" "alb_log_delivery" {
-  for_each = { for k, v in var.buckets : k => v if lookup(v, "alb_log_delivery", false) }
+data "aws_iam_policy_document" "alb_logs" {
   statement {
-    sid    = "AWSLogDeliveryWrite"
-    effect = "Allow"
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${local.elb_log_account_id}:root"]
-    }
+    sid     = "AllowELBLogDelivery"
+    effect  = "Allow"
     actions = ["s3:PutObject"]
     resources = [
-      "${aws_s3_bucket.this[each.key].arn}/*",
+      "${aws_s3_bucket.alb_logs.arn}/alb/AWSLogs/${var.account_id}/*",
     ]
+    principals {
+      type        = "AWS"
+      identifiers = [data.aws_elb_service_account.main.arn]
+    }
+  }
+  statement {
+    sid     = "AllowELBLogDeliveryServicePrincipal"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.alb_logs.arn}/alb/AWSLogs/${var.account_id}/*",
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["logdelivery.elasticloadbalancing.amazonaws.com"]
+    }
   }
 }
 
-resource "aws_s3_bucket_policy" "alb_log_delivery" {
-  for_each = { for k, v in var.buckets : k => v if lookup(v, "alb_log_delivery", false) }
-  bucket   = aws_s3_bucket.this[each.key].id
-  policy   = data.aws_iam_policy_document.alb_log_delivery[each.key].json
+resource "aws_s3_bucket_policy" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+  policy = data.aws_iam_policy_document.alb_logs.json
+}
+
+# ─── Backups bucket ────────────────────────────────────────────────────
+resource "aws_s3_bucket" "backups" {
+  bucket        = "${var.name_prefix}-backups-${var.account_id}"
+  force_destroy = false
+
+  tags = {
+    Name = "${var.name_prefix}-backups"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "backups" {
+  bucket                  = aws_s3_bucket.backups.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    id     = "expire-noncurrent"
+    status = "Enabled"
+    filter {}
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+# ─── CloudTrail bucket ─────────────────────────────────────────────────
+# Bucket policy below grants CloudTrail the GetBucketAcl + PutObject
+# permissions it needs to ship management-event logs. Without the
+# policy, the CloudTrail create call fails with InsufficientS3BucketPolicy.
+resource "aws_s3_bucket" "cloudtrail" {
+  bucket        = "${var.name_prefix}-cloudtrail-${var.account_id}"
+  force_destroy = false
+
+  tags = {
+    Name = "${var.name_prefix}-cloudtrail"
+  }
+}
+
+data "aws_iam_policy_document" "cloudtrail" {
+  statement {
+    sid       = "AWSCloudTrailAclCheck"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketAcl"]
+    resources = [aws_s3_bucket.cloudtrail.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "AWSCloudTrailWrite"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.cloudtrail.arn}/AWSLogs/${var.account_id}/*"]
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+  policy = data.aws_iam_policy_document.cloudtrail.json
+}
+
+resource "aws_s3_bucket_versioning" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "cloudtrail" {
+  bucket                  = aws_s3_bucket.cloudtrail.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# ─── Public roots bucket — IMPORTED, never destroyed ───────────────────
+# Customer-visible cryptographic archive. The lifecycle block prevents
+# `terraform destroy` from touching it. To take it under management:
+#
+#   terraform import module.s3.aws_s3_bucket.public_roots <bucket-name>
+resource "aws_s3_bucket" "public_roots" {
+  bucket        = var.public_roots_bucket
+  force_destroy = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  tags = {
+    Name      = var.public_roots_bucket
+    Sensitive = "customer-visible"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "public_roots" {
+  bucket = aws_s3_bucket.public_roots.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "public_roots" {
+  bucket = aws_s3_bucket.public_roots.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Public-roots bucket is INTENTIONALLY public-readable for transparency
+# verification by any external auditor (verified via `aws s3 ls
+# --no-sign-request`). Do not add a public_access_block here — it would
+# break the customer-facing transparency model.
+# Block on the ACL side only:
+resource "aws_s3_bucket_ownership_controls" "public_roots" {
+  bucket = aws_s3_bucket.public_roots.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
 }

@@ -1,95 +1,60 @@
 variable "name_prefix" {
-  type = string
+  description = "Project-environment naming prefix."
+  type        = string
 }
 
-variable "identifier" {
-  description = "RDS instance identifier (override per environment to keep stable across recreates)"
+variable "vpc_id" {
+  description = "VPC id (informational — subnet group + SG carry the actual binding)."
+  type        = string
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet ids for the DB subnet group."
+  type        = list(string)
+}
+
+variable "rds_security_group" {
+  description = "RDS security group id."
+  type        = string
+}
+
+variable "master_password_secret" {
+  description = "Secrets Manager ARN holding the master password."
   type        = string
 }
 
 variable "engine_version" {
-  description = "Postgres version. Pin minor so minor-upgrades are deliberate."
+  description = "Postgres engine version."
   type        = string
-  default     = "15.18"
+  default     = "15.7"
 }
 
 variable "instance_class" {
-  description = "dev=db.t4g.micro (cheapest), prod=db.t3.micro (matches live state)."
+  description = "RDS instance class."
   type        = string
-  default     = "db.t4g.micro"
+  default     = "db.t3.small"
 }
 
-variable "allocated_storage_gb" {
-  type    = number
-  default = 20
-}
-
-variable "max_allocated_storage_gb" {
-  description = "RDS storage auto-scaling ceiling"
+variable "allocated_storage" {
+  description = "Initial gp3 storage GB."
   type        = number
-  default     = 100
+  default     = 50
+}
+
+variable "max_allocated_storage" {
+  description = "gp3 auto-grow ceiling."
+  type        = number
+  default     = 200
+}
+
+variable "backup_retention" {
+  description = "Days RDS retains automated backups."
+  type        = number
+  default     = 14
 }
 
 variable "multi_az" {
-  description = "Multi-AZ doubles the cost. dev=false, prod=true."
-  type        = bool
-  default     = false
-}
-
-variable "subnet_ids" {
-  description = "Private subnet IDs across at least 2 AZs"
-  type        = list(string)
-}
-
-variable "vpc_security_group_ids" {
-  type = list(string)
-}
-
-variable "master_username" {
-  type    = string
-  default = "postgres"
-}
-
-variable "master_password_secret_arn" {
-  description = "Secrets Manager ARN holding the master password (plaintext string secret)"
-  type        = string
-}
-
-variable "db_name" {
-  type    = string
-  default = "acp"
-}
-
-variable "backup_retention_period_days" {
-  type    = number
-  default = 7
-}
-
-variable "deletion_protection" {
-  description = "prod=true, dev=false so iteration is cheap"
-  type        = bool
-  default     = false
-}
-
-variable "enhanced_monitoring_interval_seconds" {
-  description = "Enhanced Monitoring interval. 0 disables (and skips the IAM role). 60 enables 1-minute granularity but requires monitoring_role_arn."
-  type        = number
-  default     = 0
-}
-
-variable "monitoring_role_arn" {
-  description = "IAM role for Enhanced Monitoring. Required if enhanced_monitoring_interval_seconds > 0."
-  type        = string
-  default     = ""
-}
-
-variable "skip_final_snapshot" {
-  description = "prod=false, dev=true"
+  description = "Enable Multi-AZ for in-region failover."
   type        = bool
   default     = true
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
 }

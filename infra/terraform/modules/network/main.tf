@@ -1,62 +1,86 @@
-# VPC + public + private subnets across the supplied AZs, with an IGW and
-# public route table. Private subnets do NOT have a NAT gateway by default
-# (the dev environment doesn't need outbound from private subnets; prod
-# may opt to add one — see modules/network/nat.tf in a future addition).
+# VPC + 2 public + 2 private subnets + IGW + ONE NAT Gateway + route tables
+# + S3 VPC gateway endpoint (free, skips NAT for S3 traffic).
+#
+# ALB requires public subnets in two AZs — we get that requirement met.
+# Compute (EC2 + RDS + Redis) lives entirely in private subnets.
 
-resource "aws_vpc" "this" {
+resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
-  enable_dns_hostnames = true
   enable_dns_support   = true
+  enable_dns_hostnames = true
 
-  tags = merge(var.tags, {
+  tags = {
     Name = "${var.name_prefix}-vpc"
-  })
+  }
 }
 
-resource "aws_internet_gateway" "this" {
-  vpc_id = aws_vpc.this.id
-  tags = merge(var.tags, {
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
     Name = "${var.name_prefix}-igw"
-  })
+  }
 }
 
-# Public subnets — one per AZ. Index-aligned with availability_zones.
 resource "aws_subnet" "public" {
-  count                   = length(var.availability_zones)
-  vpc_id                  = aws_vpc.this.id
+  count                   = length(var.public_subnet_cidrs)
+  vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_cidrs[count.index]
-  availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
+  availability_zone       = var.azs[count.index]
+  map_public_ip_on_launch = false # ALB lives here; nothing else gets a public IP
 
-  tags = merge(var.tags, {
-    Name = "${var.name_prefix}-public-${substr(var.availability_zones[count.index], -2, 2)}"
+  tags = {
+    Name = "${var.name_prefix}-public-${var.azs[count.index]}"
     Tier = "public"
-  })
+  }
 }
 
-# Private subnets — same AZ mapping; for RDS + Redis.
 resource "aws_subnet" "private" {
-  count             = length(var.availability_zones)
-  vpc_id            = aws_vpc.this.id
+  count             = length(var.private_subnet_cidrs)
+  vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
+  availability_zone = var.azs[count.index]
 
-  tags = merge(var.tags, {
-    Name = "${var.name_prefix}-private-${substr(var.availability_zones[count.index], -2, 2)}"
+  tags = {
+    Name = "${var.name_prefix}-private-${var.azs[count.index]}"
     Tier = "private"
-  })
+  }
 }
 
-# Public route table — default route through IGW; associated to public subnets.
+# Single NAT Gateway in the first public subnet. 1a outage = no outbound
+# until we manually add a second NAT or fail over. Saves ~$33/mo.
+resource "aws_eip" "nat" {
+  count  = var.single_nat_gateway ? 1 : length(var.azs)
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.name_prefix}-eip-nat-${count.index}"
+  }
+}
+
+resource "aws_nat_gateway" "main" {
+  count         = var.single_nat_gateway ? 1 : length(var.azs)
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
+
+  tags = {
+    Name = "${var.name_prefix}-nat-${count.index}"
+  }
+
+  depends_on = [aws_internet_gateway.main]
+}
+
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
+  vpc_id = aws_vpc.main.id
+
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.this.id
+    gateway_id = aws_internet_gateway.main.id
   }
-  tags = merge(var.tags, {
-    Name = "${var.name_prefix}-public-rt"
-  })
+
+  tags = {
+    Name = "${var.name_prefix}-rt-public"
+  }
 }
 
 resource "aws_route_table_association" "public" {
@@ -65,59 +89,57 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Private route tables — one per AZ when NAT is enabled (per-AZ NAT is
-# the audit-friendly default). When NAT is disabled there's a single
-# private RT shared by every private subnet — matches the pre-Sprint-9
-# behaviour exactly.
-locals {
-  private_rt_count = (var.enable_nat_gateways && var.one_nat_per_az) ? length(var.availability_zones) : 1
-  nat_count        = var.enable_nat_gateways ? (var.one_nat_per_az ? length(var.availability_zones) : 1) : 0
-}
-
+# One private route table per AZ. When single_nat_gateway = true, both
+# private RTs point at the single NAT; that means a 1a outage knocks
+# 1b's outbound too. Accept it at design-partner stage.
 resource "aws_route_table" "private" {
-  count  = local.private_rt_count
-  vpc_id = aws_vpc.this.id
-  tags = merge(var.tags, {
-    Name = local.private_rt_count == 1 ? "${var.name_prefix}-private-rt" : "${var.name_prefix}-private-rt-${substr(var.availability_zones[count.index], -2, 2)}"
-  })
+  count  = length(var.azs)
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main[var.single_nat_gateway ? 0 : count.index].id
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-rt-private-${var.azs[count.index]}"
+  }
 }
 
 resource "aws_route_table_association" "private" {
   count          = length(aws_subnet.private)
   subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = local.private_rt_count == 1 ? aws_route_table.private[0].id : aws_route_table.private[count.index].id
+  route_table_id = aws_route_table.private[count.index].id
 }
 
-# ──────────────────────────────────────────────────────────────────────
-# Sprint 9 — Opt-in NAT gateways. Disabled in dev + existing prod (no
-# changes); enabled in prod-ha. Each NAT gets an Elastic IP so an
-# operator can pin egress IPs in vendor allowlists.
-# ──────────────────────────────────────────────────────────────────────
+# S3 VPC gateway endpoint — free, and stops S3 traffic going through NAT
+# (NAT bytes are billed; gateway endpoint isn't). Critical for the bundle
+# download path used by user_data.
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = concat(aws_route_table.private[*].id, [aws_route_table.public.id])
 
-resource "aws_eip" "nat" {
-  count  = local.nat_count
-  domain = "vpc"
-
-  tags = merge(var.tags, {
-    Name = local.nat_count == 1 ? "${var.name_prefix}-nat-eip" : "${var.name_prefix}-nat-eip-${substr(var.availability_zones[count.index], -2, 2)}"
-  })
+  tags = {
+    Name = "${var.name_prefix}-vpce-s3"
+  }
 }
 
-resource "aws_nat_gateway" "this" {
-  count         = local.nat_count
-  allocation_id = aws_eip.nat[count.index].id
-  subnet_id     = aws_subnet.public[count.index].id
+# DynamoDB VPC gateway endpoint — free. Aegis itself doesn't currently use
+# DynamoDB, but the endpoint costs nothing to keep and lets future locking /
+# rate-limit / billing-counters move to DDB without re-plumbing the network.
+# The brownfield account had this endpoint manually added (vpce-0140b9f7e623f36b4);
+# we keep parity.
+resource "aws_vpc_endpoint" "dynamodb" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = concat(aws_route_table.private[*].id, [aws_route_table.public.id])
 
-  tags = merge(var.tags, {
-    Name = local.nat_count == 1 ? "${var.name_prefix}-nat" : "${var.name_prefix}-nat-${substr(var.availability_zones[count.index], -2, 2)}"
-  })
-
-  depends_on = [aws_internet_gateway.this]
+  tags = {
+    Name = "${var.name_prefix}-vpce-dynamodb"
+  }
 }
 
-resource "aws_route" "private_default" {
-  count                  = local.nat_count
-  route_table_id         = aws_route_table.private[count.index].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.this[count.index].id
-}
+data "aws_region" "current" {}

@@ -1,21 +1,29 @@
+output "instance_id" {
+  description = "RDS DBInstanceIdentifier."
+  value       = aws_db_instance.main.id
+}
+
 output "endpoint" {
-  value     = aws_db_instance.this.endpoint
-  sensitive = true
+  description = "Connection endpoint host:port."
+  value       = aws_db_instance.main.endpoint
 }
 
 output "address" {
-  value     = aws_db_instance.this.address
-  sensitive = true
+  description = "Hostname only (no port)."
+  value       = aws_db_instance.main.address
 }
 
 output "port" {
-  value = aws_db_instance.this.port
+  description = "Listening port."
+  value       = aws_db_instance.main.port
 }
 
-output "identifier" {
-  value = aws_db_instance.this.identifier
+output "resource_id" {
+  description = "RDS DbiResourceId (IAM DB auth + audit binding)."
+  value       = aws_db_instance.main.resource_id
 }
 
-output "db_name" {
-  value = aws_db_instance.this.db_name
+output "arn" {
+  description = "RDS instance ARN."
+  value       = aws_db_instance.main.arn
 }

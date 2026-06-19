@@ -1,28 +1,25 @@
 variable "name_prefix" {
-  type = string
-}
-
-variable "buckets" {
-  description = "Map of logical-name to bucket config. Each gets versioning + SSE + public-access-block."
-  type = map(object({
-    bucket_name        = string
-    versioning_enabled = optional(bool, true)
-    expiration_days    = optional(number, 0) # 0 disables lifecycle
-    public_read        = optional(bool, false)
-    # If true, attaches an AWS-managed bucket policy granting the regional
-    # ELB log delivery service permission to write access logs. Required
-    # for any bucket used as access_logs_bucket on an ALB.
-    alb_log_delivery = optional(bool, false)
-  }))
-}
-
-variable "aws_region" {
-  description = "Region the buckets are created in. Used to look up the ELB log delivery service account id."
+  description = "Project-environment naming prefix."
   type        = string
-  default     = "ap-south-1"
 }
 
-variable "tags" {
-  type    = map(string)
-  default = {}
+variable "account_id" {
+  description = "AWS account id — used to make bucket names globally unique."
+  type        = string
+}
+
+variable "alb_log_retention" {
+  description = "Days ALB logs are retained before lifecycle expiry."
+  type        = number
+  default     = 30
+}
+
+variable "public_roots_bucket" {
+  description = "Existing customer-visible transparency bucket name."
+  type        = string
+}
+
+variable "bundle_bucket" {
+  description = "Existing bundle bucket name (referenced, not created here)."
+  type        = string
 }

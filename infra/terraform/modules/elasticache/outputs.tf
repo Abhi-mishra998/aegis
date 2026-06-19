@@ -1,13 +1,19 @@
+output "replication_group_id" {
+  description = "Replication group id."
+  value       = aws_elasticache_replication_group.main.replication_group_id
+}
+
 output "primary_endpoint" {
-  description = "Redis primary endpoint. For single-node, this is cache_nodes[0].address."
-  value       = aws_elasticache_cluster.this.cache_nodes[0].address
-  sensitive   = true
+  description = "Primary endpoint host:port (read+write)."
+  value       = aws_elasticache_replication_group.main.primary_endpoint_address
+}
+
+output "reader_endpoint" {
+  description = "Reader endpoint (read-only across replicas)."
+  value       = aws_elasticache_replication_group.main.reader_endpoint_address
 }
 
 output "port" {
-  value = aws_elasticache_cluster.this.cache_nodes[0].port
-}
-
-output "cluster_id" {
-  value = aws_elasticache_cluster.this.cluster_id
+  description = "Redis port."
+  value       = aws_elasticache_replication_group.main.port
 }

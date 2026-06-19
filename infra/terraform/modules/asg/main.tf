@@ -1,54 +1,112 @@
-# Sprint 9 — Application autoscaling group.
+# Launch Template + ASG + target-tracking scaling policy.
 #
-# A launch template + ASG + target-group attachment + a couple of
-# CloudWatch alarms. We DON'T own the ALB itself — that's the alb module
-# — but we do own the target group attachment so a new instance lands
-# in service when the ASG scales out.
+# user_data:
+#   1. Read /aegis/prod/current_bundle_sha from SSM Parameter.
+#   2. Pull bundle-<sha>.tar.gz from S3 bundle bucket.
+#   3. Extract to /opt/aegis.
+#   4. Run docker compose up -d.
+#
+# Instance refresh policy: MinHealthyPercentage = 100 — ASG cannot
+# terminate a healthy old instance until the new one passes ALB health
+# checks. This is the permanent fix for the 2026-06-18 outage where
+# current.tar.gz overwrites cascaded ASG into killing the last healthy
+# instance.
 
-resource "aws_launch_template" "this" {
+# Latest Amazon Linux 2023 arm64 AMI.
+data "aws_ami" "al2023_arm64" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-arm64"]
+  }
+  filter {
+    name   = "architecture"
+    values = ["arm64"]
+  }
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+locals {
+  user_data = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+
+    # Install Docker + Docker Compose plugin if missing.
+    dnf install -y docker
+    systemctl enable --now docker
+
+    # The compose plugin ships in AL2023 by default; verify.
+    docker compose version || dnf install -y docker-compose-plugin
+
+    BUNDLE_SHA=$(aws ssm get-parameter \
+      --region ${var.aws_region} \
+      --name ${var.ssm_bundle_parameter} \
+      --query 'Parameter.Value' --output text)
+
+    aws s3 cp \
+      s3://${var.bundle_bucket}/releases/bundle-$${BUNDLE_SHA}.tar.gz \
+      /tmp/bundle.tar.gz
+    mkdir -p /opt/aegis
+    tar -xzf /tmp/bundle.tar.gz -C /opt/aegis
+    cd /opt/aegis
+
+    # docker-compose.aws.yml carries the prod overlay (RDS endpoint,
+    # Redis endpoint, secret ARNs). Ship in the bundle, NOT baked into
+    # the AMI — that way overlays update with the bundle.
+    docker compose -f infra/docker-compose.yml -f infra/docker-compose.aws.yml up -d
+  EOT
+}
+
+resource "aws_launch_template" "main" {
   name_prefix   = "${var.name_prefix}-lt-"
-  image_id      = var.ami_id
+  image_id      = data.aws_ami.al2023_arm64.id
   instance_type = var.instance_type
-  key_name      = var.key_name
-
-  vpc_security_group_ids = var.vpc_security_group_ids
 
   iam_instance_profile {
-    name = var.iam_instance_profile_name
+    name = var.instance_profile
   }
 
-  block_device_mappings {
-    device_name = "/dev/xvda"
-    ebs {
-      volume_size           = var.root_volume_size_gb
-      volume_type           = "gp3"
-      delete_on_termination = true
-      encrypted             = true
-      kms_key_id            = var.root_volume_kms_key_id
-    }
-  }
+  vpc_security_group_ids = [var.ec2_security_group]
 
   metadata_options {
-    http_tokens   = "required" # IMDSv2 — locks down the metadata service
-    http_endpoint = "enabled"
-    # hop_limit=2 lets containers (1 hop via the docker bridge) reach
-    # IMDSv2. hop_limit=1 broke boto3 → SSM → instance-role credential
-    # lookup, surfacing as audit /receipts/key NoCredentialsError 500.
+    http_tokens                 = "required" # IMDSv2 only
     http_put_response_hop_limit = 2
-    instance_metadata_tags      = "enabled"
+    http_endpoint               = "enabled"
   }
 
   monitoring {
     enabled = true
   }
 
-  user_data = var.user_data != "" ? base64encode(var.user_data) : null
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 30
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  user_data = base64encode(local.user_data)
 
   tag_specifications {
     resource_type = "instance"
-    tags = merge(var.tags, {
-      Name = "${var.name_prefix}-asg-instance"
-    })
+    tags = {
+      Name = "${var.name_prefix}-ec2"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = {
+      Name = "${var.name_prefix}-ec2-root"
+    }
   }
 
   lifecycle {
@@ -56,84 +114,58 @@ resource "aws_launch_template" "this" {
   }
 }
 
-resource "aws_autoscaling_group" "this" {
-  name_prefix         = "${var.name_prefix}-asg-"
-  vpc_zone_identifier = var.subnet_ids
-  min_size            = var.min_size
-  desired_capacity    = var.desired_capacity
-  max_size            = var.max_size
+resource "aws_autoscaling_group" "main" {
+  name                = "${var.name_prefix}-asg"
+  vpc_zone_identifier = var.private_subnet_ids
+  min_size            = var.asg_min
+  max_size            = var.asg_max
+  desired_capacity    = var.asg_desired
 
   health_check_type         = "ELB"
-  health_check_grace_period = var.health_check_grace_period_seconds
-  default_cooldown          = 60
+  health_check_grace_period = 300
 
-  target_group_arns = [var.alb_target_group_arn]
+  target_group_arns = [var.target_group_arn]
 
   launch_template {
-    id      = aws_launch_template.this.id
-    version = aws_launch_template.this.latest_version
+    id      = aws_launch_template.main.id
+    version = "$Latest"
   }
 
-  # Instance refresh — Sprint 9 contract: an LT change triggers a
-  # rolling replacement honoring min_healthy=90% so capacity never
-  # dips below N+1.
   instance_refresh {
     strategy = "Rolling"
     preferences {
-      min_healthy_percentage = 90
-      instance_warmup        = var.health_check_grace_period_seconds
+      min_healthy_percentage = 100
+      instance_warmup        = 300
     }
+    # `launch_template` is always an implied trigger — no need to list it.
   }
 
-  dynamic "tag" {
-    for_each = merge(var.tags, {
-      Name = "${var.name_prefix}-asg"
-    })
-    content {
-      key                 = tag.key
-      value               = tag.value
-      propagate_at_launch = true
-    }
+  tag {
+    key                 = "Name"
+    value               = "${var.name_prefix}-ec2"
+    propagate_at_launch = true
   }
 
+  # Bundle-SHA changes are pushed via SSM, not by terraform — so don't
+  # let desired_capacity diff during routine reads.
   lifecycle {
+    ignore_changes        = [desired_capacity]
     create_before_destroy = true
-    ignore_changes        = [desired_capacity] # don't fight the scaling policy
   }
 }
 
-# Target-tracking scaling — keeps the average CPU around 50%. Plenty of
-# headroom for a burst while not wasting money on idle instances.
-resource "aws_autoscaling_policy" "cpu" {
-  name                   = "${var.name_prefix}-cpu-target"
-  autoscaling_group_name = aws_autoscaling_group.this.name
+# Target-tracking scaling — 60% CPU avg over the ASG. Headroom big
+# enough that a 100rps spike (4x sustained) doesn't trigger; tight
+# enough that a sustained climb does.
+resource "aws_autoscaling_policy" "cpu_target" {
+  name                   = "${var.name_prefix}-asg-cpu-target"
+  autoscaling_group_name = aws_autoscaling_group.main.name
   policy_type            = "TargetTrackingScaling"
 
   target_tracking_configuration {
     predefined_metric_specification {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
-    target_value     = 50.0
-    disable_scale_in = false
+    target_value = 60.0
   }
-}
-
-# CloudWatch — page on sustained unhealthy host count > 0.
-resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts" {
-  alarm_name          = "${var.name_prefix}-unhealthy-hosts"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "GroupInServiceInstances"
-  namespace           = "AWS/AutoScaling"
-  period              = 60
-  statistic           = "Average"
-  threshold           = max(0, var.min_size - 1)
-
-  dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.this.name
-  }
-
-  alarm_description  = "ASG has fewer than min_size healthy instances for 2 minutes."
-  treat_missing_data = "notBreaching"
-  tags               = var.tags
 }
