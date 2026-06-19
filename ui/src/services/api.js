@@ -1136,6 +1136,11 @@ export const webhookService = {
 export const siemService = {
   getConfig:    ()     => request('/siem/config'),
   saveConfig:   (data) => request('/siem/config', { method: 'POST', body: JSON.stringify(data) }),
+  // Sprint S3 — unified per-vendor test endpoint
+  vendors:      ()     => request('/siem/vendors'),
+  test:         (data) => request('/siem/test', { method: 'POST', body: JSON.stringify(data) }),
+  // Legacy split-by-vendor endpoints — retained for callers that haven't
+  // migrated to the unified .test() yet.
   testSplunk:   (data) => request('/siem/test/splunk', { method: 'POST', body: JSON.stringify(data || {}) }),
   testDatadog:  (data) => request('/siem/test/datadog', { method: 'POST', body: JSON.stringify(data || {}) }),
   push:         (data) => request('/siem/push', { method: 'POST', body: JSON.stringify(data || { limit: 100 }) }),
