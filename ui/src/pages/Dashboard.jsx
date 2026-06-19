@@ -40,6 +40,8 @@ import DataFreshness from '../components/Common/DataFreshness';
 import { IntegrationCard } from '../components/IntegrationCard';
 // Sprint S7 — vendor icons for the IntegrationsRow tiles.
 import { Slack, Database, Bell, Webhook, KeyRound, Activity as ActivityIcon } from 'lucide-react';
+// Sprint S8 — per-industry Dashboard layouts.
+import { getLayout } from '../data/dashboard_layouts';
 
 const PROVIDER_META = {
   anthropic:   { label: 'Anthropic',   icon: Brain    },
@@ -358,6 +360,48 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Sprint S8 (2026-06-19) — Per-industry guidance row.
+          Reads tenant.system_values.dashboard_preset (set by the
+          OnboardingWizard's industry-preset apply, Sprint S1) and
+          renders a "What to watch in <industry>" pill. The KPI grid
+          stays the same shape — re-ordering tiles per industry is a
+          design-partner-gated follow-up. */}
+      {(() => {
+        const presetId = workspace?.system_values?.dashboard_preset
+                         || workspace?.dashboard_preset;
+        const layout = getLayout(presetId);
+        if (!layout) return null;
+        const Icon = layout.icon;
+        return (
+          <div
+            className="rounded-xl border px-4 py-3 flex items-start gap-3"
+            style={{
+              borderColor: layout.accent_color + '44',
+              backgroundColor: layout.accent_color + '0A',
+            }}
+          >
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+              style={{ backgroundColor: layout.accent_color + '22', color: layout.accent_color }}
+            >
+              <Icon size={16} aria-hidden="true" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-white font-medium">
+                Configured for <span style={{ color: layout.accent_color }}>{layout.label}</span>
+              </div>
+              <div className="text-[11px] text-neutral-400 mt-0.5">{layout.headline}</div>
+            </div>
+            <Link
+              to="/settings/workspace"
+              className="text-[11px] text-neutral-500 hover:text-white whitespace-nowrap"
+            >
+              Change preset →
+            </Link>
+          </div>
+        );
+      })()}
 
       {/* Sprint S7 (2026-06-19) — IntegrationsRow.
           Six tiles for the connect-it-yourself integrations every
