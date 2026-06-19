@@ -1,0 +1,72 @@
+{
+  "title": "SOC 2 Controls Coverage (Aegis)",
+  "uid": "aegis-soc2-controls",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-30d", "to": "now" },
+  "tags": ["aegis", "soc2", "compliance", "sprint-s6"],
+  "description": "Per-control SOC 2 coverage view. Shows the number of audit-log rows mapped to each Trust Services Criterion over the selected window, surfaced from the SOC2_CONTROLS map in services/audit/compliance_export.py. A control with zero rows for the full period is a coverage gap the founder must close before generating the evidence bundle.",
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "label": "Tenant",
+        "datasource": "Prometheus",
+        "query": "label_values(acp_audit_logs_written_total, tenant)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "CC6.1 — Logical access controls (rows / day)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+      "description": "Authentication events, key rotations, RBAC mutations. Sourced from acp_audit_logs_written_total filtered to the CC6.1 action set.",
+      "targets": [
+        { "expr": "sum(rate(acp_audit_logs_written_total{tenant=\"$tenant\",action=~\"user_login|user_logout|api_key_revoked|role_changed|tenant_kill_switch|policy_decision\"}[1d])) * 86400", "legendFormat": "rows/day" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "CC7.1 — Threat detection (deny + quarantine)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(acp_audit_logs_written_total{tenant=\"$tenant\",decision=~\"deny|quarantine\"}[1d])) * 86400", "legendFormat": "deny+quarantine / day" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "CC7.2 — System monitoring decisions",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 },
+      "targets": [
+        { "expr": "sum(rate(acp_audit_logs_written_total{tenant=\"$tenant\",action=~\"policy_decision|behavior_firewall_decision|kill_switch_engaged|approval_resolved\"}[1d])) * 86400", "legendFormat": "decisions/day" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "CC8.1 — Change management",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 },
+      "targets": [
+        { "expr": "sum(rate(acp_audit_logs_written_total{tenant=\"$tenant\",action=~\"policy_uploaded|policy_version_bumped|tenant_kill_switch|ssm_param_updated\"}[1d])) * 86400", "legendFormat": "changes/day" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "CC6.7 — Data-loss prevention (PII + exfil)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "sum(rate(acp_audit_logs_written_total{tenant=\"$tenant\",reason=~\".*(pii|exfil).*\"}[1d])) * 86400", "legendFormat": "DLP hits/day" }
+      ]
+    }
+  ]
+}

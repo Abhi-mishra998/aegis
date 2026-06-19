@@ -53,6 +53,8 @@ export default function Compliance() {
   const [packEvidence, setPackEvidence] = useState(null)
   const [packsLoading, setPacksLoading] = useState(true)
   const [boardLoading, setBoardLoading] = useState(false)
+  // Sprint S6 — one-click SOC 2 evidence ZIP loader.
+  const [bundleLoading, setBundleLoading] = useState(false)
 
   const loadEvidence = async (fw) => {
     setLoading(prev => ({ ...prev, [fw]: true }))
@@ -107,6 +109,40 @@ export default function Compliance() {
     }
   }
 
+  // Sprint S6 — Generate + download the SOC 2 evidence ZIP. Fetches via
+  // /compliance/zip/soc2 which streams the bytes; auto-saves as a
+  // dated filename. The ZIP contains per-control CSVs + chain proofs
+  // + verify.sh + README.md so the auditor unpacks it and runs
+  // `bash verify.sh` to PASS the bundle without contacting Aegis.
+  const handleEvidenceBundle = async () => {
+    setBundleLoading(true)
+    setError('')
+    try {
+      const params = new URLSearchParams({
+        period_start: startDate + 'T00:00:00Z',
+        period_end:   endDate   + 'T23:59:59Z',
+      })
+      const resp = await fetch(`/compliance/zip/soc2?${params}`, {
+        credentials: 'include',
+      })
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '')
+        throw new Error(txt || `Server returned ${resp.status}`)
+      }
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `aegis-soc2-evidence-${startDate}-to-${endDate}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err.message || 'Evidence bundle generation failed.')
+    } finally {
+      setBundleLoading(false)
+    }
+  }
+
   const handleBoardReport = async () => {
     setBoardLoading(true)
     setError('')
@@ -139,16 +175,29 @@ export default function Compliance() {
             <p className="text-xs text-neutral-500 mt-0.5">Generate evidence reports for EU AI Act, NIST AI RMF, and SOC 2</p>
           </div>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={handleBoardReport}
-          loading={boardLoading}
-          aria-label="Generate board report PDF"
-        >
-          <BookOpen size={12} aria-hidden="true" />
-          Generate Board Report
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Sprint S6 — One-click SOC 2 evidence ZIP. */}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleEvidenceBundle}
+            loading={bundleLoading}
+            aria-label="Generate SOC 2 evidence bundle ZIP"
+          >
+            <Download size={12} aria-hidden="true" />
+            SOC 2 Evidence Bundle
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleBoardReport}
+            loading={boardLoading}
+            aria-label="Generate board report PDF"
+          >
+            <BookOpen size={12} aria-hidden="true" />
+            Generate Board Report
+          </Button>
+        </div>
       </div>
 
       {/* Date range */}
