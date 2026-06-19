@@ -179,6 +179,83 @@ async def compliance_export_get(bundle_type: str, request: Request) -> Response:
     )
 
 
+# Sprint S6 (2026-06-19) — One-click SOC 2 evidence ZIP. Wraps the
+# existing /compliance/export/soc2 JSON output + the daily Merkle
+# roots into the auditor-friendly ZIP shape documented in
+# services/audit/compliance_export.py. Returns the ZIP bytes directly
+# as application/zip with Content-Disposition: attachment.
+@router.get("/compliance/zip/{framework}", tags=["compliance"])
+async def compliance_zip(framework: str, request: Request) -> Response:
+    from datetime import UTC, datetime, timedelta
+
+    from services.audit.compliance_export import (
+        build_soc2_zip,
+        soc2_bundle_filename,
+    )
+
+    if framework.lower() != "soc2":
+        return Response(
+            content=f"framework '{framework}' is not yet supported by the ZIP exporter. "
+                    f"Try /compliance/export/{framework} for the JSON view.",
+            status_code=400,
+            media_type="text/plain",
+        )
+
+    qp = dict(request.query_params)
+    period_end = datetime.fromisoformat(qp.get("period_end", datetime.now(UTC).isoformat()))
+    period_start = datetime.fromisoformat(
+        qp.get("period_start", (period_end - timedelta(days=90)).isoformat()),
+    )
+
+    # 1. Fetch the JSON audit rows for the period.
+    upstream = await request.app.state.client.get(
+        f"{_base()}/compliance/export/soc2",
+        params={
+            "period_start": period_start.isoformat(),
+            "period_end":   period_end.isoformat(),
+        },
+        headers=internal_headers(request),
+    )
+    if upstream.status_code != 200:
+        return Response(
+            content=f"audit service returned {upstream.status_code}: {upstream.text[:300]}",
+            status_code=502,
+            media_type="text/plain",
+        )
+    bundle = upstream.json()
+    audit_rows = bundle.get("rows") or bundle.get("data") or []
+
+    # 2. Fetch the per-day chain roots.
+    chain_upstream = await request.app.state.client.get(
+        f"{_base()}/transparency/roots",
+        params={"after": period_start.date().isoformat(), "before": period_end.date().isoformat()},
+        headers=internal_headers(request),
+    )
+    chain_proofs: dict[str, dict] = {}
+    if chain_upstream.status_code == 200:
+        for root in (chain_upstream.json().get("roots") or []):
+            day = root.get("root_date") or root.get("day")
+            if day:
+                chain_proofs[day] = root
+
+    # 3. Assemble the ZIP.
+    zip_bytes = build_soc2_zip(
+        audit_rows=audit_rows,
+        chain_proofs=chain_proofs,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    filename = soc2_bundle_filename(period_start, period_end)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
 @router.post("/compliance/export", tags=["compliance"])
 async def compliance_export(request: Request) -> Response:
     """Proxy → Audit service compliance PDF/JSON export.
