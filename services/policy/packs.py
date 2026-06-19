@@ -278,7 +278,47 @@ _DEVOPS = PolicyPack(
 )
 
 
-_PACKS: tuple[PolicyPack, ...] = (_SOC2, _PCI, _HIPAA, _FINANCE, _DEVOPS)
+_AI_STARTUP_GENERIC = PolicyPack(
+    id="AI_STARTUP_GENERIC",
+    label="AI Startup (generic safe defaults)",
+    blurb=(
+        "Minimal safety net for AI-native startups with no specific "
+        "regulatory tier. Prompt-injection denies + budget caps + path "
+        "traversal denies. Escalates anything that looks like exfil to "
+        "the OWNER."
+    ),
+    framework_controls=(
+        "AI_STARTUP:promp-injection-baseline",
+        "AI_STARTUP:budget-cap-baseline",
+    ),
+    default_capabilities=("database",),
+    extra_escalation_patterns=(
+        EscalationPattern(
+            id="ai_startup_data_exfil",
+            label="AI Startup — exfil-shaped prompt (OWNER approval)",
+            approver_role="OWNER",
+            pattern=re.compile(
+                r"\b(?:upload|send|email|post|sync|export|dump)\s+"
+                r"(?:\S+\s+){0,4}?"
+                r"(?:customer|user|account|payment|credit)\s+"
+                r"(?:data|list|table|database|record)",
+                re.IGNORECASE,
+            ),
+        ),
+        EscalationPattern(
+            id="ai_startup_credential_read",
+            label="AI Startup — credential file read (OWNER approval)",
+            approver_role="OWNER",
+            pattern=re.compile(
+                r"(?:\.env(?:\.\w+)?|credentials\.json|id_rsa|api[_-]?keys?\.txt)\b",
+                re.IGNORECASE,
+            ),
+        ),
+    ),
+)
+
+
+_PACKS: tuple[PolicyPack, ...] = (_SOC2, _PCI, _HIPAA, _FINANCE, _DEVOPS, _AI_STARTUP_GENERIC)
 _BY_ID: dict[str, PolicyPack] = {p.id: p for p in _PACKS}
 
 KNOWN_PACK_IDS: tuple[str, ...] = tuple(p.id for p in _PACKS)
