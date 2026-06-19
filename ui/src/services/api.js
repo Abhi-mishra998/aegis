@@ -511,6 +511,18 @@ export const workspaceService = {
       method: "PATCH",
       body: JSON.stringify(values || {}),
     }),
+  // Sprint S1 (2026-06-19) — OWNER-only. Apply an industry preset from
+  // the OnboardingWizard Step 0. Enables matching policy packs +
+  // stashes dashboard_preset on tenant.system_values in one call.
+  applyPreset: (preset) =>
+    request("/workspace/apply-preset", {
+      method: "POST",
+      body: JSON.stringify({
+        industry_id: preset?.id || "custom",
+        policy_packs: preset?.policy_packs || [],
+        dashboard_preset: preset?.dashboard_preset || null,
+      }),
+    }),
   // Sprint 21 — Slack approvals config. The GET surface returns
   // {webhook_url, configured} (the signing secret is stripped by the
   // gateway). The PUT body is {webhook_url, rotate_secret?}.
