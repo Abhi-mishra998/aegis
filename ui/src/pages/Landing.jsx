@@ -2,7 +2,7 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import {
   Shield, ShieldCheck, Eye, Activity, MessagesSquare, FileBadge2,
-  CheckCircle2, Lock, ArrowRight, Bot, Crosshair, Workflow,
+  CheckCircle2, Lock, ArrowRight, Bot, Crosshair, Workflow, Zap,
 } from 'lucide-react'
 
 // Sprint 11 — Marketing landing.
@@ -97,6 +97,16 @@ function Hero() {
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white text-black text-sm font-semibold hover:bg-neutral-100 transition-colors"
         >
           Start free — 14-day shadow mode <ArrowRight size={14} />
+        </Link>
+        {/* Sprint S4 (2026-06-19) — Live demo CTA. Routes to the existing
+            /demo/groq-agent flow via the AgentPlayground page so a prospect
+            can type "read /etc/passwd" or "wire $25M to ACME" and watch
+            Aegis block it in real time, no signup. */}
+        <Link
+          to="/playground?source=landing"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.20] bg-white/[0.04] text-sm font-medium text-white hover:bg-white/[0.08] hover:border-white/30 transition-colors"
+        >
+          <Zap size={14} aria-hidden="true" /> Try the live demo — no signup
         </Link>
         <Link
           to="/login"
