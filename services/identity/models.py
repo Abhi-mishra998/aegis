@@ -217,6 +217,21 @@ class Tenant(Base, OrgMixin, IdMixin, TimestampMixin):
         String(128), nullable=True,
     )
 
+    # Sprint S2 (2026-06-19) — Slack OAuth columns. Populated by the
+    # /sso/slack/initiate + /sso/slack/callback flow when the operator
+    # clicks "Connect Slack" instead of pasting a webhook by hand. The
+    # callback ALSO sets slack_webhook_url above so the legacy approval
+    # path keeps firing — these columns are additive.
+    slack_bot_token: Mapped[str | None] = mapped_column(
+        String(256), nullable=True,
+    )
+    slack_workspace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+    )
+    slack_channel_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+    )
+
     # Sprint 23 — Compliance Policy Packs (SOC2 / PCI / HIPAA / Finance
     # / DevOps). List of pack IDs the tenant has enabled — the gateway
     # consults this on every /v1/messages + /v1/chat/completions to

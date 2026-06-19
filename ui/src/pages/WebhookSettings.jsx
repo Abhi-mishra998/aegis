@@ -3,9 +3,10 @@ import {
   Webhook, Slack, Bell, Globe,
   Save, Play, Loader2, AlertCircle,
   AlertTriangle, RefreshCw,
+  Link2, Unlink, Check, ArrowRight,
 } from 'lucide-react'
 import { z } from 'zod'
-import { webhookService } from '../services/api'
+import { webhookService, slackOAuthService } from '../services/api'
 import { SecretInput, StatusBadge, IntegrationCard } from '../components/Common/ConnectorPrimitives'
 import { useRole } from '../hooks/useRole'
 import useUnsavedChanges from '../hooks/useUnsavedChanges'
@@ -47,6 +48,29 @@ export default function WebhookSettings() {
   const [results, setResults] = useState({})
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState(false)
+
+  // Sprint S2 — Slack OAuth status
+  const [slackStatus, setSlackStatus] = useState({ connected: false, workspace_id: '', channel_id: '' })
+  const [slackLoading, setSlackLoading] = useState(true)
+
+  const loadSlackStatus = useCallback(() => {
+    setSlackLoading(true)
+    slackOAuthService.status()
+      .then((d) => setSlackStatus(d?.data || d || { connected: false }))
+      .catch(() => setSlackStatus({ connected: false }))
+      .finally(() => setSlackLoading(false))
+  }, [])
+  useEffect(() => { loadSlackStatus() }, [loadSlackStatus])
+
+  const connectSlack = useCallback(() => {
+    // Full-page redirect — Slack's OAuth screen does not embed in iframes.
+    window.location.assign('/sso/slack/initiate?return_to=/settings/webhooks')
+  }, [])
+
+  const disconnectSlack = useCallback(async () => {
+    await slackOAuthService.disconnect()
+    loadSlackStatus()
+  }, [loadSlackStatus])
 
   const loadConfig = useCallback(() => {
     setLoading(true)
@@ -175,41 +199,18 @@ export default function WebhookSettings() {
         </div>
       )}
 
-      <IntegrationCard icon={Slack} title="Slack" description="Post alerts to a Slack channel via incoming webhook">
-        <div className="space-y-3">
-          <div>
-            <SecretInput
-              id="slack_url"
-              label="Incoming Webhook URL"
-              placeholder="https://hooks.slack.com/services/T…/B…/…"
-              value={cfg.slack_url}
-              onChange={v => {
-                setCfg(c => ({ ...c, slack_url: v }))
-                markTouched('slack_url')
-              }}
-            />
-            {showError('slack_url') && (
-              <p className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
-                <AlertCircle size={11} /> {showError('slack_url')}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => test('slack')}
-              disabled={!cfg.slack_url || testing.slack}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20 disabled:opacity-40"
-            >
-              {testing.slack ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-              Send test message
-            </button>
-            <StatusBadge result={results.slack} />
-          </div>
-          <p className="text-xs text-neutral-600">
-            The test fires a real Slack block-kit message to the configured URL.
-            Create an incoming webhook at <span className="text-neutral-400">api.slack.com/apps</span>.
-          </p>
-        </div>
+      <IntegrationCard icon={Slack} title="Slack" description="One-click connect. Approvals land in your chosen channel.">
+        <SlackConnectSection
+          slackStatus={slackStatus}
+          slackLoading={slackLoading}
+          onRefreshStatus={loadSlackStatus}
+          onConnect={connectSlack}
+          onDisconnect={disconnectSlack}
+          onTestMessage={() => test('slack')}
+          testing={testing.slack}
+          testResult={results.slack}
+          showError={showError}
+        />
       </IntegrationCard>
 
       <IntegrationCard icon={Bell} title="PagerDuty" description="Trigger PagerDuty incidents via Events API v2">
@@ -297,6 +298,95 @@ export default function WebhookSettings() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+
+// Sprint S2 — Slack OAuth connect block. Renders either the Connect
+// button + setup hints (disconnected state) or the "Connected to
+// {workspace}" badge with Disconnect + Send Test Message actions.
+function SlackConnectSection({
+  slackStatus, slackLoading, onRefreshStatus,
+  onConnect, onDisconnect, onTestMessage,
+  testing, testResult, showError,
+}) {
+  if (slackLoading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-neutral-500">
+        <Loader2 size={12} className="animate-spin" /> Checking Slack connection…
+      </div>
+    )
+  }
+
+  if (!slackStatus.connected) {
+    return (
+      <div className="space-y-3">
+        <button
+          onClick={onConnect}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#4A154B] text-white text-sm font-medium hover:bg-[#611f63] transition-colors"
+        >
+          <Slack size={16} /> Connect Slack
+          <ArrowRight size={14} />
+        </button>
+        <p className="text-xs text-neutral-500 leading-relaxed">
+          One click → Slack consent screen → pick a channel → done. No api.slack.com
+          tab, no openssl rand, no paste-fields.
+        </p>
+        {showError('slack_url') && (
+          <p className="flex items-center gap-1 text-[11px] text-red-400">
+            <AlertCircle size={11} /> {showError('slack_url')}
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-sm text-emerald-400">
+        <Check size={16} className="bg-emerald-500/20 rounded-full p-0.5" />
+        Connected
+        {slackStatus.workspace_id && (
+          <span className="text-xs text-neutral-500">
+            workspace <code className="text-neutral-400">{slackStatus.workspace_id}</code>
+          </span>
+        )}
+        {slackStatus.channel_id && (
+          <span className="text-xs text-neutral-500">
+            channel <code className="text-neutral-400">{slackStatus.channel_id}</code>
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onTestMessage}
+          disabled={testing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20 disabled:opacity-40"
+        >
+          {testing ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+          Send test message
+        </button>
+        <StatusBadge result={testResult} />
+        <button
+          onClick={onDisconnect}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 text-xs text-red-300 hover:bg-red-500/10"
+        >
+          <Unlink size={11} /> Disconnect
+        </button>
+        <button
+          onClick={onRefreshStatus}
+          className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-neutral-500 hover:text-neutral-300"
+          aria-label="Refresh Slack status"
+        >
+          <RefreshCw size={11} />
+        </button>
+      </div>
+      <p className="text-xs text-neutral-600">
+        Approval cards land in this channel the moment an agent triggers an
+        escalation. To swap channels, disconnect and reconnect — Slack will
+        offer the channel picker again.
+      </p>
     </div>
   )
 }

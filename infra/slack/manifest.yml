@@ -1,0 +1,49 @@
+# Aegis Slack app manifest — paste into https://api.slack.com/apps/new
+# and pick "From an app manifest". The redirect URI must match the
+# PUBLIC_BASE_URL env on the Aegis gateway.
+#
+# Required env vars on the gateway:
+#   SLACK_OAUTH_CLIENT_ID      from the Basic Information page
+#   SLACK_OAUTH_CLIENT_SECRET  from the Basic Information page (Signing Secret is NOT this)
+#   PUBLIC_BASE_URL            e.g. https://aegisagent.in
+#
+# Distribution: enable "Public Distribution" once SLACK_OAUTH_CLIENT_ID
+# is wired in production so customers can install the app from their
+# workspace without ByteHubble needing per-tenant manifests.
+
+display_information:
+  name: Aegis
+  description: Runtime governance for AI agents — approval cards land in this channel.
+  background_color: "#0b0d12"
+  long_description: |
+    Aegis is a runtime security and governance platform for AI agents.
+    Connecting Aegis to your Slack workspace lets your approvers
+    receive an interactive block-kit card the moment an AI agent
+    requests an escalated action (a wire-transfer over $100k, a
+    bulk-PII export, a kubectl delete on production, etc).
+    Buttons on the card carry an HMAC-signed callback so approvers
+    can approve or reject without leaving Slack.
+
+features:
+  bot_user:
+    display_name: Aegis
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: false
+    messages_tab_read_only_enabled: true
+
+oauth_config:
+  redirect_urls:
+    - https://aegisagent.in/sso/slack/callback
+    - http://localhost:8000/sso/slack/callback   # local dev
+  scopes:
+    bot:
+      - incoming-webhook   # post the approval card to the picked channel
+      - chat:write         # post follow-up "approved by @cfo" messages
+      - channels:read      # render channel name in the Webhook settings page
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
