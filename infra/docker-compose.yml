@@ -509,6 +509,18 @@ services:
       # behavior in the UI service grid even though the container was healthy.
       - BEHAVIOR_SERVICE_URL=http://behavior:8000
       - REDIS_CLUSTER_ENABLED=false
+      # Sprint S2 — Slack OAuth Connect button needs both client id +
+      # secret. Pulled from .env via env_file above; redirect URI MUST
+      # match the manifest at infra/slack/manifest.yml and the
+      # PUBLIC_BASE_URL below.
+      - SLACK_OAUTH_CLIENT_ID=${SLACK_OAUTH_CLIENT_ID:-}
+      - SLACK_OAUTH_CLIENT_SECRET=${SLACK_OAUTH_CLIENT_SECRET:-}
+      # Sprint S2/S4 — public-facing + internal-self-call gateway URLs.
+      # PUBLIC_BASE_URL is what Slack redirects browsers back to.
+      # INTERNAL_GATEWAY_URL is the in-network DNS name the gateway uses
+      # to call its own /execute pipeline (Sprint S4 demo spawn-workspace).
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
+      - INTERNAL_GATEWAY_URL=${INTERNAL_GATEWAY_URL:-http://gateway:8000}
       # M3 closure 2026-06-18: hide /openapi.json + /docs + /redoc in prod
       # so anonymous attackers can't enumerate 246 paths.
       - ENVIRONMENT=production
