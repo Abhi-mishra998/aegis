@@ -167,6 +167,72 @@ async def workspace_policy_packs_put(request: Request) -> Any:
 
 
 @router.post(
+    "/workspace/apply-preset",
+    dependencies=[Depends(verify_role(Role.OWNER))],
+)
+async def workspace_apply_preset(request: Request) -> Any:
+    """Sprint S1 (2026-06-19) — Industry preset applier for OnboardingWizard
+    Step 0. OWNER-only. One call does:
+
+      1. PUT /workspace/policy-packs       (enable matching packs)
+      2. PATCH /workspace/system-values    (store dashboard_preset + industry_id)
+
+    Body: ``{"industry_id": "fintech|healthcare|devops|ai_startup|custom",
+              "policy_packs": ["SOC2","FINANCE","PCI"],
+              "dashboard_preset": "finance"}``
+
+    Returns the merged result; the wizard advances to Step 1 on 200.
+    Failures on the system-values patch are non-fatal — packs were
+    already applied, so the workspace is still usable.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return {"status": "error", "error": "Body must be a JSON object"}
+
+    packs = body.get("policy_packs") or []
+    industry_id = body.get("industry_id") or "custom"
+    dashboard_preset = body.get("dashboard_preset")
+    applied: dict[str, Any] = {"industry_id": industry_id}
+
+    # 1. Apply the policy-pack list. Empty list = "custom" → still call so
+    #    we record the deliberate "no packs" choice in the audit log.
+    if isinstance(packs, list):
+        pp_resp = await request.app.state.client.put(
+            f"{_base()}/workspace/policy-packs",
+            headers=internal_headers(request),
+            json={"enabled": [str(p) for p in packs if isinstance(p, str)]},
+            timeout=6.0,
+        )
+        try:
+            applied["policy_packs"] = pp_resp.json().get("data", {})
+        except Exception:  # noqa: BLE001
+            applied["policy_packs"] = {"status_code": pp_resp.status_code}
+
+    # 2. Stash the industry_id + dashboard_preset on tenant.system_values so
+    #    Dashboard.jsx (S8) can route the layout. Best-effort — never fails
+    #    the preset apply if this 5xx's.
+    try:
+        sv_resp = await request.app.state.client.patch(
+            f"{_base()}/workspace/system-values",
+            headers=internal_headers(request),
+            json={
+                "industry_preset": industry_id,
+                "dashboard_preset": dashboard_preset,
+            },
+            timeout=6.0,
+        )
+        applied["system_values_status"] = sv_resp.status_code
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("apply_preset_system_values_failed", error=str(exc))
+        applied["system_values_status"] = 0
+
+    return {"status": "ok", "data": applied}
+
+
+@router.post(
     "/workspace/exit-shadow-mode",
     dependencies=[Depends(verify_role(Role.OWNER))],
 )

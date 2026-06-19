@@ -25,10 +25,11 @@ import {
   Wand2,
   Workflow,
 } from 'lucide-react';
-import { registryService } from '../services/api';
+import { registryService, workspaceService } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
+import { INDUSTRY_PRESETS } from '../data/industry_presets';
 
 const PROVIDER_CATALOG = [
   { id: 'anthropic', label: 'Anthropic Claude', icon: Brain, blurb: 'Drop-in for `from anthropic import Anthropic`.', sdk: 'pip install aegis-anthropic==1.1.0' },
@@ -144,7 +145,14 @@ function CopyBlock({ value, label, multiline = false }) {
 export default function OnboardingWizard() {
   const navigate = useNavigate();
 
-  const [step, setStep] = useState(1);
+  // Sprint S1 (2026-06-19) — Step 0 is the industry selector. Picking a
+  // preset auto-enables the matching policy packs + prefills the provider
+  // and capabilities so the founder advances through the wizard with
+  // zero configuration decisions.
+  const [step, setStep] = useState(0);
+  const [industryId, setIndustryId] = useState(null);
+  const [applyingPreset, setApplyingPreset] = useState(false);
+  const [presetError, setPresetError] = useState('');
   const [provider, setProvider] = useState('anthropic');
   const [agentName, setAgentName] = useState('');
   // Sprint 13 — capabilities replace risk_level on Step 2. Default
@@ -246,10 +254,38 @@ export default function OnboardingWizard() {
     },
   });
 
+  // Sprint S1 — preset application. Auto-prefills provider + capabilities
+  // from the chosen industry, then advances to Step 1. Backend failures
+  // surface inline but never block the wizard (user can keep going and
+  // configure packs manually from Settings later).
+  const handlePresetSelect = async (preset) => {
+    if (applyingPreset) return;
+    setIndustryId(preset.id);
+    setApplyingPreset(true);
+    setPresetError('');
+    try {
+      // Best-effort apply. The wizard advances even if this 5xx's so the
+      // user is never trapped behind a downstream blip.
+      await workspaceService.applyPreset(preset);
+    } catch (err) {
+      setPresetError(err?.message || 'Preset apply failed — you can enable packs from Settings later.');
+    } finally {
+      setApplyingPreset(false);
+    }
+    // Prefill the existing wizard state from the preset so Steps 1 and 2
+    // arrive pre-selected. The user can still change anything; this just
+    // saves clicks for the 90% case.
+    if (preset.default_provider) setProvider(preset.default_provider);
+    if (Array.isArray(preset.default_capabilities) && preset.default_capabilities.length) {
+      setCapabilities(preset.default_capabilities);
+    }
+    setStep(1);
+  };
+
   const stepIndicator = useMemo(
     () => (
       <div className="flex items-center gap-3 mb-6">
-        {[1, 2, 3].map((n) => (
+        {[0, 1, 2, 3].map((n) => (
           <div key={n} className="flex items-center gap-3">
             <div
               className={
@@ -260,6 +296,7 @@ export default function OnboardingWizard() {
                     ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                     : 'bg-white/[0.05] text-neutral-500 border border-white/[0.07]')
               }
+              aria-label={`Step ${n}${n === 0 ? ' — Industry' : ''}`}
             >
               {step > n ? <Check size={13} aria-hidden="true" /> : n}
             </div>
@@ -293,6 +330,81 @@ export default function OnboardingWizard() {
         </div>
 
         {stepIndicator}
+
+        {step === 0 && (
+          <Card>
+            <StepHeader step={0} title="What kind of company are you?" />
+            <p className="text-xs text-neutral-400 mb-5 max-w-xl">
+              Pick the closest match. Aegis pre-enables the right policy packs
+              (SOC2, HIPAA, FINANCE, DEVOPS), wires the matching approvers
+              (CFO / CISO / SRE Lead), and lays out your dashboard. You can
+              change any of this later from <code>Workspace → Settings</code>.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              {INDUSTRY_PRESETS.map((preset) => {
+                const Icon = preset.icon;
+                const isSelected = industryId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handlePresetSelect(preset)}
+                    disabled={applyingPreset}
+                    className={
+                      'text-left p-4 rounded-xl border transition-all ' +
+                      (isSelected
+                        ? 'bg-white/[0.06] border-white/[0.20]'
+                        : 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.10]') +
+                      (applyingPreset ? ' opacity-60 cursor-wait' : ' cursor-pointer')
+                    }
+                    aria-pressed={isSelected}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={
+                          'w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ' +
+                          (isSelected
+                            ? 'bg-white text-black'
+                            : 'bg-white/[0.05] text-neutral-300')
+                        }
+                      >
+                        <Icon size={16} aria-hidden="true" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-white mb-0.5">
+                          {preset.label}
+                        </div>
+                        <div className="text-[11px] text-neutral-500 leading-snug">
+                          {preset.blurb}
+                        </div>
+                        {preset.policy_packs.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {preset.policy_packs.map((pid) => (
+                              <span
+                                key={pid}
+                                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-neutral-400"
+                              >
+                                {pid}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {presetError && (
+              <p className="text-[11px] text-amber-400 mb-3">{presetError}</p>
+            )}
+            <p className="text-[11px] text-neutral-600">
+              {applyingPreset
+                ? 'Applying preset…'
+                : 'One click. The wizard advances as soon as the packs are enabled.'}
+            </p>
+          </Card>
+        )}
 
         {step === 1 && (
           <Card>
