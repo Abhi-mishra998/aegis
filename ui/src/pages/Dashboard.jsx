@@ -394,7 +394,7 @@ export default function Dashboard() {
               <div className="text-[11px] text-neutral-400 mt-0.5">{layout.headline}</div>
             </div>
             <Link
-              to="/settings/workspace"
+              to="/settings"
               className="text-[11px] text-neutral-500 hover:text-white whitespace-nowrap"
             >
               Change preset →
@@ -417,12 +417,12 @@ export default function Dashboard() {
           <span>Integrations</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <IntegrationCard icon={Slack}        label="Slack"             to="/settings/webhooks"  connected={integrationsStatus.slack}    accentColor="#4A154B" />
-          <IntegrationCard icon={Database}     label="Splunk"            to="/settings/siem"      connected={integrationsStatus.splunk}   accentColor="#65A637" />
-          <IntegrationCard icon={ActivityIcon} label="Datadog"           to="/settings/siem"      connected={integrationsStatus.datadog}  accentColor="#632CA6" />
-          <IntegrationCard icon={Database}     label="Microsoft Sentinel" to="/settings/siem"     connected={integrationsStatus.sentinel} accentColor="#0078D4" />
-          <IntegrationCard icon={Bell}         label="PagerDuty"         to="/settings/webhooks"  connected={integrationsStatus.pagerduty} accentColor="#06AC38" />
-          <IntegrationCard icon={Webhook}      label="Webhook (generic)"  to="/settings/webhooks" connected={integrationsStatus.webhook}  accentColor="#94A3B8" />
+          <IntegrationCard icon={Slack}        label="Slack"             to="/webhook-settings" connected={integrationsStatus.slack}    accentColor="#4A154B" />
+          <IntegrationCard icon={Database}     label="Splunk"            to="/siem"             connected={integrationsStatus.splunk}   accentColor="#65A637" />
+          <IntegrationCard icon={ActivityIcon} label="Datadog"           to="/siem"             connected={integrationsStatus.datadog}  accentColor="#632CA6" />
+          <IntegrationCard icon={Database}     label="Microsoft Sentinel" to="/siem"            connected={integrationsStatus.sentinel} accentColor="#0078D4" />
+          <IntegrationCard icon={Bell}         label="PagerDuty"         to="/webhook-settings" connected={integrationsStatus.pagerduty} accentColor="#06AC38" />
+          <IntegrationCard icon={Webhook}      label="Webhook (generic)"  to="/webhook-settings" connected={integrationsStatus.webhook}  accentColor="#94A3B8" />
         </div>
       </div>
 
