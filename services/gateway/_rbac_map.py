@@ -146,6 +146,10 @@ RULES: tuple[Rule, ...] = (
     _R("/integrations/jira/test",      ("POST",),        roles=("OWNER", "ADMIN")),
     _R("/integrations/jira",           ("PUT", "DELETE"), roles=("OWNER", "ADMIN")),
     _R("/integrations/jira",           ("GET",),         min_role="READ_ONLY"),
+    # Sprint EI-6 — ServiceNow ITSM integration. Same authz as Jira.
+    _R("/integrations/servicenow/test", ("POST",),       roles=("OWNER", "ADMIN")),
+    _R("/integrations/servicenow",     ("PUT", "DELETE"), roles=("OWNER", "ADMIN")),
+    _R("/integrations/servicenow",     ("GET",),         min_role="READ_ONLY"),
     _R("/integrations*",               ("GET",),         min_role="READ_ONLY"),
     # Sprint EI-3 — SCIM bearer token management (Okta provisioning). OWNER-only:
     # issuance returns plaintext exactly once and a leaked SCIM token grants
