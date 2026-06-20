@@ -19,54 +19,73 @@ import Dashboard from './pages/Dashboard';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import Toast from './components/Common/Toast';
 
+// safeLazy: when a chunk fails to load (typically because the browser cached
+// an old index.html pointing at hashed chunks that no longer exist after a
+// deploy), force a single page reload so the browser fetches the fresh
+// asset list. Without this, every nav into a lazy route renders React
+// error #130 ("Element type is invalid") because the lazy promise rejects.
+const safeLazy = (loader) => lazy(() => loader().catch((err) => {
+  const reloaded = sessionStorage.getItem('chunk_reload_guard');
+  if (!reloaded) {
+    sessionStorage.setItem('chunk_reload_guard', '1');
+    window.location.reload();
+    // Return a never-resolving promise so React doesn't render anything
+    // before the reload kicks in.
+    return new Promise(() => {});
+  }
+  console.error('Chunk load failed after reload guard:', err);
+  throw err;
+}));
+
 // Lazy-loaded routes — split into their own chunks so the initial /dashboard
 // load doesn't pay for FlightRecorder, IdentityGraph, Policies, etc.
 // Order preserved from the original eager list for review.
-const Login              = lazy(() => import('./pages/Login'));
-const Signup             = lazy(() => import('./pages/Signup'));
-const OnboardingWizard   = lazy(() => import('./pages/OnboardingWizard'));
-const ShadowModeReview   = lazy(() => import('./pages/ShadowModeReview'));
-const Policies           = lazy(() => import('./pages/Policies'));
-const AgentSnapshot      = lazy(() => import('./pages/AgentSnapshot'));
-const ThreatGraph        = lazy(() => import('./pages/ThreatGraph'));
-const Settings           = lazy(() => import('./pages/Settings'));
-const Agents             = lazy(() => import('./pages/Agents'));
-const KillSwitch         = lazy(() => import('./pages/KillSwitch'));
-const Forensics          = lazy(() => import('./pages/Forensics'));
-const AuditLogs          = lazy(() => import('./pages/AuditLogs'));
-const Billing            = lazy(() => import('./pages/Billing'));
-const AgentPlayground    = lazy(() => import('./pages/AgentPlayground'));
-const DeveloperPanel     = lazy(() => import('./pages/DeveloperPanel'));
-const SystemHealth       = lazy(() => import('./pages/SystemHealth'));
-const IdentityGraph      = lazy(() => import('./pages/IdentityGraph'));
-const FlightRecorder     = lazy(() => import('./pages/FlightRecorder'));
-const RBAC               = lazy(() => import('./pages/RBAC'));
-const Incidents          = lazy(() => import('./pages/Incidents'));
-const AutoResponse       = lazy(() => import('./pages/AutoResponse'));
-const Compliance         = lazy(() => import('./pages/Compliance'));
-const WebhookSettings    = lazy(() => import('./pages/WebhookSettings'));
-const AdminConsole       = lazy(() => import('./pages/AdminConsole'));
-const SiemSettings       = lazy(() => import('./pages/SiemSettings'));
-const ScheduledReports   = lazy(() => import('./pages/ScheduledReports'));
-const ThreatIntel        = lazy(() => import('./pages/ThreatIntel'));
-const QuotaManagement    = lazy(() => import('./pages/QuotaManagement'));
-const SsoSettings        = lazy(() => import('./pages/SsoSettings'));
-const Notifications      = lazy(() => import('./pages/Notifications'));
-const LiveFeed           = lazy(() => import('./pages/LiveFeed'));
-const UserManagement     = lazy(() => import('./pages/UserManagement'));
-const Playbooks          = lazy(() => import('./pages/Playbooks'));
-const Team               = lazy(() => import('./pages/Team'));
+const Login              = safeLazy(() => import('./pages/Login'));
+const Signup             = safeLazy(() => import('./pages/Signup'));
+const OnboardingWizard   = safeLazy(() => import('./pages/OnboardingWizard'));
+const ShadowModeReview   = safeLazy(() => import('./pages/ShadowModeReview'));
+const Policies           = safeLazy(() => import('./pages/Policies'));
+const AgentSnapshot      = safeLazy(() => import('./pages/AgentSnapshot'));
+const ThreatGraph        = safeLazy(() => import('./pages/ThreatGraph'));
+const Settings           = safeLazy(() => import('./pages/Settings'));
+const Agents             = safeLazy(() => import('./pages/Agents'));
+const KillSwitch         = safeLazy(() => import('./pages/KillSwitch'));
+const Forensics          = safeLazy(() => import('./pages/Forensics'));
+const AuditLogs          = safeLazy(() => import('./pages/AuditLogs'));
+const Billing            = safeLazy(() => import('./pages/Billing'));
+const AgentPlayground    = safeLazy(() => import('./pages/AgentPlayground'));
+const DeveloperPanel     = safeLazy(() => import('./pages/DeveloperPanel'));
+const SystemHealth       = safeLazy(() => import('./pages/SystemHealth'));
+const IdentityGraph      = safeLazy(() => import('./pages/IdentityGraph'));
+const FlightRecorder     = safeLazy(() => import('./pages/FlightRecorder'));
+const RBAC               = safeLazy(() => import('./pages/RBAC'));
+const Incidents          = safeLazy(() => import('./pages/Incidents'));
+const AutoResponse       = safeLazy(() => import('./pages/AutoResponse'));
+const Compliance         = safeLazy(() => import('./pages/Compliance'));
+const WebhookSettings    = safeLazy(() => import('./pages/WebhookSettings'));
+const AdminConsole       = safeLazy(() => import('./pages/AdminConsole'));
+const SiemSettings       = safeLazy(() => import('./pages/SiemSettings'));
+const ScheduledReports   = safeLazy(() => import('./pages/ScheduledReports'));
+const ThreatIntel        = safeLazy(() => import('./pages/ThreatIntel'));
+const QuotaManagement    = safeLazy(() => import('./pages/QuotaManagement'));
+const SsoSettings        = safeLazy(() => import('./pages/SsoSettings'));
+const Notifications      = safeLazy(() => import('./pages/Notifications'));
+const LiveFeed           = safeLazy(() => import('./pages/LiveFeed'));
+const UserManagement     = safeLazy(() => import('./pages/UserManagement'));
+const Playbooks          = safeLazy(() => import('./pages/Playbooks'));
+const Team               = safeLazy(() => import('./pages/Team'));
 // Sprint S5 — Hierarchical Teams admin page.
-const TeamSettings       = lazy(() => import('./pages/TeamSettings'));
-const EmployeeProfile    = lazy(() => import('./pages/EmployeeProfile'));
-const Replay             = lazy(() => import('./pages/Replay'));
-const Landing            = lazy(() => import('./pages/Landing'));
-const DecisionExplorer   = lazy(() => import('./pages/DecisionExplorer'));
-const SessionExplorer    = lazy(() => import('./pages/SessionExplorer'));
-const Fleet              = lazy(() => import('./pages/Fleet'));
-const Evaluation         = lazy(() => import('./pages/Evaluation'));
-const ShadowMode         = lazy(() => import('./pages/ShadowMode'));
-const ApprovalInbox      = lazy(() => import('./pages/ApprovalInbox'));
+const TeamSettings       = safeLazy(() => import('./pages/TeamSettings'));
+const EmployeeProfile    = safeLazy(() => import('./pages/EmployeeProfile'));
+const Replay             = safeLazy(() => import('./pages/Replay'));
+const Landing            = safeLazy(() => import('./pages/Landing'));
+const TrustCenter        = safeLazy(() => import('./pages/TrustCenter'));
+const DecisionExplorer   = safeLazy(() => import('./pages/DecisionExplorer'));
+const SessionExplorer    = safeLazy(() => import('./pages/SessionExplorer'));
+const Fleet              = safeLazy(() => import('./pages/Fleet'));
+const Evaluation         = safeLazy(() => import('./pages/Evaluation'));
+const ShadowMode         = safeLazy(() => import('./pages/ShadowMode'));
+const ApprovalInbox      = safeLazy(() => import('./pages/ApprovalInbox'));
 
 // Lightweight fallback while the route chunk streams in.
 const RouteFallback = () => (
@@ -308,6 +327,8 @@ function App() {
                 path="/"
                 element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Landing />}
               />
+              {/* EH-6 — public trust center (no auth gate) */}
+              <Route path="/trust" element={<TrustCenter />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
 

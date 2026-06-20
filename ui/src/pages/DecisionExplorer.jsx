@@ -103,7 +103,7 @@ function TimelineView({ graph }) {
   if (!graph) return null
   return (
     <ol className="space-y-2">
-      {graph.nodes.map((n, idx) => {
+      {(graph.nodes || []).map((n, idx) => {
         const style = outcomeStyle(n.outcome)
         return (
           <li
@@ -148,7 +148,7 @@ function TraceOverview({ graph }) {
     { label: 'Decision',     value: graph.timeline?.final_decision || '—' },
     { label: 'Final risk',   value: graph.timeline?.final_risk?.toFixed(2) ?? '—' },
     { label: 'Total latency', value: graph.total_latency_ms != null ? `${graph.total_latency_ms} ms` : '—' },
-    { label: 'Stages',       value: graph.nodes.length },
+    { label: 'Stages',       value: (graph.nodes || []).length },
     { label: 'Tokens in',    value: graph.tokens_in ?? '—' },
     { label: 'Tokens out',   value: graph.tokens_out ?? '—' },
     { label: 'Est. USD',     value: graph.estimated_usd != null ? `$${graph.estimated_usd.toFixed(4)}` : '—' },

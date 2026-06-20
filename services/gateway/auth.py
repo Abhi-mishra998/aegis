@@ -260,7 +260,15 @@ class LocalTokenValidator:
             # by checking the active_key it sets at issuance. Without this,
             # anyone with JWT_SECRET_KEY can mint accepted tokens indefinitely.
             # Fails CLOSED on Redis error.
-            if self._redis is not None:
+            #
+            # Sprint S4 exception: anonymous demo tokens (is_demo=true) are
+            # minted directly by the gateway's /demo/spawn-workspace endpoint
+            # and never round-trip through Identity, so they cannot register
+            # an active_key. They're safe because (a) the JWT is HS256 + signed
+            # by JWT_SECRET_KEY which only the gateway holds, (b) the 30-min
+            # TTL bounds the blast radius, and (c) the spawn endpoint is
+            # rate-limited per source IP at the WAF.
+            if self._redis is not None and not payload.get("is_demo"):
                 active_key = f"{REDIS_TOKEN_PREFIX}{token_hash}"
                 try:
                     if not await self._redis.exists(active_key):

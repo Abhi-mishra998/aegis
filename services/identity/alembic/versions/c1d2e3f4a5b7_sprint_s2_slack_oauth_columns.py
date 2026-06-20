@@ -1,7 +1,7 @@
 """Sprint S2 — Slack OAuth columns on tenants (bot_token, workspace_id, channel_id).
 
-Revision ID: c0d1e2f3a4b5
-Revises: b9c0d1e2f3a4
+Revision ID: c1d2e3f4a5b7
+Revises: c0d1e2f3a4b5
 Create Date: 2026-06-19
 
 Three nullable columns. NULL on slack_bot_token means the OAuth flow
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "c0d1e2f3a4b5"
-down_revision = "b9c0d1e2f3a4"
+revision = "c1d2e3f4a5b7"
+down_revision = "c0d1e2f3a4b5"
 branch_labels = None
 depends_on = None
 

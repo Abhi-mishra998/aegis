@@ -36,6 +36,7 @@ class APIKeyRepository:
             key_hash=key_hash,
             expires_at=payload.expires_at,
             subject_kind="tenant",
+            role=getattr(payload, "role", "DEVELOPER"),
         )
 
         self.db.add(api_key)
@@ -77,6 +78,7 @@ class APIKeyRepository:
             daily_budget_usd=payload.daily_budget_usd,
             monthly_budget_usd=payload.monthly_budget_usd,
             department=department,
+            role=getattr(payload, "role", "DEVELOPER"),
         )
 
         self.db.add(api_key)

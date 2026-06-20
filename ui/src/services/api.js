@@ -161,10 +161,13 @@ const request = async (url, options = {}, retry = 1) => {
     // AUTH GATE: Block requests (except auth/health) if session is expired or missing.
     // /auth/sso/providers is public — Login page fetches it before any token
     // exists, so it must be exempt or the gate throws before we even reach login.
+    // /demo/* endpoints are the anonymous "Try live demo" CTA path — they must
+    // be reachable from an unauthenticated browser.
     const isAuthPath =
       url.includes("/auth/token") ||
       url.includes("/auth/sso/providers") ||
-      url.includes("/health");
+      url.includes("/health") ||
+      url.startsWith("/demo/");
 
     if (!isSessionValid() && !isAuthPath) {
       console.warn("API_GATED: Session expired or not found.", url);
@@ -1274,6 +1277,15 @@ export const demoService = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  // Anonymous-CTA: spin up a seeded read-only demo tenant and return a
+  // short-lived JWT. The Landing "Try live demo" button posts here so a
+  // prospect can click through the full UI without signing up.
+  spawnWorkspace: () => request('/demo/spawn-workspace', {
+    method: 'POST',
+    body: '{}',
+  }),
+  // Read-only scenario catalog. Drives the demo prompt picker on Landing.
+  listScenarios: () => request('/demo/scenarios'),
 }
 
 // Sprint 17 — Aegis for Teams. The /team page lists each employee's

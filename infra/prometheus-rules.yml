@@ -45,12 +45,63 @@ groups:
         annotations:
           summary: "p95 latency >400ms on {{ $labels.handler }}"
 
+      # EH-3 fix: this rule used to point at acp_audit_duplicates_dropped_total
+      # (the wrong metric — that's a replay-detection counter, unrelated to
+      # auth failures). Now points at the real auth-failure counter.
       - alert: AuthFailureSpike
-        expr: rate(acp_audit_duplicates_dropped_total[5m]) > 1
+        expr: sum(rate(acp_auth_failures_total[5m])) > 5
+        for: 2m
         labels:
           severity: warning
         annotations:
+          summary: "Auth failures > 5/sec for 2m — credential stuffing or token storm"
+          description: "Inspect by reason: sum(rate(acp_auth_failures_total[5m])) by (reason). If reason=revoked_token dominates, an attacker is trying tokens that were rotated. If invalid_token dominates, possibly bad SDK config or scanner."
+
+      - alert: AuditDuplicateStorm
+        expr: rate(acp_audit_duplicates_dropped_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: info
+        annotations:
           summary: "Audit duplicate rate elevated — possible replay or retry storm"
+          description: "May indicate a retry-loop in an SDK or genuine replay attack. Drill into audit_id labels."
+
+      # ── EH-3: new security event alerts ───────────────────────────
+      - alert: TenantIsolationViolation
+        expr: increase(acp_tenant_isolation_violation_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant isolation violation detected — client sent X-Tenant-ID != JWT claim"
+          description: "An authenticated client tried to spoof a different tenant via header. Investigate immediately. Grep gateway logs for tenant_isolation_violation to identify the JWT subject."
+
+      - alert: RbacDeniedSpike
+        expr: sum(rate(acp_rbac_denied_total[5m])) by (role, path_prefix) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RBAC deny rate elevated for {{ $labels.role }} on {{ $labels.path_prefix }}*"
+          description: "An authenticated principal is repeatedly hitting routes they don't have role for. Likely buggy client OR privilege-escalation probe."
+
+      - alert: MassExportPattern
+        expr: increase(acp_mass_export_attempts_total[15m]) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} called {{ $labels.endpoint }} {{ $value }} times in 15m"
+          description: "Compliance/audit exports are read-once-per-period legitimately. Three or more in 15 minutes from one tenant looks like exfil. Confirm the actor via audit_logs."
+
+      - alert: RevokedTokenStorm
+        expr: increase(acp_revoked_token_attempts_total[5m]) > 5
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} revoked-token attempts in 5m"
+          description: "Bearer of a token that was rotated/revoked is still trying. Either a stale client OR an attacker holding leaked credentials."
 
       # Billing reconciliation SLI (2026-05-15).
       # Source: scripts/ops/reconcile.py runs every 5m (--watch 300) and
@@ -146,6 +197,39 @@ groups:
         annotations:
           summary: "Inference cost cap is blocking traffic ({{ $labels.scope }}={{ $labels.key }})"
           description: "One or more tenants/agents have crossed their daily inference USD cap. Investigate via /tenant/quota + audit_logs WHERE action='inference_cost_cap_exceeded'."
+
+      # ── EH-2: demo cost runaway watch ─────────────────────────────
+      # Sums today's USD spend across every tenant tagged with
+      # tenant_role="demo" (set by the inference-cost recorder when the
+      # underlying Tenant.is_demo=true). 30 demo sessions × $5 = $150/day
+      # is the design ceiling; alert at $200 (>33% over) and page at $500.
+      - alert: DemoInferenceSpendHigh
+        expr: sum(acp_inference_cost_usd_total{tenant_role="demo"}) > 200
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Aggregate demo inference spend today is {{ $value | printf \"%.2f\" }} USD"
+          description: "Demo tenants are burning more Anthropic than designed. Inspect SELECT tenant_id, sum(amount_usd) FROM audit_logs WHERE action='inference_cost_recorded' AND is_demo GROUP BY tenant_id; if a single tenant dominates, revoke its key + lower /demo/spawn-workspace rate limit."
+
+      - alert: DemoInferenceSpendCritical
+        expr: sum(acp_inference_cost_usd_total{tenant_role="demo"}) > 500
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EMERGENCY — demo spend $500+ today ({{ $value | printf \"%.2f\" }} USD)"
+          description: "Abuse confirmed. Kill /demo/spawn-workspace temporarily by patching middleware._SKIP_PATHS to remove the entry, OR tighten the per-IP rate limit in services/gateway/routers/demo.py from 5/10min to 1/hour."
+
+      # ── EH-2: demo tenant volume watch ────────────────────────────
+      - alert: DemoTenantBacklog
+        expr: acp_demo_tenants_active > 1000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} active demo tenants — cleanup loop may be stuck"
+          description: "Identity-svc hourly _demo_cleanup_loop should be reaping expired demo tenants. If this rises monotonically, check `docker logs acp_identity 2>&1 | grep demo_tenants_reaped` for recent entries."
 
       # ── Sprint 1.4: reconciliation gap (paging escalation) ────────
       # The non-paging warnings already exist above

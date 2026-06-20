@@ -491,20 +491,25 @@ class ServiceClient:
         """Performs the actual remote OPA call and handles errors."""
         url = f"{settings.POLICY_SERVICE_URL.rstrip('/')}/policy/evaluate"
         client = await self.get_client()
+        payload = {
+            "tenant_id": str(tenant_id),
+            "agent_id": str(agent_id),
+            "tool": tool,
+            "risk_score": risk_score,
+            "behavior_history": behavior_history or [],
+            "request_id": request_id,
+            "metadata": metadata or {},
+        }
+        # One-shot retry on connect/read timeouts. Policy decisions are
+        # idempotent (no side effects) so a retry is safe. Catches the
+        # rare cold-pool reconnect that surfaced as
+        # "Policy engine error: system_unavailable" in load tests.
         try:
-            resp = await client.post(
-                url,
-                json={
-                    "tenant_id": str(tenant_id),
-                    "agent_id": str(agent_id),
-                    "tool": tool,
-                    "risk_score": risk_score,
-                    "behavior_history": behavior_history or [],
-                    "request_id": request_id,
-                    "metadata": metadata or {},
-                },
-                headers=self._get_headers(),
-            )
+            try:
+                resp = await client.post(url, json=payload, headers=self._get_headers())
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError) as _exc:
+                logger.warning("opa_call_retry", error=str(_exc))
+                resp = await client.post(url, json=payload, headers=self._get_headers())
 
             # Handle ENFORCED 403 from Policy Service
             if resp.status_code == 403:

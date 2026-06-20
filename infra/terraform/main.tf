@@ -148,6 +148,18 @@ module "asg" {
   ssm_bundle_parameter = module.ssm.bundle_parameter_name
   bundle_bucket        = var.bundle_bucket
   aws_region           = var.aws_region
+
+  rds_endpoint             = module.rds.endpoint
+  rds_master_secret_id     = module.secrets.db_password_name
+  redis_primary_endpoint   = module.elasticache.primary_endpoint
+  domain                   = var.domain
+  internal_secret_arn      = module.secrets.internal_secret_arn
+  jwt_signing_secret_id    = module.secrets.jwt_signing_name
+  mesh_jwt_secret_id       = module.secrets.mesh_jwt_secret_arn
+  stripe_webhook_secret_id = module.secrets.stripe_webhook_secret_arn
+  groq_api_key_secret_id   = module.secrets.groq_api_key_arn
+  app_param_prefix         = var.app_param_prefix
+  public_roots_bucket      = var.public_roots_bucket
 }
 
 # ───────────────────────────────────────────────────────────────────────

@@ -1,9 +1,11 @@
-import React from 'react'
-import { Link } from 'react-router-dom'
+import React, { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Shield, ShieldCheck, Eye, Activity, MessagesSquare, FileBadge2,
   CheckCircle2, Lock, ArrowRight, Bot, Crosshair, Workflow, Zap,
+  Loader2,
 } from 'lucide-react'
+import { demoService } from '../services/api'
 
 // Sprint 11 — Marketing landing.
 //
@@ -77,6 +79,43 @@ const TRUST_STRIP = [
 
 
 function Hero() {
+  const navigate = useNavigate()
+  const [spawning, setSpawning] = useState(false)
+  const [demoError, setDemoError] = useState('')
+
+  // POST /demo/spawn-workspace (anonymous) -> seeded tenant + 30-min JWT.
+  // We stash the token + tenant_id the way the rest of the app expects
+  // (localStorage + acp_token cookie), then bounce the browser to
+  // /dashboard. ProtectedRoute treats the session as authenticated.
+  const startDemo = async () => {
+    if (spawning) return
+    setSpawning(true)
+    setDemoError('')
+    try {
+      const res = await demoService.spawnWorkspace()
+      const data = res?.data || res || {}
+      const { jwt, tenant_id, ttl_seconds, owner_email } = data
+      if (!jwt || !tenant_id) throw new Error('No demo session returned')
+      const expiry = Date.now() + (Number(ttl_seconds) || 1800) * 1000
+      localStorage.setItem('tenant_id', tenant_id)
+      localStorage.setItem('acp_token_expiry', String(expiry))
+      localStorage.setItem('user_role', 'OWNER')
+      if (owner_email) localStorage.setItem('user_email', owner_email)
+      // Mark the tab as a demo session. authEvents.emitAuthFailure
+      // checks this and silently swallows per-request 401s so a single
+      // unauthorised endpoint doesn't bounce the visitor back to /login.
+      sessionStorage.setItem('aegis_demo_mode', '1')
+      // Cookie mirrors how /auth/login stores the JWT; same-site + secure
+      // so the gateway honours it on the next request.
+      document.cookie = `acp_token=${jwt}; Path=/; Max-Age=${Number(ttl_seconds) || 1800}; Secure; SameSite=Lax`
+      navigate('/dashboard?demo=1')
+    } catch (err) {
+      console.error('Demo spawn failed:', err)
+      setDemoError(err?.message || 'Could not start the demo. Please try again.')
+      setSpawning(false)
+    }
+  }
+
   return (
     <section className="px-6 py-20 lg:py-28 max-w-6xl mx-auto text-center">
       <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-neutral-500 mb-6">
@@ -98,16 +137,20 @@ function Hero() {
         >
           Start free — 14-day shadow mode <ArrowRight size={14} />
         </Link>
-        {/* Sprint S4 (2026-06-19) — Live demo CTA. Routes to the existing
-            /demo/groq-agent flow via the AgentPlayground page so a prospect
-            can type "read /etc/passwd" or "wire $25M to ACME" and watch
-            Aegis block it in real time, no signup. */}
-        <Link
-          to="/playground?source=landing"
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.20] bg-white/[0.04] text-sm font-medium text-white hover:bg-white/[0.08] hover:border-white/30 transition-colors"
+        {/* Sprint S4 — anonymous "Try live demo" CTA. POSTs to
+            /demo/spawn-workspace which mints a 30-min read-only JWT into
+            a freshly seeded tenant, then drops the browser straight on
+            /dashboard so a prospect can click through without signing up. */}
+        <button
+          type="button"
+          onClick={startDemo}
+          disabled={spawning}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.20] bg-white/[0.04] text-sm font-medium text-white hover:bg-white/[0.08] hover:border-white/30 transition-colors disabled:opacity-60"
         >
-          <Zap size={14} aria-hidden="true" /> Try the live demo — no signup
-        </Link>
+          {spawning
+            ? <><Loader2 size={14} className="animate-spin" /> Spinning up your demo workspace…</>
+            : <><Zap size={14} aria-hidden="true" /> Try the live demo — no signup</>}
+        </button>
         <Link
           to="/login"
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.12] text-sm font-medium text-neutral-200 hover:border-white/30 hover:text-white transition-colors"
@@ -118,6 +161,9 @@ function Hero() {
       <div className="text-[11px] text-neutral-600 mt-4">
         No credit card. Your Anthropic / OpenAI key never reaches us.
       </div>
+      {demoError && (
+        <div className="text-[11px] text-red-400 mt-3">{demoError}</div>
+      )}
     </section>
   )
 }

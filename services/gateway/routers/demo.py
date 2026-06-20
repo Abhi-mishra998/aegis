@@ -569,13 +569,15 @@ async def _spawn_demo_tenant(db) -> tuple[str, str]:
 
     tenant_id = uuid.uuid4()
     owner_id = uuid.uuid4()
-    label = f"demo-{tenant_id.hex[:8]}"
+    name = f"demo-{tenant_id.hex[:8]}"
     owner_email = f"demo+{tenant_id.hex[:8]}@aegisagent.in"
 
     expires = datetime.now(UTC) + _td(hours=_DEMO_DURATION_HOURS)
 
+    # Tenant column names: tenant_id (canonical Aegis UUID), name (display),
+    # org_id (FK to Organization). The Tenant model has no `label` column.
     tenant = Tenant(
-        id=tenant_id, org_id=tenant_id, label=label,
+        tenant_id=tenant_id, org_id=tenant_id, name=name,
         is_demo=True, demo_expires_at=expires,
     )
     db.add(tenant)
@@ -613,30 +615,90 @@ async def _seed_demo_data(tenant_id: str, owner_email: str) -> None:
 
 @router.post("/spawn-workspace")
 async def spawn_demo_workspace(
+    request: Request,
     db: _Annot[_AsyncSession, _Depends(get_db)],
     x_forwarded_for: _Annot[str | None, _Header(alias="X-Forwarded-For")] = None,
 ) -> dict[str, Any]:
-    """Spawn a fully-populated demo workspace.
+    """Spawn a fully-isolated demo workspace.
 
-    Auth is intentionally absent: the marketing-page CTA hits this from
-    an anonymous browser. Rate-limit at the gateway middleware so a
-    single source IP can't flood-create demo tenants. We log the X-FF
-    for forensics; abuse triggers an IP block before this handler runs.
+    Calls identity-svc `/auth/demo/spawn` which creates a brand new
+    Tenant + Organization + User row inside acp_identity. The gateway
+    then mints a 30-min HS256 JWT scoped to that tenant. Every visitor
+    gets their own quotas, rate-limits, audit log, incidents — there is
+    no shared blast radius between demo sessions.
     """
-    tenant_id, owner_email = await _spawn_demo_tenant(db)
-    await _seed_demo_data(tenant_id, owner_email)
+    # EH-2: per-source-IP app-layer rate limit. WAF gives us 2000/5min
+    # per source IP for the whole site; this carves out a tighter cap on
+    # the spawn endpoint specifically so a corporate-NAT-shared bot can't
+    # burn through the WAF budget on tenant churn.
+    # Limit: 5 spawns / 10 minutes / source IP. A real prospect needs 1,
+    # an evaluator running through repeated demos might need 3, anything
+    # past that is automation.
+    source_ip = (x_forwarded_for or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    if source_ip and source_ip != "unknown":
+        try:
+            from sdk.common.redis import get_redis_client  # noqa: PLC0415
+            redis_client = get_redis_client(settings.REDIS_URL, decode_responses=True)
+            rl_key = f"acp:demo_spawn_rl:{source_ip}"
+            current = await redis_client.incr(rl_key)
+            if int(current) == 1:
+                await redis_client.expire(rl_key, 600)  # 10 min
+            if int(current) > 5:
+                logger.warning(
+                    "demo_spawn_rate_limited",
+                    source_ip=source_ip, count=int(current),
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail="Demo spawn rate limit hit — try again in 10 minutes.",
+                    headers={"Retry-After": "600"},
+                )
+        except HTTPException:
+            raise
+        except Exception as _exc:  # noqa: BLE001
+            # Redis failure must not block legitimate users — log + open.
+            logger.warning("demo_spawn_rl_redis_error", error=str(_exc))
+    # Pull internal_secret + identity URL through settings the same way
+    # every other gateway-to-identity call does.
+    identity_url = settings.IDENTITY_SERVICE_URL.rstrip("/")
+    internal_secret = settings.INTERNAL_SECRET
 
-    # Mint a short-lived read-only JWT so the prospect can click into
-    # the seeded workspace without signing up. The token mirrors the
-    # shape app/auth handlers expect (sub, tenant_id, role).
+    try:
+        resp = await request.app.state.client.post(
+            f"{identity_url}/auth/demo/spawn",
+            headers={"X-Internal-Secret": internal_secret},
+            timeout=8.0,
+        )
+    except Exception as exc:  # noqa: BLE001 - any error => 503 to client
+        logger.error("demo_spawn_identity_unreachable", error=str(exc))
+        raise HTTPException(status_code=503, detail="Demo workspace unavailable") from exc
+
+    if resp.status_code != 200:
+        logger.error("demo_spawn_identity_failed", status=resp.status_code, body=resp.text[:200])
+        raise HTTPException(status_code=502, detail="Demo workspace provisioning failed")
+
+    data = resp.json().get("data") or {}
+    tenant_id = data["tenant_id"]
+    owner_email = data["owner_email"]
+    expires_at = data["expires_at"]
+
+    # Required claims for LocalTokenValidator (services/gateway/auth.py):
+    # sub, tenant_id, role, exp, jti. `org_id == tenant_id` keeps the SaaS
+    # invariant check happy.
     now = datetime.now(UTC)
+    session_id = uuid.uuid4()
     payload = {
         "sub":        owner_email,
         "tenant_id":  tenant_id,
+        "org_id":     tenant_id,
+        "agent_id":   "00000000-0000-0000-0000-000000000000",
         "role":       "OWNER",
         "is_demo":    True,
         "iat":        int(now.timestamp()),
-        "exp":        int((now + _td(minutes=_DEMO_JWT_TTL_MINUTES)).timestamp()),
+        "exp":        expires_at,
+        "jti":        f"demo-{session_id.hex}",
     }
     token = _jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
 

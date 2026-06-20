@@ -48,6 +48,123 @@ from services.identity.token_service import TokenService
 router = APIRouter(tags=["identity"])
 logger = structlog.get_logger(__name__)
 
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint S4 (2026-06-20) — per-visitor anonymous demo tenant
+# ─────────────────────────────────────────────────────────────────────
+# /auth/demo/spawn is called by the gateway's /demo/spawn-workspace
+# handler. The identity service writes the new row inside acp_identity
+# (which the gateway DB connection cannot see) and returns the ids;
+# the gateway then mints the JWT.
+#
+# Auth: internal-secret only (X-Internal-Secret). Public callers reach
+# the gateway, not this endpoint directly.
+#
+# Isolation invariants enforced:
+#   - Every demo session gets its own Tenant + User row.
+#   - Tenant carries is_demo=true + demo_expires_at = now() + 30 min so
+#     scripts/ops/cleanup_expired_demos.py can hard-delete them.
+#   - shadow_mode_until = NULL — demo tenants enforce blocks visibly
+#     so prospects see the wire transfer actually denied.
+#   - rps/burst/daily caps are halved vs production defaults so one
+#     abusive visitor can't budget-DoS the shared NAT.
+@router.post(
+    "/auth/demo/spawn",
+    dependencies=[Depends(verify_internal_secret)],
+    tags=["auth"],
+)
+async def spawn_demo_tenant(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Provision an isolated demo tenant + read-only OWNER user.
+    Returns ids the gateway needs to mint the demo JWT."""
+    import uuid as _uuid
+    from datetime import UTC, datetime as _dt, timedelta as _td
+
+    from services.identity.models import Organization, Tenant, User
+    from sdk.common.roles import Role
+
+    tenant_id = _uuid.uuid4()
+    org_id = _uuid.uuid4()
+    user_id = _uuid.uuid4()
+    suffix = tenant_id.hex[:8]
+    owner_email = f"demo+{suffix}@aegisagent.in"
+    expires = _dt.now(UTC) + _td(minutes=30)
+
+    org = Organization(
+        id=org_id,
+        name=f"Demo Org {suffix}",
+        slug=f"demo-{suffix}",
+        clerk_org_id=f"demo_{suffix}",
+        is_active=True,
+    )
+    db.add(org)
+
+    tenant = Tenant(
+        tenant_id=tenant_id,
+        org_id=org_id,
+        name=f"demo-{suffix}",
+        is_demo=True,
+        demo_expires_at=expires,
+        shadow_mode_until=None,
+        requests_per_second=25,
+        burst=50,
+        daily_request_cap=10_000,
+        # EH-2: hard $5/day Anthropic ceiling on every demo tenant. Without
+        # this a single prospect can burn ~$60k of inference inside a
+        # 30-minute session (1000-token prompts × ~6 req/min × 30 min ×
+        # ~$0.015/1k = ~$2.70 — but 100k-token prompts on Claude-Opus push
+        # it to ~$10 each, and 10 concurrent sessions multiply). $5 is
+        # generous enough for a real interactive demo (~30 turns of
+        # /v1/messages) and bounds the abuse blast radius to manageable.
+        daily_inference_cost_cap_usd=5.0,
+    )
+    db.add(tenant)
+    await db.flush()
+    # EH-2 follow-up: passing shadow_mode_until=None to the Tenant
+    # constructor doesn't actually set NULL — SQLAlchemy omits the
+    # column from INSERT (Python value matches the model's default of
+    # None), and Postgres then applies the server_default
+    # ("now() + interval '14 days'"). Force NULL with an explicit UPDATE
+    # so demo tenants enforce blocks visibly from second 0.
+    from sqlalchemy import update as _sql_update  # noqa: PLC0415
+    await db.execute(
+        _sql_update(Tenant)
+        .where(Tenant.tenant_id == tenant_id)
+        .values(shadow_mode_until=None)
+    )
+
+    # Demo users have no real password; bcrypt-hash a fresh random
+    # token so the NOT NULL constraint is satisfied without enabling a
+    # back-door login (the demo session uses the JWT, never /auth/login).
+    dummy_pw = secrets.token_urlsafe(32).encode()
+    hashed_pw = bcrypt.hashpw(dummy_pw, bcrypt.gensalt(rounds=4)).decode()
+    user = User(
+        id=user_id,
+        tenant_id=tenant_id,
+        org_id=tenant_id,
+        email=owner_email,
+        hashed_password=hashed_pw,
+        role=Role.OWNER,
+    )
+    db.add(user)
+    await db.commit()
+
+    logger.info(
+        "demo_tenant_spawned",
+        tenant_id=str(tenant_id), user_id=str(user_id), expires_at=expires.isoformat(),
+    )
+    return {
+        "success": True,
+        "data": {
+            "tenant_id":   str(tenant_id),
+            "org_id":      str(org_id),
+            "user_id":     str(user_id),
+            "owner_email": owner_email,
+            "expires_at":  int(expires.timestamp()),
+        },
+    }
+
 # Concurrency cap on auth endpoints — prevents PgBouncer pool exhaustion
 # under burst login load (C10). 40 slots: leaves headroom for non-auth ops
 # on the 50-connection PgBouncer pool.

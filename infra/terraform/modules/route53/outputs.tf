@@ -4,6 +4,6 @@ output "apex_record_name" {
 }
 
 output "www_record_name" {
-  description = "www CNAME FQDN."
-  value       = aws_route53_record.www_cname.fqdn
+  description = "www A record FQDN (ALIAS to ALB)."
+  value       = aws_route53_record.www_alias_a.fqdn
 }

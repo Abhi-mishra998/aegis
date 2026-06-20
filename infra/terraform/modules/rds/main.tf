@@ -26,7 +26,7 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_db_parameter_group" "main" {
   name        = "${var.name_prefix}-pg15"
   family      = "postgres15"
-  description = "Aegis Postgres 15 parameter group — log_statement none, force_ssl on."
+  description = "Aegis Postgres 15 parameter group - log_statement none, force_ssl on."
 
   parameter {
     name  = "rds.force_ssl"

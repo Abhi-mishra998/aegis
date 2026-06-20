@@ -1,0 +1,36 @@
+# Sprint EH-4 — CODEOWNERS. Every PR that touches the listed paths
+# requires explicit approval from the owner(s) before merge. GitHub
+# enforces this via the "Require review from Code Owners" branch
+# protection rule on main.
+
+# Default owner — every PR needs CTO sign-off until we hire a second
+# committer.
+*                                       @Abhi-mishra998
+
+# Security-sensitive surfaces
+/services/gateway/                      @Abhi-mishra998
+/services/gateway/_rbac_map.py          @Abhi-mishra998
+/services/gateway/_mw_auth.py           @Abhi-mishra998
+/services/gateway/middleware.py         @Abhi-mishra998
+/services/identity/                     @Abhi-mishra998
+/services/audit/                        @Abhi-mishra998
+/sdk/common/clerk_auth.py               @Abhi-mishra998
+/sdk/common/auth.py                     @Abhi-mishra998
+
+# Infrastructure / supply chain
+/infra/terraform/                       @Abhi-mishra998
+/.github/workflows/                     @Abhi-mishra998
+/scripts/ops/                           @Abhi-mishra998
+/Dockerfile                             @Abhi-mishra998
+/ui/Dockerfile                          @Abhi-mishra998
+
+# Public security artifacts
+/docs/security/                         @Abhi-mishra998
+/ui/public/.well-known/security.txt     @Abhi-mishra998
+
+# Database schema — every migration needs a second pair of eyes
+/services/*/alembic/versions/           @Abhi-mishra998
+
+# RBAC matrix — spec + tests + code must change in the same PR
+/docs/security/rbac_matrix.md           @Abhi-mishra998
+/tests/test_rbac_matrix.py              @Abhi-mishra998

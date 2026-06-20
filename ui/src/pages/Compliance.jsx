@@ -276,7 +276,7 @@ export default function Compliance() {
                       </span>
                     </div>
                     <div className="text-[10px] text-neutral-500 mt-0.5">
-                      {pack.controls.length} control{pack.controls.length === 1 ? '' : 's'} touched
+                      {(pack.controls || []).length} control{(pack.controls || []).length === 1 ? '' : 's'} touched
                     </div>
                   </div>
                   <span className="text-[10px] text-neutral-500 group-open:rotate-90 transition-transform">▶</span>
@@ -292,7 +292,7 @@ export default function Compliance() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pack.controls.map((c) => (
+                        {(pack.controls || []).map((c) => (
                           <tr key={c.id} className="border-b border-white/[0.04] last:border-b-0 align-top">
                             <td className="py-2 pr-3">
                               <span className="inline-flex items-center gap-1 text-[11px] text-neutral-200 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] font-mono">

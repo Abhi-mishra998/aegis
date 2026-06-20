@@ -33,13 +33,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # IDENTITY columns are implicitly NOT NULL in PostgreSQL; the prior
+    # ``nullable=True`` produced "conflicting NULL/NOT NULL declarations".
+    # Adding as IDENTITY backfills existing rows with sequential values
+    # from the sequence, so the canonical chain walk is well-defined for
+    # rows that pre-existed the migration too.
     op.add_column(
         "audit_logs",
         sa.Column(
             "chain_sequence",
             sa.BigInteger(),
             sa.Identity(always=False, start=1, cycle=False),
-            nullable=True,
+            nullable=False,
         ),
     )
     op.create_index(

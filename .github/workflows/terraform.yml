@@ -42,6 +42,18 @@ jobs:
       - name: Validate
         run: terraform validate -no-color
 
+      # Sprint EH-4 — Checkov IaC scan. Fails the PR on HIGH/CRITICAL
+      # Terraform misconfigurations. Skip-list documented in
+      # security_scan.yml + docs/security/git_hardening.md.
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/terraform
+          framework: terraform
+          quiet: true
+          soft_fail: false
+          skip_check: "CKV_AWS_338,CKV_AWS_158"
+
       - name: Plan (no creds — limited surface)
         # We don't have AWS creds in CI by default, so plan will fail at
         # data sources. That's OK — fmt + validate are the real gates.

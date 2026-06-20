@@ -108,8 +108,19 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
     tenant_id_str      = str(key_data.get("tenant_id") or "")
     daily_budget_usd   = key_data.get("daily_budget_usd")
     monthly_budget_usd = key_data.get("monthly_budget_usd")
+    key_role           = (key_data.get("role") or "DEVELOPER").upper()
+
+    # Sprint EH-1: READ_ONLY keys cannot run inference.
+    if key_role == "READ_ONLY":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key role READ_ONLY cannot invoke /v1/chat/completions",
+        )
+
     try:
         request.state.tenant_id = tenant_id_str
+        request.state.role = key_role
+        request.state.actor = f"apikey:{key_data.get('key_prefix', auth_key[:8])}"
     except Exception:  # noqa: BLE001
         pass
 

@@ -11,7 +11,7 @@
 
 resource "aws_wafv2_web_acl" "main" {
   name        = "${var.name_prefix}-waf"
-  description = "Aegis ALB Web ACL — managed core + bot + per-IP rate limit."
+  description = "Aegis ALB Web ACL - managed core + bot + per-IP rate limit."
   scope       = "REGIONAL"
 
   default_action {

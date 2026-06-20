@@ -7,6 +7,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
+_KEY_ROLES = Literal["OWNER", "ADMIN", "SECURITY_ANALYST", "DEVELOPER", "READ_ONLY"]
+
+
 class APIKeyBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     expires_at: datetime | None = None
@@ -14,6 +17,10 @@ class APIKeyBase(BaseModel):
     # the inbound X-Agent-ID header to match this value (so a leaked
     # per-agent key can never be used to impersonate a different agent).
     agent_id: uuid.UUID | None = None
+    # Sprint EH-1 — least-privileged role on the key itself. Default
+    # DEVELOPER for SDK/proxy keys; admins can mint OWNER keys explicitly
+    # for ops automation. Enforced by the gateway proxy auth path.
+    role: _KEY_ROLES = Field(default="DEVELOPER")
 
 
 class APIKeyCreate(APIKeyBase):
@@ -53,6 +60,14 @@ class EmployeeKeyCreate(BaseModel):
         ge=0,
         description="Hard monthly cap in USD. NULL = no cap.",
     )
+    role: _KEY_ROLES = Field(
+        default="DEVELOPER",
+        description=(
+            "Canonical Aegis role the key carries. Defaults to DEVELOPER "
+            "(least-privilege for an employee LLM proxy key). Elevate to "
+            "ADMIN/OWNER explicitly only when the key is for ops automation."
+        ),
+    )
     expires_at: datetime | None = None
 
 
@@ -84,5 +99,6 @@ class APIKeyResponse(APIKeyBase):
     daily_budget_usd: float | None = None
     monthly_budget_usd: float | None = None
     department: str | None = None
+    role: _KEY_ROLES = "OWNER"  # legacy rows default to OWNER (server-default)
 
     model_config = ConfigDict(from_attributes=True)
