@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import Button from '../Common/Button'
 import { integrationsService } from '../../services/api'
+import InboundWebhookSection from './_InboundWebhookSection'
 
 // Sprint EI-6 (2026-06-20) — ServiceNow Table API connection.
 //
@@ -221,6 +222,16 @@ export default function ServiceNowIntegrationTab() {
           </Button>
         )}
       </div>
+
+      {config && (
+        <InboundWebhookSection
+          vendor="ServiceNow"
+          docHref="/docs/security/servicenow-itsm-setup.md"
+          hasSecret={!!config.has_webhook_secret}
+          onRotate={integrationsService.rotateServiceNowWebhookSecret}
+          disabled={busy}
+        />
+      )}
     </div>
   )
 }

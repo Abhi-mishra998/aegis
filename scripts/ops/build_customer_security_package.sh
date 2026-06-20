@@ -150,6 +150,9 @@ fi
 
 # 07 — Subprocessors
 cp_safe  "$REPO_ROOT/docs/security/subprocessors.md"           "$OUT/07_subprocessors/subprocessors.md"
+# Sprint EI-18 — ITSM setup runbooks (both vendors, with round-trip).
+cp_safe  "$REPO_ROOT/docs/security/jira-itsm-setup.md"         "$OUT/07_subprocessors/jira-itsm-setup.md"
+cp_safe  "$REPO_ROOT/docs/security/servicenow-itsm-setup.md"   "$OUT/07_subprocessors/servicenow-itsm-setup.md"
 
 # 08 — Pen test
 cp_safe  "$REPO_ROOT/docs/security/pentest-sow-template.md"    "$OUT/08_pentest/pentest-sow-template.md"
