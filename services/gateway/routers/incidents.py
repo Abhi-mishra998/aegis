@@ -191,3 +191,73 @@ async def proxy_incident_export(incident_id: str, request: Request) -> Response:
         media_type=upstream.headers.get("content-type", "application/octet-stream"),
         headers=forward_headers,
     )
+
+
+# ── Sprint EI-19 — per-incident AEVF bundle download ─────────────────────
+@router.get("/incidents/{incident_id}/aevf-bundle", tags=["Incidents"])
+async def export_incident_aevf_bundle(
+    incident_id: str,
+    request: Request,
+    framework: str = "eu-ai-act",
+) -> Any:
+    """Download a self-contained AEVF bundle covering exactly the audit
+    rows tied to this incident (incident.related_audit_ids).
+
+    Pipeline:
+      1. GET api-svc /incidents/{id}  → JSON with related_audit_ids
+      2. POST audit-svc /compliance/incident-bundle with that id list
+      3. Stream the response back as application/json attachment
+
+    Auditor verifies the downloaded file offline with `aegis-verify
+    --bundle <file>` — no network call back to Aegis required.
+    Attaching this file to the upstream Jira/SNOW ticket gives the
+    operator's compliance team a portable, signed evidence trail.
+
+    RBAC: SECURITY_ANALYST+ (enforced by _rbac_map.py rule below).
+    """
+    client = request.app.state.client
+
+    # 1. Fetch the incident from api-svc.
+    incident_resp = await client.get(
+        f"{_api_base()}/incidents/{incident_id}",
+        headers=internal_headers(request),
+        timeout=8.0,
+    )
+    if incident_resp.status_code != 200:
+        # 404 / 403 / 500 — pass through with the api-svc body so the
+        # client sees a coherent error.
+        return passthrough(incident_resp)
+    incident = (incident_resp.json() or {}).get("data") or incident_resp.json()
+    audit_ids = list(incident.get("related_audit_ids") or [])
+    incident_number = incident.get("incident_number") or incident_id[:8]
+
+    # 2. Ask audit-svc to build the bundle. Empty audit_ids is valid —
+    # generator returns a bundle with zero rows but a valid chain proof
+    # of "no events in this window for this tenant".
+    bundle_payload = {
+        "audit_ids":       audit_ids,
+        "framework":       framework,
+        "incident_number": incident_number,
+    }
+    audit_url = f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/compliance/incident-bundle"
+    audit_resp = await client.post(
+        audit_url,
+        headers=internal_headers(request),
+        json=bundle_payload,
+        timeout=30.0,   # large bundles can take a few seconds to assemble
+    )
+
+    if audit_resp.status_code != 200:
+        return passthrough(audit_resp)
+
+    # 3. Stream back. Preserve the Content-Disposition so the browser
+    # offers the right filename.
+    filename = audit_resp.headers.get("content-disposition", "")
+    body = audit_resp.content
+    headers = {"Content-Disposition": filename} if filename else {}
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="application/json",
+        headers=headers,
+    )

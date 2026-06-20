@@ -160,6 +160,24 @@ Idempotent: a SNOW retry of the same resolve event finds the Aegis
 incident already `RESOLVED` and returns `already_closed` without
 re-writing.
 
+## Attaching the AEVF bundle to a SNOW ticket (Sprint EI-19)
+
+For SOC 2 / EU AI Act evidence trails — every Aegis incident has a
+downloadable, cryptographically-signed bundle of the underlying audit
+events. The auditor verifies it offline with `aegis-verify` (no network
+call back to Aegis required).
+
+1. In Aegis → **Incidents** → open the incident → click **AEVF bundle**.
+2. A `aegis-incident-INC-NNN.aevf.json` file downloads.
+3. In SNOW → open the linked ticket → **Add attachment** → upload the
+   JSON. Mark the attachment description as "Aegis cryptographic
+   evidence — verify with `pip install aegis-aevf && aegis-verify --bundle <file>`".
+
+The bundle contains every public key, the signed daily Merkle root for
+the day(s) the incident touched, and every audit row tied to it. Any
+post-hoc tampering invalidates the signature; the auditor sees that
+immediately.
+
 ## What Aegis does NOT do
 
 - **No SNOW table other than `incident`** is touched. Aegis will not

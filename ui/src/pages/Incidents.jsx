@@ -28,6 +28,20 @@ async function _exportIncidentPdf(incidentId, incidentNumber) {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// Sprint EI-19 — per-incident AEVF bundle download. The auditor opens
+// the JSON offline with `aegis-verify` and gets a cryptographically-
+// signed proof of every audit event tied to this incident, no Aegis
+// service needed.
+async function _exportIncidentAevf(incidentId, incidentNumber) {
+  const blob = await incidentService.exportAevfBundle(incidentId)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `aegis-incident-${incidentNumber || incidentId.slice(0, 8)}.aevf.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 import { AuthContext } from '../context/AuthContext';
 import { eventBus } from '../lib/eventBus';
 
@@ -204,6 +218,28 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
             >
               <Download size={11} aria-hidden="true" />
               {exporting ? 'Generating…' : 'Export PDF'}
+            </button>
+            {/* Sprint EI-19 — per-incident AEVF bundle (cryptographically
+                verifiable evidence trail for THIS incident; auditor
+                opens offline with `aegis-verify`). */}
+            <button
+              onClick={async () => {
+                setExporting(true)
+                try {
+                  await _exportIncidentAevf(incident.id, incident.incident_number)
+                  addToast('AEVF bundle downloaded — attach to your ITSM ticket for the audit trail', 'success')
+                } catch (err) {
+                  addToast(err.message || 'AEVF export failed', 'error')
+                } finally {
+                  setExporting(false)
+                }
+              }}
+              disabled={exporting}
+              title="Cryptographically-signed evidence bundle (AEVF). Auditor verifies offline with `aegis-verify`."
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-neutral-400 bg-white/[0.02] border border-[var(--border-subtle)] rounded-lg hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
+            >
+              <Download size={11} aria-hidden="true" />
+              AEVF bundle
             </button>
           </div>
         </div>

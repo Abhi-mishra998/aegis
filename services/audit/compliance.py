@@ -36,7 +36,7 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1074,6 +1074,69 @@ async def export_verifiable_bundle(
     )
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     filename = f"aegis-verifiable-{framework}-{str(tenant_id)[:8]}-{ts}.json"
+    out_path = _EXPORT_DIR / filename
+    export_bundle_as_json(bundle, out_path)
+    return FileResponse(
+        path=str(out_path),
+        filename=filename,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class _IncidentBundleRequest(BaseModel):
+    audit_ids: list[uuid.UUID] = Field(
+        ..., min_length=0, max_length=10_000,
+        description="The audit-row UUIDs to include — typically incident.related_audit_ids",
+    )
+    framework: str = Field(default="eu-ai-act",
+                            description="eu-ai-act | nist-ai-rmf | soc2 — controls the per-row control mapping")
+    incident_number: str | None = Field(default=None, max_length=32,
+                                         description="For the filename + bundle metadata; optional")
+
+
+@compliance_router.post("/incident-bundle")
+async def export_incident_bundle(
+    payload:   _IncidentBundleRequest,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID,    Depends(get_tenant_id)],
+) -> FileResponse:
+    """Sprint EI-19 — per-incident AEVF bundle.
+
+    Builds the same shape as `/verifiable-bundle/{framework}` but
+    filtered to a specific audit-row id list (typically the incident's
+    `related_audit_ids` JSON column). The transparency-root scan still
+    runs over the rows' actual time-bound so V3 chain verification
+    works offline.
+
+    Period is auto-derived from the matching rows: caller doesn't need
+    to know when the incident happened.
+    """
+    from services.audit.verifiable_bundle import generate_verifiable_bundle
+
+    _VALID = {"eu-ai-act", "nist-ai-rmf", "soc2"}
+    if payload.framework not in _VALID:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown framework '{payload.framework}'. Valid: {sorted(_VALID)}",
+        )
+
+    # Wide period bound so the audit_ids filter is the actual narrower —
+    # 10 years back, 1 day forward. The generator clamps transparency
+    # roots to the rows' real min/max date inside.
+    now = datetime.now(UTC)
+    period_start = now - timedelta(days=10 * 365)
+    period_end   = now + timedelta(days=1)
+
+    bundle = await generate_verifiable_bundle(
+        db, tenant_id, payload.framework,
+        period_start, period_end,
+        audit_ids=payload.audit_ids,
+    )
+
+    inc_tag = payload.incident_number or "incident"
+    ts = now.strftime("%Y%m%dT%H%M%SZ")
+    filename = f"aegis-{inc_tag}-{payload.framework}-{ts}.json"
     out_path = _EXPORT_DIR / filename
     export_bundle_as_json(bundle, out_path)
     return FileResponse(

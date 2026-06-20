@@ -122,6 +122,12 @@ RULES: tuple[Rule, ...] = (
     _R("/storylines*",                 ("*",),           min_role="SECURITY_ANALYST"),
     _R("/iag/*",                       ("GET",),         min_role="SECURITY_ANALYST"),
     _R("/incidents/*",                 ("PATCH", "POST", "DELETE"), min_role="SECURITY_ANALYST"),
+    # Sprint EI-19 — per-incident AEVF bundle download. SECURITY_ANALYST+
+    # because the bundle contains every audit row tied to the incident
+    # (potentially sensitive prompts / tool args) — not READ_ONLY material.
+    # Must come BEFORE the catch-all GET rule below (specificity wins
+    # in registration order via _rbac_map's _RULES list).
+    _R("/incidents/*/aevf-bundle",     ("GET",),         min_role="SECURITY_ANALYST"),
     _R("/incidents*",                  ("GET",),         min_role="READ_ONLY"),
     _R("/replay/*",                    ("GET",),         min_role="READ_ONLY"),
 
