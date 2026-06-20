@@ -145,6 +145,66 @@ class TestMarkdown:
         assert "—" in md   # placeholder for missing fixed_version
 
 
+# ── Sprint EI-15 — source-tag rendering + multi-source diff ─────────────
+class TestSourceTagging:
+    """When findings carry a `source` field (Sprint EI-15 — python-sbom
+    vs image:<ref>), the markdown shows it so the operator can tell
+    WHERE the new CVE came from."""
+
+    def _f_src(self, id, sev, source, pkg="lib", ver="1.0"):
+        return {
+            "id":                id,
+            "severity":          sev,
+            "package":           pkg,
+            "installed_version": ver,
+            "fixed_version":     None,
+            "primary_url":       f"https://nvd.nist.gov/vuln/detail/{id}",
+            "source":            source,
+        }
+
+    def test_markdown_header_includes_source_column(self):
+        r = scd.diff([self._f_src("CVE-1", "HIGH", "image:python:3.11-slim")], [])
+        md = scd.render_markdown(r)
+        assert "| Source |" in md
+
+    def test_markdown_row_renders_source(self):
+        r = scd.diff([self._f_src("CVE-IMG", "CRITICAL",
+                                    "image:openpolicyagent/opa:1.17.1-debug")], [])
+        md = scd.render_markdown(r)
+        assert "image:openpolicyagent/opa:1.17.1-debug" in md
+        assert "CVE-IMG" in md
+
+    def test_markdown_defaults_to_python_sbom_when_source_missing(self):
+        """Pre-EI-15 findings without a source still render — surface
+        'python-sbom' as the default (matches the EI-13 origin)."""
+        r = scd.diff([_f("CVE-LEGACY", "HIGH")], [])  # no source field
+        md = scd.render_markdown(r)
+        assert "python-sbom" in md
+
+    def test_same_cve_two_sources_dedupes_in_diff(self):
+        """Identity is (id, package, version) — same CVE in python AND
+        image is one finding for diff purposes. The renderer surfaces
+        the source it found first."""
+        same_cve_python = self._f_src("CVE-DUP", "HIGH", "python-sbom",
+                                       pkg="urllib3", ver="2.0")
+        same_cve_image  = self._f_src("CVE-DUP", "HIGH", "image:python:3.11",
+                                       pkg="urllib3", ver="2.0")
+        r = scd.diff([same_cve_python, same_cve_image], [])
+        # Only one new-bucket entry — the diff is shape-based, not
+        # source-based. The first matching finding wins the slot.
+        assert r["counts"]["new"] == 1
+
+    def test_image_only_cve_appears_in_new(self):
+        """A CVE that only exists in the OS layer (not in the Python
+        SBOM) is still a real CVE we need to track — EI-15's whole point."""
+        image_only = self._f_src("CVE-OS-ONLY", "CRITICAL",
+                                  "image:redis:7-alpine",
+                                  pkg="libssl1.1", ver="1.1.1n-0+deb11u5")
+        r = scd.diff([image_only], [])
+        assert r["counts"]["new"] == 1
+        assert r["new"][0]["source"].startswith("image:")
+
+
 # ── _load helper ────────────────────────────────────────────────────────
 class TestLoad:
     def test_missing_file_returns_empty_list(self):
