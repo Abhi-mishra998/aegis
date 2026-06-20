@@ -140,6 +140,13 @@ RULES: tuple[Rule, ...] = (
     _R("/webhooks/config",             ("GET",),         roles=("OWNER", "ADMIN")),
     _R("/siem/*",                      ("*",),           roles=("OWNER", "ADMIN")),
     _R("/sso/slack/*",                 ("*",),           roles=("OWNER", "ADMIN")),
+    # Sprint EI-2 — Jira ITSM integration. The api_token is per-tenant; only
+    # OWNER + ADMIN can set or delete it. READ_ONLY can see has_api_token: true
+    # but never the token itself.
+    _R("/integrations/jira/test",      ("POST",),        roles=("OWNER", "ADMIN")),
+    _R("/integrations/jira",           ("PUT", "DELETE"), roles=("OWNER", "ADMIN")),
+    _R("/integrations/jira",           ("GET",),         min_role="READ_ONLY"),
+    _R("/integrations*",               ("GET",),         min_role="READ_ONLY"),
     _R("/billing/checkout",            ("POST",),        roles=("OWNER",)),
     _R("/billing/portal",              ("POST",),        roles=("OWNER",)),
     _R("/billing*",                    ("GET",),         roles=("OWNER",)),

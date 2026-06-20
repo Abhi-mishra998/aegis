@@ -1,5 +1,5 @@
 """
-Real webhook execution — fires Slack, PagerDuty, and generic webhooks.
+Real webhook execution — fires Slack, PagerDuty, Jira, and generic webhooks.
 Also dispatches enforcement actions (KILL_AGENT, ISOLATE_AGENT, BLOCK_TOOL,
 THROTTLE, REVOKE_KEY) to the registry and api services via internal HTTP.
 
@@ -13,9 +13,14 @@ Each path stores one SecureString per credential:
 
 This matches the existing ``/aegis-siem/*`` convention in the account so an
 operator only needs to remember one ssm:put-parameter command shape.
+
+Sprint EI-2 (Jira ITSM integration): Jira config is *per-tenant*, persisted
+to the identity DB (not SSM/env) so a tenant can self-serve. The executor
+accepts the config in the ``params`` dict at call time — see fire_jira().
 """
 from __future__ import annotations
 
+import base64
 import ipaddress
 import os
 import socket
@@ -191,6 +196,135 @@ async def fire_pagerduty(
     except Exception as exc:
         logger.warning("pagerduty_alert_failed", error=str(exc))
         return {"status": "error", "reason": str(exc)}
+
+
+async def fire_jira(
+    summary: str,
+    *,
+    base_url: str,
+    account_email: str,
+    api_token: str,
+    project_key: str,
+    issue_type: str = "Bug",
+    description: str | None = None,
+    priority: str | None = None,
+    labels: list[str] | None = None,
+    context: dict | None = None,
+) -> dict:
+    """Create a Jira Cloud issue via REST API v3.
+
+    Returns a result dict with ``status`` ∈ {``"created"``, ``"skipped"``,
+    ``"error"``}. On success the dict carries the Jira ``issue_key`` and
+    ``issue_id`` so the caller can store it on the originating incident
+    for round-trip linking. Never raises.
+
+    Auth is Basic with base64(email:api_token). The on-prem Server API
+    differs from Cloud — this implementation targets Cloud (`/rest/api/3/`).
+
+    Description is sent as Atlassian Document Format (ADF) — a paragraph
+    node wrapping the supplied text, which is enough for incident-link
+    bodies. Callers wanting richer formatting can pass a fully-formed ADF
+    document via the ``description`` parameter as a JSON string starting
+    with ``{`` — it will be parsed and passed through verbatim.
+    """
+    if not (base_url and account_email and api_token and project_key):
+        logger.info("jira_create_skipped", reason="missing_config")
+        return {"status": "skipped", "reason": "Jira config incomplete"}
+
+    try:
+        _assert_safe_webhook_url(base_url)
+    except _SSRFBlocked as exc:
+        logger.warning("jira_blocked_ssrf", base_url=base_url, reason=str(exc))
+        return {"status": "error", "reason": f"jira base_url blocked: {exc}"}
+
+    # ADF body: paragraph wrapping the supplied text, or raw ADF if caller
+    # passes a JSON string (begins with '{').
+    desc_text = description or summary
+    if desc_text.lstrip().startswith("{"):
+        import json as _json
+        try:
+            adf_body = _json.loads(desc_text)
+        except Exception:
+            adf_body = _adf_paragraph(desc_text)
+    else:
+        adf_body = _adf_paragraph(desc_text, context=context)
+
+    fields: dict = {
+        "project":   {"key": project_key},
+        "summary":   summary[:255],
+        "issuetype": {"name": issue_type},
+        "description": adf_body,
+    }
+    if priority:
+        fields["priority"] = {"name": priority}
+    if labels:
+        fields["labels"] = [str(s) for s in labels][:20]
+
+    auth = base64.b64encode(f"{account_email}:{api_token}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {auth}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    url = f"{base_url.rstrip('/')}/rest/api/3/issue"
+
+    try:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+            r = await c.post(url, json={"fields": fields}, headers=headers)
+        if r.status_code == 201:
+            body = r.json()
+            issue_key = body.get("key", "")
+            issue_id  = body.get("id", "")
+            logger.info(
+                "jira_issue_created",
+                issue_key=issue_key, project=project_key, http=r.status_code,
+            )
+            return {
+                "status":     "created",
+                "issue_key":  issue_key,
+                "issue_id":   issue_id,
+                "issue_url":  f"{base_url.rstrip('/')}/browse/{issue_key}" if issue_key else "",
+                "http_status": r.status_code,
+            }
+        logger.warning(
+            "jira_issue_create_failed",
+            http=r.status_code, body=r.text[:200], project=project_key,
+        )
+        return {
+            "status": "error",
+            "http_status": r.status_code,
+            "reason": r.text[:200] if r.text else f"HTTP {r.status_code}",
+        }
+    except Exception as exc:
+        logger.warning("jira_issue_create_exception", error=str(exc))
+        return {"status": "error", "reason": str(exc)}
+
+
+def _adf_paragraph(text: str, *, context: dict | None = None) -> dict:
+    """Build a minimal Atlassian Document Format body from plain text.
+
+    A single paragraph node carrying the message, followed by an optional
+    bullet list of context key/value pairs. Sufficient for ticket bodies
+    posted by Aegis; richer ADF is left to the caller.
+    """
+    content: list[dict] = [
+        {
+            "type": "paragraph",
+            "content": [{"type": "text", "text": text}],
+        }
+    ]
+    if context:
+        items = []
+        for k, v in list(context.items())[:10]:
+            items.append({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": f"{k}: {v}"}],
+                }],
+            })
+        content.append({"type": "bulletList", "content": items})
+    return {"type": "doc", "version": 1, "content": content}
 
 
 async def fire_generic_webhook(
@@ -381,6 +515,20 @@ async def execute_step(step: dict, context: dict | None = None) -> dict:
             payload={**params.get("payload", {}), "aegis_context": ctx},
             method=params.get("method", "POST"),
             headers=params.get("headers", {}),
+        )
+
+    elif action_type == "CREATE_JIRA_ISSUE":
+        return await fire_jira(
+            summary=params.get("summary") or ctx.get("summary") or "Aegis incident",
+            base_url=params.get("base_url", ""),
+            account_email=params.get("account_email", ""),
+            api_token=params.get("api_token", ""),
+            project_key=params.get("project_key", ""),
+            issue_type=params.get("issue_type", "Bug"),
+            description=params.get("description") or ctx.get("description"),
+            priority=params.get("priority"),
+            labels=params.get("labels"),
+            context=ctx,
         )
 
     else:

@@ -10,12 +10,14 @@ import {
   MessagesSquare,
   Settings as SettingsIcon,
   ShieldCheck,
+  Ticket,
   Users,
   Webhook,
 } from 'lucide-react';
 import SystemValuesTab from '../components/settings/SystemValuesTab';
 import SlackApprovalsTab from '../components/settings/SlackApprovalsTab';
 import PolicyPacksTab from '../components/settings/PolicyPacksTab';
+import JiraIntegrationTab from '../components/settings/JiraIntegrationTab';
 import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 // Existing pages, lazy-imported so each tab only pulls its chunk on
@@ -51,6 +53,7 @@ const TABS = [
   { id: 'siem',          label: 'SIEM',            icon: Database,       Component: SiemSettings,     group: GROUP.INTEGRATIONS },
   { id: 'webhooks',      label: 'Webhooks',        icon: Webhook,        Component: WebhookSettings,  group: GROUP.INTEGRATIONS },
   { id: 'slack',         label: 'Slack approvals', icon: MessagesSquare, Component: SlackApprovalsTab, group: GROUP.INTEGRATIONS },
+  { id: 'jira',          label: 'Jira',            icon: Ticket,         Component: JiraIntegrationTab, group: GROUP.INTEGRATIONS },
   { id: 'system-values', label: 'System Values',   icon: DollarSign,     Component: SystemValuesTab,  group: GROUP.WORKSPACE },
   { id: 'policy-packs',  label: 'Policy packs',    icon: ShieldCheck,    Component: PolicyPacksTab,   group: GROUP.WORKSPACE },
   { id: 'quota',         label: 'Quota',           icon: Gauge,          Component: QuotaManagement,  group: GROUP.WORKSPACE },

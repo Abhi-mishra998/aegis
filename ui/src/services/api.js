@@ -515,6 +515,21 @@ export const workspaceService = {
 };
 
 
+// Sprint EI-2 (2026-06-20) — Per-tenant Jira ITSM integration.
+// GET returns {data: {has_api_token, base_url, project_key, ...}} — never the token.
+// PUT upserts the row. Test fires one real issue to verify the wiring.
+export const integrationsService = {
+  getJira: () => request("/integrations/jira"),
+  setJira: (body) =>
+    request("/integrations/jira", {
+      method: "PUT",
+      body: JSON.stringify(body || {}),
+    }),
+  deleteJira: () => request("/integrations/jira", { method: "DELETE" }),
+  testJira: () => request("/integrations/jira/test", { method: "POST" }),
+};
+
+
 // Sprint 5-7 — Identity & Access Graph + Blast Radius read API.
 // Surfaces the IAG endpoints that were built but never wired to the UI,
 // plus the Sprint 7 MITRE coverage grid that pulls from signal_registry.
