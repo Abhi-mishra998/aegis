@@ -25,6 +25,10 @@ and a procurement red flag.
 | # | Title | Status | Date | Replaces / Superseded by |
 |---|---|---|---|---|
 | ADR-001 | [Cryptographic audit chain — DB trigger + Merkle + S3 mirror](ADR-001-audit-chain-design.md) | Accepted | 2026-06-20 | — |
+| ADR-002 | [Centralised RBAC matrix — (path, method) → roles map](ADR-002-centralised-rbac-matrix.md) | Accepted | 2026-06-20 | — |
+| ADR-003 | [Three-layer tenant isolation — canonicalise + middleware + DB CHECK](ADR-003-three-layer-tenant-isolation.md) | Accepted | 2026-06-20 | — |
+| ADR-004 | [OPA Rego for policy decisions, not inline Python](ADR-004-opa-rego-vs-inline-python.md) | Accepted | 2026-06-20 | — |
+| ADR-005 | [ed25519 over RSA-2048 for audit-chain signing](ADR-005-ed25519-over-rsa-for-signing.md) | Accepted | 2026-06-20 | — |
 
 ## When to write an ADR
 
