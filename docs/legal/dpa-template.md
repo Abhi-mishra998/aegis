@@ -2,14 +2,18 @@
 
 **Audience:** Customer procurement / privacy counsel + ByteHubble legal.
 **Status:** `<LEGAL REVIEW PENDING>` — this is the engineering-drafted skeleton. Legal counsel must finalise §10 (Governing law), §6 (Sub-processors), and the Standard Contractual Clauses annex before counter-signature.
-**Version:** 1.0 · 2026-06-18.
+**Version:** 1.1 · 2026-06-20 (refresh for Sprint EI-8 — sub-processor register published; EU-instance residency posture added; MSA cross-reference).
 **Companion documents:**
+- `docs/legal/msa-template.md` — Master Service Agreement that this DPA attaches to.
+- `docs/legal/baa-template.md` — HIPAA-specific overlay for Covered Entities.
+- `docs/security/subprocessors.md` — current sub-processor register (incorporated by reference; supersedes the inline §6 list).
+- `docs/security/data_residency.md` — per-data-class residency table (referenced in §3 + §5 for the EU instance).
 - `docs/security/threat-model.md` — formal STRIDE-per-asset model.
-- `docs/operations/retention-policy.md` — retention SLAs referenced in §7.
+- `docs/security/data_retention.md` — customer-facing retention SLAs referenced in §7.
+- `docs/operations/retention-policy.md` — operator-facing retention runbook.
 - `docs/operations/incident-response.md` — breach-handling procedure referenced in §8.
-- `docs/security/baa-template.md` — HIPAA-specific overlay for covered entities.
 
-> **How to use this template.** Replace every `<CUSTOMER_NAME>`, `<CUSTOMER_LEGAL_ENTITY>`, `<EFFECTIVE_DATE>`, `<JURISDICTION>`, and `<NOTIFICATION_EMAIL>` placeholder. Verify the sub-processor list in §6 against the latest sub-processor register maintained at `docs/security/subprocessors.md` (to be published, OI-7 in the threat model). Any deviation from the engineering-set security measures in §5 requires Security-Engineering sign-off recorded in the change log.
+> **How to use this template.** Replace every `<CUSTOMER_NAME>`, `<CUSTOMER_LEGAL_ENTITY>`, `<EFFECTIVE_DATE>`, `<JURISDICTION>`, and `<NOTIFICATION_EMAIL>` placeholder. The sub-processor register at `docs/security/subprocessors.md` is now published (per Sprint EI-5; carries the eu-west-1 row for the EU instance). The inline §6 list below is informational; the published register controls in case of conflict. Any deviation from the engineering-set security measures in §5 requires Security-Engineering sign-off recorded in the change log.
 
 ---
 
@@ -119,17 +123,26 @@ A per-tenant kill switch can disable Aegis enforcement for a tenant; the switch 
 
 ## 6. Sub-processors
 
-ByteHubble engages the following Sub-processors as of `<EFFECTIVE_DATE>`. Customer is notified of any change to this list via `<NOTIFICATION_EMAIL>` no fewer than thirty (30) days before the change takes effect. Customer may object on reasonable, documented data-protection grounds, and ByteHubble shall use commercially reasonable efforts to accommodate or terminate the Sub-processor.
+The authoritative sub-processor register is published at `docs/security/subprocessors.md` and updated whenever a vendor changes; Customer is notified of any change that materially expands data exposure via `<NOTIFICATION_EMAIL>` no fewer than thirty (30) days before the change takes effect. Customer may object on reasonable, documented data-protection grounds and ByteHubble shall use commercially reasonable efforts to accommodate or terminate the Sub-processor.
 
-| Sub-processor                  | Role                                       | Region          | Personal Data category accessed       |
-|--------------------------------|--------------------------------------------|-----------------|---------------------------------------|
-| Amazon Web Services, Inc.      | Infrastructure (compute, storage, network) | `<AWS_REGION>`  | All categories under §3.3              |
-| Clerk, Inc.                    | Customer SSO / JWT issuance                | United States   | User identifiers under §3.3            |
-| Anthropic, PBC                 | Upstream LLM (Path B only, if enabled)     | United States   | Prompts and prompt-borne identifiers   |
-| OpenAI, L.L.C.                 | Upstream LLM (Path B only, if enabled)     | United States   | Prompts and prompt-borne identifiers   |
-| `<SLACK_OR_PAGERDUTY_VENDOR>`  | Approval-routing notification              | `<REGION>`      | Approval card metadata                 |
+The table below is a snapshot for convenience as of v1.1 of this DPA; in the event of conflict between this table and the published register, the published register controls.
 
-`<LEGAL REVIEW PENDING>` — verify Anthropic / OpenAI inclusion against the Customer's selected Aegis tier. Path A customers do not route prompts through ByteHubble, so the relevant LLM provider is not a sub-processor for them.
+| Sub-processor                  | Role                                       | Region (ap-south-1 instance) | Region (eu-west-1 instance)                 | Personal Data category accessed       |
+|--------------------------------|--------------------------------------------|------------------------------|---------------------------------------------|---------------------------------------|
+| Amazon Web Services, Inc.      | Infrastructure (compute, storage, network) | `ap-south-1` (Mumbai)        | `eu-west-1` (Ireland), full data isolation  | All categories under §3.3              |
+| Clerk, Inc.                    | Customer SSO / JWT issuance                | US (with EU + APAC options)  | EU-pinned Clerk organisation                 | User identifiers under §3.3            |
+| Anthropic, PBC                 | Upstream LLM (Path B only, if enabled)     | US (`api.anthropic.com`)     | EU (`api.eu.anthropic.com`) — opt-in         | Prompts and prompt-borne identifiers   |
+| OpenAI, L.L.C.                 | Upstream LLM (Path B only, if enabled)     | US (`api.openai.com`)        | Azure OpenAI EU regions — per-tenant DPA     | Prompts and prompt-borne identifiers   |
+| Stripe, Inc.                   | Billing / payment processing               | US + EU (auto-routed)        | EU entity for EU customers — no config change | Email, subscription metadata; cards tokenised |
+| GitHub, Inc.                   | Source code + CI                           | US                           | US — same (no Customer Data crosses)         | None (build artifacts only)            |
+| Sigstore (Fulcio + Rekor)      | Bundle-signing certificate authority + transparency log | Multi-region    | Multi-region — same                          | None (signatures only)                 |
+| `<SLACK_OR_PAGERDUTY_VENDOR>`  | Approval-routing notification              | `<REGION>`                   | `<REGION>`                                  | Approval card metadata                 |
+| Atlassian (Jira Cloud)         | ITSM (optional, per-tenant)                | Per Atlassian's residency    | Atlassian EU residency available             | Incident summary + Aegis context       |
+| ServiceNow                     | ITSM (optional, per-tenant)                | Customer's SNOW instance     | Customer's SNOW instance                     | Incident summary + Aegis context       |
+
+`<LEGAL REVIEW PENDING>` — verify Anthropic / OpenAI inclusion against the Customer's selected Aegis tier. Path A customers do not route prompts through ByteHubble, so the relevant LLM provider is not a sub-processor for them. Atlassian / ServiceNow appear only if Customer has connected the corresponding integration via Settings → Integrations.
+
+Cross-region data flows are governed by `docs/security/data_residency.md`: tenant runtime data never leaves the Customer's chosen Aegis region (`ap-south-1` or `eu-west-1`); only static build artifacts cross regions.
 
 ## 7. Data subject rights and retention
 
@@ -204,7 +217,7 @@ In the event of a conflict between this DPA and the Subscription Agreement, this
 |--------------------------------|--------------------------------------------------------------------------------------------------------|
 | Categories of Data Subjects    | Customer's employees, contractors, and end-users.                                                       |
 | Categories of Personal Data    | Identifiers in agent prompts and tool arguments; Clerk-issued JWT claims; IP addresses; approval metadata. |
-| Special categories             | Only if Customer enables Path B for HIPAA-covered operations — see `docs/security/baa-template.md`.    |
+| Special categories             | Only if Customer enables Path B for HIPAA-covered operations — see `docs/legal/baa-template.md`.    |
 | Nature of Processing           | Automated policy evaluation, cryptographic audit logging, human-approval routing.                       |
 | Purpose                        | Runtime governance of Customer's AI agents.                                                             |
 | Retention                      | As set out in §7.2.                                                                                    |

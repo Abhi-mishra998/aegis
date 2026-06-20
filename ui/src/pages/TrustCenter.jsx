@@ -237,6 +237,34 @@ function NightlyEvidence() {
 }
 
 
+function LegalTemplates() {
+  return (
+    <section className="px-6 py-12 max-w-5xl mx-auto">
+      <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">Contract templates</h2>
+      <div className="p-5 rounded-xl border border-white/[0.08] bg-white/[0.02]">
+        <p className="text-sm text-neutral-200 leading-relaxed">
+          Four templates ready for your counsel to redline:
+        </p>
+        <ul className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-neutral-400">
+          <li><span className="text-neutral-300 font-semibold">MSA</span> — Master Service Agreement (16 sections)</li>
+          <li><span className="text-neutral-300 font-semibold">DPA</span> — Data Processing Agreement (GDPR Art. 28, India DPDP §8)</li>
+          <li><span className="text-neutral-300 font-semibold">BAA</span> — HIPAA Business Associate (Covered-Entity overlay)</li>
+          <li><span className="text-neutral-300 font-semibold">SLA</span> — 99.5% Design-Partner / 99.9% Enterprise + service-credit schedule</li>
+        </ul>
+        <p className="text-xs text-neutral-500 mt-4 leading-relaxed">
+          All four ship in <code className="text-neutral-300">12_legal/</code> of the Customer
+          Security Package — request a copy below or via{' '}
+          <a className="text-white underline hover:text-neutral-200"
+             href="https://github.com/Abhi-mishra998/aegis/tree/main/docs/legal">
+            docs/legal on GitHub
+          </a>.
+        </p>
+      </div>
+    </section>
+  )
+}
+
+
 function Foot() {
   return (
     <section className="px-6 py-16 max-w-5xl mx-auto text-center">
@@ -265,6 +293,7 @@ export default function TrustCenter() {
       <Sections />
       <Compliance />
       <NightlyEvidence />
+      <LegalTemplates />
       <Disclosure />
       <Foot />
     </div>
