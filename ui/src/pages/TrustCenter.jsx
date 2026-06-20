@@ -222,6 +222,7 @@ function NightlyEvidence() {
           <li>AEVF V1–V6 walk over every daily transparency root</li>
           <li>Cross-tenant isolation 7-attack matrix against staging.aegisagent.in</li>
           <li>Public-surface probe of /health, /trust, /.well-known/security.txt</li>
+          <li>SBOM CVE diff: trivy on the latest CycloneDX SBOM, fails on any net-new HIGH+CRITICAL CVE since yesterday</li>
           <li>Chaos drill: docker kill OPA / policy / decision / Redis under live load + DB-pool burst</li>
         </ol>
         <p className="text-xs text-neutral-500 mt-4 leading-relaxed">

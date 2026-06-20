@@ -129,6 +129,79 @@ jobs:
           fi
           echo "probe_status=pass" >> "$GITHUB_OUTPUT"
 
+      # ── 4. SBOM CVE-watch (Sprint EI-13) ──────────────────────────
+      # Pulls the latest CycloneDX SBOM that security_scan.yml generated
+      # (uploaded as artifact `sbom-cyclonedx-<sha>`), runs trivy against
+      # it, then diffs against yesterday's archived JSON. Fails the job
+      # only on NEW high+critical CVEs since yesterday — chronic-unfixed
+      # CVEs are listed but don't trigger an alert (otherwise the badge
+      # is RED every night and the operator stops looking).
+      - name: Install trivy
+        run: |
+          curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" | \
+            sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y trivy
+
+      - name: Fetch latest SBOM from GH Actions artifacts
+        id: sbom_fetch
+        run: |
+          mkdir -p /tmp/sbom-work
+          # The security_scan workflow uploads sbom-cyclonedx-<sha>; pull
+          # the most recent successful run on main.
+          run_id="$(gh run list --workflow security_scan.yml \
+                       --branch main --status success --limit 1 \
+                       --json databaseId --jq '.[0].databaseId')"
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::warning::No successful security_scan run found — skipping CVE scan"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh run download "$run_id" \
+            --dir /tmp/sbom-work \
+            --pattern "sbom-cyclonedx-*" || true
+          sbom="$(find /tmp/sbom-work -name 'sbom.cyclonedx.json' | head -1)"
+          if [ -z "$sbom" ]; then
+            echo "::warning::Downloaded artifact had no sbom.cyclonedx.json"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "sbom_path=$sbom" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan SBOM + diff vs yesterday
+        id: sbom_cve
+        if: steps.sbom_fetch.outputs.skip == 'false'
+        run: |
+          SBOM="${{ steps.sbom_fetch.outputs.sbom_path }}"
+          mkdir -p /tmp/cve
+          bash scripts/ops/sbom_cve_scan.sh "$SBOM" /tmp/cve/today.json
+          # Pull yesterday's snapshot (404 = first run, empty baseline).
+          aws s3 cp "s3://${PUBLIC_ROOTS_BUCKET}/cve-history/yesterday.json" \
+            /tmp/cve/yesterday.json 2>/dev/null || true
+          status="$(python3 scripts/ops/sbom_cve_diff.py \
+            --today /tmp/cve/today.json \
+            --yesterday /tmp/cve/yesterday.json \
+            --out /tmp/cve/diff.json \
+            --summary /tmp/cve/summary.md \
+            --severity-floor HIGH || echo new-cves)"
+          # Append the rendered summary to the GH step page regardless.
+          cat /tmp/cve/summary.md >> "$GITHUB_STEP_SUMMARY"
+          # Archive today's scan as YYYY-MM-DD + roll forward to yesterday's slot
+          DATE_TODAY="$(date -u +%Y-%m-%d)"
+          aws s3 cp /tmp/cve/today.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/cve-history/${DATE_TODAY}.json" \
+            --content-type application/json --cache-control "max-age=3600"
+          aws s3 cp /tmp/cve/today.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/cve-history/yesterday.json" \
+            --content-type application/json --cache-control "max-age=300"
+          echo "sbom_cve_status=$status" >> "$GITHUB_OUTPUT"
+          # Fail the job only when net-new CVEs appeared
+          if [ "$status" = "new-cves" ]; then exit 1; fi
+
       # ── Publish the summary for public audit ───────────────────────
       - name: Publish verify summary
         if: always()
@@ -142,6 +215,7 @@ jobs:
             "aevf_v1_v6": "${{ steps.aevf.outputs.aevf_status || 'unknown' }}",
             "isolation":  "${{ steps.isolation.outputs.isolation_status || 'unknown' }}",
             "public_probe": "${{ steps.probe.outputs.probe_status || 'unknown' }}",
+            "sbom_cve":   "${{ steps.sbom_cve.outputs.sbom_cve_status || 'skip' }}",
             "gh_run_id":  "${{ github.run_id }}",
             "gh_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
@@ -169,6 +243,7 @@ jobs:
             echo "| AEVF V1-V6 | ${{ steps.aevf.outputs.aevf_status || 'unknown' }} |"
             echo "| Cross-tenant isolation (7/7) | ${{ steps.isolation.outputs.isolation_status || 'unknown' }} |"
             echo "| Public probe (/health /trust /.well-known/security.txt) | ${{ steps.probe.outputs.probe_status || 'unknown' }} |"
+            echo "| SBOM CVE diff (HIGH+CRITICAL net-new since yesterday) | ${{ steps.sbom_cve.outputs.sbom_cve_status || 'skip' }} |"
             echo
             echo "Public artifact: s3://${PUBLIC_ROOTS_BUCKET}/nightly/$(date -u +%Y-%m-%d).json"
           } >> "$GITHUB_STEP_SUMMARY"
