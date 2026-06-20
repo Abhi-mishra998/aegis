@@ -6,6 +6,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { demoService } from '../services/api'
+import { getTurnstileToken } from '../lib/turnstile'
 
 // Sprint 11 — Marketing landing.
 //
@@ -92,7 +93,11 @@ function Hero() {
     setSpawning(true)
     setDemoError('')
     try {
-      const res = await demoService.spawnWorkspace()
+      // EI-9: lazy-load Turnstile and get a proof-of-human token. If no
+      // VITE_TURNSTILE_SITE_KEY is configured (local dev), this returns
+      // '' immediately and the server bypasses verification too.
+      const turnstileToken = await getTurnstileToken()
+      const res = await demoService.spawnWorkspace(turnstileToken)
       const data = res?.data || res || {}
       const { jwt, tenant_id, ttl_seconds, owner_email } = data
       if (!jwt || !tenant_id) throw new Error('No demo session returned')
