@@ -77,6 +77,14 @@ def _to_public_dict(row) -> dict[str, Any]:
         # Sprint EI-18 — surface webhook-secret presence so the UI can
         # decide between "Generate secret" and "Rotate secret" CTAs.
         "has_webhook_secret":       bool(getattr(row, "webhook_secret", None)),
+        # Sprint EI-20 — deliverability telemetry. UI renders "Last
+        # received <ts> ago — status: <status>" so the operator can
+        # tell at a glance whether the round-trip is alive.
+        "last_webhook_received_at": (
+            row.last_webhook_received_at.isoformat()
+            if getattr(row, "last_webhook_received_at", None) else None
+        ),
+        "last_webhook_status":      getattr(row, "last_webhook_status", None),
         "default_issue_type":       row.default_issue_type,
         "default_priority":         row.default_priority,
         "enabled":                  row.enabled,
@@ -246,6 +254,12 @@ def _snow_to_public_dict(row) -> dict[str, Any]:
         "has_password":             bool(row.password),
         # Sprint EI-18 — webhook-secret presence (never the value).
         "has_webhook_secret":       bool(getattr(row, "webhook_secret", None)),
+        # Sprint EI-20 — deliverability telemetry.
+        "last_webhook_received_at": (
+            row.last_webhook_received_at.isoformat()
+            if getattr(row, "last_webhook_received_at", None) else None
+        ),
+        "last_webhook_status":      getattr(row, "last_webhook_status", None),
         "default_urgency":          row.default_urgency,
         "default_impact":           row.default_impact,
         "default_category":         row.default_category,

@@ -45,6 +45,54 @@ JIRA_DONE_NAMES = {"done", "closed", "resolved", "complete", "completed"}
 # ServiceNow: state ids that mean "resolved or closed" per default install.
 SNOW_DONE_STATES = {"6", "7", "8"}  # 6=Resolved, 7=Closed, 8=Cancelled
 
+# Sprint EI-20 — canonical vocabulary for last_webhook_status. Locked so
+# the UI + tests + `_touch_webhook_telemetry` agree. New values must be
+# added here in the same PR that emits them.
+#
+# Intentionally OMITS the `no_config` response value — that path returns
+# 200 with status=no_config BUT does not touch telemetry (the row either
+# doesn't exist or lacks webhook_secret; touching it would create
+# misleading "events" against a row the operator hasn't set up yet).
+WEBHOOK_STATUS_VOCAB = frozenset({
+    "closed",            # webhook resolved the Aegis incident
+    "already_closed",    # incident was already RESOLVED — idempotent noop
+    "ignored",           # not a done-like transition (e.g. comment added)
+    "unknown_issue_key", # we don't know that issue/sys_id → noop
+    "unknown_sys_id",    # SNOW twin of unknown_issue_key
+    "no_issue_key",      # body parsed but no issue.key (malformed)
+    "no_sys_id",         # SNOW twin of no_issue_key
+    "bad_signature",     # HMAC verify failed
+    "patch_failed",      # api-svc PATCH returned non-2xx
+})
+
+
+async def _touch_webhook_telemetry(
+    db: AsyncSession,
+    model_cls,
+    tenant_id: uuid.UUID,
+    status_word: str,
+) -> None:
+    """Best-effort UPDATE of the EI-20 telemetry columns.
+
+    Failure here MUST NOT abort the webhook (the round-trip still
+    functions; we just lose the telemetry for this one event).
+    """
+    from datetime import UTC, datetime
+    try:
+        await db.execute(
+            update(model_cls)
+            .where(model_cls.tenant_id == tenant_id)
+            .values(
+                last_webhook_received_at=datetime.now(UTC),
+                last_webhook_status=status_word,
+            ),
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("webhook_telemetry_touch_failed",
+                       tenant_id=str(tenant_id), status=status_word,
+                       error=str(exc))
+
 
 def _verify_hmac(secret: str, body: bytes, signature_header: str) -> bool:
     """Constant-time HMAC-SHA256 verify. Header may be hex OR `sha256=hex`."""
@@ -116,6 +164,8 @@ async def jira_webhook(
     if cfg is None or not cfg.webhook_secret:
         # Don't leak "tenant exists / does not exist" — bare 200.
         logger.warning("jira_webhook_no_config", tenant_id=str(tenant_id))
+        # EI-20: can't touch telemetry — no row to update OR we'd be
+        # touching a row that doesn't have webhook_secret yet. Silent.
         return {"status": "no_config"}
 
     sig_hdr = (
@@ -125,6 +175,10 @@ async def jira_webhook(
     if not _verify_hmac(cfg.webhook_secret, raw, sig_hdr):
         logger.warning("jira_webhook_bad_signature",
                        tenant_id=str(tenant_id))
+        # EI-20: write telemetry BEFORE raising so operator sees the
+        # bad-signature event in Settings (most common "why isn't this
+        # working" cause).
+        await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, "bad_signature")
         raise HTTPException(status_code=401, detail="bad signature")
 
     try:
@@ -135,9 +189,11 @@ async def jira_webhook(
     issue_key = issue.get("key")
     status_name = ((issue.get("fields") or {}).get("status") or {}).get("name", "")
     if not issue_key:
+        await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, "no_issue_key")
         return {"status": "no_issue_key"}
     if status_name.strip().lower() not in JIRA_DONE_NAMES:
         # Non-resolve event (e.g. issue commented, assignee changed). Ack.
+        await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, "ignored")
         return {"status": "ignored", "reason": f"jira status '{status_name}' not done-like"}
 
     # Look up the Aegis incident by stored jira_issue_key.
@@ -153,8 +209,10 @@ async def jira_webhook(
                     issue_key=issue_key, tenant_id=str(tenant_id))
         # 200 on unknown so Jira doesn't retry forever for a hand-created
         # issue we never linked to an Aegis incident.
+        await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, "unknown_issue_key")
         return {"status": "unknown_issue_key", "issue_key": issue_key}
     if (incident.status or "").upper() in ("RESOLVED", "CLOSED"):
+        await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, "already_closed")
         return {"status": "already_closed", "incident_id": str(incident.id)}
 
     result = await _patch_incident_resolved(
@@ -165,8 +223,10 @@ async def jira_webhook(
         tenant_id=str(tenant_id), issue_key=issue_key,
         incident_id=str(incident.id), patch_ok=result.get("ok"),
     )
+    final_status = "closed" if result.get("ok") else "patch_failed"
+    await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, final_status)
     return {
-        "status": "closed" if result.get("ok") else "patch_failed",
+        "status": final_status,
         "incident_id": str(incident.id),
         "issue_key":   issue_key,
     }
@@ -206,6 +266,7 @@ async def servicenow_webhook(
     if not _verify_hmac(cfg.webhook_secret, raw, sig_hdr):
         logger.warning("snow_webhook_bad_signature",
                        tenant_id=str(tenant_id))
+        await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, "bad_signature")
         raise HTTPException(status_code=401, detail="bad signature")
 
     try:
@@ -215,8 +276,10 @@ async def servicenow_webhook(
     sys_id = (body or {}).get("sys_id")
     state  = str((body or {}).get("state", "")).strip()
     if not sys_id:
+        await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, "no_sys_id")
         return {"status": "no_sys_id"}
     if state not in SNOW_DONE_STATES:
+        await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, "ignored")
         return {"status": "ignored", "reason": f"snow state '{state}' not resolved-like"}
 
     from services.api.models.incident import Incident  # noqa: PLC0415
@@ -229,8 +292,10 @@ async def servicenow_webhook(
     if incident is None:
         logger.info("snow_webhook_unknown_sys_id",
                     sys_id=sys_id, tenant_id=str(tenant_id))
+        await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, "unknown_sys_id")
         return {"status": "unknown_sys_id", "sys_id": sys_id}
     if (incident.status or "").upper() in ("RESOLVED", "CLOSED"):
+        await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, "already_closed")
         return {"status": "already_closed", "incident_id": str(incident.id)}
 
     result = await _patch_incident_resolved(
@@ -241,8 +306,10 @@ async def servicenow_webhook(
         tenant_id=str(tenant_id), sys_id=sys_id,
         incident_id=str(incident.id), patch_ok=result.get("ok"),
     )
+    final_status = "closed" if result.get("ok") else "patch_failed"
+    await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, final_status)
     return {
-        "status": "closed" if result.get("ok") else "patch_failed",
+        "status": final_status,
         "incident_id": str(incident.id),
         "sys_id":       sys_id,
     }

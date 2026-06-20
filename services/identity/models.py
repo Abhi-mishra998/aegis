@@ -420,6 +420,18 @@ class ServicenowIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin
     # on first PUT, returned to the operator ONCE in the response, never
     # surfaced on subsequent GETs.
     webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Sprint EI-20 — deliverability telemetry. Written on EVERY inbound
+    # webhook event (even bad_signature / unknown_sys_id) so the Settings
+    # UI can show "we received something from SNOW 5 min ago, status: …".
+    # Surfaces in the integration's GET response as
+    # last_webhook_received_at + last_webhook_status; never returns the
+    # body or the HMAC sig.
+    last_webhook_received_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    last_webhook_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True,
+    )
 
 
 class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
@@ -454,6 +466,14 @@ class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     # generated on first PUT, returned to the operator ONCE in the
     # response, never surfaced on subsequent GETs.
     webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Sprint EI-20 — deliverability telemetry (see ServicenowIntegration
+    # above for the same fields + semantics).
+    last_webhook_received_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    last_webhook_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True,
+    )
 
 
 # ---------------------------------------------------------------------------

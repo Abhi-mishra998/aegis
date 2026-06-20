@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import {
-  AlertTriangle, CheckCircle2, Copy, KeyRound, RefreshCw, Webhook,
+  AlertCircle, AlertTriangle, CheckCircle2, Copy, KeyRound,
+  MinusCircle, RefreshCw, Webhook,
 } from 'lucide-react'
 import Button from '../Common/Button'
 
@@ -10,17 +11,44 @@ import Button from '../Common/Button'
  *  - the per-tenant webhook URL the operator pastes into Jira/SNOW
  *  - a Generate / Rotate secret button (POSTs to the rotate endpoint)
  *  - the one-time plaintext banner (mirrors EI-3 SCIM token UX)
+ *  - Sprint EI-20: a deliverability "Last received <ts> ago — status:
+ *    <status>" line so the operator can verify the round-trip is alive
+ *    without grepping gateway logs.
  *
  * Props:
  *   vendor          'Jira' | 'ServiceNow' — label only
  *   docHref         link to docs/security/<vendor>-itsm-setup.md
  *   hasSecret       boolean — toggles Generate vs Rotate verb
+ *   lastReceivedAt  ISO-8601 string or null (EI-20)
+ *   lastStatus      WEBHOOK_STATUS_VOCAB string or null (EI-20)
  *   onRotate        async () => { plaintext, webhook_url, ... } — calls
  *                   integrationsService.rotate{Jira,ServiceNow}WebhookSecret
  *   disabled        outer-busy flag from the parent tab
  */
+// Sprint EI-20 — must match services/gateway/routers/itsm_webhooks.py:
+// WEBHOOK_STATUS_VOCAB. Adding a new value upstream means adding it
+// here too.
+const OK_STATUSES = new Set(['closed', 'already_closed', 'ignored'])
+const WARN_STATUSES = new Set([
+  'bad_signature', 'unknown_issue_key', 'unknown_sys_id',
+  'no_issue_key', 'no_sys_id', 'no_config', 'patch_failed',
+])
+
+function _relativeTime (iso) {
+  if (!iso) return null
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return null
+  const diffSec = Math.floor((Date.now() - then) / 1000)
+  if (diffSec < 0)       return 'in the future'
+  if (diffSec < 60)      return `${diffSec}s ago`
+  if (diffSec < 3600)    return `${Math.floor(diffSec / 60)}m ago`
+  if (diffSec < 86400)   return `${Math.floor(diffSec / 3600)}h ago`
+  return `${Math.floor(diffSec / 86400)}d ago`
+}
+
 export default function InboundWebhookSection ({
   vendor, docHref, hasSecret, onRotate, disabled,
+  lastReceivedAt, lastStatus,
 }) {
   const [revealed, setRevealed] = useState(null)   // { plaintext, webhook_url }
   const [busy, setBusy] = useState(false)
@@ -125,27 +153,70 @@ export default function InboundWebhookSection ({
       )}
 
       {!revealed && (
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="text-xs text-neutral-400 flex items-center gap-2">
-            {hasSecret ? (
-              <>
-                <CheckCircle2 size={12} className="text-green-400" />
-                Secret configured — rotate any time to invalidate the old one.
-              </>
-            ) : (
-              <>
-                <KeyRound size={12} className="text-neutral-500" />
-                No secret yet — generate one to enable upstream-resolve close.
-              </>
-            )}
+        <div className="space-y-3">
+          {/* EI-20 — deliverability indicator. Always renders so the
+              operator can tell at a glance whether Aegis has ever
+              received a webhook from this vendor + how it was handled. */}
+          <ActivityRow lastReceivedAt={lastReceivedAt} lastStatus={lastStatus} />
+
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-xs text-neutral-400 flex items-center gap-2">
+              {hasSecret ? (
+                <>
+                  <CheckCircle2 size={12} className="text-green-400" />
+                  Secret configured — rotate any time to invalidate the old one.
+                </>
+              ) : (
+                <>
+                  <KeyRound size={12} className="text-neutral-500" />
+                  No secret yet — generate one to enable upstream-resolve close.
+                </>
+              )}
+            </div>
+            <Button onClick={rotate} disabled={disabled || busy}
+              variant={hasSecret ? 'secondary' : 'primary'}>
+              {busy ? <RefreshCw size={12} className="animate-spin" /> : <KeyRound size={12} />}
+              {hasSecret ? 'Rotate secret' : 'Generate secret'}
+            </Button>
           </div>
-          <Button onClick={rotate} disabled={disabled || busy}
-            variant={hasSecret ? 'secondary' : 'primary'}>
-            {busy ? <RefreshCw size={12} className="animate-spin" /> : <KeyRound size={12} />}
-            {hasSecret ? 'Rotate secret' : 'Generate secret'}
-          </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+
+function ActivityRow ({ lastReceivedAt, lastStatus }) {
+  // Three visual states: never (no events yet), ok (last event was a
+  // success/idempotent outcome), warn (last event was rejected /
+  // unknown / failed). Operator should see the warn class red enough
+  // to investigate but not so loud it screams during normal ignored
+  // events (e.g. SNOW Business Rule firing on every comment).
+  const rel = _relativeTime(lastReceivedAt)
+  let Icon = MinusCircle
+  let colour = 'text-neutral-500'
+  let label  = 'No webhook events received yet'
+
+  if (rel && lastStatus) {
+    label = `Last received ${rel} — status: ${lastStatus}`
+    if (OK_STATUSES.has(lastStatus)) {
+      Icon = CheckCircle2
+      colour = 'text-green-400'
+    } else if (WARN_STATUSES.has(lastStatus)) {
+      Icon = AlertCircle
+      colour = 'text-amber-400'
+    } else {
+      // Status word we don't recognise — keep it neutral but show the
+      // raw word so the operator can grep for it.
+      Icon = AlertCircle
+      colour = 'text-amber-400'
+    }
+  }
+
+  return (
+    <div className={`text-xs flex items-center gap-2 ${colour}`}>
+      <Icon size={12} className="shrink-0" aria-hidden="true" />
+      <span title={lastReceivedAt || 'never received'}>{label}</span>
     </div>
   )
 }
