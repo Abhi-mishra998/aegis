@@ -73,8 +73,11 @@ resource "aws_iam_role_policy" "gha_nightly_perms" {
         Resource = [
           "arn:aws:s3:::aegis-staging-backups-628478946931",
           "arn:aws:s3:::aegis-staging-backups-628478946931/*",
-          # Read-only for the public roots bucket — verifier needs to
-          # walk historical roots.
+          # Public roots bucket — verifier needs to walk historical
+          # roots (read), AND the EI-13 sbom-cve-watch needs to write
+          # under cve-history/ + the EI-4 nightly_verify writes under
+          # nightly/. The bucket itself is anonymously-readable; this
+          # grant only controls write.
           "arn:aws:s3:::aegis-public-roots-628478946931",
           "arn:aws:s3:::aegis-public-roots-628478946931/*",
         ]
