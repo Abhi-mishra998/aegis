@@ -196,8 +196,17 @@ async def generate_verifiable_bundle(
     framework: str,
     period_start: datetime,
     period_end: datetime,
+    *,
+    audit_ids: list[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
-    """Build a self-contained, offline-verifiable evidence bundle."""
+    """Build a self-contained, offline-verifiable evidence bundle.
+
+    When ``audit_ids`` is provided (Sprint EI-19 — per-incident bundle),
+    the row set is filtered to that explicit id list AND the period is
+    auto-narrowed to cover only the matching timestamps. The period
+    arguments still bound the transparency-root scan as an upper cap so
+    a buggy caller can't pull years of roots by accident.
+    """
     # 1. Audit rows in the period, ordered by (chain_shard, timestamp) so
     # the verifier's V3 (prev_hash chain) traversal hits them in chain order.
     rows_q = (
@@ -207,6 +216,9 @@ async def generate_verifiable_bundle(
         .where(AuditLog.timestamp <= period_end)
         .order_by(AuditLog.timestamp.asc())
     )
+    if audit_ids:
+        # Empty list ≠ None — explicit empty means "no rows match".
+        rows_q = rows_q.where(AuditLog.id.in_(audit_ids))
     rows: list[AuditLog] = list((await db.execute(rows_q)).scalars().all())
 
     earliest_ts = rows[0].timestamp.isoformat() if rows else None

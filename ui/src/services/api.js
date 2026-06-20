@@ -870,6 +870,11 @@ export const incidentService = {
     body: JSON.stringify(data),
   }),
   exportPdf: (id) => blobRequest(`/incidents/${id}/export`, { method: 'POST' }),
+  // Sprint EI-19 — per-incident AEVF bundle (cryptographically-verifiable
+  // evidence for THIS incident). Auditor opens offline with `aegis-verify`.
+  // Returns JSON; UI saves as <incident-number>.aegis.json.
+  exportAevfBundle: (id, framework = 'eu-ai-act') =>
+    blobRequest(`/incidents/${id}/aevf-bundle?framework=${encodeURIComponent(framework)}`),
 };
 
 export const autoResponseService = {

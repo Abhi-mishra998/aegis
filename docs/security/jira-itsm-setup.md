@@ -127,7 +127,27 @@ operational situation demands it.
 
 ---
 
-## 7. What this integration does NOT do
+## 7. Attaching the AEVF bundle to a Jira ticket (Sprint EI-19)
+
+For SOC 2 / EU AI Act evidence — every Aegis incident has a
+downloadable, cryptographically-signed bundle of the underlying audit
+events. The auditor verifies it offline with `aegis-verify` (no network
+call to Aegis required).
+
+1. In Aegis → **Incidents** → open the incident → click **AEVF bundle**.
+2. A `aegis-incident-INC-NNN.aevf.json` file downloads.
+3. In Jira → open the linked issue → drag the JSON into the
+   **Attachments** panel. Add a comment: "Aegis cryptographic evidence
+   — verify with `pip install aegis-aevf && aegis-verify --bundle <file>`".
+
+The bundle contains every public key, the signed daily Merkle root for
+the days the incident touched, and every audit row tied to it. Any
+post-hoc tampering invalidates the signature; the auditor sees that
+immediately.
+
+---
+
+## 8. What this integration does NOT do
 
 - **No Jira-side custom fields populated.** Aegis writes only the four
   required fields: project, summary, description, issuetype (plus

@@ -33,6 +33,7 @@ and a procurement red flag.
 | ADR-007 | [Docker Compose on EC2 over Kubernetes](ADR-007-docker-compose-on-ec2-over-kubernetes.md) | Accepted | 2026-06-20 | — |
 | ADR-008 | [ES256 mesh JWT over mTLS for service-to-service auth](ADR-008-mesh-jwt-over-mtls.md) | Accepted | 2026-06-20 | — |
 | ADR-009 | [S3 Object Lock — GOVERNANCE for backups, COMPLIANCE for CloudTrail](ADR-009-s3-object-lock-modes.md) | Accepted | 2026-06-20 | — |
+| ADR-010 | [Per-incident AEVF bundle as a first-class download](ADR-010-per-incident-aevf-bundle.md) | Accepted | 2026-06-21 | — |
 
 ## When to write an ADR
 
