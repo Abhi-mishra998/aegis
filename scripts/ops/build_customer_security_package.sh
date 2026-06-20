@@ -89,6 +89,7 @@ cp_safe  "$REPO_ROOT/docs/security/rbac_matrix.md"             "$OUT/03_security
 cp_safe  "$REPO_ROOT/docs/security/data_classification.md"     "$OUT/03_security_controls/data-classification.md"
 cp_safe  "$REPO_ROOT/docs/security/shared_responsibility.md"   "$OUT/03_security_controls/shared-responsibility.md"
 cp_safe  "$REPO_ROOT/docs/security/data_retention.md"          "$OUT/03_security_controls/data-retention.md"
+cp_safe  "$REPO_ROOT/docs/security/data_residency.md"          "$OUT/03_security_controls/data-residency.md"
 
 # 04 — Compliance
 cp_safe  "$REPO_ROOT/docs/security/soc2_tracker.md"            "$OUT/04_compliance/soc2-tracker.md"
@@ -103,6 +104,7 @@ cp_safe  "$REPO_ROOT/docs/runbooks/secrets_rotation.md"        "$OUT/05_operatio
 cp_safe  "$REPO_ROOT/docs/runbooks/object_lock_migration.md"   "$OUT/05_operations/object-lock-migration.md"
 cp_safe  "$REPO_ROOT/docs/runbooks/dr_drill_log.md"            "$OUT/05_operations/dr-drill-log.md"
 cp_safe  "$REPO_ROOT/docs/runbooks/key_rotation.md"            "$OUT/05_operations/key-rotation.md"
+cp_safe  "$REPO_ROOT/docs/runbooks/multi_region_bootstrap.md"  "$OUT/05_operations/multi-region-bootstrap.md"
 
 # 06 — Supply chain
 cp_safe  "$REPO_ROOT/docs/security/git_hardening.md"           "$OUT/06_supply_chain/git-hardening.md"

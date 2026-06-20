@@ -2,7 +2,7 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import {
   Shield, ShieldCheck, Lock, FileBadge2, Globe, Activity,
-  ArrowRight, FileText, ExternalLink, CheckCircle2, GitBranch,
+  ArrowRight, FileText, ExternalLink, CheckCircle2, GitBranch, MapPin,
 } from 'lucide-react'
 
 /**
@@ -74,6 +74,13 @@ const SECTIONS = [
     body: 'Seven vendors: AWS, Anthropic, OpenAI, Clerk, Stripe, GitHub, Sigstore. Each listed with purpose, data shared, region, and compliance attestations. 30-day notice on any new vendor with new data class.',
     href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/security/subprocessors.md',
     linkLabel: 'Subprocessor list',
+  },
+  {
+    icon: MapPin,
+    title: 'Data residency',
+    body: 'Default region: ap-south-1 (Mumbai). Dedicated eu-west-1 (Ireland) instance available on contract for EU customers — tenant runtime data never leaves the chosen region. Per-data-class residency table maps every artifact to its region of record.',
+    href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/security/data_residency.md',
+    linkLabel: 'Per-data-class residency table',
   },
 ]
 
