@@ -28,7 +28,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="/tmp/aegis-customer-security-package-${TS}"
 ZIP="${OUT}.zip"
 
-mkdir -p "$OUT"/{01_architecture,02_threat_model,03_security_controls,04_compliance,05_operations,06_supply_chain,07_subprocessors,08_pentest,09_disclosure,10_test_evidence,11_adr}
+mkdir -p "$OUT"/{01_architecture,02_threat_model,03_security_controls,04_compliance,05_operations,06_supply_chain,07_subprocessors,08_pentest,09_disclosure,10_test_evidence,11_adr,12_legal}
 
 # 00 — README
 cat > "$OUT/00_README.md" <<'EOF'
@@ -60,6 +60,9 @@ for this packet.
 11. `11_adr/` — Architecture Decision Records: the "why" behind every
     structural choice in Aegis, the alternatives we considered, and the
     constraints they impose on future work.
+12. `12_legal/` — Contract templates: MSA, DPA, BAA (HIPAA), SLA. All
+    engineering-drafted with `<LEGAL REVIEW PENDING>` markers; hand to
+    Customer counsel for redline.
 
 If anything here is missing or stale, email `security@aegisagent.in`.
 EOF
@@ -182,6 +185,13 @@ if [ -d "$OUT/11_adr_src" ]; then
     mv "$OUT/11_adr_src"/* "$OUT/11_adr/" 2>/dev/null || true
     rmdir "$OUT/11_adr_src"
 fi
+
+# 12 — Legal templates (MSA, DPA, BAA, SLA + index)
+cp_safe  "$REPO_ROOT/docs/legal/README.md"                     "$OUT/12_legal/README.md"
+cp_safe  "$REPO_ROOT/docs/legal/msa-template.md"               "$OUT/12_legal/msa-template.md"
+cp_safe  "$REPO_ROOT/docs/legal/dpa-template.md"               "$OUT/12_legal/dpa-template.md"
+cp_safe  "$REPO_ROOT/docs/legal/baa-template.md"               "$OUT/12_legal/baa-template.md"
+cp_safe  "$REPO_ROOT/docs/legal/sla-template.md"               "$OUT/12_legal/sla-template.md"
 
 # Zip it up — include a manifest so the buyer can verify file count.
 ( cd /tmp && zip -rq "$ZIP" "$(basename "$OUT")" )

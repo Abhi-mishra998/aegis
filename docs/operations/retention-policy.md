@@ -4,8 +4,8 @@
 **Owner:** ByteHubble Legal + Security Engineering.
 **Version:** 1.0 · 2026-06-18.
 **Companion documents:**
-- `docs/security/dpa-template.md` §7 (DPA retention summary; this file is the authoritative source).
-- `docs/security/baa-template.md` §11 (HIPAA-specific retention summary; this file is the authoritative source).
+- `docs/legal/dpa-template.md` §7 (DPA retention summary; this file is the authoritative source).
+- `docs/legal/baa-template.md` §11 (HIPAA-specific retention summary; this file is the authoritative source).
 - `docs/operations/incident-response.md` §6 (incident-evidence retention windows).
 - `docs/runbooks/tenant_data_request.md` (operational procedure for tenant erasure / portability requests).
 

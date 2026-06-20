@@ -2,13 +2,15 @@
 
 **Audience:** HIPAA-Covered-Entity customer privacy counsel + ByteHubble legal.
 **Status:** `<LEGAL REVIEW PENDING>` — engineering-drafted skeleton. Legal counsel must finalise §13 (Governing law / venue), §3 (Permitted Uses) against the Customer's own minimum-necessary scope, and the breach-notification window in §7 against state-law overlays.
-**Version:** 1.0 · 2026-06-18.
+**Version:** 1.1 · 2026-06-20 (refresh for Sprint EI-8 — companion-doc paths aligned with the new docs/legal/ canonical location).
 **Companion documents:**
-- `docs/security/dpa-template.md` — base Data Processing Agreement; this BAA is the HIPAA-specific overlay.
-- `docs/operations/retention-policy.md` — retention windows referenced in §11.
+- `docs/legal/msa-template.md` — Master Service Agreement that this BAA attaches to.
+- `docs/legal/dpa-template.md` — base Data Processing Agreement; this BAA is the HIPAA-specific overlay.
+- `docs/security/data_retention.md` — customer-facing retention SLAs referenced in §11.
+- `docs/operations/retention-policy.md` — operator-facing retention runbook.
 - `docs/operations/incident-response.md` — breach-handling procedure referenced in §7.
 
-> **How to use this template.** Replace every `<COVERED_ENTITY_NAME>`, `<EFFECTIVE_DATE>`, `<JURISDICTION>`, `<NOTIFICATION_EMAIL>` placeholder. Confirm with the Customer that they are a Covered Entity under 45 C.F.R. § 160.103 and that ByteHubble is being engaged as a Business Associate. This BAA is in addition to, not in substitution for, the Data Processing Agreement at `docs/security/dpa-template.md`.
+> **How to use this template.** Replace every `<COVERED_ENTITY_NAME>`, `<EFFECTIVE_DATE>`, `<JURISDICTION>`, `<NOTIFICATION_EMAIL>` placeholder. Confirm with the Customer that they are a Covered Entity under 45 C.F.R. § 160.103 and that ByteHubble is being engaged as a Business Associate. This BAA is in addition to, not in substitution for, the Data Processing Agreement at `docs/legal/dpa-template.md`.
 
 ---
 
@@ -128,7 +130,7 @@ Business Associate maintains an accounting of disclosures of PHI to enable Cover
 
 ## 9. Subcontractors
 
-In accordance with 45 C.F.R. § 164.502(e)(1)(ii), Business Associate ensures that any Subcontractor that creates, receives, maintains, or transmits PHI on behalf of Business Associate agrees in writing to the same restrictions and conditions that apply to Business Associate under this BAA. The Subcontractor list is the same as the sub-processor list in `docs/security/dpa-template.md` §6, restricted to the sub-set that may access PHI:
+In accordance with 45 C.F.R. § 164.502(e)(1)(ii), Business Associate ensures that any Subcontractor that creates, receives, maintains, or transmits PHI on behalf of Business Associate agrees in writing to the same restrictions and conditions that apply to Business Associate under this BAA. The Subcontractor list is the same as the sub-processor list in `docs/legal/dpa-template.md` §6, restricted to the sub-set that may access PHI:
 
 | Subcontractor              | Role                                                          | PHI category accessed                            |
 |----------------------------|---------------------------------------------------------------|--------------------------------------------------|
