@@ -67,13 +67,16 @@ def _tenant_id_from_request(request: Request) -> uuid.UUID:
 
 
 def _to_public_dict(row) -> dict[str, Any]:
-    """Public response shape — never expose api_token."""
+    """Public response shape — never expose api_token OR webhook_secret."""
     return {
         "id":                       str(row.id),
         "base_url":                 row.base_url,
         "project_key":              row.project_key,
         "account_email":            row.account_email,
         "has_api_token":            bool(row.api_token),
+        # Sprint EI-18 — surface webhook-secret presence so the UI can
+        # decide between "Generate secret" and "Rotate secret" CTAs.
+        "has_webhook_secret":       bool(getattr(row, "webhook_secret", None)),
         "default_issue_type":       row.default_issue_type,
         "default_priority":         row.default_priority,
         "enabled":                  row.enabled,
@@ -241,6 +244,8 @@ def _snow_to_public_dict(row) -> dict[str, Any]:
         "instance_url":             row.instance_url,
         "username":                 row.username,
         "has_password":             bool(row.password),
+        # Sprint EI-18 — webhook-secret presence (never the value).
+        "has_webhook_secret":       bool(getattr(row, "webhook_secret", None)),
         "default_urgency":          row.default_urgency,
         "default_impact":           row.default_impact,
         "default_category":         row.default_category,
@@ -390,3 +395,109 @@ async def test_snow_config(
         actor=getattr(request.state, "actor", "unknown"),
     )
     return {"data": result}
+
+
+# ─── Sprint EI-18 — webhook-secret rotate (round-trip enabler) ──────────
+# Both endpoints share the same shape: OWNER + ADMIN gated, mint a fresh
+# 32-byte hex secret, write to the integration row, return plaintext in
+# the response exactly once. Subsequent GETs surface
+# ``has_webhook_secret: bool`` only.
+
+def _mint_webhook_secret() -> str:
+    """64-hex-char (32-byte) secret. Matches the EI-17 column width."""
+    import secrets as _s
+    return _s.token_hex(32)
+
+
+def _webhook_base_url(request: Request, vendor: str, tenant_id: uuid.UUID) -> str:
+    """Build the per-tenant webhook URL the operator pastes into Jira/SNOW.
+
+    Honours X-Forwarded-Host when behind the ALB so the URL reflects the
+    Aegis domain the customer reaches us on (not the internal host).
+    """
+    host = (
+        request.headers.get("X-Forwarded-Host")
+        or request.headers.get("Host")
+        or "aegisagent.in"
+    )
+    scheme = request.headers.get("X-Forwarded-Proto") or "https"
+    return f"{scheme}://{host}/webhooks/{vendor}/{tenant_id}"
+
+
+@router.post("/jira/webhook-secret/rotate", status_code=201)
+async def rotate_jira_webhook_secret(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Mint + return a fresh Jira webhook secret. Plaintext returned ONCE."""
+    from services.identity.models import JiraIntegration
+    tenant_id = _tenant_id_from_request(request)
+    res = await db.execute(
+        select(JiraIntegration).where(JiraIntegration.tenant_id == tenant_id),
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Jira config not set — PUT /integrations/jira first",
+        )
+    plaintext = _mint_webhook_secret()
+    row.webhook_secret = plaintext
+    await db.commit()
+    await db.refresh(row)
+    logger.info(
+        "jira_webhook_secret_rotated",
+        tenant_id=str(tenant_id),
+        actor=getattr(request.state, "actor", "unknown"),
+    )
+    return {"data": {
+        "plaintext":            plaintext,
+        "plaintext_warning":    (
+            "Copy this secret now. Aegis does not store the plaintext anywhere "
+            "you can retrieve it again — paste it into Jira's Automation rule "
+            "(see docs/security/jira-itsm-setup.md) then dismiss this banner."
+        ),
+        "webhook_url":          _webhook_base_url(request, "jira", tenant_id),
+        "has_webhook_secret":   True,
+    }}
+
+
+@router.post("/servicenow/webhook-secret/rotate", status_code=201)
+async def rotate_snow_webhook_secret(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Mint + return a fresh ServiceNow webhook secret. Plaintext returned ONCE."""
+    from services.identity.models import ServicenowIntegration
+    tenant_id = _tenant_id_from_request(request)
+    res = await db.execute(
+        select(ServicenowIntegration).where(
+            ServicenowIntegration.tenant_id == tenant_id,
+        ),
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="ServiceNow config not set — PUT /integrations/servicenow first",
+        )
+    plaintext = _mint_webhook_secret()
+    row.webhook_secret = plaintext
+    await db.commit()
+    await db.refresh(row)
+    logger.info(
+        "snow_webhook_secret_rotated",
+        tenant_id=str(tenant_id),
+        actor=getattr(request.state, "actor", "unknown"),
+    )
+    return {"data": {
+        "plaintext":            plaintext,
+        "plaintext_warning":    (
+            "Copy this secret now. Aegis does not store the plaintext anywhere "
+            "you can retrieve it again — paste it into the ServiceNow Business "
+            "Rule script (see docs/security/servicenow-itsm-setup.md) then "
+            "dismiss this banner."
+        ),
+        "webhook_url":          _webhook_base_url(request, "servicenow", tenant_id),
+        "has_webhook_secret":   True,
+    }}

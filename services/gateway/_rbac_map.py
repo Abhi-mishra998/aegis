@@ -144,10 +144,15 @@ RULES: tuple[Rule, ...] = (
     # OWNER + ADMIN can set or delete it. READ_ONLY can see has_api_token: true
     # but never the token itself.
     _R("/integrations/jira/test",      ("POST",),        roles=("OWNER", "ADMIN")),
+    # Sprint EI-18 — webhook-secret rotate is OWNER-only (a leaked
+    # secret lets anyone PATCH any incident to RESOLVED for the tenant;
+    # tighter than the Test button which is OWNER+ADMIN).
+    _R("/integrations/jira/webhook-secret/rotate", ("POST",), roles=("OWNER",)),
     _R("/integrations/jira",           ("PUT", "DELETE"), roles=("OWNER", "ADMIN")),
     _R("/integrations/jira",           ("GET",),         min_role="READ_ONLY"),
     # Sprint EI-6 — ServiceNow ITSM integration. Same authz as Jira.
     _R("/integrations/servicenow/test", ("POST",),       roles=("OWNER", "ADMIN")),
+    _R("/integrations/servicenow/webhook-secret/rotate", ("POST",), roles=("OWNER",)),
     _R("/integrations/servicenow",     ("PUT", "DELETE"), roles=("OWNER", "ADMIN")),
     _R("/integrations/servicenow",     ("GET",),         min_role="READ_ONLY"),
     _R("/integrations*",               ("GET",),         min_role="READ_ONLY"),

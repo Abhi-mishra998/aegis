@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import Button from '../Common/Button'
 import { integrationsService } from '../../services/api'
+import InboundWebhookSection from './_InboundWebhookSection'
 
 // Sprint EI-2 (2026-06-20) — Jira Cloud ITSM connection.
 //
@@ -200,6 +201,16 @@ export default function JiraIntegrationTab() {
           </Button>
         )}
       </div>
+
+      {config && (
+        <InboundWebhookSection
+          vendor="Jira"
+          docHref="/docs/security/jira-itsm-setup.md"
+          hasSecret={!!config.has_webhook_secret}
+          onRotate={integrationsService.rotateJiraWebhookSecret}
+          disabled={busy}
+        />
+      )}
     </div>
   )
 }

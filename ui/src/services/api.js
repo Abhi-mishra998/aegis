@@ -540,6 +540,14 @@ export const integrationsService = {
   deleteServiceNow: () => request("/integrations/servicenow", { method: "DELETE" }),
   testServiceNow: () =>
     request("/integrations/servicenow/test", { method: "POST" }),
+
+  // Sprint EI-18 — webhook-secret rotate for the EI-17 inbound flow.
+  // Returns { plaintext, webhook_url, has_webhook_secret } in the
+  // response body — plaintext shown ONCE in the Settings UI.
+  rotateJiraWebhookSecret: () =>
+    request("/integrations/jira/webhook-secret/rotate", { method: "POST" }),
+  rotateServiceNowWebhookSecret: () =>
+    request("/integrations/servicenow/webhook-secret/rotate", { method: "POST" }),
 };
 
 
