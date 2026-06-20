@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<!--
+  Sprint EI-22 (2026-06-21). Standalone responsible-disclosure mirror —
+  published to s3://aegis-public-roots-628478946931/security/index.html
+  by the nightly_verify workflow on every run. Reachable even if the
+  Aegis ALB is down (same outage-resistance pattern as status-mirror.html
+  from EI-14).
+
+  Plain HTML — no framework, no fetch, no JS dependencies.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aegis — Responsible Disclosure</title>
+  <meta name="description" content="Aegis responsible-disclosure policy + safe harbor + rewards schedule." />
+  <link rel="icon" href="data:," />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { background: #000; color: #d4d4d4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+    header { padding: 64px 24px 32px; text-align: center; }
+    .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #6b6b6b; }
+    h1 { font-size: 28px; margin: 12px 0 16px; font-weight: 700; color: #fff; line-height: 1.3; }
+    .sub { color: #a3a3a3; font-size: 14px; max-width: 540px; margin: 0 auto; line-height: 1.6; }
+    section { padding: 24px 0; }
+    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #6b6b6b; margin: 0 0 12px; }
+    h3 { font-size: 14px; margin: 0 0 12px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 640px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .card { padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    .card.ok    { border-color: rgba(74,222,128,.30); }
+    .card.warn  { border-color: rgba(251,191,36,.30); }
+    .card.info  { border-color: rgba(96,165,250,.30); background: rgba(96,165,250,.04); }
+    ul { margin: 8px 0 0; padding-left: 20px; font-size: 12px; color: #d4d4d4; line-height: 1.6; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 8px 12px 8px 0; vertical-align: top; }
+    th { text-transform: uppercase; letter-spacing: 1px; color: #6b6b6b; font-size: 10px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    td { border-bottom: 1px solid rgba(255,255,255,.04); color: #d4d4d4; }
+    a { color: #fff; text-underline-offset: 2px; }
+    a:hover { text-decoration: none; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; text-decoration: none; margin-right: 8px; }
+    .btn.primary { background: #fff; color: #000; }
+    .btn.secondary { background: rgba(255,255,255,.04); color: #fff; border: 1px solid rgba(255,255,255,.20); }
+    footer { padding: 64px 24px 96px; text-align: center; font-size: 11px; color: #737373; }
+    .slo-window { color: #a3a3a3; font-size: 12px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <div class="eyebrow">Responsible disclosure</div>
+    <h1>We treat the security of a security product as the first concern.</h1>
+    <p class="sub">
+      If you find something, we want to hear from you — quickly, privately,
+      and with credit. No legal threats, no NDAs, no triage queue. A real
+      engineer responds in under 48 hours.
+    </p>
+    <p style="margin-top: 32px;">
+      <a class="btn primary" href="mailto:security@aegisagent.in?subject=Security%20report">
+        ✉ Email security@aegisagent.in
+      </a>
+      <a class="btn secondary" href="https://github.com/Abhi-mishra998/aegis/security/advisories/new" target="_blank" rel="noopener">
+        Open a GitHub Security Advisory ↗
+      </a>
+    </p>
+  </header>
+
+  <section class="wrap">
+    <h2>Our response SLOs</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Acknowledge receipt</h3>
+        <div class="slo-window">within 48 hours</div>
+      </div>
+      <div class="card">
+        <h3>Triage decision</h3>
+        <div class="slo-window">within 5 business days</div>
+      </div>
+      <div class="card">
+        <h3>Fix for HIGH / CRITICAL</h3>
+        <div class="slo-window">within 90 days (faster on agreement)</div>
+      </div>
+      <div class="card">
+        <h3>Public credit (if accepted)</h3>
+        <div class="slo-window">next security advisory</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2>Scope</h2>
+    <div class="grid">
+      <div class="card ok">
+        <h3 style="color:#4ade80;">✓ In scope</h3>
+        <ul>
+          <li>Aegis API surface at aegisagent.in / eu.aegisagent.in</li>
+          <li>staging.aegisagent.in (synthetic data only)</li>
+          <li>Aegis SDKs on PyPI (aegis-aevf, aegis-anthropic, aegis-openai, aegis-bedrock, aegis-langchain)</li>
+          <li>Aegis container images we publish (per the Customer Security Package SBOM)</li>
+          <li>Documentation vulnerabilities that demonstrate a real attack</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3 style="color:#fbbf24;">✗ Out of scope</h3>
+        <ul>
+          <li>Other tenants' data — report and we'll reproduce; do NOT pivot</li>
+          <li>Social engineering against employees or suppliers</li>
+          <li>Physical attacks against infrastructure</li>
+          <li>Denial-of-service attacks</li>
+          <li>Findings in third-party SaaS (Clerk, Stripe, AWS) — report to that vendor</li>
+          <li>Best-practice warnings without demonstrable security impact</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="card info">
+      <h2 style="color:rgba(147,197,253,.8);">Safe harbor</h2>
+      <p style="font-size: 14px; color: #e5e5e5; line-height: 1.6;">
+        We will not pursue civil action or initiate law-enforcement action
+        against you for good-faith research that complies with this policy.
+        This includes accidental DMCA / CFAA / equivalent claims — we
+        waive them. Make a good-faith effort to avoid data exfiltration,
+        service degradation, and access to other tenants' data, and notify
+        us immediately if you encounter any of those during research.
+      </p>
+      <p style="font-size: 14px; color: #e5e5e5; line-height: 1.6; margin-top: 12px;">
+        If a third party brings action against you for research conducted
+        under this policy, contact us — we will intervene in good faith
+        to clarify that the research was authorised by Aegis.
+      </p>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2>Rewards — honest version</h2>
+    <p style="font-size: 12px; color: #737373; margin-bottom: 16px; max-width: 540px; line-height: 1.6;">
+      Aegis is pre-revenue. Today we offer public credit + a written
+      commitment to retroactively pay your finding once we cross $1M ARR.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Severity</th><th>Examples</th><th>Today (pre-revenue)</th><th>Tomorrow (post-$1M ARR)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>CRITICAL</b></td>
+          <td>RCE, auth bypass, cross-tenant data leak, audit-chain tamper</td>
+          <td>Public credit + retroactive payment ($5k+ committed)</td>
+          <td>Up to $20,000</td>
+        </tr>
+        <tr>
+          <td><b>HIGH</b></td>
+          <td>Privilege escalation, RBAC bypass, secret leak in logs</td>
+          <td>Public credit + retroactive payment ($1k+ committed)</td>
+          <td>Up to $5,000</td>
+        </tr>
+        <tr>
+          <td><b>MEDIUM</b></td>
+          <td>Cache poisoning, SSRF without exfil, info disclosure</td>
+          <td>Public credit</td>
+          <td>Up to $500</td>
+        </tr>
+        <tr>
+          <td><b>LOW</b></td>
+          <td>CSRF on low-impact endpoint, missing header on non-sensitive page</td>
+          <td>Public credit (at our discretion)</td>
+          <td>Public credit</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="wrap">
+    <h2>Hall of credit</h2>
+    <div class="card">
+      <p style="font-size: 14px; color: #e5e5e5;">
+        Be the first researcher in the ledger. Email
+        <a href="mailto:security@aegisagent.in?subject=Security%20report">security@aegisagent.in</a>
+        and your handle (or real name — your choice) lands here on the
+        next security advisory.
+      </p>
+    </div>
+  </section>
+
+  <footer class="wrap">
+    <p>
+      Machine-readable directory entry:
+      <a href="https://aegisagent.in/.well-known/security.txt">/.well-known/security.txt</a> (RFC 9116).
+    </p>
+    <p style="margin-top: 16px;">
+      <a href="https://aegisagent.in/trust">← Back to Trust Center</a>
+      &nbsp;·&nbsp;
+      <a href="https://aegisagent.in">aegisagent.in</a>
+    </p>
+  </footer>
+</body>
+</html>

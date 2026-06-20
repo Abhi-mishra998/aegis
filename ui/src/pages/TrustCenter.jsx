@@ -104,11 +104,16 @@ const COMPLIANCE = [
 
 const RESPONSIBLE_DISCLOSURE = (
   <>
-    Found a vulnerability? Email{' '}
+    Found a vulnerability? Full program details, scope, safe-harbor, and the
+    rewards schedule live on the{' '}
+    <a className="text-white underline hover:text-neutral-200" href="/security">
+      responsible-disclosure page
+    </a>
+    . Quick paths: email{' '}
     <a className="text-white underline hover:text-neutral-200" href="mailto:security@aegisagent.in">
       security@aegisagent.in
     </a>{' '}
-    or open a GitHub Security Advisory. We acknowledge within 48 hours, triage within 5 business days, and ship a fix for High/Critical within 90 days. See our signed{' '}
+    or open a GitHub Security Advisory. We acknowledge within 48 hours, triage within 5 business days, and ship a fix for High/Critical within 90 days. RFC 9116 directory entry at{' '}
     <a className="text-white underline hover:text-neutral-200" href="/.well-known/security.txt">
       /.well-known/security.txt
     </a>

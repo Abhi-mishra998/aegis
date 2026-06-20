@@ -177,17 +177,65 @@ cp_safe  "$REPO_ROOT/ui/public/.well-known/security.txt"       "$OUT/09_disclosu
 cat > "$OUT/09_disclosure/policy.md" <<'EOF'
 # Responsible Disclosure Policy
 
-Aegis runs no public bug-bounty program at this time. We do honour
-responsible disclosure under the following terms:
+Full human-readable policy: https://aegisagent.in/security
+Machine-readable directory entry: https://aegisagent.in/.well-known/security.txt
+(RFC 9116). Static outage-resistant mirror at
+https://aegis-public-roots-628478946931.s3.amazonaws.com/security/index.html
 
-- Email security@aegisagent.in or open a GitHub Security Advisory.
-- Do not test against other tenants' data. Use the demo workspace
-  (anonymous, /demo/spawn-workspace) for any active probing.
-- Acknowledge: within 48 hours.
-- Triage decision: within 5 business days.
-- Patch for HIGH/CRITICAL: within 90 days, faster on agreement.
-- We will publicly credit you (handle of your choice) in the next
-  Aegis security advisory unless you ask us not to.
+## Channels
+
+- Email security@aegisagent.in (preferred for sensitive details)
+- GitHub Security Advisory: https://github.com/Abhi-mishra998/aegis/security/advisories/new
+
+## Response SLOs
+
+- Acknowledge receipt:        within 48 hours
+- Triage decision:            within 5 business days
+- Fix for HIGH / CRITICAL:    within 90 days (faster on agreement)
+- Public credit (if accepted): next security advisory
+
+## Scope
+
+In scope:
+- aegisagent.in + eu.aegisagent.in (production)
+- staging.aegisagent.in (synthetic data only)
+- Aegis SDKs on PyPI (aegis-aevf, aegis-anthropic, aegis-openai,
+  aegis-bedrock, aegis-langchain)
+- Aegis container images we publish (per the Customer Security
+  Package SBOM at 06_supply_chain/)
+- Documentation that demonstrates a real attack
+
+Out of scope:
+- Other tenants' data — report and we will reproduce; do NOT pivot
+  to attempt to read other tenants
+- Social engineering against employees or suppliers
+- Physical attacks against infrastructure
+- Denial-of-service attacks
+- Findings in third-party SaaS we use (Clerk, Stripe, AWS) — report
+  directly to that vendor
+- Best-practice warnings without demonstrable security impact
+
+## Safe harbour
+
+We will not pursue civil action or initiate law-enforcement action
+against you for good-faith research that complies with this policy.
+If a third party brings action against you for research conducted
+under this policy, contact us — we will intervene in good faith to
+clarify that the research was authorised by Aegis.
+
+## Rewards (Sprint EI-22 refresh)
+
+Aegis is pre-revenue. Today's offer:
+
+| Severity  | Today (pre-revenue)                                           | Tomorrow (post-$1M ARR)  |
+| --------- | ------------------------------------------------------------- | ------------------------ |
+| CRITICAL  | Public credit + retroactive payment ($5k+ committed)          | Up to $20,000            |
+| HIGH      | Public credit + retroactive payment ($1k+ committed)          | Up to $5,000             |
+| MEDIUM    | Public credit                                                 | Up to $500               |
+| LOW       | Public credit (at our discretion)                             | Public credit            |
+
+When the paid tier opens we will email past reporters with retroactive
+payment offers per the schedule above.
 EOF
 
 # 10 — Test evidence

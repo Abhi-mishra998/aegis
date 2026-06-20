@@ -264,6 +264,20 @@ jobs:
               --cache-control "max-age=300"
           fi
 
+      # ── Sprint EI-22 — publish the security-page mirror ──────────
+      # Same outage-resistance pattern as the /status mirror: a security
+      # researcher can still find the responsible-disclosure policy
+      # and the email address even if the Aegis ALB is down.
+      - name: Publish static security-page mirror
+        if: always()
+        run: |
+          if [ -f ui/public/security-mirror.html ]; then
+            aws s3 cp ui/public/security-mirror.html \
+              "s3://${PUBLIC_ROOTS_BUCKET}/security/index.html" \
+              --content-type text/html \
+              --cache-control "max-age=300"
+          fi
+
       # ── Sprint EI-14 — 30-day uptime rollup ───────────────────────
       # Pull every per-day verify.json from the public bucket for the
       # trailing 30 days, classify each as green / incident / no_data,
