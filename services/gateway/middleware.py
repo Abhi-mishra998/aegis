@@ -122,6 +122,21 @@ _SKIP_PATH_PREFIXES = (
     # verifies the signature itself before touching autonomy-svc.
     "/slack/approve/",
     "/slack/reject/",
+    # Sprint EI-3 — SCIM protocol endpoints (/scim/v2/Users, /Groups,
+    # /ServiceProviderConfig, /Schemas, /ResourceTypes). Auth model is
+    # ``Authorization: Bearer scim_<token>`` validated against the
+    # scim_tokens table by the SCIM router itself via _scim_auth.
+    # Skip-list lets the request through middleware so the handler can
+    # resolve the bearer.
+    #
+    # /scim/v2/tokens is the management surface — it stays under JWT
+    # auth (OWNER-only) so it does NOT match this prefix; matching is
+    # done by the more-specific RBAC rule in _rbac_map first.
+    "/scim/v2/Users",
+    "/scim/v2/Groups",
+    "/scim/v2/ServiceProviderConfig",
+    "/scim/v2/Schemas",
+    "/scim/v2/ResourceTypes",
 )
 
 # Management paths: require auth + rate-limiting, but bypass the agent

@@ -603,6 +603,10 @@ from services.gateway.routers.siem import router as _siem_router  # noqa: E402
 from services.gateway.routers.teams import router as _teams_router  # noqa: E402
 # Sprint EI-2 (2026-06-20) — Jira (and future ITSM) per-tenant integrations.
 from services.gateway.routers.integrations import router as _integrations_router  # noqa: E402
+# Sprint EI-3 (2026-06-20) — Okta SCIM bearer-token management (issue/list/revoke).
+from services.gateway.routers.scim_tokens import router as _scim_tokens_router  # noqa: E402
+# Sprint EI-3 (2026-06-20) — SCIM 2.0 protocol endpoints (User/Group/Schemas/SPC).
+from services.gateway.routers.scim import router as _scim_router  # noqa: E402
 # Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
 from services.gateway.routers.messages import router as _messages_router  # noqa: E402
 # Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
@@ -638,6 +642,8 @@ app.include_router(_slack_oauth_router)
 app.include_router(_siem_router)
 app.include_router(_teams_router)
 app.include_router(_integrations_router)
+app.include_router(_scim_tokens_router)
+app.include_router(_scim_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_clerk_router)
