@@ -353,6 +353,35 @@ class Team(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     )
 
 
+class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
+    """Sprint EI-2 (2026-06-20) — per-tenant Jira Cloud ITSM integration.
+
+    One row per tenant (uniqueness enforced at the application layer by the
+    upsert helper in services/identity/router.py). ``api_token`` holds the
+    Atlassian API token as the same disk-KMS-protected String column that
+    ``Tenant.slack_bot_token`` uses; the REST surface never returns the raw
+    value — only ``has_api_token: bool``.
+    """
+
+    __tablename__ = "jira_integrations"
+
+    base_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    project_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_token: Mapped[str] = mapped_column(String(512), nullable=False)
+    default_issue_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="Bug",
+        server_default=text("'Bug'"),
+    )
+    default_priority: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
+    auto_create_on_incident: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # HARDENED INVARIANTS (SQLAlchemy Events)
 # ---------------------------------------------------------------------------

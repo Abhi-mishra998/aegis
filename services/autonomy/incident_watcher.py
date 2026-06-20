@@ -101,6 +101,74 @@ def _matches_conditions(incident: dict[str, Any], conditions: dict[str, Any]) ->
     return True
 
 
+# ── Jira auto-create (Sprint EI-2) ───────────────────────────────────────────
+
+async def _maybe_auto_create_jira(
+    incident: dict[str, Any], tenant_id: uuid.UUID, session_factory,
+) -> None:
+    """Open a Jira ticket if the tenant has Jira enabled with auto_create on.
+
+    Best-effort — never raises. Failures are logged but do not block the
+    main incident-watcher loop or any downstream playbooks.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    try:
+        from services.identity.models import JiraIntegration  # noqa: PLC0415
+        from services.autonomy.webhook_executor import fire_jira  # noqa: PLC0415
+    except Exception as exc:
+        logger.warning("jira_auto_import_failed", error=str(exc))
+        return
+
+    async with session_factory() as db:
+        try:
+            res = await db.execute(
+                select(JiraIntegration).where(
+                    JiraIntegration.tenant_id == tenant_id,
+                    JiraIntegration.enabled.is_(True),
+                    JiraIntegration.auto_create_on_incident.is_(True),
+                ),
+            )
+            cfg = res.scalar_one_or_none()
+        except Exception as exc:
+            logger.warning("jira_auto_config_lookup_failed", error=str(exc))
+            return
+
+    if cfg is None:
+        return
+
+    severity = (incident.get("severity") or "HIGH").upper()
+    risk     = incident.get("risk_score")
+    inc_id   = incident.get("id", "")
+    summary  = f"[Aegis {severity}] {incident.get('trigger') or incident.get('finding') or 'Incident'}"[:255]
+    desc     = (
+        f"Aegis opened incident {inc_id} (severity={severity}, risk_score={risk}).\n\n"
+        f"Tool:    {incident.get('tool', 'n/a')}\n"
+        f"Agent:   {incident.get('agent_id', 'n/a')}\n"
+        f"Findings: {incident.get('findings', [])}\n\n"
+        f"Resolve this ticket once the incident has been triaged in Aegis."
+    )
+
+    result = await fire_jira(
+        summary=summary,
+        base_url=cfg.base_url,
+        account_email=cfg.account_email,
+        api_token=cfg.api_token,
+        project_key=cfg.project_key,
+        issue_type=cfg.default_issue_type or "Bug",
+        description=desc,
+        priority=cfg.default_priority,
+        labels=["aegis", f"sev-{severity.lower()}"],
+    )
+    logger.info(
+        "jira_auto_created",
+        tenant_id=str(tenant_id)[:8],
+        incident_id=inc_id[:8] if inc_id else "",
+        outcome=result.get("status"),
+        issue_key=result.get("issue_key", ""),
+    )
+
+
 # ── Per-incident handler ──────────────────────────────────────────────────────
 
 async def _handle_incident(incident: dict[str, Any], session_factory) -> None:
@@ -118,6 +186,10 @@ async def _handle_incident(incident: dict[str, Any], session_factory) -> None:
     except ValueError:
         logger.warning("incident_watcher_bad_tenant", raw=raw_tid)
         return
+
+    # Sprint EI-2 — best-effort Jira ticket creation. Runs in parallel with
+    # playbook evaluation so a slow Jira API never blocks playbook firing.
+    asyncio.create_task(_maybe_auto_create_jira(incident, tenant_id, session_factory))
 
     async with session_factory() as db:
         stmt = (
