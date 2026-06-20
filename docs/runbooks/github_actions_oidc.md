@@ -1,8 +1,15 @@
 # GitHub Actions → AWS OIDC role
 
-Sprint EI-4 (2026-06-20). The nightly-soak + nightly-verify workflows
-authenticate to AWS via OpenID Connect — no long-lived access keys
-land in GitHub Secrets, no per-key rotation cron job.
+Sprint EI-4 (2026-06-20). The nightly-soak + nightly-verify + nightly-chaos
+workflows authenticate to AWS via OpenID Connect — no long-lived access
+keys land in GitHub Secrets, no per-key rotation cron job.
+
+Sprint EI-10 (2026-06-20) adds a SECOND, stricter role
+(`aegis-gha-release`) for the `release_bundle.yml` workflow — separate
+from the nightly role because release signing has prod-bundle-write
+power that nightly tasks must NOT have. The two roles are scoped to
+different `sub` claims so a leaked nightly workflow YAML cannot start
+publishing prod release bundles.
 
 ## The role
 
@@ -83,6 +90,79 @@ resource "aws_iam_role_policy" "gha_nightly_perms" {
 
 output "gha_nightly_role_arn" {
   value = aws_iam_role.gha_nightly.arn
+}
+```
+
+## The release-signing role (Sprint EI-10)
+
+Separate role with prod-bundle write + SSM update. Trust policy scopes
+the role to the `release_bundle.yml` workflow specifically — even another
+workflow in the same repo on the same branch cannot assume it.
+
+```hcl
+# infra/terraform/modules/iam/github_oidc.tf (appended)
+
+resource "aws_iam_role" "gha_release" {
+  name = "aegis-gha-release"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        # Scope to THE release_bundle.yml workflow ON the main branch.
+        # The job_workflow_ref claim carries the workflow file path, so a
+        # different workflow YAML (even on main, even in this repo) can't
+        # assume this role.
+        StringLike = {
+          "token.actions.githubusercontent.com:job_workflow_ref" =
+            "Abhi-mishra998/aegis/.github/workflows/release_bundle.yml@refs/heads/main"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "gha_release_perms" {
+  role = aws_iam_role.gha_release.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Write the bundle + signature siblings into prod releases prefix.
+        # Restricted to the v2 (Object-Locked) bucket per OP-3.
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::aegis-prod-backups-628478946931-v2",
+          "arn:aws:s3:::aegis-prod-backups-628478946931-v2/releases/*",
+        ]
+      },
+      {
+        # Update the bundle-SHA pointer so the ASG can find the new bundle.
+        # Scope tight — only this one parameter.
+        Effect = "Allow"
+        Action = ["ssm:PutParameter", "ssm:GetParameter"]
+        Resource = "arn:aws:ssm:ap-south-1:628478946931:parameter/aegis/prod/current_bundle_sha"
+      },
+      {
+        # Optional auto-rollout — disabled by default in the workflow.
+        Effect = "Allow"
+        Action = ["autoscaling:StartInstanceRefresh",
+                  "autoscaling:DescribeAutoScalingGroups",
+                  "autoscaling:DescribeInstanceRefreshes"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+output "gha_release_role_arn" {
+  value = aws_iam_role.gha_release.arn
 }
 ```
 

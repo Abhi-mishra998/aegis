@@ -78,26 +78,47 @@ Suppression workflow:
 2. **False positive** → upstream PR to the scanner OR add to `.trivyignore` / `.gitleaks.toml` / `skip_check`.
 3. **Genuine vuln, must fix** → patch in same PR, never temporarily suppress.
 
-## 4 · Bundle signing (cosign)
+## 4 · Bundle signing (cosign keyless OIDC, Sprint EI-10)
 
-The release bundle that EC2 pulls at boot is now signed with cosign. Pipeline:
+The release bundle that EC2 pulls at boot is signed end-to-end via
+GitHub Actions OIDC — no long-lived signing keys exist anywhere in the
+pipeline. Pipeline:
 
 ```
-laptop git push
-  → GitHub Actions build_release_bundle.yml
-    → scripts/ops/build_release_bundle.sh
-    → scripts/ops/sign_bundle.sh    ← cosign sign-blob (keyless OIDC)
-    → aws s3 cp bundle.tar.gz + .sig + .pem + .bundle  to S3
-EC2 user_data
-  → aws s3 cp  bundle.tar.gz + .sig + .pem + .bundle
-  → cosign verify-blob  ← refuses to extract if signature invalid
+git push origin main
+  → GitHub Actions release_bundle.yml
+    → permissions.id-token: write  (workflow gets a short-lived OIDC token)
+    → npm run build  +  scripts/ops/build_release_bundle.sh
+    → cosign sign-blob --yes  ← Fulcio issues a 10-min cert bound to the
+                                workflow URL + commit SHA; signature
+                                inclusion logged in Rekor
+    → aws s3 cp  bundle.tar.gz + .sig + .pem + .bundle  to
+                 s3://aegis-prod-backups-628478946931-v2/releases/
+    → aws ssm put-parameter /aegis/prod/current_bundle_sha
+EC2 user_data (next ASG instance refresh)
+  → aws s3 cp  bundle.tar.gz + 3 siblings
+  → cosign verify-blob  ← refuses to extract if cert-identity wrong
   → tar xz + docker compose up
 ```
 
-The verify step:
-- Requires the certificate identity to match `^https://github\.com/Abhi-mishra998/aegis/` (i.e. only your CI can sign things this fleet will accept).
-- Requires OIDC issuer = `https://token.actions.githubusercontent.com` (i.e. only signatures minted by GitHub's OIDC — not your laptop).
-- If the SSM gate parameter `/aegis/prod/require_signed_bundle` is `true`, deployment aborts on verification failure. Default is `false` for the migration window; flip to `true` once you've done one signed deploy successfully.
+The verify step on EC2 (`infra/terraform/modules/asg/main.tf:73-79`):
+
+- Requires `--certificate-identity-regexp '^https://github\.com/Abhi-mishra998/aegis/'`
+  — only THIS repo's workflows can sign things this fleet will accept.
+- Requires `--certificate-oidc-issuer 'https://token.actions.githubusercontent.com'`
+  — only Fulcio-issued certs from GitHub OIDC, never a personal cosign key.
+- If the SSM gate `/aegis/prod/require_signed_bundle == "true"`, the
+  deploy aborts on any verification failure. Default `false` for the
+  migration window; flip to `true` once the first release_bundle.yml run
+  has landed a signed bundle in S3 (see `testing.md` §OP-4).
+
+Any third party with cosign installed can re-verify the chain from outside:
+
+```bash
+bash scripts/ops/verify_signed_bundle.sh /path/to/bundle.tar.gz
+# Pass iff the cert was issued for a release_bundle.yml run on main of
+# this repo. A bundle signed by a fork or a personal key fails.
+```
 
 ## 5 · Pre-merge checklist
 
@@ -118,14 +139,11 @@ gh api repos/Abhi-mishra998/aegis/branches/main/protection \
   | jq '.required_signatures.enabled'    # → true
 
 # 2. Inspect the last shipped bundle's signature:
-aws s3 ls s3://aegis-prod-backups-628478946931/releases/   | grep bundle
-cosign verify-blob \
-  --certificate bundle-<sha>.tar.gz.pem \
-  --signature   bundle-<sha>.tar.gz.sig \
-  --bundle      bundle-<sha>.tar.gz.bundle \
-  --certificate-identity-regexp '^https://github\.com/Abhi-mishra998/aegis/' \
-  --certificate-oidc-issuer     'https://token.actions.githubusercontent.com' \
-  bundle-<sha>.tar.gz
+aws s3 ls s3://aegis-prod-backups-628478946931-v2/releases/   | grep bundle
+# Pull the bundle + 3 signature siblings, then run the helper:
+bash scripts/ops/verify_signed_bundle.sh /tmp/bundle-<sha>.tar.gz
+# The helper pins the cert-identity regex to release_bundle.yml on main —
+# bundles signed by any other workflow or branch fail verification.
 
 # 3. Inspect that production refuses unsigned bundles:
 aws ssm get-parameter --name /aegis/prod/require_signed_bundle \
