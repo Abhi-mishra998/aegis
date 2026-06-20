@@ -119,3 +119,40 @@ jobs:
           # -ll = "show low+medium+high"; we fail on HIGH only.
           bandit -r services sdk -ll -iii --skip B101,B608 \
                  --exclude tests,build,dist
+
+  sbom:
+    name: CycloneDX SBOM generation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install project (full server extras) + cyclonedx-py
+        run: |
+          pip install --upgrade pip
+          pip install '.[server]' || pip install '.'   # server extras optional
+          pip install cyclonedx-bom
+
+      - name: Generate SBOM (CycloneDX 1.5 JSON)
+        run: |
+          mkdir -p reports
+          cyclonedx-py environment --output-format json --output-file reports/sbom.cyclonedx.json
+          jq '{components: (.components | length), version: .specVersion, format: .bomFormat}' reports/sbom.cyclonedx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx-${{ github.sha }}
+          path: reports/sbom.cyclonedx.json
+          retention-days: 90
+
+      - name: Mirror SBOM into release assets (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # No-op placeholder for now — bundle script picks it up from reports/
+          # at next sign-bundle.sh run. Architect's intent: SBOM lives next to
+          # the cosign-signed bundle so CISO sees both in one fetch.
+          ls -la reports/sbom.cyclonedx.json

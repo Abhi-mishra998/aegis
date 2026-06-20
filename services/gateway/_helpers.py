@@ -130,6 +130,42 @@ def assert_path_tenant_matches_jwt(request: Request, path_tenant_id: str) -> Non
         )
 
 
+def reject_mismatched_tenant_query(request: Request) -> None:
+    """Brutal-review F-S8 — reject `?tenant_id=X` when X != JWT tenant.
+
+    Background: list endpoints (/audit/logs, /incidents, …) used to silently
+    drop ``?tenant_id=`` from the query string, returning JWT-tenant data
+    instead. That's not a leak — JWT scope is enforced — but it misleads any
+    developer who builds a "list across tenants" mental model on top of it.
+    This helper makes the contract loud: pass nothing OR pass your own
+    tenant; passing someone else's tenant returns 400.
+    """
+    qp = request.query_params.get("tenant_id")
+    if qp is None:
+        return
+    jwt_tenant = (
+        getattr(request.state, "tenant_id", None)
+        or (getattr(request.state, "jwt_claims", None) or {}).get("tenant_id")
+        or ""
+    )
+    if not jwt_tenant or str(qp) != str(jwt_tenant):
+        logger.warning(
+            "query_param_tenant_mismatch",
+            query_tenant=qp,
+            jwt_tenant=jwt_tenant,
+            path=request.url.path,
+            actor=getattr(request.state, "actor", "unknown"),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "tenant_id query parameter is not honoured on this route. "
+                "Requests are always scoped to the JWT tenant; omit the parameter "
+                "or set it to your own tenant_id."
+            ),
+        )
+
+
 # ─────────────────────────────────────────────────────────────
 # Inter-service headers + response forwarding
 # ─────────────────────────────────────────────────────────────

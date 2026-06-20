@@ -26,6 +26,7 @@ from services.gateway._helpers import (
     clamp_int,
     internal_headers,
     passthrough,
+    reject_mismatched_tenant_query,
     trust_proxy,
 )
 
@@ -51,6 +52,7 @@ async def audit_summary(request: Request) -> Any:
 @router.get("/audit/logs", tags=["audit"])
 async def list_audit_logs(request: Request) -> Any:
     """Proxy → Audit logs list."""
+    reject_mismatched_tenant_query(request)
     params: dict[str, Any] = {
         "limit":  clamp_int(request.query_params.get("limit"),  50, 1, 500),
         "offset": clamp_int(request.query_params.get("offset"),  0, 0, 100_000),
