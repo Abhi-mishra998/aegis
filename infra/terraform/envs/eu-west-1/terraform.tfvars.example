@@ -1,0 +1,94 @@
+# Aegis EU instance tfvars — Sprint EI-5 (2026-06-20).
+#
+# Brings up a fully-isolated stack in eu-west-1 (Ireland) for any
+# EU customer whose contract requires "data never leaves the EU".
+# This stack runs IN PARALLEL with ap-south-1 prod; it shares NO
+# database, NO Redis, NO S3 with any other region. The two stacks
+# are connected only by:
+#   - the same GitHub repo (build artifacts cross via deploy bundle)
+#   - the same DNS apex (eu.aegisagent.in resolves to this stack's ALB)
+#   - the same Stripe + Clerk SaaS providers (each has its own EU data
+#     residency story — see docs/security/data_residency.md §3)
+#
+# Cost: targets ~$420/mo to match prod's HA shape. Reduce instance
+# sizes for design-partner phase if cost matters more than capacity.
+#
+# Apply: see docs/runbooks/multi_region_bootstrap.md for the full
+# bring-up sequence (ACM cert, state bucket, public roots bucket,
+# secrets bootstrap, then `terraform init -backend-config=…` then
+# `terraform apply`).
+
+# ── Identity ──────────────────────────────────────────────────────────
+aws_region  = "eu-west-1"
+project     = "aegis"
+environment = "eu"
+domain      = "eu.aegisagent.in"
+# Operator must create *.aegisagent.in ACM cert in eu-west-1 BEFORE apply
+# (ACM is region-bound; the ap-south-1 cert does not cover EU ALBs).
+
+# ── Network ───────────────────────────────────────────────────────────
+# Distinct CIDR — no peering with ap-south-1 or staging by design so
+# data + traffic isolation is provable to a regulator.
+vpc_cidr             = "10.40.0.0/16"
+azs                  = ["eu-west-1a", "eu-west-1b"]
+public_subnet_cidrs  = ["10.40.1.0/24", "10.40.2.0/24"]
+private_subnet_cidrs = ["10.40.3.0/24", "10.40.4.0/24"]
+# Single NAT during design-partner phase to save $33/mo. Flip to false
+# (dual NAT, one per AZ) before the first prod EU customer goes live —
+# matches the prod ap-south-1 posture.
+single_nat_gateway   = true
+
+# ── Compute ───────────────────────────────────────────────────────────
+# Mirrors prod sizing — m6g.large × 2 in ASG, can absorb the same
+# nightly soak shape we ran against staging.
+instance_type = "m6g.large"
+asg_min       = 2
+asg_max       = 4
+asg_desired   = 2
+
+# ── Bundle ────────────────────────────────────────────────────────────
+# Per-region bundle bucket. The deploy script must build IN-region or
+# replicate from ap-south-1 to here BEFORE the EU ASG launches new
+# instances (user_data would otherwise download from the wrong bucket).
+ssm_bundle_parameter = "/aegis/eu/current_bundle_sha"
+bundle_bucket        = "aegis-eu-backups-628478946931"
+bundle_sha_initial   = "main"
+
+# ── Database (RDS Postgres) ───────────────────────────────────────────
+# Multi-AZ on from day one — EU customers will not accept a single-AZ
+# story even in a design-partner phase. Same backup window as prod.
+db_engine_version        = "15.18"
+db_instance_class        = "db.t3.small"
+db_allocated_storage     = 50
+db_max_allocated_storage = 200
+db_backup_retention      = 14
+db_multi_az              = true
+
+# ── Cache (Redis) ─────────────────────────────────────────────────────
+redis_node_type = "cache.t3.micro"
+redis_num_nodes = 2
+
+# ── Edge (ALB logging) ────────────────────────────────────────────────
+alb_log_retention_days = 30
+
+# ── WAF ───────────────────────────────────────────────────────────────
+waf_rate_limit_per_ip_per_5min = 2000
+
+# ── Observability ─────────────────────────────────────────────────────
+sns_alarm_email = "founder@aegisagent.in"
+
+# ── Public transparency roots ────────────────────────────────────────
+# CRITICAL: EU stack publishes transparency roots to its OWN bucket in
+# eu-west-1. The ap-south-1 prod public-roots bucket is NEVER written
+# to from the EU stack — that would defeat the data-residency claim.
+# Customers fetching EU-tenant transparency proofs read from the EU
+# bucket. Both buckets are anonymously-readable; the per-region split
+# is for residency, not access control.
+public_roots_bucket = "aegis-public-roots-eu-628478946931"
+
+# ── Default tags ──────────────────────────────────────────────────────
+tags = {
+  Owner       = "ByteHubble"
+  CostCenter  = "engineering-eu"
+  Residency   = "eu-only"
+}
