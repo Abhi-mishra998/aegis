@@ -1,0 +1,129 @@
+name: nightly-chaos
+
+# Sprint EI-7 (2026-06-20). 05:13 UTC — 1 hour after nightly_verify
+# (which is 1 hour after nightly_soak). Chaos comes LAST in the
+# nightly chain because it deliberately damages the staging stack,
+# and we want soak + AEVF verify to land on a known-healthy host.
+#
+# The drill runs the parametrized chaos suite at
+# tests/chaos/test_resilience_live.py on the staging EC2 via SSM
+# (the runner needs `docker kill` access, which only exists on the
+# host where the containers run — not the GH-Actions ubuntu-latest
+# runner). The SSM RunCommand executes pytest; we wait for it and
+# fail the workflow if any case breached its SLO budget.
+#
+# Output: pytest stdout in the run summary + a "chaos: pass|fail"
+# field appended to the public verify.json at
+# s3://aegis-public-roots-628478946931/nightly/<date>.json.
+
+on:
+  schedule:
+    - cron: "13 5 * * *"   # 05:13 UTC = ~10:43 IST
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "ap-south-1"
+  PUBLIC_ROOTS_BUCKET: "aegis-public-roots-628478946931"
+
+jobs:
+  chaos:
+    name: Resilience drill against staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Operator: replace with the ARN that `terraform output gha_nightly_role_arn`
+          # printed (same role nightly_soak.yml uses — docs/runbooks/github_actions_oidc.md).
+          role-to-assume: arn:aws:iam::628478946931:role/aegis-gha-nightly-soak
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Discover staging EC2 instance
+        id: discover
+        run: |
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=staging" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)"
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "::warning::No running staging EC2 — staging may be torn down. Skipping chaos drill."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Will run chaos on instance: $INSTANCE_ID"
+
+      - name: Run chaos drill via SSM
+        id: chaos
+        if: steps.discover.outputs.skip == 'false'
+        run: |
+          STAGING_INSTANCE_ID="${{ steps.discover.outputs.instance_id }}"
+          export STAGING_INSTANCE_ID
+          if bash scripts/chaos/run_via_ssm.sh | tee /tmp/chaos.log; then
+            echo "chaos_status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "chaos_status=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Append chaos result to public nightly summary
+        if: always() && steps.discover.outputs.skip == 'false'
+        run: |
+          DATE_TODAY="$(date -u +%Y-%m-%d)"
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Pull the existing verify.json from earlier in the night, if any —
+          # the nightly_verify workflow at 04:13 may have already published.
+          if aws s3 cp "s3://${PUBLIC_ROOTS_BUCKET}/nightly/${DATE_TODAY}.json" /tmp/prior.json 2>/dev/null; then
+            jq --arg chaos "${{ steps.chaos.outputs.chaos_status || 'skip' }}" \
+               --arg ts "$NOW" \
+               '. + {chaos: $chaos, chaos_appended_at: $ts}' \
+               /tmp/prior.json > /tmp/merged.json
+          else
+            cat > /tmp/merged.json <<EOF
+          {
+            "run_at_utc":  "$NOW",
+            "date":        "$DATE_TODAY",
+            "chaos":       "${{ steps.chaos.outputs.chaos_status || 'skip' }}",
+            "note":        "chaos result added without prior verify.json (soak/verify may have skipped)"
+          }
+          EOF
+          fi
+          jq . /tmp/merged.json
+          aws s3 cp /tmp/merged.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/nightly/${DATE_TODAY}.json" \
+            --content-type application/json --cache-control "max-age=3600"
+          aws s3 cp /tmp/merged.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/nightly/latest.json" \
+            --content-type application/json --cache-control "max-age=300"
+
+      - name: Render to step summary
+        if: always()
+        run: |
+          {
+            echo '### Nightly chaos drill'
+            echo
+            if [ "${{ steps.discover.outputs.skip }}" = "true" ]; then
+              echo "**Skipped** — no running staging EC2 (staging may be torn down between nightly windows)."
+            else
+              echo "| Check | Status |"
+              echo "|---|---|"
+              echo "| Chaos drill (5 cases) | ${{ steps.chaos.outputs.chaos_status || 'unknown' }} |"
+              if [ -f /tmp/chaos.log ]; then
+                echo ''
+                echo '<details><summary>Pytest output</summary>'
+                echo
+                echo '```'
+                tail -100 /tmp/chaos.log
+                echo '```'
+                echo '</details>'
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

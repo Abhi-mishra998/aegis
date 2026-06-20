@@ -105,6 +105,7 @@ cp_safe  "$REPO_ROOT/docs/runbooks/object_lock_migration.md"   "$OUT/05_operatio
 cp_safe  "$REPO_ROOT/docs/runbooks/dr_drill_log.md"            "$OUT/05_operations/dr-drill-log.md"
 cp_safe  "$REPO_ROOT/docs/runbooks/key_rotation.md"            "$OUT/05_operations/key-rotation.md"
 cp_safe  "$REPO_ROOT/docs/runbooks/multi_region_bootstrap.md"  "$OUT/05_operations/multi-region-bootstrap.md"
+cp_safe  "$REPO_ROOT/docs/runbooks/chaos_drill_log.md"         "$OUT/05_operations/chaos-drill-log.md"
 
 # 06 — Supply chain
 cp_safe  "$REPO_ROOT/docs/security/git_hardening.md"           "$OUT/06_supply_chain/git-hardening.md"

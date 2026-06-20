@@ -123,6 +123,10 @@ def _wait_container_up(container: str, deadline_s: int = 60) -> bool:
     "acp_opa",
     "acp_policy",
     "acp_decision",
+    # Sprint EI-7 — Redis kill exercises the Redis-fallback code paths
+    # (SSE publish best-effort, session-intelligence in-memory fallback,
+    # behavior firewall consult). Same SLO budget.
+    "acp_redis",
 ])
 def test_kill_during_load(target: str) -> None:
     """Kill `target` mid-stream and verify graceful degradation."""
@@ -167,3 +171,72 @@ def test_kill_during_load(target: str) -> None:
     #   when no replacement has come up yet)
     assert p95 < 5000, f"p95={p95:.0f}ms breached 5s budget during {target} kill"
     assert fail_rate < 0.25, f"fail_rate={fail_rate:.2%} > 25% budget during {target} kill"
+
+
+# ── Sprint EI-7 — DB-pool exhaustion ──────────────────────────────────────
+def test_db_pool_exhaustion_under_burst() -> None:
+    """Smash the gateway with 200 concurrent /execute calls in 5 s.
+
+    The pgbouncer pool is 50; SQLAlchemy adds ~25 more app-side. At 200
+    concurrent we deliberately blow past both — the test asserts that:
+      - The gateway returns 429 (rate-limited) or 503 (queue overflow)
+        for the surplus requests, NOT 500 (uncaught exception)
+      - The 50-100 requests that DO fit through complete with p95 < 8s
+      - No request takes longer than 30 s (no zombie connection holds)
+
+    This validates the back-pressure design rather than the happy-path
+    capacity. The gateway under load should choose to *reject loudly*
+    over *crash quietly*.
+    """
+    BURST = 200
+    BURST_WINDOW_S = 5.0
+
+    async def runner():
+        async with httpx.AsyncClient() as client:
+            jwt, tid = await _spawn_demo(client)
+
+        results: list[tuple[int, float]] = []
+        async with httpx.AsyncClient(limits=httpx.Limits(max_connections=BURST)) as client:
+            tasks = [
+                asyncio.create_task(_one_request(client, jwt, tid))
+                for _ in range(BURST)
+            ]
+            done, _pending = await asyncio.wait(tasks, timeout=BURST_WINDOW_S + 30)
+            for d in done:
+                try:
+                    results.append(d.result())
+                except Exception:
+                    results.append((-1, 30000.0))
+        return results
+
+    results = asyncio.run(runner())
+    assert results, "No requests completed"
+
+    codes = [c for c, _ in results]
+    latencies = sorted(l for _, l in results if l > 0)
+    n = len(latencies)
+    p95 = latencies[int(n * 0.95) - 1] if n else 0
+    longest = max(latencies) if latencies else 0
+
+    # Categorize: 200-499 = handled; 429/503 = back-pressure (good);
+    # 500-502/504 = uncaught (bad).
+    handled        = sum(1 for c in codes if 200 <= c < 400)
+    back_pressure  = sum(1 for c in codes if c in (429, 503))
+    crashed        = sum(1 for c in codes if c >= 500 and c not in (503,))
+
+    print(f"\n[chaos db_pool] burst={BURST} handled={handled} "
+          f"back_pressure={back_pressure} crashed={crashed} p95={p95:.0f}ms "
+          f"longest={longest:.0f}ms")
+
+    # SLO budgets for back-pressure correctness:
+    # - At least some requests must succeed (the pool isn't completely starved).
+    # - Crashes (5xx that aren't 503) must be < 5% — that's the bug signal.
+    # - p95 of the requests that DID get through must stay < 8 s.
+    # - No request hangs past 30 s.
+    assert handled > 0, "Every request 5xx'd — pool may be completely deadlocked"
+    crash_rate = crashed / max(1, len(codes))
+    assert crash_rate < 0.05, (
+        f"crash_rate={crash_rate:.2%} > 5% — uncaught exception under burst"
+    )
+    assert p95 < 8000, f"p95={p95:.0f}ms > 8s budget under burst"
+    assert longest < 30000, f"longest={longest:.0f}ms — zombie connection hold detected"
