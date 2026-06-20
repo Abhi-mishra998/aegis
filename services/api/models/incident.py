@@ -41,3 +41,13 @@ class Incident(Base, TenantMixin, IdMixin, TimestampMixin):
 
     # Human-readable explanation (Fix 10)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Sprint EI-17 — external ITSM linkage. Populated when the
+    # incident_watcher.py auto-create hook successfully fires
+    # fire_jira / fire_servicenow. The inbound /webhooks/{jira,
+    # servicenow} endpoints look up the Aegis incident by these to
+    # close it when the upstream ticket is marked Done/Resolved.
+    jira_issue_key:       Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    jira_issue_url:       Mapped[str | None] = mapped_column(String(512), nullable=True)
+    servicenow_sys_id:    Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    servicenow_number:    Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

@@ -116,15 +116,54 @@ explicitly.
 
 ---
 
+## Closing the loop — SNOW Resolved → Aegis closed (Sprint EI-17)
+
+Sprint EI-17 added the inbound side: resolving the SNOW incident
+automatically marks the originating Aegis incident as `RESOLVED` too.
+One Business Rule on the SNOW side does it.
+
+1. In Aegis: **Settings → Integrations → ServiceNow → Generate webhook
+   secret**. A 64-char HMAC secret is generated server-side and shown
+   ONCE; copy it now (same model as Okta SCIM tokens).
+2. In SNOW: **System Definition → Business Rules → New**:
+   - Table:      `Incident [incident]`
+   - When:       `after`
+   - Update:     ☑
+   - Filter:     `state CHANGES TO Resolved OR state CHANGES TO Closed`
+   - Advanced:   ☑
+   - Script:
+     ```javascript
+     // Aegis EI-17 round-trip — close the originating incident.
+     var url = 'https://aegisagent.in/webhooks/servicenow/<YOUR_AEGIS_TENANT_ID>';
+     var secret = '<paste the 64-char webhook secret here>';
+     var body = JSON.stringify({
+       sys_id: current.sys_id.toString(),
+       number: current.number.toString(),
+       state:  current.state.toString(),
+     });
+     var hmac = new GlideHash(GlideHash.HMAC_SHA256, secret);
+     var signature = hmac.processString(body);
+     var req = new sn_ws.RESTMessageV2();
+     req.setEndpoint(url);
+     req.setHttpMethod('POST');
+     req.setRequestHeader('Content-Type', 'application/json');
+     req.setRequestHeader('X-ServiceNow-Signature', signature);
+     req.setRequestBody(body);
+     req.execute();
+     ```
+   - Save.
+3. Test: resolve a SNOW incident that was opened by an Aegis auto-
+   create. Within ~5 seconds the Aegis incident moves to `RESOLVED`
+   with a timeline entry `event: external_link, by: snow-webhook:<sys_id-prefix>`.
+
+Idempotent: a SNOW retry of the same resolve event finds the Aegis
+incident already `RESOLVED` and returns `already_closed` without
+re-writing.
+
 ## What Aegis does NOT do
 
 - **No SNOW table other than `incident`** is touched. Aegis will not
   open Change Requests, Problems, or Service Catalog Requests.
-- **No outbound webhook from SNOW back to Aegis** is wired today.
-  Resolving the SNOW ticket does NOT close the Aegis incident — they
-  are linked only by sys_id reference for human triage convenience.
-  A future sprint may add a SNOW Business Rule → Aegis webhook to
-  close the loop.
 - **No SNOW user provisioning**. Use the Okta SCIM integration
   (`docs/security/okta-scim-setup.md`) if you want Aegis users
   auto-provisioned; SNOW user provisioning is a separate Okta connector.

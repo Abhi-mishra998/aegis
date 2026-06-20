@@ -415,6 +415,11 @@ class ServicenowIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin
     auto_create_on_incident: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true"),
     )
+    # Sprint EI-17 — HMAC secret used to verify inbound /webhooks/servicenow
+    # POSTs (SNOW Business Rule signs the body with this). Server-generated
+    # on first PUT, returned to the operator ONCE in the response, never
+    # surfaced on subsequent GETs.
+    webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
@@ -444,6 +449,11 @@ class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     auto_create_on_incident: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true"),
     )
+    # Sprint EI-17 — HMAC secret used to verify inbound /webhooks/jira
+    # POSTs (Jira Automation rule signs the body with this). Server-
+    # generated on first PUT, returned to the operator ONCE in the
+    # response, never surfaced on subsequent GETs.
+    webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 # ---------------------------------------------------------------------------

@@ -180,6 +180,18 @@ async def _maybe_auto_create_jira(
         issue_key=result.get("issue_key", ""),
     )
 
+    # Sprint EI-17 — write the issue_key back on the originating Aegis
+    # incident so the inbound /webhooks/jira handler can find it later.
+    if result.get("status") == "created" and inc_id and result.get("issue_key"):
+        await _patch_incident_external_link(
+            tenant_id=tenant_id,
+            incident_id=inc_id,
+            fields={
+                "jira_issue_key": result["issue_key"],
+                "jira_issue_url": result.get("issue_url", ""),
+            },
+        )
+
 
 # ── ServiceNow auto-create (Sprint EI-6) ─────────────────────────────────────
 
@@ -254,6 +266,61 @@ async def _maybe_auto_create_snow(
         outcome=result.get("status"),
         number=result.get("number", ""),
     )
+
+    # Sprint EI-17 — write back sys_id + number on the originating
+    # incident so /webhooks/servicenow can resolve it on upstream close.
+    if result.get("status") == "created" and inc_id and result.get("sys_id"):
+        await _patch_incident_external_link(
+            tenant_id=tenant_id,
+            incident_id=inc_id,
+            fields={
+                "servicenow_sys_id": result["sys_id"],
+                "servicenow_number": result.get("number", ""),
+            },
+        )
+
+
+# ── Sprint EI-17 — write-back helper ────────────────────────────────────────
+
+async def _patch_incident_external_link(
+    *, tenant_id: uuid.UUID, incident_id: str, fields: dict[str, str],
+) -> None:
+    """PATCH /incidents/{id} on api-svc to store the external-ticket link.
+
+    Best-effort. Failure here is non-blocking — the ticket WAS created
+    in Jira/SNOW; the only downside of a failed link-back is that the
+    inbound webhook can't later close the Aegis incident. Logged loudly
+    so an operator notices the gap.
+    """
+    import httpx  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    api_url = os.environ.get("API_SERVICE_URL", "http://api:8005").rstrip("/")
+    internal_secret = os.environ.get("INTERNAL_SECRET", "")
+    if not internal_secret:
+        logger.warning("incident_link_back_no_secret",
+                       reason="INTERNAL_SECRET unset; cannot call api-svc")
+        return
+    headers = {
+        "X-Internal-Secret": internal_secret,
+        "X-Tenant-ID":       str(tenant_id),
+        "X-ACP-Actor":       "incident_watcher:link-back",
+        "Content-Type":      "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.patch(
+                f"{api_url}/incidents/{incident_id}",
+                headers=headers,
+                json=fields,
+            )
+        if r.status_code >= 400:
+            logger.warning("incident_link_back_failed",
+                           http=r.status_code, body=r.text[:160],
+                           incident_id=incident_id[:8] if incident_id else "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("incident_link_back_exception", error=str(exc),
+                       incident_id=incident_id[:8] if incident_id else "")
 
 
 # ── Per-incident handler ──────────────────────────────────────────────────────

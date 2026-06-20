@@ -44,6 +44,14 @@ class IncidentUpdate(BaseModel):
     status:      Status | None = None
     assigned_to: str | None = None
     note:        str | None = None
+    # Sprint EI-17 — external ITSM link-back. Populated by the
+    # autonomy incident_watcher when fire_jira / fire_servicenow
+    # succeeds; consumed by the inbound /webhooks/{jira,servicenow}
+    # handlers to find the right incident on upstream resolve.
+    jira_issue_key:    str | None = None
+    jira_issue_url:    str | None = None
+    servicenow_sys_id: str | None = None
+    servicenow_number: str | None = None
 
 
 class IncidentActionRequest(BaseModel):
