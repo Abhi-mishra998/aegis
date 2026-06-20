@@ -1,0 +1,185 @@
+name: release-bundle
+
+# Sprint EI-10 (2026-06-20). Finishes OP-4 cutover — replaces the manual
+# `bash scripts/ops/sign_bundle.sh` operator step with an automated keyless
+# signing flow rooted in GitHub OIDC. Every push to main produces a
+# signed release artefact in S3 that the ASG user_data can verify on boot.
+#
+# Output layout in s3://<bundle-bucket>/releases/:
+#   bundle-<sha>.tar.gz         the actual deploy bundle
+#   bundle-<sha>.tar.gz.sig     ed25519 signature (cosign output)
+#   bundle-<sha>.tar.gz.pem     short-lived Fulcio cert with the OIDC identity
+#   bundle-<sha>.tar.gz.bundle  Rekor transparency-log inclusion proof
+#   bundle-<sha>.tar.gz.sha256  plain-text sha256 for manifest cross-check
+#
+# The ASG user_data already does the verify side
+# (infra/terraform/modules/asg/main.tf:73-79) — this commit completes the
+# producer side so the SSM gate `/aegis/prod/require_signed_bundle` can be
+# safely flipped to "true" by the operator.
+#
+# Rollout safety: this workflow does NOT auto-trigger an ASG instance
+# refresh by default. Operator runs that step manually (typically via
+# the existing scripts/ops/deploy_staggered.sh) after eyeballing the
+# build output. Set inputs.auto_rollout=true on workflow_dispatch to
+# kick a refresh in the same run.
+
+on:
+  push:
+    branches: [main]
+    # Skip pushes that only touch markdown / images / runbooks — those
+    # don't change the runtime and the operator doesn't want to roll
+    # the ASG for docs commits.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'ui/public/.well-known/**'
+      - '.github/workflows/nightly_*.yml'
+  workflow_dispatch:
+    inputs:
+      auto_rollout:
+        description: "Trigger ASG instance refresh after upload (prod only)"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write    # required for cosign keyless OIDC
+  contents: read
+  packages: read
+
+env:
+  AWS_REGION: "ap-south-1"
+  # Pin a cosign version so a Sigstore breaking change doesn't surprise us.
+  # Bump in lockstep with the verify-side cosign in the ASG user_data.
+  COSIGN_VERSION: "v2.4.0"
+
+jobs:
+  build-and-sign:
+    name: Build, keyless-sign, upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1   # script uses git short SHA — needs the HEAD commit
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "value=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI (vite)
+        run: |
+          cd ui
+          npm ci --silent
+          npm run build
+
+      - name: Build deploy bundle
+        id: bundle
+        run: |
+          # The existing builder honours SKIP_UI_BUILD because we already
+          # built above; it writes to /tmp/aegis-bundle-<ts>.tar.gz and
+          # echoes the path.
+          SKIP_UI_BUILD=1 bash scripts/ops/build_release_bundle.sh
+          BUNDLE_PATH="$(ls -t /tmp/aegis-bundle-*.tar.gz | head -1)"
+          echo "path=$BUNDLE_PATH" >> "$GITHUB_OUTPUT"
+          echo "name=bundle-${{ steps.sha.outputs.value }}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Sign bundle (cosign keyless via OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          # The ID-token gets minted automatically by the runner because
+          # we set permissions.id-token=write at workflow level. cosign
+          # discovers it via ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN env vars.
+          # Fulcio embeds the OIDC identity (the workflow URL) into the
+          # cert — that's what the ASG verify-side checks via
+          # --certificate-identity-regexp.
+          BUNDLE="${{ steps.bundle.outputs.path }}"
+          cosign sign-blob \
+            --yes \
+            --bundle             "${BUNDLE}.bundle" \
+            --output-certificate "${BUNDLE}.pem" \
+            --output-signature   "${BUNDLE}.sig" \
+            "${BUNDLE}"
+          shasum -a 256 "${BUNDLE}" | awk '{print $1}' > "${BUNDLE}.sha256"
+          ls -la "${BUNDLE}"*
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Operator: replace with the ARN from `terraform output gha_release_role_arn`.
+          # Docs at docs/runbooks/github_actions_oidc.md describe the trust
+          # policy + IAM permissions this role needs.
+          role-to-assume: arn:aws:iam::628478946931:role/aegis-gha-release
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload bundle + signature siblings to S3
+        env:
+          BUNDLE_PATH: ${{ steps.bundle.outputs.path }}
+          BUNDLE_NAME: ${{ steps.bundle.outputs.name }}
+        run: |
+          # Use the Object-Locked v2 bucket from Sprint EH-5 / OP-3.
+          BUCKET="aegis-prod-backups-628478946931-v2"
+          DEST="s3://${BUCKET}/releases/${BUNDLE_NAME}"
+          aws s3 cp "$BUNDLE_PATH"        "$DEST"
+          aws s3 cp "${BUNDLE_PATH}.sig"  "${DEST}.sig"
+          aws s3 cp "${BUNDLE_PATH}.pem"  "${DEST}.pem"
+          aws s3 cp "${BUNDLE_PATH}.bundle" "${DEST}.bundle"
+          aws s3 cp "${BUNDLE_PATH}.sha256" "${DEST}.sha256"
+          echo "Uploaded:"
+          aws s3 ls "s3://${BUCKET}/releases/${BUNDLE_NAME}" || true
+          aws s3 ls "s3://${BUCKET}/releases/${BUNDLE_NAME}." || true
+
+      - name: Update SSM bundle SHA pointer
+        run: |
+          aws ssm put-parameter \
+            --name "/aegis/prod/current_bundle_sha" \
+            --value "${{ steps.sha.outputs.value }}" \
+            --type "String" \
+            --overwrite >/dev/null
+          echo "SSM /aegis/prod/current_bundle_sha → ${{ steps.sha.outputs.value }}"
+
+      - name: Optional ASG instance refresh
+        if: github.event.inputs.auto_rollout == 'true'
+        run: |
+          ASG_NAME="$(aws --region ${{ env.AWS_REGION }} autoscaling describe-auto-scaling-groups \
+            --query "AutoScalingGroups[?contains(Tags[?Key=='Environment'].Value, 'prod')].AutoScalingGroupName | [0]" \
+            --output text)"
+          if [ -z "$ASG_NAME" ] || [ "$ASG_NAME" = "None" ]; then
+            echo "::error::Could not find ASG tagged Environment=prod"; exit 1
+          fi
+          aws --region ${{ env.AWS_REGION }} autoscaling start-instance-refresh \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":120}'
+          echo "ASG instance refresh started on $ASG_NAME"
+
+      - name: Render to step summary
+        if: always()
+        run: |
+          {
+            echo '### Release bundle'
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Bundle name | \`${{ steps.bundle.outputs.name }}\` |"
+            echo "| Commit | \`${{ steps.sha.outputs.value }}\` |"
+            echo "| Auto-rollout | \`${{ github.event.inputs.auto_rollout || 'false' }}\` |"
+            echo "| OIDC issuer | \`https://token.actions.githubusercontent.com\` |"
+            echo "| Cert identity | \`https://github.com/${{ github.repository }}/.github/workflows/release_bundle.yml@refs/heads/main\` |"
+            echo
+            echo "Verify locally with:"
+            echo
+            echo '```'
+            echo "bash scripts/ops/verify_signed_bundle.sh \\"
+            echo "  /path/to/${{ steps.bundle.outputs.name }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
