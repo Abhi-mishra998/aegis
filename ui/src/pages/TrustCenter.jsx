@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   Shield, ShieldCheck, Lock, FileBadge2, Globe, Activity,
   ArrowRight, FileText, ExternalLink, CheckCircle2, GitBranch, MapPin,
+  Network,
 } from 'lucide-react'
 
 /**
@@ -81,6 +82,13 @@ const SECTIONS = [
     body: 'Default region: ap-south-1 (Mumbai). Dedicated eu-west-1 (Ireland) instance available on contract for EU customers — tenant runtime data never leaves the chosen region. Per-data-class residency table maps every artifact to its region of record.',
     href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/security/data_residency.md',
     linkLabel: 'Per-data-class residency table',
+  },
+  {
+    icon: Network,
+    title: 'Reference architectures',
+    body: 'Three deployment patterns reviewable end-to-end by your Cloud Architect: Aegis on AWS (production source-of-truth), Aegis on Azure (target architecture, Terraform on roadmap), Aegis hybrid with customer-controlled LLM (prompts + completions never leave your VPC via Path A /execute).',
+    href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/architecture/reference/README.md',
+    linkLabel: 'AWS / Azure / hybrid patterns',
   },
 ]
 
