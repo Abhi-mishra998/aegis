@@ -46,9 +46,11 @@ We will implement a **three-layer audit chain**:
    even across partitions.
 
 3. **Public transparency mirror**: daily per-tenant Merkle roots are
-   computed, signed with **ed25519** (per-tenant CMK in AWS KMS), and
-   uploaded to `s3://aegis-public-roots-628478946931/` — anonymous reads,
-   no AWS credentials required. Each root carries `prev_root_hash`
+   computed, signed with **ed25519** (one customer-managed CMK per
+   region wraps the signing-key material — see ADR-006 for why this
+   is one-per-region today, not one-per-tenant), and uploaded to
+   `s3://aegis-public-roots-628478946931/` — anonymous reads, no AWS
+   credentials required. Each root carries `prev_root_hash`
    chaining back to genesis
    (`services/audit/transparency.py:97-137`,
     `services/audit/alembic/versions/g2h3i4j5k6l7_add_prev_root_hash.py`).
@@ -78,10 +80,12 @@ We will implement a **three-layer audit chain**:
    smaller signatures, and is what Sigstore/Rekor and SSH-CA have
    converged on. No customer-cited compliance reason to prefer RSA at
    our trust tier.
-5. **Single global signing key.** Rejected vs per-tenant CMK. Per-tenant
-   isolation lets a customer revoke our access to their key (and
-   therefore stop signing their own root) without affecting other
-   tenants — a property regulated buyers ask for explicitly.
+5. **Single global signing key** (one shared key across every tenant
+   and every region). Rejected — defeats the regional-isolation
+   commitment in `docs/security/data_residency.md`. The current
+   "one CMK per region" implementation (see ADR-006) is the
+   intermediate step; per-tenant CMK migration is mechanical when
+   a contract requires it.
 
 ## Consequences
 
@@ -100,8 +104,10 @@ We will implement a **three-layer audit chain**:
     audit row (e.g., GDPR Article 17 erasure) must do so via a separate
     `redaction_record` row — the original audit row cannot be edited.
     Operator workflow lives in `docs/runbooks/tenant_data_request.md`.
-  - Cost: per-tenant KMS CMK + S3 PUT per day per tenant per partition.
-    Negligible at current scale; will revisit at 1k+ tenants.
+  - Cost: one customer-managed CMK per region (per ADR-006) + S3 PUT
+    per day per tenant per partition. Negligible at current scale;
+    per-tenant CMK migration to revisit when the first regulated
+    customer contract requires it.
   - Cryptographic-key rotation is a real operational burden — handled by
     `docs/runbooks/secrets_rotation.md` and the historical-keys table
     (`services/audit/alembic/versions/h3i4j5k6l7m8_add_transparency_columns_and_historical_keys.py`)

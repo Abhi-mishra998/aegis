@@ -29,6 +29,10 @@ and a procurement red flag.
 | ADR-003 | [Three-layer tenant isolation — canonicalise + middleware + DB CHECK](ADR-003-three-layer-tenant-isolation.md) | Accepted | 2026-06-20 | — |
 | ADR-004 | [OPA Rego for policy decisions, not inline Python](ADR-004-opa-rego-vs-inline-python.md) | Accepted | 2026-06-20 | — |
 | ADR-005 | [ed25519 over RSA-2048 for audit-chain signing](ADR-005-ed25519-over-rsa-for-signing.md) | Accepted | 2026-06-20 | — |
+| ADR-006 | [Customer-managed KMS CMK per region for audit envelope](ADR-006-customer-managed-kms-key-per-region.md) | Accepted | 2026-06-20 | Supersedes the "per-tenant CMK" reference in ADR-001 §1.3 |
+| ADR-007 | [Docker Compose on EC2 over Kubernetes](ADR-007-docker-compose-on-ec2-over-kubernetes.md) | Accepted | 2026-06-20 | — |
+| ADR-008 | [ES256 mesh JWT over mTLS for service-to-service auth](ADR-008-mesh-jwt-over-mtls.md) | Accepted | 2026-06-20 | — |
+| ADR-009 | [S3 Object Lock — GOVERNANCE for backups, COMPLIANCE for CloudTrail](ADR-009-s3-object-lock-modes.md) | Accepted | 2026-06-20 | — |
 
 ## When to write an ADR
 
