@@ -28,7 +28,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="/tmp/aegis-customer-security-package-${TS}"
 ZIP="${OUT}.zip"
 
-mkdir -p "$OUT"/{01_architecture,02_threat_model,03_security_controls,04_compliance,05_operations,06_supply_chain,07_subprocessors,08_pentest,09_disclosure,10_test_evidence}
+mkdir -p "$OUT"/{01_architecture,02_threat_model,03_security_controls,04_compliance,05_operations,06_supply_chain,07_subprocessors,08_pentest,09_disclosure,10_test_evidence,11_adr}
 
 # 00 — README
 cat > "$OUT/00_README.md" <<'EOF'
@@ -50,12 +50,16 @@ for this packet.
 5. `05_operations/` — DR runbook with RTO/RPO targets, secrets rotation
    runbook, monthly drill log.
 6. `06_supply_chain/` — supply-chain hardening: cosign image signing,
-   Trivy/Gitleaks/Checkov/Bandit in CI, CODEOWNERS-gated reviews.
+   Trivy/Gitleaks/Checkov/Bandit in CI, CODEOWNERS-gated reviews,
+   CycloneDX 1.5 SBOM (`sbom.cyclonedx.json`) regenerated nightly by CI.
 7. `07_subprocessors/` — the seven vendors that touch customer data.
 8. `08_pentest/` — engagement SoW (Q3 2026 scheduled).
 9. `09_disclosure/` — responsible disclosure policy + RFC 9116 security.txt.
 10. `10_test_evidence/` — most recent isolation pen-test (7/7 attacks
     blocked) and concurrent-load test (300 reqs, 0 errors).
+11. `11_adr/` — Architecture Decision Records: the "why" behind every
+    structural choice in Aegis, the alternatives we considered, and the
+    constraints they impose on future work.
 
 If anything here is missing or stale, email `security@aegisagent.in`.
 EOF
@@ -107,9 +111,26 @@ cp_safe  "$REPO_ROOT/.github/workflows/terraform.yml"          "$OUT/06_supply_c
 cp_safe  "$REPO_ROOT/.github/CODEOWNERS"                       "$OUT/06_supply_chain/CODEOWNERS"
 cp_safe  "$REPO_ROOT/scripts/ops/sign_bundle.sh"               "$OUT/06_supply_chain/sign-bundle.sh"
 cp_safe  "$REPO_ROOT/scripts/ci/no_secrets_on_disk.sh"         "$OUT/06_supply_chain/ci-no-secrets-on-disk.sh"
-# SBOM if available
+# SBOM — CycloneDX 1.5 JSON, regenerated nightly by .github/workflows/security_scan.yml (sbom job).
+# If missing locally, run: `pip install cyclonedx-bom && cyclonedx-py environment \
+#   --output-format json --output-file reports/sbom.cyclonedx.json` from repo root.
 if [ -f "$REPO_ROOT/reports/sbom.cyclonedx.json" ]; then
     cp "$REPO_ROOT/reports/sbom.cyclonedx.json" "$OUT/06_supply_chain/sbom.cyclonedx.json"
+else
+    cat > "$OUT/06_supply_chain/sbom.MISSING" <<'EOF'
+SBOM not present in reports/sbom.cyclonedx.json at package time.
+
+CI generates it on every push to main; download the latest artifact named
+`sbom-cyclonedx-<sha>` from the security-scan workflow run that built this
+release, OR regenerate locally:
+
+    pip install cyclonedx-bom
+    cyclonedx-py environment \
+      --output-format json \
+      --output-file reports/sbom.cyclonedx.json
+
+Then re-run scripts/ops/build_customer_security_package.sh.
+EOF
 fi
 
 # 07 — Subprocessors
@@ -150,6 +171,14 @@ EOF
 # 10 — Test evidence
 cp_dir_safe "$REPO_ROOT/reports/e2e_test_2026_06_20"           "$OUT/10_test_evidence/2026-06-20"
 cp_safe     "$REPO_ROOT/testing.md"                            "$OUT/10_test_evidence/most-recent-report.md"
+
+# 11 — Architecture Decision Records
+cp_dir_safe "$REPO_ROOT/docs/adr"                              "$OUT/11_adr_src"
+# Flatten the directory copy into the ZIP layer for discoverability.
+if [ -d "$OUT/11_adr_src" ]; then
+    mv "$OUT/11_adr_src"/* "$OUT/11_adr/" 2>/dev/null || true
+    rmdir "$OUT/11_adr_src"
+fi
 
 # Zip it up — include a manifest so the buyer can verify file count.
 ( cd /tmp && zip -rq "$ZIP" "$(basename "$OUT")" )

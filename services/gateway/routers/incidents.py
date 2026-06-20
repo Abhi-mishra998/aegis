@@ -29,6 +29,7 @@ from services.gateway._helpers import (
     internal_headers,
     passthrough,
     publish_event,
+    reject_mismatched_tenant_query,
     trust_proxy,
 )
 
@@ -78,6 +79,7 @@ async def incident_summary(request: Request) -> Any:
 @router.get("/incidents", tags=["Incidents"])
 async def list_incidents(request: Request) -> Any:
     """Proxy → API service incident list with optional status/severity filters."""
+    reject_mismatched_tenant_query(request)
     resp = await request.app.state.client.get(
         f"{_api_base()}/incidents",
         params={
