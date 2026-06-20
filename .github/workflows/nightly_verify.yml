@@ -172,14 +172,30 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Scan SBOM + diff vs yesterday
+      - name: Scan SBOM + container images + diff vs yesterday
         id: sbom_cve
         if: steps.sbom_fetch.outputs.skip == 'false'
         run: |
           SBOM="${{ steps.sbom_fetch.outputs.sbom_path }}"
           mkdir -p /tmp/cve
-          bash scripts/ops/sbom_cve_scan.sh "$SBOM" /tmp/cve/today.json
-          # Pull yesterday's snapshot (404 = first run, empty baseline).
+          # 1. Python SBOM (Sprint EI-13) — app-dep CVEs.
+          bash scripts/ops/sbom_cve_scan.sh "$SBOM" /tmp/cve/sbom.json
+          # 2. Pinned container images (Sprint EI-15) — OS-layer CVEs.
+          #    Closes the gap between "what the Python SBOM sees" and
+          #    "what actually runs in the container". Failures on
+          #    individual images are tolerated (image_cve_scan.sh
+          #    records placeholder findings so the diff sees them).
+          bash scripts/ops/list_pinned_images.sh > /tmp/cve/images.txt
+          echo "Pinned images to scan:"
+          cat /tmp/cve/images.txt
+          bash scripts/ops/image_cve_scan.sh /tmp/cve/images.txt /tmp/cve/images.json
+          # 3. Union for the diff — sbom_cve_diff.py operates on the
+          #    combined list. CveKey identity stays (id, package,
+          #    version) so the same CVE in two sources is still ONE
+          #    finding for diff purposes.
+          jq -s '.[0] + .[1] | sort_by(.id, .source, .package, .installed_version)' \
+            /tmp/cve/sbom.json /tmp/cve/images.json > /tmp/cve/today.json
+          # 4. Diff vs yesterday's snapshot (404 = first run = empty baseline).
           aws s3 cp "s3://${PUBLIC_ROOTS_BUCKET}/cve-history/yesterday.json" \
             /tmp/cve/yesterday.json 2>/dev/null || true
           status="$(python3 scripts/ops/sbom_cve_diff.py \

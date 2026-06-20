@@ -122,6 +122,9 @@ cp_safe  "$REPO_ROOT/scripts/ci/no_secrets_on_disk.sh"         "$OUT/06_supply_c
 # Sprint EI-13 — SBOM CVE-watch tooling (nightly_verify pipeline)
 cp_safe  "$REPO_ROOT/scripts/ops/sbom_cve_scan.sh"             "$OUT/06_supply_chain/sbom_cve_scan.sh"
 cp_safe  "$REPO_ROOT/scripts/ops/sbom_cve_diff.py"             "$OUT/06_supply_chain/sbom_cve_diff.py"
+# Sprint EI-15 — container-image CVE scan (OS-layer coverage on top of EI-13)
+cp_safe  "$REPO_ROOT/scripts/ops/image_cve_scan.sh"            "$OUT/06_supply_chain/image_cve_scan.sh"
+cp_safe  "$REPO_ROOT/scripts/ops/list_pinned_images.sh"        "$OUT/06_supply_chain/list_pinned_images.sh"
 cp_safe  "$REPO_ROOT/.github/workflows/nightly_verify.yml"     "$OUT/06_supply_chain/ci-nightly_verify.yml"
 # SBOM — CycloneDX 1.5 JSON, regenerated nightly by .github/workflows/security_scan.yml (sbom job).
 # If missing locally, run: `pip install cyclonedx-bom && cyclonedx-py environment \

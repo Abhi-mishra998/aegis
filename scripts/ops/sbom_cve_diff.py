@@ -124,13 +124,19 @@ def render_markdown(diff_result: dict) -> str:
         out.append("")
         out.append("#### New CVEs (this is the signal)")
         out.append("")
-        out.append("| CVE | Severity | Package | Installed | Fixed in | Link |")
-        out.append("|---|---|---|---|---|---|")
+        # Sprint EI-15 — `source` column tells the operator WHERE the
+        # CVE came from (python-sbom vs image:<ref>). Default value
+        # 'python-sbom' applies to entries that lack a source tag
+        # (i.e. produced by sbom_cve_scan.sh before EI-15 was wired).
+        out.append("| CVE | Severity | Source | Package | Installed | Fixed in | Link |")
+        out.append("|---|---|---|---|---|---|---|")
         for f in diff_result["new"]:
             url = f.get("primary_url") or ""
             fixed = f.get("fixed_version") or "—"
+            source = f.get("source") or "python-sbom"
             out.append(
                 f"| {f.get('id', '?')} | {f.get('severity', '?')} | "
+                f"{source} | "
                 f"{f.get('package', '?')} | {f.get('installed_version', '?')} | "
                 f"{fixed} | [link]({url}) |"
             )
