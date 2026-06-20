@@ -1,0 +1,117 @@
+name: nightly-soak
+
+# Sprint EI-4 (2026-06-20). Runs the soak harness against
+# staging.aegisagent.in every night at 03:13 UTC + on demand.
+# Fails the job (and so the badge) if:
+#   - locust aggregate failure rate > 1%
+#   - locust p99 > 5000ms
+#   - any of the 4 post-run checks fail (chain verify, reconciliation,
+#     flight timeline open, transparency root unverified)
+#
+# Authenticates via OIDC, NEVER stores AWS keys in GitHub Secrets.
+# See docs/runbooks/github_actions_oidc.md for the role wiring.
+
+on:
+  schedule:
+    - cron: "13 3 * * *"   # 03:13 UTC = 08:43 IST — outside peak demo hours
+  workflow_dispatch:       # operator can trigger ad-hoc
+    inputs:
+      users:
+        description: "Concurrent users (default 100)"
+        default: "100"
+      duration:
+        description: "locust -t value (default 10m)"
+        default: "10m"
+
+permissions:
+  id-token: write   # for AWS OIDC assume-role
+  contents: read
+
+env:
+  STAGING_GATEWAY_URL: "https://staging.aegisagent.in"
+  AWS_REGION: "ap-south-1"
+
+jobs:
+  soak:
+    name: 100u × 10min soak against staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install soak deps
+        run: |
+          pip install --upgrade pip
+          # The soak.py harness uses httpx + locust + the project's own
+          # post_run_checks module. Pin locust for reproducibility.
+          pip install 'locust==2.31.6' httpx structlog
+          pip install -e .
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Operator: replace with the ARN that `terraform output gha_nightly_role_arn`
+          # printed after one-time OIDC bootstrap (docs/runbooks/github_actions_oidc.md).
+          role-to-assume: arn:aws:iam::628478946931:role/aegis-gha-nightly-soak
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Pull INTERNAL_SECRET for staging from SSM
+        id: secret
+        run: |
+          val="$(aws ssm get-parameter \
+            --name /aegis/staging/internal_secret \
+            --with-decryption \
+            --query 'Parameter.Value' --output text)"
+          # mask before any echo
+          echo "::add-mask::$val"
+          echo "internal_secret=$val" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for staging ALB to be healthy
+        run: |
+          for i in {1..30}; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "${STAGING_GATEWAY_URL}/health" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Staging ALB healthy."; exit 0
+            fi
+            echo "Attempt $i — got $code, retrying in 10s"; sleep 10
+          done
+          echo "Staging never came up healthy." >&2; exit 1
+
+      - name: Run soak
+        env:
+          GATEWAY_URL: ${{ env.STAGING_GATEWAY_URL }}
+          INTERNAL_SECRET: ${{ steps.secret.outputs.internal_secret }}
+        run: |
+          USERS="${{ github.event.inputs.users || '100' }}"
+          DURATION="${{ github.event.inputs.duration || '10m' }}"
+          python tests/load/soak.py \
+            --users "$USERS" \
+            --duration "$DURATION" \
+            --tenants 3 \
+            --gateway-url "$GATEWAY_URL" \
+            --internal-secret "$INTERNAL_SECRET"
+
+      - name: Upload soak reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ github.run_id }}
+          path: reports/soak/
+          retention-days: 90
+
+      - name: Summarize result for the run page
+        if: always()
+        run: |
+          # The soak harness writes summary.json with top-line pass/fail.
+          latest="$(ls -t reports/soak/ 2>/dev/null | head -1 || true)"
+          if [ -n "$latest" ] && [ -f "reports/soak/$latest/summary.json" ]; then
+            echo '### Soak summary' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            jq . "reports/soak/$latest/summary.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No summary.json — soak likely exited before tearing down." >> "$GITHUB_STEP_SUMMARY"
+          fi
