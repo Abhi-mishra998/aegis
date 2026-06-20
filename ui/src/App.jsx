@@ -81,6 +81,7 @@ const Replay             = safeLazy(() => import('./pages/Replay'));
 const Landing            = safeLazy(() => import('./pages/Landing'));
 const TrustCenter        = safeLazy(() => import('./pages/TrustCenter'));
 const StatusPage         = safeLazy(() => import('./pages/StatusPage'));
+const SecurityPage       = safeLazy(() => import('./pages/SecurityPage'));
 const DecisionExplorer   = safeLazy(() => import('./pages/DecisionExplorer'));
 const SessionExplorer    = safeLazy(() => import('./pages/SessionExplorer'));
 const Fleet              = safeLazy(() => import('./pages/Fleet'));
@@ -334,6 +335,12 @@ function App() {
                   as a static HTML to s3://aegis-public-roots/status/index.html
                   so it survives an ALB outage. */}
               <Route path="/status" element={<StatusPage />} />
+              {/* EI-22 — public responsible-disclosure landing page;
+                  mirrored to s3://aegis-public-roots/security/index.html
+                  same outage-resistance pattern as /status. */}
+              <Route path="/security" element={<SecurityPage />} />
+              <Route path="/security/policy" element={<SecurityPage />} />
+              <Route path="/security/report" element={<SecurityPage />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
 
