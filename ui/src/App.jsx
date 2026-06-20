@@ -80,6 +80,7 @@ const EmployeeProfile    = safeLazy(() => import('./pages/EmployeeProfile'));
 const Replay             = safeLazy(() => import('./pages/Replay'));
 const Landing            = safeLazy(() => import('./pages/Landing'));
 const TrustCenter        = safeLazy(() => import('./pages/TrustCenter'));
+const StatusPage         = safeLazy(() => import('./pages/StatusPage'));
 const DecisionExplorer   = safeLazy(() => import('./pages/DecisionExplorer'));
 const SessionExplorer    = safeLazy(() => import('./pages/SessionExplorer'));
 const Fleet              = safeLazy(() => import('./pages/Fleet'));
@@ -329,6 +330,10 @@ function App() {
               />
               {/* EH-6 — public trust center (no auth gate) */}
               <Route path="/trust" element={<TrustCenter />} />
+              {/* EI-14 — public status page (no auth gate); also mirrored
+                  as a static HTML to s3://aegis-public-roots/status/index.html
+                  so it survives an ALB outage. */}
+              <Route path="/status" element={<StatusPage />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
 

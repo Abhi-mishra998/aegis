@@ -232,6 +232,45 @@ jobs:
             --content-type application/json \
             --cache-control "max-age=300"
 
+      # ── Sprint EI-14 — publish the static status-page mirror ──────
+      # Single-file HTML, no JS framework — survives an Aegis ALB
+      # outage because it lives in the same anonymously-readable bucket
+      # as the data it consumes. CNAME from status.aegisagent.in
+      # (operator-applied, see docs/runbooks/status_page_setup.md)
+      # points at the bucket's website endpoint.
+      - name: Publish static status-page mirror
+        if: always()
+        run: |
+          if [ -f ui/public/status-mirror.html ]; then
+            aws s3 cp ui/public/status-mirror.html \
+              "s3://${PUBLIC_ROOTS_BUCKET}/status/index.html" \
+              --content-type text/html \
+              --cache-control "max-age=300"
+          fi
+
+      # ── Sprint EI-14 — 30-day uptime rollup ───────────────────────
+      # Pull every per-day verify.json from the public bucket for the
+      # trailing 30 days, classify each as green / incident / no_data,
+      # publish uptime/30day.json so /status (React + static mirror)
+      # can render the rate. Runs AFTER the publish step so today's
+      # JSON is already in the bucket.
+      - name: Compute + publish 30-day uptime rollup
+        if: always()
+        run: |
+          mkdir -p /tmp/nightly-archive
+          aws s3 sync "s3://${PUBLIC_ROOTS_BUCKET}/nightly/" \
+            /tmp/nightly-archive/ \
+            --exclude "*" --include "*.json" \
+            --exclude "latest.json"
+          python3 scripts/ops/uptime_rollup.py \
+            --input-dir /tmp/nightly-archive \
+            --out /tmp/uptime-30day.json \
+            --window-days 30
+          aws s3 cp /tmp/uptime-30day.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/uptime/30day.json" \
+            --content-type application/json \
+            --cache-control "max-age=600"
+
       - name: Render to step summary
         if: always()
         run: |

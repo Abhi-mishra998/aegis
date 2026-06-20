@@ -57,8 +57,8 @@ const SECTIONS = [
   {
     icon: Activity,
     title: 'Operational monitoring',
-    body: 'Prometheus + AlertManager with security-specific counters (auth failures, tenant-isolation violations, RBAC denials, mass exports, revoked token storms). Status page at status.aegisagent.in updated every minute.',
-    href: 'https://status.aegisagent.in/',
+    body: 'Prometheus + AlertManager with security-specific counters (auth failures, tenant-isolation violations, RBAC denials, mass exports, revoked token storms). Public status page (this site /status) backed by the nightly verify workflow + a static S3 mirror at status.aegisagent.in for outage-time availability.',
+    href: '/status',
     linkLabel: 'Live status page',
   },
   {
