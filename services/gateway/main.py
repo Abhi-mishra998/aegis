@@ -607,6 +607,8 @@ from services.gateway.routers.integrations import router as _integrations_router
 from services.gateway.routers.scim_tokens import router as _scim_tokens_router  # noqa: E402
 # Sprint EI-3 (2026-06-20) — SCIM 2.0 protocol endpoints (User/Group/Schemas/SPC).
 from services.gateway.routers.scim import router as _scim_router  # noqa: E402
+# Sprint EI-17 (2026-06-21) — inbound ITSM webhooks (Jira + ServiceNow → close Aegis incident).
+from services.gateway.routers.itsm_webhooks import router as _itsm_webhooks_router  # noqa: E402
 # Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
 from services.gateway.routers.messages import router as _messages_router  # noqa: E402
 # Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
@@ -644,6 +646,7 @@ app.include_router(_teams_router)
 app.include_router(_integrations_router)
 app.include_router(_scim_tokens_router)
 app.include_router(_scim_router)
+app.include_router(_itsm_webhooks_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
 app.include_router(_clerk_router)

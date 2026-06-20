@@ -137,6 +137,13 @@ _SKIP_PATH_PREFIXES = (
     "/scim/v2/ServiceProviderConfig",
     "/scim/v2/Schemas",
     "/scim/v2/ResourceTypes",
+    # Sprint EI-17 — inbound ITSM webhooks from Jira / ServiceNow. No
+    # JWT — the upstream platform can't carry one. Authenticated by
+    # HMAC-SHA256(body) against the per-tenant webhook_secret stored on
+    # the integration row; the handler in services/gateway/routers/
+    # itsm_webhooks.py does the verification before any DB write.
+    "/webhooks/jira/",
+    "/webhooks/servicenow/",
 )
 
 # Management paths: require auth + rate-limiting, but bypass the agent

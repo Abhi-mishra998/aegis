@@ -195,6 +195,25 @@ class IncidentRepository:
         if payload.note:
             timeline.append({"event": "note", "detail": payload.note, "by": actor, "timestamp": now_iso})
 
+        # Sprint EI-17 — external ITSM linkage write-back from the
+        # autonomy incident_watcher. Append a timeline marker so the
+        # link is visible in the incident's history (audit-friendly).
+        for field, value in (
+            ("jira_issue_key",    payload.jira_issue_key),
+            ("jira_issue_url",    payload.jira_issue_url),
+            ("servicenow_sys_id", payload.servicenow_sys_id),
+            ("servicenow_number", payload.servicenow_number),
+        ):
+            if value is not None and getattr(incident, field, None) != value:
+                setattr(incident, field, value)
+                timeline.append({
+                    "event":    "external_link",
+                    "field":    field,
+                    "value":    value,
+                    "by":       actor,
+                    "timestamp": now_iso,
+                })
+
         incident.timeline = timeline
         await self.db.commit()
         await self.db.refresh(incident)
