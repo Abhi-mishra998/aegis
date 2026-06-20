@@ -97,8 +97,25 @@ resource "aws_s3_bucket" "backups" {
   bucket        = "${var.name_prefix}-backups-${var.account_id}"
   force_destroy = false
 
+  # Sprint EH-5 — S3 Object Lock for tamper-evidence on backup objects.
+  # Enabling this on a NEW bucket is free; for the pre-existing
+  # production bucket the migration procedure is documented in
+  # docs/runbooks/object_lock_migration.md. Once migrated, set
+  # `object_lock_enabled = true` on the imported state too.
+  object_lock_enabled = true
+
   tags = {
     Name = "${var.name_prefix}-backups"
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"   # operator can override with bypass perm; COMPLIANCE locks even root
+      days = 30
+    }
   }
 }
 
@@ -149,8 +166,25 @@ resource "aws_s3_bucket" "cloudtrail" {
   bucket        = "${var.name_prefix}-cloudtrail-${var.account_id}"
   force_destroy = false
 
+  # Sprint EH-5 — CloudTrail logs are the forensic backstop. Object Lock
+  # in COMPLIANCE mode (180 days) means even an admin who steals the
+  # root account credentials cannot delete the trail that proves the
+  # theft. Migration procedure for the existing bucket in
+  # docs/runbooks/object_lock_migration.md.
+  object_lock_enabled = true
+
   tags = {
     Name = "${var.name_prefix}-cloudtrail"
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+  rule {
+    default_retention {
+      mode = "COMPLIANCE"   # cannot be lowered, even by root
+      days = 180
+    }
   }
 }
 

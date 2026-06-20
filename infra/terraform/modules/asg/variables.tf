@@ -58,6 +58,62 @@ variable "bundle_bucket" {
 }
 
 variable "aws_region" {
-  description = "AWS region — propagated into user_data for ssm/s3 calls."
+  description = "AWS region - propagated into user_data for ssm/s3 calls."
+  type        = string
+}
+
+# ── Runtime config plumbed into the .env on boot ──────────────────────
+variable "rds_endpoint" {
+  description = "RDS endpoint host:port (used to build DATABASE_URL)."
+  type        = string
+}
+
+variable "rds_master_secret_id" {
+  description = "Secrets Manager secret id holding the RDS master password."
+  type        = string
+}
+
+variable "redis_primary_endpoint" {
+  description = "ElastiCache primary endpoint host:port (TLS rediss://)."
+  type        = string
+}
+
+variable "domain" {
+  description = "Public domain (e.g. aegisagent.in) - used for PUBLIC_BASE_URL."
+  type        = string
+}
+
+variable "internal_secret_arn" {
+  description = "Secrets Manager id for inter-service shared secret."
+  type        = string
+}
+
+variable "jwt_signing_secret_id" {
+  description = "Secrets Manager id for JWT signing key."
+  type        = string
+}
+
+variable "mesh_jwt_secret_id" {
+  description = "Secrets Manager id for mesh JWT secret."
+  type        = string
+}
+
+variable "stripe_webhook_secret_id" {
+  description = "Secrets Manager id for Stripe webhook secret."
+  type        = string
+}
+
+variable "groq_api_key_secret_id" {
+  description = "Secrets Manager id for Groq API key."
+  type        = string
+}
+
+variable "app_param_prefix" {
+  description = "SSM parameter prefix for app config (no leading slash)."
+  type        = string
+}
+
+variable "public_roots_bucket" {
+  description = "Public transparency roots bucket."
   type        = string
 }

@@ -248,8 +248,9 @@ export default function Replay() {
     )
   }
 
-  const aegis = data.stages.find((s) => s.kind === 'aegis_evaluation') || {}
-  const outcome = data.stages.find((s) => s.kind === 'outcome') || {}
+  const stages = data.stages || []
+  const aegis = stages.find((s) => s.kind === 'aegis_evaluation') || {}
+  const outcome = stages.find((s) => s.kind === 'outcome') || {}
 
   return (
     <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
@@ -279,8 +280,8 @@ export default function Replay() {
 
       {/* The 5-stage stepper */}
       <div className="flex flex-col lg:flex-row gap-3 lg:gap-6 items-stretch">
-        {data.stages.map((s, i) => (
-          <StageCard key={s.kind} stage={s} isLast={i === data.stages.length - 1} />
+        {stages.map((s, i) => (
+          <StageCard key={s.kind} stage={s} isLast={i === stages.length - 1} />
         ))}
       </div>
 

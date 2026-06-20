@@ -13,7 +13,29 @@ const REASON_LABELS = {
   csrf_failure:     'CSRF Validation Failed',
 }
 
+// Demo sessions (anonymous "Try live demo" CTA) carry a tightly-scoped
+// 30-min JWT against a shared sandbox tenant. Not every endpoint is
+// authorised for that token (e.g. /webhooks/config requires a real user
+// row). We deliberately swallow auth failures in demo mode so the
+// occasional 401 doesn't blow the session out — the affected widget
+// just renders empty.
+function isDemoMode() {
+  try {
+    return (
+      sessionStorage.getItem('aegis_demo_mode') === '1' ||
+      new URLSearchParams(window.location.search).get('demo') === '1'
+    )
+  } catch {
+    return false
+  }
+}
+
 export function emitAuthFailure({ reason = 'unauthorized', url, statusCode } = {}) {
+  if (isDemoMode()) {
+    // Telemetry-friendly trace, but no SOC overlay + no redirect.
+    console.debug('[demo] suppressed auth failure', { reason, url, statusCode })
+    return
+  }
   window.dispatchEvent(
     new CustomEvent(AUTH_EVENTS.FAILURE, {
       detail: {

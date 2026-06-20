@@ -98,3 +98,18 @@ class APIKey(Base, TenantMixin, IdMixin, TimestampMixin):
     department: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True,
     )
+
+    # Sprint EH-1 (2026-06-21) — explicit canonical Role on every key.
+    # Previously every acp_emp_/acp_ key implicitly granted OWNER on the
+    # /v1/* surface because the proxy handler set request.state.role from
+    # the JWT-path default rather than from the key row. With per-key role
+    # we can mint a DEVELOPER-only Anthropic proxy key for a customer SDK
+    # without giving them OWNER read of audit logs etc.
+    # Default OWNER preserves legacy behavior for keys created before this
+    # column existed; new keys default to DEVELOPER (least-privilege for
+    # employee/SDK keys — admins can elevate explicitly).
+    role: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+        default="DEVELOPER", server_default="OWNER",
+        index=True,
+    )

@@ -113,9 +113,10 @@ function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon 
 /* ───────── 30-day spend sparkline (no external chart lib) ───────────── */
 
 function SpendSparkline({ trend }) {
-  const max = Math.max(0.000001, ...trend.map((t) => Number(t.spend_usd) || 0))
-  const points = trend.map((t, i) => {
-    const x = (i / Math.max(1, trend.length - 1)) * 100
+  const series = trend || []
+  const max = Math.max(0.000001, ...series.map((t) => Number(t.spend_usd) || 0))
+  const points = series.map((t, i) => {
+    const x = (i / Math.max(1, series.length - 1)) * 100
     const y = 100 - ((Number(t.spend_usd) || 0) / max) * 100
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }).join(' ')

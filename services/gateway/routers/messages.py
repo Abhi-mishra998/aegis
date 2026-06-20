@@ -138,14 +138,25 @@ async def proxy_anthropic_messages(request: Request) -> Response:
     tenant_id_str = str(key_data.get("tenant_id") or "")
     daily_budget_usd   = key_data.get("daily_budget_usd")
     monthly_budget_usd = key_data.get("monthly_budget_usd")
+    key_role           = (key_data.get("role") or "DEVELOPER").upper()
 
-    # Pin the tenant onto request.state so internal_headers() picks it
-    # up for downstream service calls (audit-svc + autonomy-svc), and
-    # mirror it as a header on subsequent fan-outs. /v1/messages auths
-    # via x-api-key not Bearer, so X-Tenant-ID isn't auto-set by the
-    # gateway's normal Clerk middleware.
+    # Sprint EH-1: minimum role required to use the /v1/messages proxy is
+    # DEVELOPER. Reject READ_ONLY keys here so they cannot run inference.
+    # OWNER/ADMIN/SECURITY_ANALYST/DEVELOPER pass through.
+    if key_role == "READ_ONLY":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key role READ_ONLY cannot invoke /v1/messages",
+        )
+
+    # Pin the tenant + role onto request.state so internal_headers() picks
+    # them up for downstream service calls. /v1/messages auths via
+    # x-api-key not Bearer, so the gateway's normal Clerk middleware
+    # doesn't set request.state for us.
     try:
         request.state.tenant_id = tenant_id_str
+        request.state.role = key_role
+        request.state.actor = f"apikey:{key_data.get('key_prefix', auth_key[:8])}"
     except Exception:  # noqa: BLE001
         pass
 

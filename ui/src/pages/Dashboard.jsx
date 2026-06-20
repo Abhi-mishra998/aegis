@@ -323,6 +323,34 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Shadow-mode banner — explains why high-risk actions show
+          findings=[policy_deny] but action=allow. Clicking "Exit shadow
+          mode" hits the OWNER-gated endpoint and the next /execute
+          actually blocks. */}
+      {shadowActive && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-2 w-2 rounded-full bg-amber-400 animate-pulse" aria-hidden="true" />
+          <div className="flex-1">
+            <div className="text-xs font-semibold text-amber-200">
+              Shadow mode is ON · {shadowDaysLeft != null ? `${shadowDaysLeft} days left` : ''}
+            </div>
+            <p className="text-[11px] text-amber-200/70 leading-relaxed mt-1">
+              Aegis is recording every decision but <strong>not</strong> blocking. Wire
+              transfers, PII dumps and policy-deny actions will show up in the audit log
+              with <code>findings=[policy_deny]</code>, but the agent still gets
+              <code>action=allow</code> so your live traffic isn't interrupted. Exit
+              shadow mode to start hard-blocking.
+            </p>
+          </div>
+          <Link
+            to="/shadow-review"
+            className="text-[11px] font-medium text-amber-300 hover:text-amber-200 underline whitespace-nowrap"
+          >
+            Review &amp; exit →
+          </Link>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1">

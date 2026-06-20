@@ -67,7 +67,10 @@ logger = structlog.get_logger(__name__)
 
 _SKIP_PATHS = frozenset(
     [
-        "/health", "/docs", "/openapi.json", "/redoc", "/metrics",
+        # `/metrics` is intentionally NOT here — it leaks tenant-labelled
+        # Prom series. It's gated by an in-process X-Internal-Secret check
+        # inside the middleware dispatch (see _maybe_allow_metrics below).
+        "/health", "/docs", "/openapi.json", "/redoc",
         "/system/health",  # ops aggregate — must be reachable by k8s/ALB/Datadog probes (no tenant data)
         "/status",         # public customer-shareable status page (no tenant data)
         "/auth/token", "/auth/login", "/auth/agent/token",  # public auth endpoints
@@ -82,6 +85,13 @@ _SKIP_PATHS = frozenset(
         # against Clerk's JWKS. Neither carries an Aegis-issued token.
         "/webhooks/clerk",
         "/auth/clerk/provision",
+        # Sprint S4 — anonymous demo workspace. Marketing "Try live demo"
+        # CTA hits this from an unauthed browser. Rate-limited per IP at
+        # the gateway; mints a 30-min read-only JWT scoped to a freshly
+        # seeded is_demo=true tenant.
+        "/demo/spawn-workspace",
+        # Scenario catalog is read-only metadata for the demo picker.
+        "/demo/scenarios",
     ]
 )
 
@@ -228,6 +238,42 @@ SHADOW_DOWNGRADES_TOTAL = Counter(
     ["tenant_id", "original_action"],
 )
 
+# ── EH-3: security-specific counters (separate from operational ones) ──
+# These get their own Prometheus rule group so the SOC has one place to
+# look. Wiring sites are documented in each counter's labelname comment.
+AUTH_FAILURES_TOTAL = Counter(
+    "acp_auth_failures_total",
+    "Authentication failures — bad/expired JWT, bad API key, revoked token",
+    # reason ∈ {invalid_token, expired_token, revoked_token, no_token, bad_api_key, validator_error}
+    ["reason"],
+)
+TENANT_ISOLATION_VIOLATIONS_TOTAL = Counter(
+    "acp_tenant_isolation_violation_total",
+    "Header X-Tenant-ID did not match JWT tenant_id claim — attempted spoof",
+    [],
+)
+REVOKED_TOKEN_ATTEMPTS_TOTAL = Counter(
+    "acp_revoked_token_attempts_total",
+    "Bearer of a revoked token attempted to authenticate",
+    [],
+)
+RBAC_DENIED_TOTAL = Counter(
+    "acp_rbac_denied_total",
+    "Authenticated principal blocked by the gateway RBAC matrix (EH-1)",
+    # role = the principal's actual role; path_prefix = first 2 segments of the rejected path
+    ["role", "path_prefix"],
+)
+MASS_EXPORT_ATTEMPTS_TOTAL = Counter(
+    "acp_mass_export_attempts_total",
+    "POST /audit/logs/export OR POST /compliance/export call rate",
+    ["endpoint", "tenant_id"],
+)
+ADMIN_ACTION_TOTAL = Counter(
+    "acp_admin_action_total",
+    "Sensitive admin mutation (kill switch, role change, key mint, tenant delete)",
+    ["action"],
+)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Sprint 10 — Production hardening (PRODUCT_PLAN.md §14).
@@ -372,6 +418,19 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         if _path in _SKIP_PATHS or _prefix_skip:
             return await call_next(request)
 
+        # /metrics: require internal secret. Prometheus inside the VPC
+        # sends X-Internal-Secret in its scrape_configs; public ALB
+        # callers don't carry it and get 401.
+        if _path == "/metrics":
+            if request.headers.get("X-Internal-Secret") == settings.INTERNAL_SECRET:
+                return await call_next(request)
+            from fastapi.responses import JSONResponse as _JSON
+            return _JSON(
+                {"error": "Unauthorized", "detail": "metrics endpoint is internal-only"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'X-Internal-Secret realm="metrics"'},
+            )
+
         client_ip = request.client.host if request.client else "unknown"
         t_id_str: str = "unknown"
         agent_id: uuid.UUID = uuid.UUID(int=0)
@@ -408,6 +467,37 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             identity = await self._handle_auth_phase(request)
             tenant_id, agent_id, t_id_str, tier = identity
             jti = getattr(request.state, "jti", None)
+
+            # --- 2.1 AUTHORIZATION (Sprint EH-1) ---
+            # Centralised path -> role enforcement. Spec lives in
+            # docs/security/rbac_matrix.md, code in _rbac_map.py.
+            # Runs after auth populates request.state.role so the lookup
+            # is against the canonical role (not a client-forged header).
+            from services.gateway._rbac_map import is_authorized  # noqa: PLC0415
+            _actual_role = getattr(request.state, "role", "READ_ONLY") or "READ_ONLY"
+            _ok, _reason = is_authorized(_path, request.method, _actual_role)
+            if not _ok:
+                _path_prefix = "/" + "/".join(p for p in _path.split("/")[:3] if p)
+                RBAC_DENIED_TOTAL.labels(role=_actual_role, path_prefix=_path_prefix).inc()
+                logger.warning(
+                    "rbac_denied",
+                    path=_path, method=request.method,
+                    actual_role=_actual_role, reason=_reason,
+                    tenant_id=t_id_str,
+                )
+                from fastapi.responses import JSONResponse as _JSON  # noqa: PLC0415
+                return _JSON(
+                    {"error": "Forbidden", "detail": _reason},
+                    status_code=403,
+                )
+
+            # EH-3: mass-export watch. Both /audit/logs/export and
+            # /compliance/export are read-once-write-many: a customer
+            # legitimately calls each once per audit period (≤1/day).
+            # Anything above that is exfil pattern — Prometheus alert
+            # picks it up.
+            if request.method == "POST" and _path in ("/audit/logs/export", "/compliance/export"):
+                MASS_EXPORT_ATTEMPTS_TOTAL.labels(endpoint=_path, tenant_id=t_id_str).inc()
 
             # --- 2.5 PER-TENANT QUOTA (Sprint 3.2) ---
             # Token-bucket rps+burst + UTC daily/monthly counters from the

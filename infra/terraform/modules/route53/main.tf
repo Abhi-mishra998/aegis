@@ -7,9 +7,10 @@
 # the apex.
 
 resource "aws_route53_record" "apex_a" {
-  zone_id = var.zone_id
-  name    = var.domain
-  type    = "A"
+  zone_id         = var.zone_id
+  name            = var.domain
+  type            = "A"
+  allow_overwrite = true
 
   alias {
     name                   = var.alb_dns_name
@@ -19,9 +20,10 @@ resource "aws_route53_record" "apex_a" {
 }
 
 resource "aws_route53_record" "apex_aaaa" {
-  zone_id = var.zone_id
-  name    = var.domain
-  type    = "AAAA"
+  zone_id         = var.zone_id
+  name            = var.domain
+  type            = "AAAA"
+  allow_overwrite = true
 
   alias {
     name                   = var.alb_dns_name
@@ -30,10 +32,15 @@ resource "aws_route53_record" "apex_aaaa" {
   }
 }
 
-resource "aws_route53_record" "www_cname" {
-  zone_id = var.zone_id
-  name    = "www.${var.domain}"
-  type    = "CNAME"
-  ttl     = 300
-  records = [var.domain]
+resource "aws_route53_record" "www_alias_a" {
+  zone_id         = var.zone_id
+  name            = "www.${var.domain}"
+  type            = "A"
+  allow_overwrite = true
+
+  alias {
+    name                   = var.alb_dns_name
+    zone_id                = var.alb_zone_id
+    evaluate_target_health = true
+  }
 }

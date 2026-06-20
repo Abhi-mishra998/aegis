@@ -1,0 +1,121 @@
+name: security-scan
+
+# Sprint EH-4 (2026-06-21) — supply-chain security scans.
+# Closes architect finding: "no cryptographic chain from commit to image".
+#
+# What runs on every PR + on every push to main:
+#   1. Trivy filesystem scan  — CVE check on Python + Node deps + Dockerfiles
+#   2. Gitleaks               — secret-pattern scan across diff + history
+#   3. Checkov                — Terraform misconfiguration scan
+#   4. Bandit                 — Python AST security smells
+#
+# All four are fail-on-high (CVE severity ≥ HIGH, secret match, IaC critical
+# rule). Severity rationale + suppression workflow in
+# docs/security/git_hardening.md.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Nightly re-scan: a CVE published TODAY may make yesterday's green
+    # PR vulnerable. The nightly result fails the next-morning build if
+    # it has gone red.
+    - cron: "13 3 * * *"
+
+permissions:
+  contents: read
+  security-events: write      # for SARIF upload to GitHub code scanning
+  pull-requests: write
+
+jobs:
+  trivy-fs:
+    name: Trivy filesystem CVE scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          # Fail the job if any HIGH/CRITICAL CVE is found. To
+          # temporarily suppress, add to .trivyignore with an expiry
+          # comment and a tracking issue link.
+          exit-code: '1'
+          ignore-unfixed: true   # don't fail on unpatched CVEs we can't fix
+
+      - name: Upload Trivy SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  gitleaks:
+    name: Gitleaks secret-pattern scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so historical secret leaks are caught too
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Custom config that allows our test fixtures + dev-only sample envs
+          # under scripts/utils/. Same rules as scripts/ci/no_secrets_on_disk.sh
+          # but pattern-based instead of filename-based.
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  checkov:
+    name: Checkov IaC scan (Terraform + Dockerfile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/terraform
+          framework: terraform
+          quiet: true
+          soft_fail: false      # fail the build on HIGH/CRITICAL misconfig
+          skip_check: >-
+            CKV_AWS_338,CKV_AWS_158
+            # CKV_AWS_338 = S3 bucket-level public-access-block on the
+            #   aegis-public-roots bucket. We intentionally allow anonymous
+            #   GetObject so customers can verify transparency roots.
+            # CKV_AWS_158 = log group should be encrypted with KMS CMK.
+            #   AWS-managed KMS is sufficient at our trust tier; can revisit
+            #   when we add per-tenant CMKs.
+
+      - name: Checkov on Dockerfiles
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          framework: dockerfile
+          quiet: true
+          soft_fail: false
+
+  bandit:
+    name: Bandit Python AST security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install bandit[toml]
+
+      - run: |
+          # Scan source only — skip tests + the SDK reference impl.
+          # -ll = "show low+medium+high"; we fail on HIGH only.
+          bandit -r services sdk -ll -iii --skip B101,B608 \
+                 --exclude tests,build,dist

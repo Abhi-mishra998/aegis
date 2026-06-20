@@ -98,6 +98,14 @@ data "aws_iam_policy_document" "ssm_param" {
       var.app_param_arns,
     )
   }
+  # First-boot bootstrap: stash auto-generated Grafana password into SSM
+  # so subsequent boots reuse the same value.
+  statement {
+    sid       = "WriteGrafanaPassword"
+    effect    = "Allow"
+    actions   = ["ssm:PutParameter"]
+    resources = var.app_param_arns
+  }
   # Application also needs to decrypt SecureString parameters; the default
   # AWS-managed key for SSM is used (we don't ship a CMK for params).
   statement {

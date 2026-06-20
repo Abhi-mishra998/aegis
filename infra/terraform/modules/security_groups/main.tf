@@ -11,7 +11,7 @@
 
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
-  description = "ALB — public 80/443 in; egress to EC2 only."
+  description = "ALB - public 80/443 in; egress to EC2 only."
   vpc_id      = var.vpc_id
 
   tags = {
@@ -39,16 +39,16 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 
 resource "aws_vpc_security_group_egress_rule" "alb_to_ec2" {
   security_group_id            = aws_security_group.alb.id
-  description                  = "ALB → EC2 gateway port only."
+  description                  = "ALB to EC2 gateway port only."
   referenced_security_group_id = aws_security_group.ec2.id
-  from_port                    = 8000
-  to_port                      = 8000
+  from_port                    = 5173
+  to_port                      = 5173
   ip_protocol                  = "tcp"
 }
 
 resource "aws_security_group" "ec2" {
   name        = "${var.name_prefix}-ec2-sg"
-  description = "EC2 — gateway port from ALB; egress for AWS APIs + upstream LLM + npm."
+  description = "EC2 - gateway port from ALB; egress for AWS APIs + upstream LLM + npm."
   vpc_id      = var.vpc_id
 
   tags = {
@@ -60,12 +60,12 @@ resource "aws_vpc_security_group_ingress_rule" "ec2_from_alb" {
   security_group_id            = aws_security_group.ec2.id
   description                  = "Gateway port 8000 from ALB only."
   referenced_security_group_id = aws_security_group.alb.id
-  from_port                    = 8000
-  to_port                      = 8000
+  from_port                    = 5173
+  to_port                      = 5173
   ip_protocol                  = "tcp"
 }
 
-# Egress all — EC2 needs to reach SSM, S3, Secrets Manager, Anthropic,
+# Egress all - EC2 needs to reach SSM, S3, Secrets Manager, Anthropic,
 # OpenAI, npm.  Filtered upstream by NAT + WAF on inbound, not by SG egress.
 resource "aws_vpc_security_group_egress_rule" "ec2_all" {
   security_group_id = aws_security_group.ec2.id
@@ -76,7 +76,7 @@ resource "aws_vpc_security_group_egress_rule" "ec2_all" {
 
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds-sg"
-  description = "RDS — Postgres port from EC2 only; no egress."
+  description = "RDS - Postgres port from EC2 only; no egress."
   vpc_id      = var.vpc_id
 
   tags = {
@@ -95,7 +95,7 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_ec2" {
 
 resource "aws_security_group" "redis" {
   name        = "${var.name_prefix}-redis-sg"
-  description = "Redis — TLS port from EC2 only; no egress."
+  description = "Redis - TLS port from EC2 only; no egress."
   vpc_id      = var.vpc_id
 
   tags = {

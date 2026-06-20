@@ -1,4 +1,4 @@
-# ElastiCache Redis — primary + N-1 replicas, NO cluster mode.
+# ElastiCache Redis - primary + N-1 replicas, NO cluster mode.
 # TLS in-transit and at-rest encryption.
 
 resource "aws_elasticache_subnet_group" "main" {
@@ -25,7 +25,7 @@ resource "aws_elasticache_parameter_group" "main" {
 
 resource "aws_elasticache_replication_group" "main" {
   replication_group_id = "${var.name_prefix}-redis"
-  description          = "Aegis Redis replication group — primary + ${var.num_nodes - 1} replica(s)."
+  description          = "Aegis Redis replication group - primary + ${var.num_nodes - 1} replica(s)."
   engine               = "redis"
   engine_version       = "7.1"
   node_type            = var.node_type

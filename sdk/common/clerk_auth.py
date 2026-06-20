@@ -250,7 +250,18 @@ class ClerkTokenValidator:
         # default Clerk JWT.
         if not canonical.get("tenant_id"):
             clerk_org_id = payload.get("org_id") or canonical.get("org_id")
-            resolved = await self._resolve_tenant_id_from_redis(clerk_org_id)
+            resolved = None
+            if clerk_org_id:
+                resolved = await self._resolve_tenant_id_from_redis(clerk_org_id)
+            # Personal Clerk accounts (no org membership) emit JWTs with an
+            # empty `org_id`. /auth/clerk/provision stores them under the
+            # synthetic key `personal_{clerk_user_id}` — try that next.
+            if resolved is None:
+                clerk_user_id = payload.get("sub") or canonical.get("clerk_user_id")
+                if clerk_user_id:
+                    resolved = await self._resolve_tenant_id_from_redis(
+                        f"personal_{clerk_user_id}",
+                    )
             if resolved:
                 canonical["tenant_id"] = resolved
                 if not canonical.get("org_id"):

@@ -160,7 +160,7 @@ export default function PolicyPacksTab() {
 
                   {/* Controls badges */}
                   <div className="flex flex-wrap gap-1.5">
-                    {pack.framework_controls.map((c) => (
+                    {(pack.framework_controls || []).map((c) => (
                       <span
                         key={c}
                         className="inline-flex items-center gap-1 text-[10px] text-neutral-300 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] font-mono"

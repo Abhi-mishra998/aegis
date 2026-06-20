@@ -1,0 +1,43 @@
+# Sprint EH-4 — Gitleaks config. Catches secret patterns committed to git.
+#
+# We deliberately keep the default rules ON and only add allowlist entries
+# for known-safe paths. The corresponding file-level check at deploy time
+# is scripts/ci/no_secrets_on_disk.sh.
+
+title = "Aegis Gitleaks Configuration"
+
+[extend]
+# Pull in the upstream default ruleset (~140 rules: AWS, GitHub, Stripe,
+# Slack, GCP, Azure, Anthropic, OpenAI, Twilio, …)
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known-safe paths"
+
+paths = [
+  # Test fixtures with documented dummy secrets
+  '''tests/fixtures/.*''',
+  '''tests/test_signing_keys_prod_guard\.py''',
+  # Public transparency log keys live here
+  '''services/audit/transparency_keys/.*''',
+  # Dev-only sample envs that ship intentionally
+  '''scripts/utils/.*''',
+  # Built UI bundle has no secrets but has long hex strings
+  '''ui/dist/.*''',
+  # Documentation may reference dummy keys for examples
+  '''docs/.*''',
+  # AppleDouble noise — already blocked by scripts/ci/no_secrets_on_disk.sh
+  '''\._.*''',
+]
+
+regexes = [
+  # Stripe test-mode keys (sk_test_…) are intentional in vendor docs
+  '''sk_test_[A-Za-z0-9]+''',
+  # Clerk test keys
+  '''pk_test_[A-Za-z0-9]+''',
+  '''sk_test_[A-Za-z0-9]{20,}''',
+  # Placeholder strings used in code comments + env.example
+  '''REPLACE_WITH_[A-Z_]+''',
+  '''CHANGE_ME[a-z_]*''',
+  '''PLACEHOLDER-[a-z0-9-]+''',
+]

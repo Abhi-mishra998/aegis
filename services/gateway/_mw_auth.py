@@ -215,6 +215,13 @@ class _AuthMixin:
                             await self.redis.incr(auth_fail_key)
                             await self.redis.expire(auth_fail_key, 300)
                             failures = await self.redis.get(auth_fail_key)
+                            # EH-3 security counter
+                            from services.gateway.middleware import (
+                                REVOKED_TOKEN_ATTEMPTS_TOTAL,
+                                AUTH_FAILURES_TOTAL,
+                            )  # noqa: PLC0415
+                            REVOKED_TOKEN_ATTEMPTS_TOTAL.inc()
+                            AUTH_FAILURES_TOTAL.labels(reason="revoked_token").inc()
                             if failures and int(failures) > 1000:
                                 raise HTTPException(status_code=429, detail="Too many authentication failures")
                             raise HTTPException(status_code=401, detail="Token revoked")
@@ -241,6 +248,9 @@ class _AuthMixin:
 
                         reason = getattr(_validation_exc, "reason", None) if isinstance(_validation_exc, ACPAuthError) else None
                         reason = reason or "invalid_token"
+                        # EH-3 security counter
+                        from services.gateway.middleware import AUTH_FAILURES_TOTAL  # noqa: PLC0415
+                        AUTH_FAILURES_TOTAL.labels(reason=reason).inc()
                         raise HTTPException(
                             status_code=401,
                             detail="Invalid or expired token",
@@ -367,6 +377,8 @@ class _AuthMixin:
             )
 
         if x_tenant != tenant_id_str:
+            from services.gateway.middleware import TENANT_ISOLATION_VIOLATIONS_TOTAL  # noqa: PLC0415
+            TENANT_ISOLATION_VIOLATIONS_TOTAL.inc()
             logger.critical("tenant_isolation_violation", token_tenant=tenant_id_str, header_tenant=x_tenant)
             raise HTTPException(status_code=403, detail="Tenant mismatch detected")
 
