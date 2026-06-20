@@ -1,7 +1,8 @@
 """
-Real webhook execution — fires Slack, PagerDuty, Jira, and generic webhooks.
-Also dispatches enforcement actions (KILL_AGENT, ISOLATE_AGENT, BLOCK_TOOL,
-THROTTLE, REVOKE_KEY) to the registry and api services via internal HTTP.
+Real webhook execution — fires Slack, PagerDuty, Jira, ServiceNow, and
+generic webhooks. Also dispatches enforcement actions (KILL_AGENT,
+ISOLATE_AGENT, BLOCK_TOOL, THROTTLE, REVOKE_KEY) to the registry and
+api services via internal HTTP.
 
 Sprint 2b (closes audit C17): Slack + PagerDuty credentials can be loaded
 from AWS SSM Parameter Store at boot — ``ALERT_CRED_SOURCE=ssm`` selects
@@ -17,6 +18,10 @@ operator only needs to remember one ssm:put-parameter command shape.
 Sprint EI-2 (Jira ITSM integration): Jira config is *per-tenant*, persisted
 to the identity DB (not SSM/env) so a tenant can self-serve. The executor
 accepts the config in the ``params`` dict at call time — see fire_jira().
+
+Sprint EI-6 (ServiceNow ITSM integration): same per-tenant pattern. The
+ServiceNow Table API takes Basic auth — username + password (or service
+account password). See fire_servicenow().
 """
 from __future__ import annotations
 
@@ -327,6 +332,128 @@ def _adf_paragraph(text: str, *, context: dict | None = None) -> dict:
     return {"type": "doc", "version": 1, "content": content}
 
 
+async def fire_servicenow(
+    short_description: str,
+    *,
+    instance_url: str,
+    username: str,
+    password: str,
+    description: str | None = None,
+    urgency: int = 2,
+    impact: int = 2,
+    category: str | None = None,
+    assignment_group: str | None = None,
+    correlation_id: str | None = None,
+    context: dict | None = None,
+) -> dict:
+    """Create a ServiceNow Incident via the Table API.
+
+    Returns a result dict with ``status`` ∈ {``"created"``, ``"skipped"``,
+    ``"error"``}. On success the dict carries the SNOW ``sys_id`` and
+    ``number`` (e.g. ``INC0010001``) for round-trip linking and an
+    ``incident_url`` the operator can click in Slack. Never raises.
+
+    Auth is HTTP Basic with the dedicated service-account password. For
+    SaaS ServiceNow instances enforce strong-password rotation via SNOW's
+    own user-management — Aegis does not refresh the credential.
+
+    Urgency and impact follow SNOW's 1-2-3 scale (1=High, 2=Medium, 3=Low);
+    values are clamped to that range. SNOW computes ``priority`` from
+    urgency × impact on its side — no need to send it.
+
+    Body shape (table API):
+      POST <instance>/api/now/table/incident
+      {
+        "short_description": "...",
+        "description":       "...",
+        "urgency": "1|2|3",
+        "impact":  "1|2|3",
+        "category":          "<optional>",
+        "assignment_group":  "<optional sys_id>",
+        "correlation_id":    "<optional dedup key>"
+      }
+
+    Response shape on success (201):
+      {"result": {"sys_id": "<32-char hex>",
+                  "number": "INC0010001", ...}}
+    """
+    if not (instance_url and username and password):
+        logger.info("snow_create_skipped", reason="missing_config")
+        return {"status": "skipped", "reason": "ServiceNow config incomplete"}
+
+    try:
+        _assert_safe_webhook_url(instance_url)
+    except _SSRFBlocked as exc:
+        logger.warning("snow_blocked_ssrf", instance_url=instance_url, reason=str(exc))
+        return {"status": "error", "reason": f"servicenow instance_url blocked: {exc}"}
+
+    # Clamp urgency/impact to 1-3 — SNOW rejects anything else.
+    urgency = max(1, min(3, int(urgency or 2)))
+    impact  = max(1, min(3, int(impact  or 2)))
+
+    desc_text = description or short_description
+    if context:
+        ctx_lines = "\n".join(f"  {k}: {v}" for k, v in list(context.items())[:10])
+        desc_text = f"{desc_text}\n\n--- Aegis context ---\n{ctx_lines}"
+
+    body: dict = {
+        "short_description": short_description[:160],   # SNOW field cap
+        "description":       desc_text,
+        "urgency":           str(urgency),
+        "impact":            str(impact),
+    }
+    if category:
+        body["category"] = category
+    if assignment_group:
+        body["assignment_group"] = assignment_group
+    if correlation_id:
+        # SNOW de-dupes on correlation_id when it's set — same id means
+        # SNOW won't open a second ticket, it returns the existing one.
+        body["correlation_id"] = correlation_id
+
+    auth = base64.b64encode(f"{username}:{password}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {auth}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    url = f"{instance_url.rstrip('/')}/api/now/table/incident"
+
+    try:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+            r = await c.post(url, json=body, headers=headers)
+        if r.status_code == 201:
+            data = r.json().get("result", {}) or {}
+            sys_id = data.get("sys_id", "")
+            number = data.get("number", "")
+            logger.info(
+                "snow_incident_created",
+                number=number, sys_id=sys_id[:8], http=r.status_code,
+            )
+            return {
+                "status":       "created",
+                "sys_id":       sys_id,
+                "number":       number,
+                "incident_url": (
+                    f"{instance_url.rstrip('/')}/nav_to.do?uri=incident.do?sys_id={sys_id}"
+                    if sys_id else ""
+                ),
+                "http_status":  r.status_code,
+            }
+        logger.warning(
+            "snow_incident_create_failed",
+            http=r.status_code, body=r.text[:200],
+        )
+        return {
+            "status":      "error",
+            "http_status": r.status_code,
+            "reason":      r.text[:200] if r.text else f"HTTP {r.status_code}",
+        }
+    except Exception as exc:
+        logger.warning("snow_incident_create_exception", error=str(exc))
+        return {"status": "error", "reason": str(exc)}
+
+
 async def fire_generic_webhook(
     url: str,
     payload: dict | None = None,
@@ -528,6 +655,26 @@ async def execute_step(step: dict, context: dict | None = None) -> dict:
             description=params.get("description") or ctx.get("description"),
             priority=params.get("priority"),
             labels=params.get("labels"),
+            context=ctx,
+        )
+
+    elif action_type == "CREATE_SNOW_INCIDENT":
+        return await fire_servicenow(
+            short_description=(
+                params.get("short_description")
+                or params.get("summary")
+                or ctx.get("summary")
+                or "Aegis incident"
+            ),
+            instance_url=params.get("instance_url", ""),
+            username=params.get("username", ""),
+            password=params.get("password", ""),
+            description=params.get("description") or ctx.get("description"),
+            urgency=params.get("urgency", 2),
+            impact=params.get("impact", 2),
+            category=params.get("category"),
+            assignment_group=params.get("assignment_group"),
+            correlation_id=params.get("correlation_id") or ctx.get("incident_id"),
             context=ctx,
         )
 

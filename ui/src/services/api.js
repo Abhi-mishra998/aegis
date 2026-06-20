@@ -516,9 +516,11 @@ export const workspaceService = {
 
 
 // Sprint EI-2 (2026-06-20) — Per-tenant Jira ITSM integration.
-// GET returns {data: {has_api_token, base_url, project_key, ...}} — never the token.
-// PUT upserts the row. Test fires one real issue to verify the wiring.
+// Sprint EI-6 (2026-06-20) — Per-tenant ServiceNow ITSM integration.
+// GET returns {data: {has_*, instance_url, ...}} — never the secret.
+// PUT upserts the row. Test fires one real ticket to verify the wiring.
 export const integrationsService = {
+  // Jira
   getJira: () => request("/integrations/jira"),
   setJira: (body) =>
     request("/integrations/jira", {
@@ -527,6 +529,17 @@ export const integrationsService = {
     }),
   deleteJira: () => request("/integrations/jira", { method: "DELETE" }),
   testJira: () => request("/integrations/jira/test", { method: "POST" }),
+
+  // ServiceNow
+  getServiceNow: () => request("/integrations/servicenow"),
+  setServiceNow: (body) =>
+    request("/integrations/servicenow", {
+      method: "PUT",
+      body: JSON.stringify(body || {}),
+    }),
+  deleteServiceNow: () => request("/integrations/servicenow", { method: "DELETE" }),
+  testServiceNow: () =>
+    request("/integrations/servicenow/test", { method: "POST" }),
 };
 
 

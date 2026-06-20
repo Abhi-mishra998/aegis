@@ -103,6 +103,18 @@ def _matches_conditions(incident: dict[str, Any], conditions: dict[str, Any]) ->
 
 # ── Jira auto-create (Sprint EI-2) ───────────────────────────────────────────
 
+def _severity_to_snow_levels(severity: str) -> tuple[int, int]:
+    """Map Aegis severity → ServiceNow (urgency, impact) per SNOW's 1=High,
+    2=Medium, 3=Low convention. CRITICAL maps to (1,1) i.e. highest priority.
+    """
+    s = (severity or "HIGH").upper()
+    if s == "CRITICAL":  return (1, 1)
+    if s == "HIGH":      return (1, 2)
+    if s == "MEDIUM":    return (2, 2)
+    if s == "LOW":       return (3, 3)
+    return (2, 2)  # default to Medium/Medium
+
+
 async def _maybe_auto_create_jira(
     incident: dict[str, Any], tenant_id: uuid.UUID, session_factory,
 ) -> None:
@@ -169,6 +181,81 @@ async def _maybe_auto_create_jira(
     )
 
 
+# ── ServiceNow auto-create (Sprint EI-6) ─────────────────────────────────────
+
+async def _maybe_auto_create_snow(
+    incident: dict[str, Any], tenant_id: uuid.UUID, session_factory,
+) -> None:
+    """Open a ServiceNow Incident if the tenant has SNOW enabled with
+    auto_create on. Best-effort; never raises.
+
+    Uses Aegis's incident_id as the SNOW ``correlation_id`` so a retry of
+    the same incident does not open a duplicate ticket — SNOW de-dupes
+    on correlation_id and returns the existing record.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    try:
+        from services.identity.models import ServicenowIntegration  # noqa: PLC0415
+        from services.autonomy.webhook_executor import fire_servicenow  # noqa: PLC0415
+    except Exception as exc:
+        logger.warning("snow_auto_import_failed", error=str(exc))
+        return
+
+    async with session_factory() as db:
+        try:
+            res = await db.execute(
+                select(ServicenowIntegration).where(
+                    ServicenowIntegration.tenant_id == tenant_id,
+                    ServicenowIntegration.enabled.is_(True),
+                    ServicenowIntegration.auto_create_on_incident.is_(True),
+                ),
+            )
+            cfg = res.scalar_one_or_none()
+        except Exception as exc:
+            logger.warning("snow_auto_config_lookup_failed", error=str(exc))
+            return
+
+    if cfg is None:
+        return
+
+    severity = (incident.get("severity") or "HIGH").upper()
+    risk     = incident.get("risk_score")
+    inc_id   = incident.get("id", "")
+    short    = f"[Aegis {severity}] {incident.get('trigger') or incident.get('finding') or 'Incident'}"[:160]
+    desc     = (
+        f"Aegis opened incident {inc_id} (severity={severity}, risk_score={risk}).\n\n"
+        f"Tool:    {incident.get('tool', 'n/a')}\n"
+        f"Agent:   {incident.get('agent_id', 'n/a')}\n"
+        f"Findings: {incident.get('findings', [])}\n\n"
+        f"Resolve this incident once Aegis has been triaged."
+    )
+
+    # Prefer per-incident severity → urgency/impact, but let the tenant
+    # default override if their on-call rotation expects fixed levels.
+    auto_urgency, auto_impact = _severity_to_snow_levels(severity)
+
+    result = await fire_servicenow(
+        short_description=short,
+        instance_url=cfg.instance_url,
+        username=cfg.username,
+        password=cfg.password,
+        description=desc,
+        urgency=auto_urgency,
+        impact=auto_impact,
+        category=cfg.default_category,
+        assignment_group=cfg.default_assignment_group,
+        correlation_id=inc_id or None,
+    )
+    logger.info(
+        "snow_auto_created",
+        tenant_id=str(tenant_id)[:8],
+        incident_id=inc_id[:8] if inc_id else "",
+        outcome=result.get("status"),
+        number=result.get("number", ""),
+    )
+
+
 # ── Per-incident handler ──────────────────────────────────────────────────────
 
 async def _handle_incident(incident: dict[str, Any], session_factory) -> None:
@@ -190,6 +277,9 @@ async def _handle_incident(incident: dict[str, Any], session_factory) -> None:
     # Sprint EI-2 — best-effort Jira ticket creation. Runs in parallel with
     # playbook evaluation so a slow Jira API never blocks playbook firing.
     asyncio.create_task(_maybe_auto_create_jira(incident, tenant_id, session_factory))
+    # Sprint EI-6 — same pattern for ServiceNow. Independent task so a slow
+    # SNOW instance can't slow down Jira either.
+    asyncio.create_task(_maybe_auto_create_snow(incident, tenant_id, session_factory))
 
     async with session_factory() as db:
         stmt = (

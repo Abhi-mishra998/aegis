@@ -385,6 +385,38 @@ class ScimToken(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     )
 
 
+class ServicenowIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
+    """Sprint EI-6 (2026-06-20) — per-tenant ServiceNow ITSM integration.
+
+    One row per tenant. ``password`` holds the service account password
+    as a plain String column (same disk-KMS-only protection as Slack
+    bot tokens + Jira API tokens — the REST surface never returns the
+    plaintext, exposing ``has_password: bool`` instead).
+    """
+
+    __tablename__ = "servicenow_integrations"
+
+    instance_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    username: Mapped[str] = mapped_column(String(128), nullable=False)
+    password: Mapped[str] = mapped_column(String(512), nullable=False)
+    default_urgency: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default=text("2"),
+    )
+    default_impact: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default=text("2"),
+    )
+    default_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    default_assignment_group: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
+    auto_create_on_incident: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
+
+
 class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Sprint EI-2 (2026-06-20) — per-tenant Jira Cloud ITSM integration.
 

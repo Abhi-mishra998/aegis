@@ -1,21 +1,29 @@
-"""Sprint EI-2 (2026-06-20) — per-tenant ITSM integration CRUD.
+"""Sprint EI-2/EI-6 (2026-06-20) — per-tenant ITSM integration CRUD.
 
-First vendor: Atlassian Jira Cloud. CRUD operations operate on a single
-``jira_integrations`` row keyed by tenant_id; the executor in
-``services/autonomy/webhook_executor.py:fire_jira`` reads the row at
-incident-open time.
+Vendors:
+  * Atlassian Jira Cloud      — Sprint EI-2
+  * ServiceNow Table API      — Sprint EI-6 (this commit)
+
+Each vendor has a single per-tenant config row. The autonomy webhook
+executor (``services/autonomy/webhook_executor.py``) reads the row at
+incident-open time; the ``incident_watcher`` auto-fires when the row
+has ``auto_create_on_incident=true``.
 
 Endpoints (all role-gated via ``services/gateway/_rbac_map.py``):
 
   GET    /integrations/jira          — current config, api_token redacted
-  PUT    /integrations/jira          — upsert (creates row if missing)
-  DELETE /integrations/jira          — drop the row
-  POST   /integrations/jira/test     — fire one test issue + return result
+  PUT    /integrations/jira          — upsert
+  DELETE /integrations/jira          — drop
+  POST   /integrations/jira/test     — fire one test issue
 
-The PUT body never round-trips the api_token back out — on GET we surface
-``has_api_token: bool`` instead. The Test endpoint creates a real issue
-in the configured project with summary "Aegis connection test — safe to
-close" so the operator sees it in Jira and can verify their wiring.
+  GET    /integrations/servicenow         — current config, password redacted
+  PUT    /integrations/servicenow         — upsert
+  DELETE /integrations/servicenow         — drop
+  POST   /integrations/servicenow/test    — open one test incident
+
+The GET surface never round-trips the secret — it surfaces
+``has_api_token`` / ``has_password`` instead. The Test endpoints create
+a real ticket with summary "Aegis connection test — safe to close".
 """
 from __future__ import annotations
 
@@ -29,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.db import get_db
-from services.autonomy.webhook_executor import fire_jira
+from services.autonomy.webhook_executor import fire_jira, fire_servicenow
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -201,6 +209,182 @@ async def test_jira_config(
     )
     logger.info(
         "jira_test_fired",
+        tenant_id=str(tenant_id),
+        outcome=result.get("status"),
+        actor=getattr(request.state, "actor", "unknown"),
+    )
+    return {"data": result}
+
+
+# ─── ServiceNow (EI-6) ────────────────────────────────────────────────────
+class ServicenowUpsert(BaseModel):
+    instance_url: str = Field(min_length=8, max_length=255,
+                              description="e.g. https://acme.service-now.com")
+    username: str = Field(min_length=1, max_length=128,
+                          description="Service-account username")
+    password: str = Field(min_length=1, max_length=512,
+                          description="Service-account password; never returned")
+    default_urgency: int = Field(default=2, ge=1, le=3,
+                                 description="1=High, 2=Medium, 3=Low")
+    default_impact: int = Field(default=2, ge=1, le=3,
+                                description="1=High, 2=Medium, 3=Low")
+    default_category: str | None = Field(default=None, max_length=64)
+    default_assignment_group: str | None = Field(default=None, max_length=64,
+                                                 description="sys_id of the SNOW assignment group")
+    enabled: bool = True
+    auto_create_on_incident: bool = True
+
+
+def _snow_to_public_dict(row) -> dict[str, Any]:
+    return {
+        "id":                       str(row.id),
+        "instance_url":             row.instance_url,
+        "username":                 row.username,
+        "has_password":             bool(row.password),
+        "default_urgency":          row.default_urgency,
+        "default_impact":           row.default_impact,
+        "default_category":         row.default_category,
+        "default_assignment_group": row.default_assignment_group,
+        "enabled":                  row.enabled,
+        "auto_create_on_incident":  row.auto_create_on_incident,
+        "created_at":               row.created_at.isoformat() if row.created_at else None,
+        "updated_at":               row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/servicenow")
+async def get_snow_config(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    from services.identity.models import ServicenowIntegration
+    tenant_id = _tenant_id_from_request(request)
+    res = await db.execute(
+        select(ServicenowIntegration).where(
+            ServicenowIntegration.tenant_id == tenant_id,
+        ),
+    )
+    row = res.scalar_one_or_none()
+    return {"data": _snow_to_public_dict(row) if row else None}
+
+
+@router.put("/servicenow")
+async def upsert_snow_config(
+    request: Request,
+    payload: ServicenowUpsert,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    from services.identity.models import ServicenowIntegration
+    tenant_id = _tenant_id_from_request(request)
+
+    if not payload.instance_url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="instance_url must include scheme")
+
+    res = await db.execute(
+        select(ServicenowIntegration).where(
+            ServicenowIntegration.tenant_id == tenant_id,
+        ),
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        row = ServicenowIntegration(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            org_id=tenant_id,
+            instance_url=payload.instance_url,
+            username=payload.username,
+            password=payload.password,
+            default_urgency=payload.default_urgency,
+            default_impact=payload.default_impact,
+            default_category=payload.default_category,
+            default_assignment_group=payload.default_assignment_group,
+            enabled=payload.enabled,
+            auto_create_on_incident=payload.auto_create_on_incident,
+        )
+        db.add(row)
+    else:
+        row.instance_url             = payload.instance_url
+        row.username                 = payload.username
+        row.password                 = payload.password
+        row.default_urgency          = payload.default_urgency
+        row.default_impact           = payload.default_impact
+        row.default_category         = payload.default_category
+        row.default_assignment_group = payload.default_assignment_group
+        row.enabled                  = payload.enabled
+        row.auto_create_on_incident  = payload.auto_create_on_incident
+
+    await db.commit()
+    await db.refresh(row)
+    logger.info(
+        "snow_config_upserted",
+        tenant_id=str(tenant_id),
+        instance_url=payload.instance_url,
+        enabled=payload.enabled,
+        actor=getattr(request.state, "actor", "unknown"),
+    )
+    return {"data": _snow_to_public_dict(row)}
+
+
+@router.delete("/servicenow", status_code=204)
+async def delete_snow_config(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    from services.identity.models import ServicenowIntegration
+    tenant_id = _tenant_id_from_request(request)
+    res = await db.execute(
+        select(ServicenowIntegration).where(
+            ServicenowIntegration.tenant_id == tenant_id,
+        ),
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        return
+    await db.delete(row)
+    await db.commit()
+    logger.info(
+        "snow_config_deleted",
+        tenant_id=str(tenant_id),
+        actor=getattr(request.state, "actor", "unknown"),
+    )
+
+
+@router.post("/servicenow/test")
+async def test_snow_config(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Create one test incident with the stored config. Returns the executor result."""
+    from services.identity.models import ServicenowIntegration
+    tenant_id = _tenant_id_from_request(request)
+    res = await db.execute(
+        select(ServicenowIntegration).where(
+            ServicenowIntegration.tenant_id == tenant_id,
+        ),
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404,
+                            detail="ServiceNow config not set for this tenant")
+
+    result = await fire_servicenow(
+        short_description="Aegis connection test — safe to close",
+        instance_url=row.instance_url,
+        username=row.username,
+        password=row.password,
+        description=(
+            "This incident was created by the Aegis Settings → Integrations → "
+            "ServiceNow Test Connection button. If you can see it, the wiring "
+            "is correct. You can resolve this incident immediately — no action "
+            "required."
+        ),
+        urgency=row.default_urgency,
+        impact=row.default_impact,
+        category=row.default_category,
+        assignment_group=row.default_assignment_group,
+    )
+    logger.info(
+        "snow_test_fired",
         tenant_id=str(tenant_id),
         outcome=result.get("status"),
         actor=getattr(request.state, "actor", "unknown"),
