@@ -353,6 +353,38 @@ class Team(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     )
 
 
+class ScimToken(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
+    """Sprint EI-3 (2026-06-20) — bearer token used by Okta SCIM provisioning.
+
+    Separate from APIKey because:
+      * scope is /scim/v2/* only (not /v1/messages, /execute, etc.)
+      * the issuance flow is OWNER-gated and returns the plaintext exactly
+        once; nothing else (no role grants, no expiry by default)
+      * Okta sends one bearer for every provisioning call, regardless of
+        Okta admin user — so we deliberately do NOT bind a role here
+
+    The token is sha256-hashed at rest with a per-tenant prefix on the raw
+    value (``scim_<16 base32 chars>``) for log-friendly identification.
+    """
+
+    __tablename__ = "scim_tokens"
+
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True,
+    )
+    token_prefix: Mapped[str] = mapped_column(String(24), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+    )
+
+
 class JiraIntegration(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     """Sprint EI-2 (2026-06-20) — per-tenant Jira Cloud ITSM integration.
 

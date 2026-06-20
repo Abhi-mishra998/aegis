@@ -147,6 +147,14 @@ RULES: tuple[Rule, ...] = (
     _R("/integrations/jira",           ("PUT", "DELETE"), roles=("OWNER", "ADMIN")),
     _R("/integrations/jira",           ("GET",),         min_role="READ_ONLY"),
     _R("/integrations*",               ("GET",),         min_role="READ_ONLY"),
+    # Sprint EI-3 — SCIM bearer token management (Okta provisioning). OWNER-only:
+    # issuance returns plaintext exactly once and a leaked SCIM token grants
+    # full directory write to the entire tenant. /scim/v2/tokens is JWT-gated
+    # by this rule; /scim/v2/{Users,Groups,...} is skip-listed in middleware
+    # and uses its own scim_ bearer validation.
+    _R("/scim/v2/tokens/*",            ("DELETE",),      roles=("OWNER",)),
+    _R("/scim/v2/tokens",              ("POST",),        roles=("OWNER",)),
+    _R("/scim/v2/tokens",              ("GET",),         roles=("OWNER",)),
     _R("/billing/checkout",            ("POST",),        roles=("OWNER",)),
     _R("/billing/portal",              ("POST",),        roles=("OWNER",)),
     _R("/billing*",                    ("GET",),         roles=("OWNER",)),

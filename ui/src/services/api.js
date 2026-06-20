@@ -530,6 +530,23 @@ export const integrationsService = {
 };
 
 
+// Sprint EI-3 (2026-06-20) — SCIM bearer tokens for Okta provisioning.
+// POST returns the plaintext exactly once; GET only returns the prefix +
+// last_used_at. Each token grants full directory write to the tenant —
+// the Settings UI surfaces a clear "copy now, we won't show this again"
+// banner on POST so the operator doesn't paste the wrong value into Okta.
+export const scimService = {
+  listTokens: () => request("/scim/v2/tokens"),
+  createToken: (label) =>
+    request("/scim/v2/tokens", {
+      method: "POST",
+      body: JSON.stringify({ label: label || "Okta" }),
+    }),
+  revokeToken: (tokenId) =>
+    request(`/scim/v2/tokens/${tokenId}`, { method: "DELETE" }),
+};
+
+
 // Sprint 5-7 — Identity & Access Graph + Blast Radius read API.
 // Surfaces the IAG endpoints that were built but never wired to the UI,
 // plus the Sprint 7 MITRE coverage grid that pulls from signal_registry.
