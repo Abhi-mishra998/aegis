@@ -128,6 +128,20 @@ class ACPSettings(BaseSettings):
         description="Signing key for service mesh JWTs. Falls back to INTERNAL_SECRET if empty."
     )
 
+    # Sprint EI-9 (2026-06-20) — Cloudflare Turnstile bot-defence on
+    # /demo/spawn-workspace. If unset (local dev), the verifier is bypassed
+    # and the spawn endpoint behaves exactly as before. If set, the spawn
+    # handler requires a valid cf-turnstile-response token in the request
+    # body and returns 403 on missing/invalid.
+    TURNSTILE_SECRET_KEY: str = Field(
+        default="",
+        description="Cloudflare Turnstile secret key. Empty = verifier bypassed (local dev)."
+    )
+    TURNSTILE_VERIFY_URL: str = Field(
+        default="https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        description="Cloudflare siteverify endpoint. Override only for the synthetic test fixture."
+    )
+
     OPA_URL: str = Field(
         default="http://acp_opa:8181"
     )

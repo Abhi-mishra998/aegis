@@ -637,6 +637,25 @@ async def spawn_demo_workspace(
     source_ip = (x_forwarded_for or "").split(",")[0].strip() or (
         request.client.host if request.client else "unknown"
     )
+
+    # EI-9 (2026-06-20) — Cloudflare Turnstile proof-of-human. WAF + per-IP
+    # rate-limit don't catch corporate NAT bots; Turnstile does. Bypassed
+    # when TURNSTILE_SECRET_KEY is empty (local dev / staging without a
+    # configured site key). On reject returns 403, NOT 429, because the
+    # signal is "we don't believe you're human", not "you've used your
+    # quota — try later".
+    from services.gateway._turnstile import verify as _verify_turnstile  # noqa: PLC0415
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    cf_token = (body or {}).get("cf-turnstile-response") or (body or {}).get("cf_turnstile_response")
+    allowed, reason = await _verify_turnstile(request, token=cf_token, source_ip=source_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Turnstile verification failed: {reason}",
+        )
     if source_ip and source_ip != "unknown":
         try:
             from sdk.common.redis import get_redis_client  # noqa: PLC0415

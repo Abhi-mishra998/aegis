@@ -1325,9 +1325,12 @@ export const demoService = {
   // Anonymous-CTA: spin up a seeded read-only demo tenant and return a
   // short-lived JWT. The Landing "Try live demo" button posts here so a
   // prospect can click through the full UI without signing up.
-  spawnWorkspace: () => request('/demo/spawn-workspace', {
+  // Sprint EI-9 (2026-06-20) — sends the Cloudflare Turnstile token in
+  // the body if Landing.jsx managed to get one. Server bypasses the
+  // check if TURNSTILE_SECRET_KEY is unset (local dev / staging).
+  spawnWorkspace: (turnstileToken = '') => request('/demo/spawn-workspace', {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify({ 'cf-turnstile-response': turnstileToken || '' }),
   }),
   // Read-only scenario catalog. Drives the demo prompt picker on Landing.
   listScenarios: () => request('/demo/scenarios'),

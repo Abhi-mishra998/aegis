@@ -11,9 +11,11 @@ Every third party that processes customer data on Aegis's behalf. Updated whenev
 | **Stripe** | Billing + payment processing | Cardholder data is tokenized — Aegis never touches the PAN. Email + subscription metadata exchanged. | US + EU (Stripe routes per customer country) | EU entity used for EU customers — no Aegis-side config change | PCI-DSS L1, SOC 1/2, ISO 27001, GDPR DPA |
 | **GitHub** | Source repository + CI/CD (security scanning, Cosign signing OIDC) | No customer data — only Aegis source + build artifacts | US | US — same; only build artifacts cross, no customer data | SOC 1/2/3, ISO 27001 |
 | **Sigstore (Fulcio + Rekor)** | Bundle-signing certificate authority + transparency log | Cryptographic signature metadata on every signed bundle (no customer data) | Multi-region | Multi-region — same | Operated by The Linux Foundation OpenSSF |
+| **Cloudflare** | Bot-defence (Turnstile) on `/demo/spawn-workspace` only — does NOT proxy any traffic | Anonymous proof-of-human token + source IP at challenge time; no Customer Data | Cloudflare edge (global anycast) | Cloudflare edge (global anycast) | SOC 2 Type II, ISO 27001, ISO 27018, GDPR DPA |
 
 ## What changed in the last 6 months
 
+- 2026-06-20 — added Cloudflare (Turnstile) for bot-defence on `/demo/spawn-workspace` (Sprint EI-9). Bypassed when no site key is configured (local dev / unconfigured deploy). No paid-customer endpoints are gated by Turnstile.
 - 2026-06-20 — added eu-west-1 (Ireland) regional posture for every sub-processor in preparation for the EU instance launch (Sprint EI-5). No new vendors added; existing vendors' EU residency stories enumerated.
 - 2026-06-19 — added Sigstore (Fulcio + Rekor) when cosign signing was introduced in Sprint EH-4.
 - 2026-06-15 — Clerk added (replaced an in-house bcrypt password flow).
