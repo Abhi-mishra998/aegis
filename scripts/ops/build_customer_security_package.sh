@@ -28,7 +28,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="/tmp/aegis-customer-security-package-${TS}"
 ZIP="${OUT}.zip"
 
-mkdir -p "$OUT"/{01_architecture,02_threat_model,03_security_controls,04_compliance,05_operations,06_supply_chain,07_subprocessors,08_pentest,09_disclosure,10_test_evidence,11_adr,12_legal}
+mkdir -p "$OUT"/{01_architecture,02_threat_model,03_security_controls,04_compliance,05_operations,06_supply_chain,07_subprocessors,08_pentest,09_disclosure,10_test_evidence,11_adr,12_legal,13_reference_architectures}
 
 # 00 — README
 cat > "$OUT/00_README.md" <<'EOF'
@@ -63,6 +63,10 @@ for this packet.
 12. `12_legal/` — Contract templates: MSA, DPA, BAA (HIPAA), SLA. All
     engineering-drafted with `<LEGAL REVIEW PENDING>` markers; hand to
     Customer counsel for redline.
+13. `13_reference_architectures/` — Aegis on AWS (production
+    source-of-truth), Aegis on Azure (target), Aegis hybrid with
+    customer-controlled LLM. One per deployment pattern your Cloud
+    Architect might evaluate.
 
 If anything here is missing or stale, email `security@aegisagent.in`.
 EOF
@@ -204,6 +208,12 @@ cp_safe  "$REPO_ROOT/docs/legal/msa-template.md"               "$OUT/12_legal/ms
 cp_safe  "$REPO_ROOT/docs/legal/dpa-template.md"               "$OUT/12_legal/dpa-template.md"
 cp_safe  "$REPO_ROOT/docs/legal/baa-template.md"               "$OUT/12_legal/baa-template.md"
 cp_safe  "$REPO_ROOT/docs/legal/sla-template.md"               "$OUT/12_legal/sla-template.md"
+
+# 13 — Reference architectures (Sprint EI-21)
+cp_safe  "$REPO_ROOT/docs/architecture/reference/README.md"                       "$OUT/13_reference_architectures/README.md"
+cp_safe  "$REPO_ROOT/docs/architecture/reference/aegis-on-aws.md"                 "$OUT/13_reference_architectures/aegis-on-aws.md"
+cp_safe  "$REPO_ROOT/docs/architecture/reference/aegis-on-azure.md"               "$OUT/13_reference_architectures/aegis-on-azure.md"
+cp_safe  "$REPO_ROOT/docs/architecture/reference/aegis-hybrid-customer-llm.md"    "$OUT/13_reference_architectures/aegis-hybrid-customer-llm.md"
 
 # Zip it up — include a manifest so the buyer can verify file count.
 ( cd /tmp && zip -rq "$ZIP" "$(basename "$OUT")" )
