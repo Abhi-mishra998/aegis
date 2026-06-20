@@ -207,6 +207,8 @@ export default function JiraIntegrationTab() {
           vendor="Jira"
           docHref="/docs/security/jira-itsm-setup.md"
           hasSecret={!!config.has_webhook_secret}
+          lastReceivedAt={config.last_webhook_received_at || null}
+          lastStatus={config.last_webhook_status || null}
           onRotate={integrationsService.rotateJiraWebhookSecret}
           disabled={busy}
         />

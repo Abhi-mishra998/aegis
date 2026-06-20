@@ -228,6 +228,8 @@ export default function ServiceNowIntegrationTab() {
           vendor="ServiceNow"
           docHref="/docs/security/servicenow-itsm-setup.md"
           hasSecret={!!config.has_webhook_secret}
+          lastReceivedAt={config.last_webhook_received_at || null}
+          lastStatus={config.last_webhook_status || null}
           onRotate={integrationsService.rotateServiceNowWebhookSecret}
           disabled={busy}
         />
