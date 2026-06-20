@@ -1,0 +1,174 @@
+name: nightly-verify
+
+# Sprint EI-4 (2026-06-20). Runs three independent verification suites
+# every night at 04:13 UTC (1 hour after the soak finishes so the
+# soak's audit rows are sealed into a Merkle root by the
+# transparency_scheduler before we try to verify them):
+#
+#   1. AEVF V1-V6 — walks every daily root in the public S3 transparency
+#      bucket and verifies ed25519 + prev_root_hash chain.
+#   2. Cross-tenant isolation — runs reports/e2e_test_2026_06_20/
+#      isolation_test.sh against staging.aegisagent.in; expects 7/7
+#      attacks blocked.
+#   3. Public probe — confirms /trust, /health, /.well-known/security.txt
+#      return 200 from a clean GH Actions runner (no IP allowlist hits).
+#
+# Output: pushes a `verify.json` summary to
+#   s3://aegis-public-roots-628478946931/nightly/<UTC-date>.json
+# so any customer can `aws s3 cp --no-sign-request` and audit the run.
+# Fails the workflow on any check failure → operator gets the email alarm.
+
+on:
+  schedule:
+    - cron: "13 4 * * *"   # 1h after nightly_soak.yml
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "ap-south-1"
+  PUBLIC_ROOTS_BUCKET: "aegis-public-roots-628478946931"
+  STAGING_GATEWAY_URL: "https://staging.aegisagent.in"
+
+jobs:
+  verify:
+    name: AEVF + isolation + public probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install aegis-aevf (PyPI)
+        run: pip install --upgrade pip 'aegis-aevf>=1.0.0'
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::628478946931:role/aegis-gha-nightly-soak
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ── 1. AEVF V1-V6 over public S3 bucket ─────────────────────────
+      - name: AEVF — V1-V6 over yesterday's root
+        id: aevf
+        run: |
+          DATE_YESTERDAY="$(date -u -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -u -v -1d +%Y-%m-%d)"
+          mkdir -p /tmp/aevf
+          # Pull yesterday's roots across every tenant partition that
+          # published one. List, then verify each.
+          aws s3 ls "s3://${PUBLIC_ROOTS_BUCKET}/roots/" --recursive \
+            | awk -v d="$DATE_YESTERDAY" '$0 ~ d {print $4}' > /tmp/aevf/keys.txt
+          rooted="$(wc -l < /tmp/aevf/keys.txt | tr -d ' ')"
+          echo "Found $rooted root file(s) dated $DATE_YESTERDAY"
+          if [ "$rooted" -eq 0 ]; then
+            echo "No roots published for $DATE_YESTERDAY — non-fatal but logged."
+            echo "aevf_status=no_roots" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          fail=0
+          while read -r key; do
+            aws s3 cp "s3://${PUBLIC_ROOTS_BUCKET}/$key" /tmp/aevf/root.json --quiet
+            # The aegis-verify CLI ships as a console_script entry point
+            # named `aegis-verify`. Walks the prev_root_hash chain from
+            # this root back to genesis.
+            if ! aegis-verify --bundle /tmp/aevf/root.json --bucket "$PUBLIC_ROOTS_BUCKET" \
+                 > /tmp/aevf/last.txt 2>&1; then
+              echo "✗ AEVF FAIL on $key"
+              cat /tmp/aevf/last.txt
+              fail=$((fail+1))
+            else
+              echo "✓ AEVF PASS on $key"
+            fi
+          done < /tmp/aevf/keys.txt
+          if [ "$fail" -gt 0 ]; then
+            echo "aevf_status=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "aevf_status=pass" >> "$GITHUB_OUTPUT"
+
+      # ── 2. Cross-tenant isolation against staging ──────────────────
+      - name: Isolation — 7-attack matrix against staging
+        id: isolation
+        run: |
+          # The script in the repo points at prod by default; override the
+          # BASE env to staging. Returns non-zero if any attack succeeds.
+          export BASE="$STAGING_GATEWAY_URL"
+          # sed-in-place to flip BASE without touching the file in git
+          tmpf="$(mktemp)"
+          sed "s|^BASE=.*|BASE=\"$STAGING_GATEWAY_URL\"|" \
+            reports/e2e_test_2026_06_20/isolation_test.sh > "$tmpf"
+          chmod +x "$tmpf"
+          if bash "$tmpf" | tee /tmp/isolation.txt; then
+            echo "isolation_status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "isolation_status=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      # ── 3. Public-surface probe ────────────────────────────────────
+      - name: Public probe — /trust /health /.well-known/security.txt
+        id: probe
+        run: |
+          fail=0
+          for path in /health /trust /.well-known/security.txt; do
+            url="${STAGING_GATEWAY_URL}${path}"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "✓ 200 $path"
+            else
+              echo "✗ $code $path"; fail=$((fail+1))
+            fi
+          done
+          if [ "$fail" -gt 0 ]; then
+            echo "probe_status=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "probe_status=pass" >> "$GITHUB_OUTPUT"
+
+      # ── Publish the summary for public audit ───────────────────────
+      - name: Publish verify summary
+        if: always()
+        run: |
+          DATE_TODAY="$(date -u +%Y-%m-%d)"
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > /tmp/verify.json <<EOF
+          {
+            "run_at_utc": "$NOW",
+            "date":       "$DATE_TODAY",
+            "aevf_v1_v6": "${{ steps.aevf.outputs.aevf_status || 'unknown' }}",
+            "isolation":  "${{ steps.isolation.outputs.isolation_status || 'unknown' }}",
+            "public_probe": "${{ steps.probe.outputs.probe_status || 'unknown' }}",
+            "gh_run_id":  "${{ github.run_id }}",
+            "gh_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          jq . /tmp/verify.json
+          aws s3 cp /tmp/verify.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/nightly/${DATE_TODAY}.json" \
+            --content-type application/json \
+            --cache-control "max-age=3600"
+          # Also overwrite a stable "latest" pointer so consumers don't
+          # need to know yesterday's date to fetch the freshest run.
+          aws s3 cp /tmp/verify.json \
+            "s3://${PUBLIC_ROOTS_BUCKET}/nightly/latest.json" \
+            --content-type application/json \
+            --cache-control "max-age=300"
+
+      - name: Render to step summary
+        if: always()
+        run: |
+          {
+            echo '### Nightly verify summary'
+            echo
+            echo "| Check | Status |"
+            echo "|---|---|"
+            echo "| AEVF V1-V6 | ${{ steps.aevf.outputs.aevf_status || 'unknown' }} |"
+            echo "| Cross-tenant isolation (7/7) | ${{ steps.isolation.outputs.isolation_status || 'unknown' }} |"
+            echo "| Public probe (/health /trust /.well-known/security.txt) | ${{ steps.probe.outputs.probe_status || 'unknown' }} |"
+            echo
+            echo "Public artifact: s3://${PUBLIC_ROOTS_BUCKET}/nightly/$(date -u +%Y-%m-%d).json"
+          } >> "$GITHUB_STEP_SUMMARY"

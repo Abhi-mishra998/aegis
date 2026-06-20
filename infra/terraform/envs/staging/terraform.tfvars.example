@@ -1,0 +1,80 @@
+# Aegis staging tfvars — passed via `terraform apply -var-file=...`.
+# Sprint EI-4 (2026-06-20). Staging is provisioned only when running
+# nightly soak / chaos tests so the production environment never
+# absorbs synthetic load; it can be `terraform destroy`-ed in between
+# runs to save cost.
+#
+# Cost target: ~$80/month standing (EC2 + small RDS + 1 Redis node).
+# Compare to prod ~$420/month (m6g.large × 2 + Multi-AZ RDS + 2 Redis).
+
+# ── Identity ──────────────────────────────────────────────────────────
+aws_region  = "ap-south-1"
+project     = "aegis"
+environment = "staging"
+domain      = "staging.aegisagent.in"
+# Note: the wildcard ACM cert for *.aegisagent.in already covers this
+# subdomain; the staging Route53 zone must be the same hosted zone as
+# the prod apex (terraform looks up by `name = "${domain}."`).
+
+# ── Network ───────────────────────────────────────────────────────────
+# Distinct CIDR — staging shares no VPC peering with prod by design so a
+# misbehaving soak job cannot poison prod's network state.
+vpc_cidr             = "10.30.0.0/16"
+azs                  = ["ap-south-1a", "ap-south-1b"]
+public_subnet_cidrs  = ["10.30.1.0/24", "10.30.2.0/24"]
+private_subnet_cidrs = ["10.30.3.0/24", "10.30.4.0/24"]
+single_nat_gateway   = true
+
+# ── Compute ───────────────────────────────────────────────────────────
+# 1× t4g.small ASG is enough to absorb a 100-user 10-minute soak. Bump
+# to t4g.medium if soak p95 starts climbing or chaos tests exhaust the
+# 2GB RAM ceiling.
+instance_type = "t4g.small"
+asg_min       = 1
+asg_max       = 1
+asg_desired   = 1
+
+# ── Bundle ────────────────────────────────────────────────────────────
+ssm_bundle_parameter = "/aegis/staging/current_bundle_sha"
+bundle_bucket        = "aegis-staging-backups-628478946931"
+bundle_sha_initial   = "main"
+
+# ── Database (RDS Postgres) ───────────────────────────────────────────
+# db.t4g.micro = 2 vCPU / 1GB RAM. Single-AZ — staging is throw-away;
+# Multi-AZ is a +$15/mo for no value here. Backups 1 day (a soak run
+# never needs PITR farther than the prior night's run).
+db_engine_version        = "15.18"
+db_instance_class        = "db.t4g.micro"
+db_allocated_storage     = 20
+db_max_allocated_storage = 50
+db_backup_retention      = 1
+db_multi_az              = false
+
+# ── Cache (Redis) ─────────────────────────────────────────────────────
+# Single node — no replica. Soak runs are restart-tolerant.
+redis_node_type = "cache.t4g.micro"
+redis_num_nodes = 1
+
+# ── Edge (ALB logging) ────────────────────────────────────────────────
+alb_log_retention_days = 7
+
+# ── WAF ───────────────────────────────────────────────────────────────
+# Higher per-IP rate limit so the staging soak from a single GH Actions
+# runner doesn't trip WAF before locust can ramp.
+waf_rate_limit_per_ip_per_5min = 20000
+
+# ── Observability ─────────────────────────────────────────────────────
+sns_alarm_email = "founder@aegisagent.in"
+
+# ── Preserved ─────────────────────────────────────────────────────────
+# Staging publishes to the SAME public transparency bucket as prod so a
+# customer who archives a daily root sees both prod and staging tenants
+# under one verifiable history. Staging tenant IDs are prefixed `stg-`
+# in the soak harness so consumers can filter.
+public_roots_bucket = "aegis-public-roots-628478946931"
+
+# ── Default tags merged into provider default_tags ────────────────────
+tags = {
+  Owner      = "ByteHubble"
+  CostCenter = "engineering-test"
+}

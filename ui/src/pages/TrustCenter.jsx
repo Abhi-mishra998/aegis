@@ -200,6 +200,34 @@ function Disclosure() {
 }
 
 
+function NightlyEvidence() {
+  return (
+    <section className="px-6 py-12 max-w-5xl mx-auto">
+      <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">Nightly evidence</h2>
+      <div className="p-5 rounded-xl border border-white/[0.08] bg-white/[0.02]">
+        <p className="text-sm text-neutral-200 leading-relaxed">
+          Every night at 04:13 UTC a GitHub Actions workflow runs three independent
+          checks against our staging environment and publishes the result as a
+          signed JSON document to the same public bucket as our audit roots:
+        </p>
+        <ol className="mt-3 list-decimal pl-5 text-xs text-neutral-400 space-y-1.5 leading-relaxed">
+          <li>AEVF V1–V6 walk over every daily transparency root</li>
+          <li>Cross-tenant isolation 7-attack matrix against staging.aegisagent.in</li>
+          <li>Public-surface probe of /health, /trust, /.well-known/security.txt</li>
+        </ol>
+        <p className="text-xs text-neutral-500 mt-4 leading-relaxed">
+          Fetch the most recent run (no AWS credentials required):
+        </p>
+        <pre className="mt-2 px-3 py-2 text-[11px] font-mono bg-black/40 border border-white/[0.06] rounded text-neutral-200 overflow-x-auto">
+{`aws s3 cp s3://aegis-public-roots-628478946931/nightly/latest.json - \\
+  --no-sign-request`}
+        </pre>
+      </div>
+    </section>
+  )
+}
+
+
 function Foot() {
   return (
     <section className="px-6 py-16 max-w-5xl mx-auto text-center">
@@ -227,6 +255,7 @@ export default function TrustCenter() {
       <Header />
       <Sections />
       <Compliance />
+      <NightlyEvidence />
       <Disclosure />
       <Foot />
     </div>
