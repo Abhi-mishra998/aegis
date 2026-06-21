@@ -278,6 +278,74 @@ async def _stream_consumer_loop(redis: Redis) -> None:
             await asyncio.sleep(_RETRY_SLEEP)
 
 
+_EVENT_TRIGGER_NAMES: tuple[str, ...] = (
+    "protect_audit_logs",
+    "protect_audit_logs_drop",
+)
+_EVENT_TRIGGER_RECHECK_SECONDS = 300  # 5 minutes
+
+
+async def _probe_event_triggers(db: Any) -> dict[str, str]:
+    """Return ``{trigger_name: evtenabled}`` for the audit-protection event
+    triggers. Missing trigger maps to ``"MISSING"``.
+
+    N23 (2026-06-21): the P0-3 break-glass procedure documents
+    ``ALTER EVENT TRIGGER protect_audit_logs DISABLE`` as the superuser
+    override. Postgres logs the DDL but no app-side alarm fires. This
+    probe surfaces the state via the ``acp_audit_event_trigger_disabled``
+    Prometheus gauge so a Grafana alert can page the operator. Polled
+    every ``_EVENT_TRIGGER_RECHECK_SECONDS`` to catch runtime DISABLE,
+    not just startup state.
+
+    ``evtenabled`` values per Postgres docs:
+      * ``O`` — enabled (origin/local — the default for new triggers)
+      * ``R`` — enabled on replica only
+      * ``A`` — always enabled
+      * ``D`` — disabled (THE break-glass state)
+    """
+    from sqlalchemy import text
+    states: dict[str, str] = {name: "MISSING" for name in _EVENT_TRIGGER_NAMES}
+    try:
+        result = await db.execute(
+            text(
+                "SELECT evtname, evtenabled FROM pg_event_trigger "
+                "WHERE evtname = ANY(:names)"
+            ),
+            {"names": list(_EVENT_TRIGGER_NAMES)},
+        )
+        for row in result.fetchall():
+            # SQLAlchemy returns a Row; access by index works for both
+            # asyncpg + psycopg2 backends.
+            name = row[0]
+            enabled = row[1]
+            states[str(name)] = str(enabled)
+    except Exception as exc:
+        logger.warning("audit_event_trigger_probe_failed", error=str(exc))
+        # On probe failure, set gauges to a sentinel high value so the
+        # alert still fires — silent probe failure must not look healthy.
+        for name in _EVENT_TRIGGER_NAMES:
+            acp_audit_event_trigger_disabled.labels(trigger=name).set(1)
+        return states
+
+    for name, evtenabled in states.items():
+        if evtenabled == "O" or evtenabled == "A" or evtenabled == "R":
+            acp_audit_event_trigger_disabled.labels(trigger=name).set(0)
+        else:
+            # "D" (disabled) or "MISSING" — both are alarm-worthy.
+            acp_audit_event_trigger_disabled.labels(trigger=name).set(1)
+            logger.critical(
+                "audit_event_trigger_not_enabled",
+                trigger=name,
+                state=evtenabled,
+                note=(
+                    "P0-3 audit-log protection is OFF. "
+                    "Break-glass scenario or missing migration. "
+                    "Investigate ASAP — backdated audit row forgery is possible."
+                ),
+            )
+    return states
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Create tables, start stream consumer, clean up on shutdown."""
@@ -299,6 +367,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             else:
                 raise
 
+        # N23 (2026-06-21): startup probe for the P0-3 event triggers. The
+        # periodic re-probe below catches a runtime DISABLE; this one catches
+        # missing migrations on a fresh boot.
+        await _probe_event_triggers(db)
+
     # 2. Connect Redis and ensure consumer group
     redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
     await _ensure_consumer_group(redis)
@@ -318,6 +391,29 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await asyncio.sleep(10)
 
     bp_task = asyncio.create_task(_bp_loop())
+
+    # N23 (2026-06-21): periodic re-probe of the P0-3 event triggers so a
+    # runtime ``ALTER EVENT TRIGGER ... DISABLE`` is caught within a few
+    # minutes instead of waiting for the next service restart. The probe is
+    # cheap (single indexed lookup on a system catalog) — 5 min cadence is
+    # well below MTTD targets without adding meaningful DB load.
+    async def _event_trigger_recheck_loop() -> None:
+        # Wait one cycle before the first re-probe — the startup probe in
+        # lifespan() already set the initial gauge value.
+        await asyncio.sleep(_EVENT_TRIGGER_RECHECK_SECONDS)
+        while True:
+            try:
+                async with SessionLocal() as probe_db:
+                    await _probe_event_triggers(probe_db)
+            except asyncio.CancelledError:
+                break
+            except Exception as _exc:
+                logger.warning(
+                    "audit_event_trigger_recheck_loop_error", error=str(_exc),
+                )
+            await asyncio.sleep(_EVENT_TRIGGER_RECHECK_SECONDS)
+
+    event_trigger_task = asyncio.create_task(_event_trigger_recheck_loop())
 
     # 2026-05-14 — Transactional Outbox drain worker. Backstops the sync
     # billing path so any audit row that didn't get a usage_record via the
@@ -375,6 +471,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Signal consumer to stop (will catch CancelledError)
     consumer_task.cancel()
     bp_task.cancel()
+    event_trigger_task.cancel()
     outbox_task.cancel()
     transparency_task.cancel()
     delivery_task.cancel()
@@ -440,6 +537,22 @@ acp_audit_table_present = Gauge(
 # Default to 1 (assume healthy); flipped to 0 by the exception handler on
 # the first undefined-table response, and set by the lifespan startup probe.
 acp_audit_table_present.set(1)
+
+# N23 (2026-06-21): expose the P0-3 event-trigger state. A break-glass
+# ``ALTER EVENT TRIGGER protect_audit_logs DISABLE`` (documented in
+# scripts/sql/p0_3_audit_owner_protection.sql) flips the matching label to
+# 1, which the operator alerts on. A missing trigger row (migration not
+# applied / accidental DROP EVENT TRIGGER) also flips the gauge to 1 so
+# the alarm fires on either failure mode.
+acp_audit_event_trigger_disabled = Gauge(
+    "acp_audit_event_trigger_disabled",
+    "1 if the named audit-protection event trigger is disabled or missing, 0 if enabled.",
+    ["trigger"],
+)
+# Default to 0 (assume healthy). The lifespan probe overwrites with the
+# real value before traffic is accepted; the periodic loop refreshes it.
+for _trigger_name in ("protect_audit_logs", "protect_audit_logs_drop"):
+    acp_audit_event_trigger_disabled.labels(trigger=_trigger_name).set(0)
 
 
 @app.exception_handler(ProgrammingError)
