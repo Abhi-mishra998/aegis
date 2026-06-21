@@ -247,6 +247,26 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/demo",
 )
 
+# N3 (2026-06-21) — paths that an is_demo=True JWT must never reach.
+# Demo workspaces are minted by /demo/spawn-workspace with role=OWNER so
+# RBAC alone lets them touch every SECURITY_ANALYST+ read surface. These
+# prefixes are org-wide investigation views (forensic timelines, incident
+# storylines, identity-access graph, threat-intel IOCs) and the staff-only
+# /admin/* namespace — none of them are appropriate for a self-served
+# sandbox tenant. All four prefixes verified to exist as live routes:
+#   /forensics/*    -> services/gateway/routers/forensics.py
+#   /storylines/*   -> services/gateway/routers/storylines.py
+#   /iag/*          -> services/gateway/routers/iag.py
+#   /threat-intel/* -> services/gateway/routers/threatintel.py
+_DEMO_BLOCKED_PREFIXES = (
+    "/admin/",
+    "/forensics/",
+    "/storylines/",
+    "/iag/",
+    "/threat-intel/",
+)
+_DEMO_BLOCKED_EXACT = ("/admin", "/forensics", "/storylines", "/iag", "/threat-intel")
+
 # Configuration from global settings
 _GLOBAL_RATE_LIMIT = settings.GLOBAL_RATE_LIMIT
 _IP_RATE_LIMIT = settings.IP_RATE_LIMIT
@@ -538,16 +558,24 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             # minted anonymously by /demo/spawn-workspace — there is no path
             # where a legitimately-issued demo JWT would ever need to enter
             # the platform-staff /admin/* namespace.
-            if _path.startswith("/admin/") or _path == "/admin":
+            #
+            # N3 (2026-06-21): extended to forensics, storylines, IAG, and
+            # threat-intel surfaces. Demo tokens carry role=OWNER so they
+            # pass every RBAC gate down to SECURITY_ANALYST+; without this
+            # block a prospect could read forensic timelines, incident
+            # narratives, the identity-access graph, and threat-intel IOCs
+            # of the sandbox tenant. These are org-wide-investigation
+            # surfaces — never appropriate for a self-served demo sandbox.
+            if _path.startswith(_DEMO_BLOCKED_PREFIXES) or _path in _DEMO_BLOCKED_EXACT:
                 _claims = getattr(request.state, "jwt_claims", {}) or {}
                 if _claims.get("is_demo") is True:
                     logger.warning(
-                        "admin_path_demo_token_blocked",
+                        "demo_token_blocked_endpoint",
                         path=_path, tenant_id=t_id_str,
                     )
                     from fastapi.responses import JSONResponse as _JSON  # noqa: PLC0415
                     return _JSON(
-                        {"error": "Forbidden", "detail": "demo workspaces cannot access /admin/*"},
+                        {"error": "Forbidden", "detail": "demo workspaces cannot access this endpoint"},
                         status_code=403,
                     )
 
