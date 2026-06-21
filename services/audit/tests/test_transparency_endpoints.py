@@ -354,3 +354,147 @@ def test_rotation_helpers_pem_roundtrip(tmp_path: Path) -> None:
 
     loaded = _load_private_pem(key_path)
     assert _public_pem(loaded) == _public_pem(priv)
+
+
+# --------------------------------------------------------------------------- #
+# /transparency/keys — N4 fix (cross-tenant key registry leak)                #
+# --------------------------------------------------------------------------- #
+#
+# Before the fix the endpoint returned the full `transparency_historical_keys`
+# table to any caller, leaking every tenant's rotation cadence and
+# fingerprints. After the fix the endpoint:
+#   1. Requires a valid X-Tenant-ID header (get_tenant_id dependency).
+#   2. Returns ONLY the currently-active root-signing key (no historical
+#      registry). The schema carries no tenant_id column, so per-tenant
+#      filtering at the DB level would require a follow-up migration.
+
+
+@pytest.mark.asyncio
+async def test_list_root_signing_keys_returns_active_only(fake_db) -> None:
+    """The endpoint returns only the active key — no `historical` field, so
+    no cross-tenant rotation cadence is exposed."""
+    from services.audit.transparency import list_root_signing_keys
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-00000000000a")
+    resp = await list_root_signing_keys(db=fake_db, tenant_id=tenant_a)
+    body = resp.data
+
+    # Active key is present and well-formed.
+    assert "active" in body
+    assert body["active"]["algorithm"] == "ed25519"
+    assert isinstance(body["active"]["fingerprint"], str)
+    assert len(body["active"]["fingerprint"]) >= 16
+
+    # CRITICAL: the historical registry must NOT appear in the response.
+    assert "historical" not in body
+
+
+@pytest.mark.asyncio
+async def test_list_root_signing_keys_is_same_active_across_tenants(fake_db) -> None:
+    """The active key is platform-global — both tenants see the same active
+    fingerprint, but neither sees any other tenant's historical keys."""
+    from services.audit.transparency import list_root_signing_keys
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-00000000000a")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-00000000000b")
+
+    resp_a = await list_root_signing_keys(db=fake_db, tenant_id=tenant_a)
+    resp_b = await list_root_signing_keys(db=fake_db, tenant_id=tenant_b)
+
+    # Active root-signing key is shared infrastructure; both see it.
+    assert resp_a.data["active"]["fingerprint"] == resp_b.data["active"]["fingerprint"]
+
+    # Neither response leaks the historical registry.
+    assert "historical" not in resp_a.data
+    assert "historical" not in resp_b.data
+
+
+@pytest.mark.asyncio
+async def test_list_root_signing_keys_does_not_query_historical(
+    monkeypatch, fake_db
+) -> None:
+    """The historical-keys loader must not be invoked at all. Even if the
+    table were populated, the endpoint must never read from it.
+
+    Regression guard for the N4 fix: a naive refactor that re-adds the
+    historical fetch would silently re-introduce the cross-tenant leak.
+    """
+    import services.audit.signer as signer_mod
+    from services.audit.transparency import list_root_signing_keys
+
+    calls: list[Any] = []
+
+    async def _spy(db: Any) -> list[dict[str, str]]:
+        calls.append(db)
+        return []
+
+    monkeypatch.setattr(signer_mod, "load_historical_public_keys", _spy)
+
+    tenant = uuid.UUID("00000000-0000-0000-0000-00000000000c")
+    await list_root_signing_keys(db=fake_db, tenant_id=tenant)
+
+    assert calls == [], (
+        "list_root_signing_keys must not call load_historical_public_keys — "
+        "doing so re-introduces N4 (cross-tenant key registry leak)."
+    )
+
+
+def test_list_root_signing_keys_requires_tenant_header() -> None:
+    """End-to-end FastAPI check: the endpoint must reject requests that
+    don't carry X-Tenant-ID. Before the N4 fix the endpoint took no
+    tenant dependency and any internally-authorised caller could pull
+    every tenant's historical keys.
+
+    We stand up a minimal FastAPI app that mounts only the function under
+    test, override `verify_internal_secret` + `get_db` so the request
+    reaches the handler, and confirm that the missing-header path fails
+    with HTTP 400 while the header-present path succeeds with HTTP 200.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from sdk.common.auth import verify_internal_secret
+    from sdk.common.db import get_db
+    from services.audit.transparency import list_root_signing_keys
+
+    app = FastAPI()
+    app.get("/transparency/keys")(list_root_signing_keys)
+
+    # Stub the two non-tenant dependencies so the request lands in the
+    # handler; tenant_id stays bound to the real get_tenant_id which
+    # reads X-Tenant-ID and raises HTTP 400 when absent.
+    async def _fake_db():
+        yield None
+
+    app.dependency_overrides[verify_internal_secret] = lambda: "test-secret"
+    app.dependency_overrides[get_db] = _fake_db
+
+    client = TestClient(app)
+
+    # No X-Tenant-ID → HTTP 400 (caught upstream of the handler body).
+    resp_no_tenant = client.get("/transparency/keys")
+    assert resp_no_tenant.status_code == 400, (
+        f"missing X-Tenant-ID must yield 400, got {resp_no_tenant.status_code} "
+        f"({resp_no_tenant.text[:200]})"
+    )
+
+    # With a valid tenant header → 200 + only the active key.
+    resp_tenant_a = client.get(
+        "/transparency/keys",
+        headers={"X-Tenant-ID": "00000000-0000-0000-0000-00000000000a"},
+    )
+    assert resp_tenant_a.status_code == 200, resp_tenant_a.text
+    body_a = resp_tenant_a.json().get("data", {})
+    assert "active" in body_a
+    assert "historical" not in body_a
+
+    # A different tenant header → same active key, still no historical
+    # registry (cross-tenant cadence cannot leak).
+    resp_tenant_b = client.get(
+        "/transparency/keys",
+        headers={"X-Tenant-ID": "00000000-0000-0000-0000-00000000000b"},
+    )
+    assert resp_tenant_b.status_code == 200, resp_tenant_b.text
+    body_b = resp_tenant_b.json().get("data", {})
+    assert "historical" not in body_b
+    assert body_a["active"]["fingerprint"] == body_b["active"]["fingerprint"]

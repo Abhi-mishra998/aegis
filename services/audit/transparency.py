@@ -563,20 +563,32 @@ async def verify_root(
 @transparency_router.get("/keys", response_model=APIResponse[dict])
 async def list_root_signing_keys(
     db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
 ) -> APIResponse[dict]:
-    """List active + historical root-signing public keys.
+    """Return the currently-active root-signing public key.
 
-    The `active` entry is whichever key is currently in the signer
-    singleton; the `historical` list is sourced from
-    `transparency_historical_keys` (populated by the rotation script).
-    Customers verifying an old root look up its fingerprint here.
+    N4 fix (2026-06-21): previously also returned the global
+    `transparency_historical_keys` registry, which leaks every other
+    tenant's key-rotation cadence and fingerprints to any caller. The
+    `transparency_historical_keys` schema (see
+    `services/audit/models.py::TransparencyHistoricalKey`) carries no
+    `tenant_id` column, so per-tenant filtering at the query level is
+    impossible without a schema migration. Until that migration lands,
+    this endpoint requires tenant authentication and returns ONLY the
+    currently-active key.
+
+    Callers that need to verify a receipt signed by a previously-active
+    key should use `/transparency/verify-root` or `/receipts/verify`,
+    which transparently fall back to the historical registry server-side
+    via `signer.verify_receipt_against_known_keys`.
+
+    `tenant_id` is required to enforce that the caller has presented a
+    valid tenant identity; the active key itself is platform-global.
     """
-    from services.audit.signer import get_root_signer, load_historical_public_keys
+    from services.audit.signer import get_root_signer
     s = get_root_signer()
-    historical = await load_historical_public_keys(db)
     return APIResponse(data={
         "active": s.public_key_info(),
-        "historical": historical,
     })
 
 
