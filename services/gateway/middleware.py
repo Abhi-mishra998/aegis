@@ -223,6 +223,13 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/threat-intel",
     "/users",
     "/webhooks",
+    # P1-5 fix 2026-06-21 — EI-2 / EI-6 integration tabs (Jira, ServiceNow,
+    # SCIM tokens). The handler in services/gateway/routers/integrations.py
+    # returns the per-tenant integration config; without /integrations in
+    # this skip-list, the gateway's tool-extraction middleware grabbed the
+    # request first and returned "Tool name is required" — the EI-2 Jira
+    # Settings tab in the UI was unreachable.
+    "/integrations",
     "/admin",
     "/dashboard",
     "/policy",
