@@ -638,6 +638,38 @@ async def spawn_demo_workspace(
         request.client.host if request.client else "unknown"
     )
 
+    # P2-1 (2026-06-21): the brutal review spawned 5 distinct tenants in
+    # <2 seconds from inside an EC2 via SSM-exec. WAF protects the public
+    # surface (per-public-IP rate limit) but anything originating from
+    # inside the fleet (RCE in any service, CI runner with IAM, SSM-exec)
+    # bypasses WAF entirely and inherits the loopback IP, sharing the
+    # 5-spawn budget across all attackers. Legitimate demo spawns ALWAYS
+    # arrive through the ALB, which sets X-Forwarded-For with the real
+    # client's public IP. If the first hop is empty, loopback, or private
+    # (RFC1918 / RFC4193 / link-local / docker bridge), the request is
+    # not coming from a real user and we refuse it.
+    import ipaddress as _ip
+    def _is_external_public(addr: str) -> bool:
+        try:
+            ip = _ip.ip_address(addr)
+        except ValueError:
+            return False
+        # is_global is the canonical "real internet" check; it rejects
+        # loopback (127.0.0.0/8), link-local (169.254/16, ::1, fe80::),
+        # private (10/8, 172.16/12, 192.168/16, fc00::/7), reserved, etc.
+        return ip.is_global
+    if not source_ip or source_ip == "unknown" or not _is_external_public(source_ip):
+        logger.warning(
+            "demo_spawn_blocked_internal_origin",
+            source_ip=source_ip or "<empty>",
+            xff=x_forwarded_for or "<empty>",
+            client_host=(request.client.host if request.client else None),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Demo spawn is only available from a public client through the load balancer.",
+        )
+
     # EI-9 (2026-06-20) — Cloudflare Turnstile proof-of-human. WAF + per-IP
     # rate-limit don't catch corporate NAT bots; Turnstile does. Bypassed
     # when TURNSTILE_SECRET_KEY is empty (local dev / staging without a
