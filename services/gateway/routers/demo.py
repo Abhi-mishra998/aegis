@@ -931,6 +931,28 @@ async def spawn_demo_workspace(
     }
     token = _jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
 
+    # C-5 (2026-05-13) compatibility: the legacy validator at
+    # services/gateway/auth.py:266-275 requires the active-key
+    # ``acp:token:<sha256(token)>`` to exist in Redis — without it the JWT is
+    # rejected as "Token not recognized by Identity service". Identity sets
+    # that key at issuance for normal logins, but the demo-spawn path mints
+    # its own HS256 token locally (no Identity round-trip). Register the
+    # active-key here so the demo JWT is actually usable on subsequent
+    # requests.
+    try:
+        import hashlib as _hashlib  # noqa: PLC0415
+        from sdk.common.constants import REDIS_TOKEN_PREFIX  # noqa: PLC0415
+        from sdk.common.redis import get_redis_client  # noqa: PLC0415
+        _r = get_redis_client(settings.REDIS_URL, decode_responses=True)
+        _token_hash = _hashlib.sha256(token.encode()).hexdigest()
+        await _r.set(
+            f"{REDIS_TOKEN_PREFIX}{_token_hash}",
+            "1",
+            ex=_DEMO_JWT_TTL_MINUTES * 60,
+        )
+    except Exception as _reg_exc:  # noqa: BLE001
+        logger.warning("demo_token_registration_failed", error=str(_reg_exc))
+
     logger.info(
         "demo_workspace_spawned",
         tenant_id=tenant_id, owner_email=owner_email,
