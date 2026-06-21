@@ -425,11 +425,16 @@ def verify_role(*allowed):
     async def _dependency(
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
+        # N17: every WWW-Authenticate realm slug is collapsed to a single
+        # literal ("aegis") so the realm value does not leak the validator
+        # branch (invalid_token / session_expired / insufficient_role /
+        # revoked_token). That distinction is the same oracle the P3-1
+        # body-shape collapse already closed on the response body.
         if not authorization:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing Authorization header",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         raw = extract_bearer_token(authorization)
@@ -437,7 +442,7 @@ def verify_role(*allowed):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Malformed Authorization header — expected 'Bearer <token>'",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         if token_validator is None:
@@ -449,11 +454,10 @@ def verify_role(*allowed):
         try:
             claims = await token_validator.validate(raw)
         except ACPAuthError as exc:
-            reason = getattr(exc, "reason", None) or "invalid_token"
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=str(exc),
-                headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             ) from exc
 
         role_canonical = canonical_role(claims.get("role"))
@@ -464,7 +468,7 @@ def verify_role(*allowed):
                     f"Role {role_canonical!r} is not permitted on this endpoint. "
                     f"Required: {sorted(allowed_set)}."
                 ),
-                headers={"WWW-Authenticate": 'Bearer realm="insufficient_role"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         # Stamp the canonical projection onto the claims so route handlers
