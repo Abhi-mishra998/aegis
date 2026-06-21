@@ -36,6 +36,7 @@
 #   /aegis-prodha/stripe/pro-price-id      → STRIPE_PRO_PRICE_ID
 #   /aegis-prodha/stripe/enterprise-price-id → STRIPE_ENTERPRISE_PRICE_ID
 #   /aegis-prodha/stripe/webhook-secret    → STRIPE_WEBHOOK_SECRET
+#   /aegis-prodha/prometheus/scrape-secret → PROMETHEUS_SCRAPE_SECRET   (N11)
 
 set -euo pipefail
 
@@ -70,6 +71,11 @@ declare -A MAP=(
   ["${SSM_PREFIX}/stripe/pro-price-id"]="STRIPE_PRO_PRICE_ID"
   ["${SSM_PREFIX}/stripe/enterprise-price-id"]="STRIPE_ENTERPRISE_PRICE_ID"
   ["${SSM_PREFIX}/stripe/webhook-secret"]="STRIPE_WEBHOOK_SECRET"
+  # N11 deploy wiring (2026-06-21) — dedicated Prometheus /metrics scrape
+  # secret. After A11's middleware change, gateway /metrics rejects
+  # X-Internal-Secret entirely. Prometheus now ships X-Prometheus-Secret
+  # = PROMETHEUS_SCRAPE_SECRET; rotate independently of every other secret.
+  ["${SSM_PREFIX}/prometheus/scrape-secret"]="PROMETHEUS_SCRAPE_SECRET"
 )
 
 if [[ "$MODE" == "local" ]]; then
@@ -102,10 +108,16 @@ if [[ "$MODE" == "local" ]]; then
   grep -cE "^($(echo "$ENV_NAMES" | tr '\n' '|' | sed 's/|$//'))=" "$ENV_FILE"
 
   cd /opt/aegis
+  # N11 deploy wiring (2026-06-21) — also recreate `prometheus` so the
+  # newly-overlaid PROMETHEUS_SCRAPE_SECRET env var is picked up; gateway
+  # must also recreate so the in-process middleware reloads it. Without
+  # restarting both, prometheus continues scraping with the stale
+  # X-Prometheus-Secret value and gateway keeps returning 401 on /metrics.
   docker compose -f infra/docker-compose.yml -f infra/docker-compose.aws.yml \
-    up -d --force-recreate --no-deps identity gateway 2>&1 | tail -8
+    up -d --force-recreate --no-deps identity gateway prometheus 2>&1 | tail -8
   sleep 5
   docker ps --filter name=^acp_identity$ --filter name=^acp_gateway$ \
+    --filter name=^acp_prometheus$ \
     --format '{{.Names}}\t{{.Status}}'
   exit 0
 fi
@@ -153,6 +165,9 @@ PATHS=(
   "${SSM_PREFIX}/stripe/pro-price-id:STRIPE_PRO_PRICE_ID"
   "${SSM_PREFIX}/stripe/enterprise-price-id:STRIPE_ENTERPRISE_PRICE_ID"
   "${SSM_PREFIX}/stripe/webhook-secret:STRIPE_WEBHOOK_SECRET"
+  # N11 deploy wiring (2026-06-21) — dedicated Prometheus /metrics scrape
+  # secret. Gateway middleware rejects raw INTERNAL_SECRET after A11.
+  "${SSM_PREFIX}/prometheus/scrape-secret:PROMETHEUS_SCRAPE_SECRET"
 )
 
 ENV_NAMES=$(printf '%s\n' "${PATHS[@]}" | cut -d: -f2 | sort -u)
@@ -173,9 +188,11 @@ COUNT=$(grep -cE "^($(echo "$ENV_NAMES" | tr '\n' '|' | sed 's/|$//'))=" "$ENV_F
 echo "Restored $COUNT env vars"
 
 cd /opt/aegis
-docker compose -f infra/docker-compose.yml -f infra/docker-compose.aws.yml up -d --force-recreate --no-deps identity gateway 2>&1 | tail -6
+# N11 deploy wiring (2026-06-21) — recreate prometheus + gateway too so the
+# overlaid PROMETHEUS_SCRAPE_SECRET reaches both sides of the scrape.
+docker compose -f infra/docker-compose.yml -f infra/docker-compose.aws.yml up -d --force-recreate --no-deps identity gateway prometheus 2>&1 | tail -6
 sleep 8
-docker ps --filter name=^acp_identity$ --filter name=^acp_gateway$ --format '{{.Names}}\t{{.Status}}'
+docker ps --filter name=^acp_identity$ --filter name=^acp_gateway$ --filter name=^acp_prometheus$ --format '{{.Names}}\t{{.Status}}'
 INNER
 )
 SCRIPT="${SCRIPT//__REGION__/$REGION}"
