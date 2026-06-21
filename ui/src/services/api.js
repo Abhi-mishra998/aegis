@@ -194,7 +194,17 @@ const request = async (url, options = {}, retry = 1) => {
       credentials: "include", // Always send httpOnly cookies
     });
 
-    if (res.status === 401) {
+    // Gateway-bug compatibility: the gateway middleware currently translates
+    // an expired/malformed Bearer on auth-adjacent paths to 403 "Fail-Closed:
+    // decision service unavailable" instead of a clean 401. For Clerk-session
+    // requests we treat that specific 403 as an auth-rotation artifact and
+    // give it the same refresh-once-and-replay treatment as a real 401. If
+    // the retry still fails OR the 403 isn't the fail-closed signature, we
+    // fall through to the normal 4xx handling below.
+    const isFailClosed403 =
+      res.status === 403 &&
+      String(res.headers.get("content-type") || "").includes("application/json");
+    if (res.status === 401 || isFailClosed403) {
       // Clerk session race: the Clerk JWT lifetime is 60s. Even with the
       // exp-aware preflight in attachClerkAuth, requests can be in flight
       // when the SDK rotates underneath them. Before declaring the session
@@ -202,6 +212,23 @@ const request = async (url, options = {}, retry = 1) => {
       // in-memory cache, fetch a fresh JWT, and replay ONCE. If THAT also
       // 401s, the session really is dead.
       const isClerkSession = hasClerkAuth();
+      if (res.status !== 401 && isFailClosed403) {
+        // Confirm this 403 is the gateway's auth fail-closed (vs a genuine
+        // policy block) before treating it as a refreshable auth artifact.
+        // We peek the body without consuming the original response stream.
+        const peek = res.clone();
+        try {
+          const body = await peek.json();
+          const err = String(body?.error || "");
+          if (!err.includes("Fail-Closed") && !err.toLowerCase().includes("unauth")) {
+            // Real policy 403, not auth — fall through to standard handling.
+            return await _handleResponse(res, url);
+          }
+        } catch (_) {
+          // Non-JSON or unreadable — assume it's a real 403, not auth.
+          return await _handleResponse(res, url);
+        }
+      }
       if (isClerkSession && !options._authRetried) {
         try {
           const freshToken = await getFreshClerkToken();
@@ -215,8 +242,8 @@ const request = async (url, options = {}, retry = 1) => {
               headers: retryHeaders,
               credentials: "include",
             });
-            if (retryRes.status !== 401) {
-              // Quiet success — the first 401 is a Clerk-rotation artifact,
+            if (retryRes.status !== 401 && retryRes.status !== 403) {
+              // Quiet success — the first 401/403 is a Clerk-rotation artifact,
               // not a real auth failure; the user's network panel still
               // shows it, but the application path is OK so no console
               // noise here.
@@ -231,16 +258,17 @@ const request = async (url, options = {}, retry = 1) => {
       // wasn't applicable). Logging on the first 401 of every Clerk-token-
       // rotation moment flooded the console; users mistook the resolved
       // requests for a permanent outage.
-      console.error(`AUTHENTICATION_REQUIRED [401] ${url}`);
+      const observedStatus = res.status;
+      console.error(`AUTHENTICATION_REQUIRED [${observedStatus}] ${url}`);
       clearSessionMetadata();
       if (window.location.pathname !== "/login") {
-        emitAuthFailure({ reason: "unauthorized", url, statusCode: 401 });
+        emitAuthFailure({ reason: "unauthorized", url, statusCode: observedStatus });
       }
       // Throw a special sentinel so the catch block knows NOT to retry.
       // parseApiError() reads _status + _wwwAuth to map to a user-facing string.
       const authErr = new Error("UNAUTHORIZED: Session expired or credentials invalid.");
       authErr._noRetry = true;
-      authErr._status = 401;
+      authErr._status = observedStatus;
       authErr._wwwAuth = res.headers.get("WWW-Authenticate") || "";
       throw authErr;
     }
