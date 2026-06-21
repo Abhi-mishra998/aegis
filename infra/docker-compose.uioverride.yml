@@ -1,0 +1,20 @@
+# infra/docker-compose.uioverride.yml
+# UI hot-reload overlay — bind-mount the host's /opt/aegis/ui/dist over the
+# baked-in /usr/share/nginx/html in the infra-ui image. Without this overlay,
+# a `tar -xzf bundle.tar.gz -C /opt/aegis` deploy updates ui/dist on disk but
+# the running container keeps serving whatever dist was COPY'd into the image
+# at `docker build` time (vite-built bundles change name on every build, so
+# the index.html → assets/index-<hash>.js reference becomes a stale 404).
+#
+# Use:
+#   docker compose -f infra/docker-compose.yml \
+#                  -f infra/docker-compose.aws.yml \
+#                  -f infra/docker-compose.uioverride.yml \
+#                  up -d --no-deps --force-recreate ui
+#
+# Once the CI pipeline starts rebuilding the infra-ui image on every bundle
+# this overlay can be removed.
+services:
+  ui:
+    volumes:
+      - /opt/aegis/ui/dist:/usr/share/nginx/html:ro
