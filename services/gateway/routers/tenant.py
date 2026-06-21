@@ -41,7 +41,7 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
             "requests_per_second": int, "burst": int,
             "daily_request_cap": int, "monthly_request_cap": int | null,
             "daily_inference_cost_cap_usd": float | null,
-            "rpm_limit": int, "tier": str,
+            "rpm_limit": int,
           },
           "usage": {
             "daily_used": int, "daily_resets_at": iso8601,
@@ -50,12 +50,18 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
             ... cost usage merged from InferenceCostLimiter ...
           }
         }
+
+    P3-2 (2026-06-21): the `tier` field was dropped from the public response.
+    An attacker who breached one tenant could previously read `"tier":"enterprise"`
+    on every neighbouring tenant they could enumerate, narrowing the next
+    target. Tier still drives quota internally — it's just no longer leaked
+    on the public surface. Stripe-side billing and the admin/* routes (gated
+    by ROOT) retain authoritative tier visibility.
     """
     tenant_id = getattr(request.state, "tenant_id", None)
     if tenant_id is None:
         raise HTTPException(status_code=401, detail="tenant context required")
     limits = getattr(request.state, "quota_limits", None) or {}
-    tier   = getattr(request.state, "tier", "basic")
     rpm    = int(getattr(request.state, "rpm_limit", 0) or 0)
 
     # Lazy imports because TenantQuotaLimiter pulls a chunk of unrelated
@@ -119,7 +125,6 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
             "monthly_request_cap":           limits.get("monthly_request_cap"),
             "daily_inference_cost_cap_usd":  limits.get("daily_inference_cost_cap_usd"),
             "rpm_limit":                     rpm,
-            "tier":                          tier,
         },
         "usage": {**usage, **cost_usage},
     }
