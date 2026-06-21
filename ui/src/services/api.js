@@ -1316,6 +1316,44 @@ export const teamService = {
     request(`/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
 }
 
+// Sprint S5 — hierarchical teams used by TeamSettings.jsx.
+// Backend at /teams (services/identity).
+export const teamsService = {
+  list:   () => request('/teams'),
+  create: (payload) => request('/teams', { method: 'POST', body: JSON.stringify(payload) }),
+  remove: (teamId) => request(`/teams/${encodeURIComponent(teamId)}`, { method: 'DELETE' }),
+}
+
+// Sprint EI-3 — Okta SCIM bearer-token management used by
+// settings/ScimTokensTab.jsx. Backend at /scim/tokens.
+export const scimService = {
+  listTokens:  () => request('/scim/tokens'),
+  createToken: (label) => request('/scim/tokens', { method: 'POST', body: JSON.stringify({ label }) }),
+  revokeToken: (tokenId) => request(`/scim/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+}
+
+// Sprint EI-2 / EI-6 — Jira + ServiceNow integration config used by
+// settings/JiraIntegrationTab.jsx and settings/ServiceNowIntegrationTab.jsx.
+// The backend lives at services/gateway/routers/integrations.py with the
+// full GET/PUT/DELETE/test/webhook-rotate suite per vendor.
+export const integrationsService = {
+  // Jira
+  getJira:    () => request('/integrations/jira'),
+  setJira:    (body) => request('/integrations/jira', { method: 'PUT', body: JSON.stringify(body) }),
+  deleteJira: () => request('/integrations/jira', { method: 'DELETE' }),
+  testJira:   () => request('/integrations/jira/test', { method: 'POST' }),
+  rotateJiraWebhookSecret: () =>
+    request('/integrations/jira/webhook-secret/rotate', { method: 'POST' }),
+
+  // ServiceNow
+  getServiceNow:    () => request('/integrations/servicenow'),
+  setServiceNow:    (body) => request('/integrations/servicenow', { method: 'PUT', body: JSON.stringify(body) }),
+  deleteServiceNow: () => request('/integrations/servicenow', { method: 'DELETE' }),
+  testServiceNow:   () => request('/integrations/servicenow/test', { method: 'POST' }),
+  rotateServiceNowWebhookSecret: () =>
+    request('/integrations/servicenow/webhook-secret/rotate', { method: 'POST' }),
+}
+
 // Sprint S2 — Slack OAuth status used by Dashboard.jsx + WebhookSettings.jsx.
 // Restoring the export the bundle expected (it was lost in a prior refactor
 // and is the source of the `REQUEST_FAILED /sso/slack/status` console error +
