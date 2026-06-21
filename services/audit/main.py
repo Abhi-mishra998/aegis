@@ -284,6 +284,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # 1. Validate DB schema before accepting traffic
     async with get_session_factory()() as db:
         await check_schema(db, "audit")
+        # P2-3 (2026-06-21): set the gauge from a real probe at startup. If
+        # audit_logs is missing the readiness check still passes (we want
+        # the service up so the operator can hit endpoints and see the 503),
+        # but Prometheus alerts on acp_audit_table_present==0 fire.
+        try:
+            from sqlalchemy import text
+            await db.execute(text("SELECT 1 FROM audit_logs LIMIT 1"))
+            acp_audit_table_present.set(1)
+        except ProgrammingError as _probe_exc:
+            if getattr(getattr(_probe_exc, "orig", None), "sqlstate", None) == "42P01":
+                acp_audit_table_present.set(0)
+                logger.error("audit_table_missing_at_startup")
+            else:
+                raise
 
     # 2. Connect Redis and ensure consumer group
     redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
@@ -407,6 +421,46 @@ app = FastAPI(
 
 # Consolidated SDK Setup
 setup_app(app, "audit")
+
+
+# ── P2-3 fix (2026-06-21) — graceful 503 on missing audit_logs table ───
+# If audit_logs is dropped (operator error, broken migration, namespace
+# eviction), every read query raises sqlalchemy.exc.ProgrammingError with
+# pgcode 42P01 ("undefined_table"). The default Exception handler turned
+# that into an opaque 500 "An internal server error occurred", giving the
+# operator no signal to alert on. Convert to a structured 503 so monitors
+# can fire on `chain_status == "degraded"` and ops can detect outages.
+from prometheus_client import Gauge  # noqa: E402
+from sqlalchemy.exc import ProgrammingError  # noqa: E402
+
+acp_audit_table_present = Gauge(
+    "acp_audit_table_present",
+    "1 if the audit_logs table exists and is queryable, 0 if missing/broken.",
+)
+# Default to 1 (assume healthy); flipped to 0 by the exception handler on
+# the first undefined-table response, and set by the lifespan startup probe.
+acp_audit_table_present.set(1)
+
+
+@app.exception_handler(ProgrammingError)
+async def _audit_table_missing_handler(_: Any, exc: ProgrammingError) -> Any:  # noqa: ANN401
+    """Return structured 503 when audit_logs (or another core table) is gone."""
+    from fastapi.responses import JSONResponse
+    pgcode = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    if pgcode == "42P01":
+        acp_audit_table_present.set(0)
+        logger.error("audit_table_unavailable", error=str(exc))
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Service degraded",
+                "chain_status": "degraded",
+                "reason": "audit_table_unavailable",
+            },
+        )
+    # Re-raise other ProgrammingErrors to the default 500 handler.
+    raise exc
+
 
 app.include_router(router)
 app.include_router(pending_router)
