@@ -49,6 +49,36 @@ class PermissionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# P1-2 fix 2026-06-21 — server-side XSS validator for agent free-text fields.
+# Caught by brutal-review: AgentCreate.description had no validator, so
+# `<script>alert(1)</script><img src=x onerror=alert(2)>` was stored
+# verbatim. The UI render-side escape is defense in depth but not enough —
+# audit-log exports, support tools, and partner SIEM integrations all read
+# this field raw. Reject the dangerous chars at the API boundary.
+_XSS_FORBIDDEN_SUBSTRINGS = (
+    "<", ">",                # HTML tags
+    "javascript:", "data:",  # script-bearing URI schemes
+    "vbscript:",
+)
+
+
+def _validate_no_html(field_name: str, v: str | None) -> str | None:
+    """Reject any HTML-tag or script-scheme bytes. Pre-strips whitespace.
+    Returns the validated string or raises ValueError.
+    """
+    if v is None:
+        return v
+    s = v.strip()
+    lower = s.lower()
+    for token in _XSS_FORBIDDEN_SUBSTRINGS:
+        if token in lower:
+            raise ValueError(
+                f"{field_name} cannot contain HTML tags or script schemes "
+                f"(found {token!r})"
+            )
+    return s
+
+
 class AgentCreate(BaseModel):
     name: str = Field(..., max_length=100)
     description: str = Field(..., min_length=10, max_length=500)
@@ -72,16 +102,30 @@ class AgentCreate(BaseModel):
             )
         return v
 
+    @field_validator("description")
+    @classmethod
+    def description_no_html(cls, v: str) -> str:
+        return _validate_no_html("description", v)
+
     @field_validator("owner_id")
     @classmethod
-    def strip_whitespace(cls, v: str) -> str:
-        return v.strip()
+    def owner_id_strip_and_validate(cls, v: str) -> str:
+        # owner_id is an email-shaped identifier — same XSS posture as
+        # description (rendered in UI member-list + audit logs).
+        stripped = v.strip()
+        _validate_no_html("owner_id", stripped)
+        return stripped
 
 
 class AgentUpdate(BaseModel):
     description: str | None = Field(None, min_length=10, max_length=500)
     status: AgentStatus | None = None
     metadata_data: dict[str, str] | None = Field(None, alias="metadata")
+
+    @field_validator("description")
+    @classmethod
+    def description_no_html(cls, v: str | None) -> str | None:
+        return _validate_no_html("description", v)
 
     @field_validator("metadata_data")
     @classmethod
