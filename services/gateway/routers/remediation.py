@@ -77,7 +77,13 @@ async def replay_remediation(incident_id: str, request: Request) -> Any:
             status_code=409,
             detail=f"incident {incident_id} has no participating agents — no agent to remediate",
         )
-    httpx_client = getattr(request.app.state, "client", None) or httpx.AsyncClient(timeout=10.0)
+    # N16 (2026-06-21) — outbound webhook MUST NOT follow redirects. The
+    # remediation page_oncall webhook URL is tenant-configurable; if the
+    # destination host returns a 301 to a loopback / metadata IP we'd
+    # re-issue the request straight past the SSRF check on `policy.webhook_url`.
+    httpx_client = getattr(request.app.state, "client", None) or httpx.AsyncClient(
+        timeout=10.0, follow_redirects=False,
+    )
     new_actions = await executor.replay(
         _redis,
         incident_id=incident_id,
