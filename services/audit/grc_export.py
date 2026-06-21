@@ -124,6 +124,25 @@ def _summary_for(row: AuditLog, control_framework: str, control_id: str) -> str:
     )
 
 
+# N25 (2026-06-21): CSV formula-injection guard. Excel / LibreOffice / Numbers
+# auto-execute any cell whose first character is one of =, +, -, @ as a
+# formula on open — see CVE-2014-3524 family. Tool names and reason strings
+# in our evidence rows are user-influenced (an agent's tool name comes from
+# the registered MCP tool, the reason is a policy + rego template), so a
+# carefully crafted upload could attempt SSRF / file-disclosure when the
+# auditor opens the CSV. We defang by prepending a single-quote, the OWASP
+# CSV-injection recommended escape; the visible cell content is unchanged
+# in Excel ("formula display" shows '=foo, but the cell renders "=foo").
+_FORMULA_PREFIXES: tuple[str, ...] = ("=", "+", "-", "@")
+
+
+def _escape_formula(value: Any) -> Any:
+    """Defang an Excel formula-injection attempt on a single CSV cell."""
+    if isinstance(value, str) and value and value[0] in _FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
 def _row_to_evidence(
     row: AuditLog, mapping: dict[str, list[str]],
 ) -> Iterable[dict[str, Any]]:
@@ -191,6 +210,10 @@ def build_grc_export(
             records.append(ev)
 
     if output == "csv":
+        # N25: QUOTE_ALL wraps every cell in double-quotes regardless of
+        # content. Combined with _escape_formula below, this neutralises
+        # both formula injection (=, +, -, @) and any CSV-parser ambiguity
+        # around embedded commas / newlines in reason strings.
         if not records:
             # Still emit the header row so consumers don't have to guess
             # the schema on an empty period.
@@ -201,14 +224,20 @@ def build_grc_export(
                 "aevf_bundle_url", "aevf_event_hash", "aevf_spec_version",
             ]
             buf = io.StringIO()
-            w = csv.writer(buf, quoting=csv.QUOTE_MINIMAL)
+            w = csv.writer(buf, quoting=csv.QUOTE_ALL)
             w.writerow(header)
             return buf.getvalue()
+        # N25: defang every string cell BEFORE handing to DictWriter so
+        # the escape lives in the persisted artifact, not just in the
+        # in-memory dict.
+        sanitised = [
+            {k: _escape_formula(v) for k, v in r.items()} for r in records
+        ]
         buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=list(records[0].keys()),
-                            quoting=csv.QUOTE_MINIMAL)
+        w = csv.DictWriter(buf, fieldnames=list(sanitised[0].keys()),
+                            quoting=csv.QUOTE_ALL)
         w.writeheader()
-        w.writerows(records)
+        w.writerows(sanitised)
         return buf.getvalue()
 
     return records
