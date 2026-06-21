@@ -201,13 +201,17 @@ async def process_groq_queue() -> None:
                         insight = await generate_insight(event)
                         await store_insight(event_id, insight)
 
-                        # Notify frontend via SSE pub/sub
+                        # Notify frontend via SSE pub/sub.
+                        # N2 (2026-06-21) — payload carries top-level ``tenant_id``
+                        # so the SSE generator can verify cross-tenant messages
+                        # never leak to the wrong client.
                         tenant_id = event.get("tenant_id", "")
                         if tenant_id:
                             with contextlib.suppress(Exception):
                                 await redis.publish(
                                     f"acp:events:{tenant_id}",
                                     json.dumps({
+                                        "tenant_id": tenant_id,
                                         "type": "insight_generated",
                                         "data": {
                                             "event_id": event_id,
