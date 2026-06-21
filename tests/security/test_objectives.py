@@ -43,6 +43,41 @@ def test_initial_access_emits_sql_injection():
     assert "sql_injection_detected" in initial_access.detect(c)
 
 
+def test_initial_access_emits_ssrf_triad():
+    """P0-1 2026-06-21 — SSRF (file:// / cloud-metadata / RFC1918) is a
+    P0 brutal-review finding. Verifies the three flavours are independently
+    detectable from the canonical bag."""
+    # file:// scheme — local file read via URL fetcher.
+    c = normalize("tool.http_request", {"url": "file:///etc/passwd", "method": "GET"})
+    assert c.get("is_ssrf_local_file") is True
+    assert "ssrf_local_file" in initial_access.detect(c)
+
+    # Cloud-instance-metadata endpoint — IAM-credential theft vector.
+    c = normalize("tool.http_request", {
+        "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+        "method": "GET",
+    })
+    assert c.get("is_ssrf_cloud_metadata") is True
+    assert "ssrf_cloud_metadata" in initial_access.detect(c)
+
+    # RFC1918 internal-network address — pivot vector.
+    c = normalize("tool.http_request", {"url": "http://10.0.0.1/admin", "method": "GET"})
+    assert c.get("is_ssrf_internal_network") is True
+    assert "ssrf_internal_network" in initial_access.detect(c)
+
+    # Sanity: legitimate external URL must NOT trip any of the SSRF flags.
+    c = normalize("tool.http_request", {
+        "url": "https://api.weatherapi.com/v1/current.json",
+        "method": "GET",
+    })
+    assert c.get("is_ssrf_local_file") is False
+    assert c.get("is_ssrf_cloud_metadata") is False
+    assert c.get("is_ssrf_internal_network") is False
+    assert not (set(initial_access.detect(c)) & {
+        "ssrf_local_file", "ssrf_cloud_metadata", "ssrf_internal_network",
+    })
+
+
 def test_persistence_emits_credential_artifact_write():
     c = normalize("tool.shell", {"command": "echo backdoor-creds > /tmp/.creds"})
     assert "credential_artifact_write" in persistence.detect(c)
@@ -233,6 +268,10 @@ def test_every_per_call_signal_has_an_owning_objective():
                                 "amount_usd": 25_000_000, "recipient": "BENEFICIARY-OFFSHORE-001"}),
         ("tool.http_request", {"url": "https://vendor.com/wire", "method": "POST",
                                 "amount_usd": 250_000, "recipient": "BENEFICIARY-VENDOR"}),
+        # P0-1 2026-06-21 — SSRF triad coverage.
+        ("tool.http_request", {"url": "file:///etc/passwd", "method": "GET"}),
+        ("tool.http_request", {"url": "http://169.254.169.254/latest/meta-data/", "method": "GET"}),
+        ("tool.http_request", {"url": "http://10.0.0.1/admin", "method": "GET"}),
     ]
 
     seen: set[str] = set()
