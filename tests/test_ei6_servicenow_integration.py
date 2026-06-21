@@ -171,16 +171,27 @@ class TestFireServiceNow:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return None
             async def post(self, *a, **k):
-                return httpx.Response(401, text="User Not Authenticated")
+                # N26: SNOW echoes the username in its 401 body — must NOT
+                # propagate to the API response.
+                return httpx.Response(
+                    401,
+                    text='User Not Authenticated: invalid login for user "aegis_bot"',
+                )
 
         monkeypatch.setattr("services.autonomy.webhook_executor.httpx.AsyncClient",
                             _ErrClient)
 
         r = _run(fire_servicenow(short_description="t",
                                   instance_url="https://example.com",
-                                  username="u", password="bad"))
+                                  username="aegis_bot", password="bad"))
         assert r["status"] == "error"
         assert r["http_status"] == 401
+        # N26 (2026-06-21): the caller-visible reason is a sanitised class,
+        # NOT the upstream echo. Otherwise the test ticket endpoint leaks
+        # SNOW's username back through Aegis's response body.
+        assert r["reason"] == "ServiceNow auth failed"
+        assert "aegis_bot" not in r["reason"]
+        assert "User Not Authenticated" not in r["reason"]
 
     def test_network_exception_returns_error(self, monkeypatch):
         class _ExcClient:
@@ -188,7 +199,11 @@ class TestFireServiceNow:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return None
             async def post(self, *a, **k):
-                raise httpx.ConnectError("DNS down")
+                # N26: exception messages can carry proxy URLs (which may
+                # embed creds). Must not leak.
+                raise httpx.ConnectError(
+                    "DNS down for proxy https://user:secret@proxy.local:8080"
+                )
 
         monkeypatch.setattr("services.autonomy.webhook_executor.httpx.AsyncClient",
                             _ExcClient)
@@ -197,7 +212,10 @@ class TestFireServiceNow:
                                   instance_url="https://example.com",
                                   username="u", password="p"))
         assert r["status"] == "error"
-        assert "DNS down" in r["reason"]
+        # N26: generic message — exception details stay in the structured log
+        assert r["reason"] == "ServiceNow unavailable"
+        assert "secret" not in r["reason"]
+        assert "proxy.local" not in r["reason"]
 
 
 # ── 2. execute_step dispatch ────────────────────────────────────────────

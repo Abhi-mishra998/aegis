@@ -441,18 +441,46 @@ async def fire_servicenow(
                 ),
                 "http_status":  r.status_code,
             }
+        # N26 (2026-06-21): full SNOW response body stays in the internal log,
+        # but the caller-visible `reason` is a generic class so we don't echo
+        # SNOW's 401 (which can reflect the username + password-length hints)
+        # into the operator's HTTP response.
         logger.warning(
             "snow_incident_create_failed",
-            http=r.status_code, body=r.text[:200],
+            http=r.status_code, body=r.text[:500],
         )
         return {
             "status":      "error",
             "http_status": r.status_code,
-            "reason":      r.text[:200] if r.text else f"HTTP {r.status_code}",
+            "reason":      _safe_snow_error(r.status_code),
         }
     except Exception as exc:
-        logger.warning("snow_incident_create_exception", error=str(exc))
-        return {"status": "error", "reason": str(exc)}
+        # N26: same scrub on the network-level exception path. The full
+        # exception string (which could include the URL + credentials of a
+        # misconfigured proxy) stays in the log; the caller gets a generic
+        # "ServiceNow unavailable".
+        logger.warning("snow_incident_create_exception", error=str(exc)[:500])
+        return {"status": "error", "reason": "ServiceNow unavailable"}
+
+
+def _safe_snow_error(status: int) -> str:
+    """N26: map a SNOW HTTP status to a caller-visible class.
+
+    The mapping is intentionally coarse: any 4xx maps to one of two
+    sanitised strings ("ServiceNow auth failed" vs "ServiceNow rejected
+    request"), any 5xx maps to "ServiceNow unavailable". The exact
+    upstream body is in the structured log under the request id so an
+    operator can correlate, but it never lands in the HTTP response body
+    where a curious tenant admin could read it (or where a JS client
+    could pipe it to a third party).
+    """
+    if status in (401, 403):
+        return "ServiceNow auth failed"
+    if 400 <= status < 500:
+        return "ServiceNow rejected request"
+    if 500 <= status < 600:
+        return "ServiceNow unavailable"
+    return f"ServiceNow returned unexpected status {status}"
 
 
 async def fire_generic_webhook(
