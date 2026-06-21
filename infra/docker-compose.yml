@@ -163,6 +163,9 @@ services:
     # 4 uvicorn workers gives the service ~4x headroom on a single container
     # without horizontal scale — the BEHAVIOR_FAIL_CLOSED_TOTAL counter is
     # the alertable signal for when this still isn't enough.
+    # 2026-06-21: 4 workers × ~110MB anon-rss + parent overhead pushed past
+    # the prior 256M cgroup limit on fresh hosts; OOM killer was cycling
+    # the container every ~30s. 512M leaves comfortable headroom.
     command: uvicorn services.behavior.main:app --host 0.0.0.0 --port 8000 --workers 4
     depends_on:
       pgbouncer:
@@ -171,7 +174,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: "256M"
+          memory: "512M"
           cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
