@@ -52,7 +52,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "d1f2e3a4b5c6"
-down_revision = "c0d1e2f3a4b5"
+down_revision = "o1p2q3r4s5t6"
 branch_labels = None
 depends_on = None
 
