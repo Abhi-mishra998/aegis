@@ -24,6 +24,20 @@ MESH_JWT_AUTH_TOTAL = Counter(
     ["method"],  # jwt | legacy | failed
 )
 
+# N6 fix (2026-06-21): mint_service_token raises RuntimeError when
+# ACP_MESH_PRIVATE_KEY_PEM is empty (Phase 3 fail-loud behaviour). Without
+# the per-call try/except in mesh_headers below, that RuntimeError used to
+# bubble out to FastAPI as an opaque HTTP 500 — operators saw a generic
+# crash instead of the actual config issue. mesh_headers now traps the
+# mint failure, increments this counter, and returns an empty dict so the
+# caller can still build a request; the receiver naturally 403s on a
+# missing mesh token, which is the correct degraded behaviour.
+MESH_HEADERS_MINT_FAILURES = Counter(
+    "mesh_headers_mint_failures_total",
+    "Times mesh_headers() returned empty because mint_service_token failed",
+    ["service"],
+)
+
 # auto_error=False so we control the error message and status code (403 not 422)
 internal_secret_header = APIKeyHeader(name="X-Internal-Secret", auto_error=False)
 
@@ -177,11 +191,31 @@ def mesh_headers(my_service: str) -> dict[str, str]:
     rejects it (mesh keys configured ⇒ legacy disabled). Sending it was
     dead weight that gave a false impression of dual-auth defense.
 
-    Raises only when the mint helper raises (no private key configured).
-    The decision to fail loudly vs. fall back to a shared secret lives in
-    mint_service_token; this wrapper just returns the resulting header.
+    N6 fix (2026-06-21): mint_service_token raises RuntimeError when
+    ACP_MESH_PRIVATE_KEY_PEM is empty (fresh ASG boot before SSM populates
+    the env, misconfigured launch template, key rotation gap, etc.). Pre-N6
+    that RuntimeError propagated to the caller, then to FastAPI, and the
+    client saw an opaque HTTP 500 with no breadcrumb pointing at the
+    config gap. Now we catch the failure, increment a counter so the
+    operator dashboards light up, and return an empty dict. The caller can
+    still construct its request — but with no mesh token attached the
+    receiver returns 403, which is the right degraded outcome (no silent
+    bypass, no opaque 500).
     """
-    return {"X-Mesh-Token": mint_service_token(my_service)}
+    try:
+        return {"X-Mesh-Token": mint_service_token(my_service)}
+    except RuntimeError as exc:
+        MESH_HEADERS_MINT_FAILURES.labels(service=my_service).inc()
+        logger.error(
+            "mesh_headers_mint_unavailable service=%r error=%s",
+            my_service,
+            exc,
+        )
+        # Empty dict — caller still builds a request, receiver returns 403
+        # on the missing X-Mesh-Token. Operators see both the counter spike
+        # and the 403s in upstream logs, which pin the root cause to the
+        # mint helper rather than to a downstream service crash.
+        return {}
 
 
 def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
