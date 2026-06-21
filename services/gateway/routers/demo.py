@@ -550,7 +550,7 @@ from jose import jwt as _jwt
 from sqlalchemy import delete as _delete, select as _select
 from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 
-from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import _verify_mesh_jwt, verify_internal_secret
 from sdk.common.db import get_db
 
 
@@ -619,6 +619,7 @@ async def spawn_demo_workspace(
     request: Request,
     db: _Annot[_AsyncSession, _Depends(get_db)],
     x_forwarded_for: _Annot[str | None, _Header(alias="X-Forwarded-For")] = None,
+    x_mesh_token: _Annot[str | None, _Header(alias="X-Mesh-Token")] = None,
 ) -> dict[str, Any]:
     """Spawn a fully-isolated demo workspace.
 
@@ -627,6 +628,24 @@ async def spawn_demo_workspace(
     then mints a 30-min HS256 JWT scoped to that tenant. Every visitor
     gets their own quotas, rate-limits, audit log, incidents — there is
     no shared blast radius between demo sessions.
+
+    Two ways in:
+
+      1. **Public client through the ALB** — the legitimate marketing
+         path. Source IP must be globally-routable (XFF first hop is
+         public) AND the immediate TCP peer must be a VPC-private ALB
+         hop (P2-1 + N20). Per-source-IP rate-limit of 5/10min.
+
+      2. **Mesh-authenticated internal caller** — operator-only escape
+         hatch (N20 follow-up, 2026-06-21). A cron / Lambda / smoke-test
+         script inside the VPC that needs to spawn a demo tenant for
+         testing presents a valid ``X-Mesh-Token`` (ES256, kid in
+         ``ACP_MESH_TRUSTED_KEYS``). The XFF + ALB-hop checks are
+         skipped because only services with their own mesh private key
+         can mint such a token — the brutal-review attack model (RCE in
+         any ONE service) doesn't grant access to OTHER services' keys.
+         The rate-limit is preserved but keyed by ``mesh:<issuer>`` so
+         each operator script gets its own bucket.
     """
     # EH-2: per-source-IP app-layer rate limit. WAF gives us 2000/5min
     # per source IP for the whole site; this carves out a tighter cap on
@@ -638,6 +657,31 @@ async def spawn_demo_workspace(
     source_ip = (x_forwarded_for or "").split(",")[0].strip() or (
         request.client.host if request.client else "unknown"
     )
+
+    # N20 operator escape hatch (2026-06-21) — mesh-JWT authenticated
+    # internal caller. A valid ES256 X-Mesh-Token signed by a service
+    # whose public key is in ``ACP_MESH_TRUSTED_KEYS`` skips the XFF +
+    # ALB-hop checks below. Reasoning: only services inside the mesh
+    # can mint such tokens, and the brutal-review attack scenario (RCE
+    # in any single service) doesn't grant the attacker access to OTHER
+    # services' mesh private keys — so a mesh token authentically
+    # attests "this request is from a known-good internal service" in a
+    # way the X-Forwarded-For check cannot. Rate-limit is preserved but
+    # keyed by ``mesh:<issuer>`` so the operator script still gets
+    # bucketed instead of inheriting a spoofed-IP bucket.
+    is_mesh_operator = False
+    mesh_issuer: str | None = None
+    if x_mesh_token:
+        _claims = _verify_mesh_jwt(x_mesh_token)
+        if _claims is not None and not _claims.get("_expired"):
+            is_mesh_operator = True
+            mesh_issuer = str(_claims.get("iss") or "unknown")
+            logger.info(
+                "demo_spawn_mesh_operator_path",
+                issuer=mesh_issuer,
+                source_ip=source_ip or "<empty>",
+                client_host=request.client.host if request.client else None,
+            )
 
     # P2-1 (2026-06-21): the brutal review spawned 5 distinct tenants in
     # <2 seconds from inside an EC2 via SSM-exec. WAF protects the public
@@ -717,34 +761,70 @@ async def spawn_demo_workspace(
         return ip.is_private
 
     client_host = request.client.host if request.client else None
-    if not source_ip or source_ip == "unknown" or not _is_external_public(source_ip):
-        logger.warning(
-            "demo_spawn_blocked_internal_origin",
-            source_ip=source_ip or "<empty>",
-            xff=x_forwarded_for or "<empty>",
-            client_host=client_host,
-            reason="xff_not_public",
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Demo spawn is only available from a public client through the load balancer.",
-        )
-    if not _is_alb_hop(client_host):
-        # XFF says public but the TCP peer is loopback / docker bridge —
-        # someone inside the cluster is spoofing XFF to bypass the
-        # primary check. Refuse and log loudly: this is an indicator of
-        # a fleet-internal compromise attempt.
-        logger.warning(
-            "demo_spawn_blocked_xff_spoof",
-            source_ip=source_ip,
-            xff=x_forwarded_for or "<empty>",
-            client_host=client_host,
-            reason="client_host_not_alb",
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Demo spawn requires routing through the load balancer.",
-        )
+    # The N20 operator-escape-hatch above sets is_mesh_operator=True for
+    # callers presenting a valid mesh JWT. Those bypass the XFF + ALB-hop
+    # checks because mesh authentication is a stronger attestation of
+    # "from a known-good internal service" than the network-layer checks.
+    # Everyone else must satisfy BOTH checks (public XFF + ALB private peer).
+    if not is_mesh_operator:
+        if not source_ip or source_ip == "unknown" or not _is_external_public(source_ip):
+            logger.warning(
+                "demo_spawn_blocked_external_only",
+                source_ip=source_ip or "<empty>",
+                xff=x_forwarded_for or "<empty>",
+                client_host=client_host,
+                reason="xff_not_public",
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error":  "Forbidden",
+                    "detail": (
+                        "Demo spawn requires either a public client through the "
+                        "load balancer OR a mesh-authenticated internal caller "
+                        "(X-Mesh-Token)."
+                    ),
+                    "hints": {
+                        "external": "Hit https://<your-domain>/demo/spawn-workspace from a browser",
+                        "internal": (
+                            "Mint a mesh token with "
+                            "sdk.common.auth.mint_service_token('<your-svc>') "
+                            "and pass via X-Mesh-Token"
+                        ),
+                    },
+                },
+            )
+        if not _is_alb_hop(client_host):
+            # XFF says public but the TCP peer is loopback / docker bridge —
+            # someone inside the cluster is spoofing XFF to bypass the
+            # primary check. Refuse and log loudly: this is an indicator of
+            # a fleet-internal compromise attempt.
+            logger.warning(
+                "demo_spawn_blocked_external_only",
+                source_ip=source_ip,
+                xff=x_forwarded_for or "<empty>",
+                client_host=client_host,
+                reason="client_host_not_alb",
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error":  "Forbidden",
+                    "detail": (
+                        "Demo spawn requires either a public client through the "
+                        "load balancer OR a mesh-authenticated internal caller "
+                        "(X-Mesh-Token)."
+                    ),
+                    "hints": {
+                        "external": "Hit https://<your-domain>/demo/spawn-workspace from a browser",
+                        "internal": (
+                            "Mint a mesh token with "
+                            "sdk.common.auth.mint_service_token('<your-svc>') "
+                            "and pass via X-Mesh-Token"
+                        ),
+                    },
+                },
+            )
 
     # EI-9 (2026-06-20) — Cloudflare Turnstile proof-of-human. WAF + per-IP
     # rate-limit don't catch corporate NAT bots; Turnstile does. Bypassed
@@ -752,30 +832,52 @@ async def spawn_demo_workspace(
     # configured site key). On reject returns 403, NOT 429, because the
     # signal is "we don't believe you're human", not "you've used your
     # quota — try later".
-    from services.gateway._turnstile import verify as _verify_turnstile  # noqa: PLC0415
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        body = {}
-    cf_token = (body or {}).get("cf-turnstile-response") or (body or {}).get("cf_turnstile_response")
-    allowed, reason = await _verify_turnstile(request, token=cf_token, source_ip=source_ip)
-    if not allowed:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Turnstile verification failed: {reason}",
-        )
-    if source_ip and source_ip != "unknown":
+    #
+    # N20 operator path (2026-06-21): mesh-authenticated internal callers
+    # are by definition NOT humans behind a browser — they're cron/Lambda/
+    # smoke-test scripts. Asking them to solve a CAPTCHA is operationally
+    # absurd. The mesh JWT (ES256 + trusted kid) already constitutes a
+    # stronger non-human-bot proof than Turnstile, so skip.
+    if not is_mesh_operator:
+        from services.gateway._turnstile import verify as _verify_turnstile  # noqa: PLC0415
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        cf_token = (body or {}).get("cf-turnstile-response") or (body or {}).get("cf_turnstile_response")
+        allowed, reason = await _verify_turnstile(request, token=cf_token, source_ip=source_ip)
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Turnstile verification failed: {reason}",
+            )
+    # Rate-limit key selection: mesh callers bucket by issuer (so a
+    # rogue/runaway operator script can't burn the whole 5-per-10-min
+    # budget); everyone else buckets by source IP as before. Same 5/10min
+    # cap either way — the operator path is NOT a way to dodge the limit,
+    # it's just a way to authenticate as an internal caller.
+    if is_mesh_operator and mesh_issuer:
+        rl_bucket: str | None = f"mesh:{mesh_issuer}"
+        rl_log_key = mesh_issuer
+    elif source_ip and source_ip != "unknown":
+        rl_bucket = source_ip
+        rl_log_key = source_ip
+    else:
+        rl_bucket = None
+        rl_log_key = "unknown"
+    if rl_bucket is not None:
         try:
             from sdk.common.redis import get_redis_client  # noqa: PLC0415
             redis_client = get_redis_client(settings.REDIS_URL, decode_responses=True)
-            rl_key = f"acp:demo_spawn_rl:{source_ip}"
+            rl_key = f"acp:demo_spawn_rl:{rl_bucket}"
             current = await redis_client.incr(rl_key)
             if int(current) == 1:
                 await redis_client.expire(rl_key, 600)  # 10 min
             if int(current) > 5:
                 logger.warning(
                     "demo_spawn_rate_limited",
-                    source_ip=source_ip, count=int(current),
+                    bucket=rl_log_key, count=int(current),
+                    mesh=is_mesh_operator,
                 )
                 raise HTTPException(
                     status_code=429,
@@ -833,6 +935,8 @@ async def spawn_demo_workspace(
         "demo_workspace_spawned",
         tenant_id=tenant_id, owner_email=owner_email,
         source_ip=x_forwarded_for or "unknown",
+        mesh_operator=is_mesh_operator,
+        mesh_issuer=mesh_issuer,
     )
     return {
         "success": True,
