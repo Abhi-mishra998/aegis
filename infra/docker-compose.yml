@@ -818,11 +818,21 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus-rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus_data:/prometheus
+    environment:
+      # N11 fix (2026-06-21) — dedicated /metrics scrape secret read by
+      # prometheus.yml via `secrets:` env-var substitution. Independent
+      # of INTERNAL_SECRET so a mesh-secret leak cannot scrape tenant
+      # gauges. Must be exported in `.env` before `docker compose up`.
+      - PROMETHEUS_SCRAPE_SECRET=${PROMETHEUS_SCRAPE_SECRET:-}
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
+      # Allow env-var substitution in the scrape config so the dedicated
+      # PROMETHEUS_SCRAPE_SECRET env var lands in the X-Prometheus-Secret
+      # header without committing the secret to the YAML file.
+      - --enable-feature=expand-external-labels
     depends_on:
       alertmanager:
         condition: service_healthy

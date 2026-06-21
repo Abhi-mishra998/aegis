@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import re
 import time
@@ -68,8 +69,9 @@ logger = structlog.get_logger(__name__)
 _SKIP_PATHS = frozenset(
     [
         # `/metrics` is intentionally NOT here — it leaks tenant-labelled
-        # Prom series. It's gated by an in-process X-Internal-Secret check
-        # inside the middleware dispatch (see _maybe_allow_metrics below).
+        # Prom series. N11 fix (2026-06-21) replaced the raw INTERNAL_SECRET
+        # gate with X-Mesh-Token (ES256) OR X-Prometheus-Secret (dedicated
+        # PROMETHEUS_SCRAPE_SECRET); see the metrics gate inside dispatch.
         # P2-2 fix 2026-06-21: /openapi.json removed from this no-auth list.
         # It's now auth-gated by an RBAC rule in _rbac_map.py so partners +
         # auditors can fetch the API contract with any token but anonymous
@@ -458,17 +460,45 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         if _path in _SKIP_PATHS or _prefix_skip:
             return await call_next(request)
 
-        # /metrics: require internal secret. Prometheus inside the VPC
-        # sends X-Internal-Secret in its scrape_configs; public ALB
-        # callers don't carry it and get 401.
+        # N11 fix (2026-06-21) — /metrics is no longer gated by raw
+        # INTERNAL_SECRET. Two valid auth paths now exist:
+        #
+        #   1. X-Mesh-Token: an ES256 mesh JWT (any Aegis service can
+        #      scrape the gateway with its own per-service key).
+        #   2. X-Prometheus-Secret: the dedicated PROMETHEUS_SCRAPE_SECRET
+        #      (used by the prometheus container, which has no mesh keypair).
+        #
+        # Either passes; absence/invalid of both returns 401. Critically,
+        # INTERNAL_SECRET is NOT accepted — that secret can leak to any
+        # service in the mesh and must not double as the metrics-scrape
+        # credential. The two are now rotated independently.
         if _path == "/metrics":
-            if request.headers.get("X-Internal-Secret") == settings.INTERNAL_SECRET:
+            # Mesh JWT path — preferred for Aegis-internal callers.
+            mesh_token = request.headers.get("X-Mesh-Token")
+            if mesh_token:
+                from sdk.common.auth import _verify_mesh_jwt
+                claims = _verify_mesh_jwt(mesh_token)
+                if claims and not claims.get("_expired"):
+                    return await call_next(request)
+            # Dedicated Prometheus scrape secret — only path for the
+            # prometheus container, which has no per-service keypair.
+            # Empty PROMETHEUS_SCRAPE_SECRET disables this lane (no
+            # accidental "" == "" match).
+            scrape_secret = request.headers.get("X-Prometheus-Secret")
+            if (
+                scrape_secret
+                and settings.PROMETHEUS_SCRAPE_SECRET
+                and hmac.compare_digest(scrape_secret, settings.PROMETHEUS_SCRAPE_SECRET)
+            ):
                 return await call_next(request)
             from fastapi.responses import JSONResponse as _JSON
             return _JSON(
-                {"error": "Unauthorized", "detail": "metrics endpoint is internal-only"},
+                {
+                    "error":  "Unauthorized",
+                    "detail": "metrics endpoint requires X-Mesh-Token or X-Prometheus-Secret",
+                },
                 status_code=401,
-                headers={"WWW-Authenticate": 'X-Internal-Secret realm="metrics"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis-metrics"'},
             )
 
         client_ip = request.client.host if request.client else "unknown"
