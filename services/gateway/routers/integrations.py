@@ -37,10 +37,78 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.db import get_db
+from sdk.common.config import settings
 from services.autonomy.webhook_executor import fire_jira, fire_servicenow
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+
+
+# P1-5 fix 2026-06-21: the gateway's `settings.DATABASE_URL` points to the
+# `acp_audit` pool (audit_user); the integrations tables (jira_integrations,
+# servicenow_integrations) live in `acp_identity` (owned by identity_user).
+# Querying via `get_db` returns `relation "..._integrations" does not exist`.
+# This module owns its own engine + session factory bound to the
+# acp_identity pool so the GET/PUT/PATCH/DELETE here hit the right schema.
+#
+# The URL is derived from the gateway's existing DATABASE_URL by swapping
+# user + db name. Per-db credentials are in pgbouncer's userlist.txt; we
+# rely on identity_user / identity_prod_pwd being present there (rendered
+# at boot from SSM SecureString — see user_data).
+import functools as _functools  # noqa: E402
+import re as _re  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker as _async_sessionmaker  # noqa: E402
+from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine  # noqa: E402
+
+
+def _identity_db_url() -> str:
+    """Translate the gateway's acp_audit URL into the acp_identity URL.
+
+    Input  : postgresql+asyncpg://audit_user:audit_prod_pwd@pgbouncer:6432/acp_audit
+    Output : postgresql+asyncpg://identity_user:identity_prod_pwd@pgbouncer:6432/acp_identity
+    """
+    url = settings.DATABASE_URL
+    # Replace user:password — both must match an entry in pgbouncer/userlist.txt.
+    url = _re.sub(r"://[^:]+:[^@]+@", "://identity_user:identity_prod_pwd@", url, count=1)
+    # Replace db name (last path segment).
+    url = _re.sub(r"/acp_[a-z_]+(\?|$)", r"/acp_identity\1", url)
+    return url
+
+
+@_functools.lru_cache
+def _identity_engine():
+    return _create_async_engine(
+        _identity_db_url(),
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=10, max_overflow=20, pool_timeout=15, pool_recycle=1800,
+        connect_args={
+            "server_settings": {
+                "application_name": "acp-gateway-integrations",
+                "statement_timeout": "10000",
+            },
+            "statement_cache_size": 0,
+        },
+    )
+
+
+@_functools.lru_cache
+def _identity_sessionmaker():
+    return _async_sessionmaker(
+        bind=_identity_engine(),
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
+async def get_identity_db():
+    """FastAPI dependency: yields an AsyncSession bound to acp_identity DB.
+
+    Use this for routes in this module that need jira_integrations,
+    servicenow_integrations, or scim_tokens — tables owned by identity-svc.
+    """
+    async with _identity_sessionmaker()() as session:
+        yield session
 
 
 # ── Pydantic IO models ──────────────────────────────────────────────────
@@ -98,7 +166,7 @@ def _to_public_dict(row) -> dict[str, Any]:
 @router.get("/jira")
 async def get_jira_config(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     """Return the tenant's Jira config (api_token redacted), or null."""
     from services.identity.models import JiraIntegration
@@ -114,7 +182,7 @@ async def get_jira_config(
 async def upsert_jira_config(
     request: Request,
     payload: JiraUpsert,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     """Create or update the tenant's Jira config in one call."""
     from services.identity.models import JiraIntegration
@@ -168,7 +236,7 @@ async def upsert_jira_config(
 @router.delete("/jira", status_code=204)
 async def delete_jira_config(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> None:
     """Remove the tenant's Jira config (incidents stop auto-creating tickets)."""
     from services.identity.models import JiraIntegration
@@ -191,7 +259,7 @@ async def delete_jira_config(
 @router.post("/jira/test")
 async def test_jira_config(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     """Create one test issue with the stored config. Returns the executor result."""
     from services.identity.models import JiraIntegration
@@ -274,7 +342,7 @@ def _snow_to_public_dict(row) -> dict[str, Any]:
 @router.get("/servicenow")
 async def get_snow_config(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     from services.identity.models import ServicenowIntegration
     tenant_id = _tenant_id_from_request(request)
@@ -291,7 +359,7 @@ async def get_snow_config(
 async def upsert_snow_config(
     request: Request,
     payload: ServicenowUpsert,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     from services.identity.models import ServicenowIntegration
     tenant_id = _tenant_id_from_request(request)
@@ -347,7 +415,7 @@ async def upsert_snow_config(
 @router.delete("/servicenow", status_code=204)
 async def delete_snow_config(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> None:
     from services.identity.models import ServicenowIntegration
     tenant_id = _tenant_id_from_request(request)
@@ -371,7 +439,7 @@ async def delete_snow_config(
 @router.post("/servicenow/test")
 async def test_snow_config(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     """Create one test incident with the stored config. Returns the executor result."""
     from services.identity.models import ServicenowIntegration
@@ -441,7 +509,7 @@ def _webhook_base_url(request: Request, vendor: str, tenant_id: uuid.UUID) -> st
 @router.post("/jira/webhook-secret/rotate", status_code=201)
 async def rotate_jira_webhook_secret(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     """Mint + return a fresh Jira webhook secret. Plaintext returned ONCE."""
     from services.identity.models import JiraIntegration
@@ -479,7 +547,7 @@ async def rotate_jira_webhook_secret(
 @router.post("/servicenow/webhook-secret/rotate", status_code=201)
 async def rotate_snow_webhook_secret(
     request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_identity_db)],
 ) -> dict:
     """Mint + return a fresh ServiceNow webhook secret. Plaintext returned ONCE."""
     from services.identity.models import ServicenowIntegration
