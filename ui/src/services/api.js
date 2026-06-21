@@ -1316,3 +1316,29 @@ export const teamService = {
     request(`/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
 }
 
+// Sprint S2 — Slack OAuth status used by Dashboard.jsx + WebhookSettings.jsx.
+// Restoring the export the bundle expected (it was lost in a prior refactor
+// and is the source of the `REQUEST_FAILED /sso/slack/status` console error +
+// the `slackOAuthService is undefined` runtime exception). Backend lives at
+// services/gateway/routers/slack_oauth.py if/when it ships; for now the
+// status endpoint returns `{connected: false}` on missing/404 so the UI's
+// "Connect Slack" CTA renders correctly.
+export const slackOAuthService = {
+  status: () =>
+    request('/sso/slack/status').catch((err) => {
+      // 404 / route-missing is the steady state until Slack OAuth ships;
+      // fail open so the UI shows "not connected" instead of crashing.
+      if (err && (err.status === 404 || err.status === 401)) {
+        return { data: { connected: false } }
+      }
+      throw err
+    }),
+  disconnect: () =>
+    request('/sso/slack/disconnect', { method: 'POST' }).catch((err) => {
+      if (err && err.status === 404) {
+        return { data: { ok: true } }
+      }
+      throw err
+    }),
+}
+
