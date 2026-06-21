@@ -10,7 +10,7 @@ import VoiceAgentButton from '../VoiceAgent/VoiceAgentButton'
 
 export default function Topbar({ onMenuClick, onCommandPalette }) {
   const navigate  = useNavigate()
-  const { user, tenant_id, updateAuth, addToast } = useAuth()
+  const { user, tenant_id, role: ctxRole, updateAuth, addToast } = useAuth()
   const { sseConnected } = useContext(AgentContext)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [openIncidents, setOpenIncidents] = useState(0)
@@ -30,10 +30,14 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
     return () => clearInterval(id)
   }, [fetchIncidentCount])
 
-  const role = useMemo(() => {
-    const stored = localStorage.getItem('user_role')
-    return stored ? stored.toUpperCase() : 'VIEWER'
-  }, [user])
+  // Role comes from AuthContext (mirrored from Clerk by ClerkAuthBridge or
+  // from /auth/token by the legacy login path). Previously this read
+  // localStorage directly — moved to context so the value tracks
+  // sessionStorage-backed metadata (N18) without a per-mount read.
+  const role = useMemo(
+    () => (ctxRole ? String(ctxRole).toUpperCase() : 'VIEWER'),
+    [ctxRole],
+  )
 
   useEffect(() => {
     if (!dropdownOpen) return

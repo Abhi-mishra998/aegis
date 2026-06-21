@@ -9,6 +9,7 @@ import KeyboardCheatsheet from './components/Common/KeyboardCheatsheet';
 import CommandPalette from './components/Common/CommandPalette';
 import { useHotkeys } from './hooks/useHotkeys';
 import { onAuthFailure } from './lib/authEvents';
+import { getSessionItem } from './lib/sessionStore';
 import { clearSessionMetadata } from './services/api';
 
 // Critical-path imports — first paint cost.
@@ -77,16 +78,17 @@ const RouteFallback = () => (
 );
 
 // Auth state is based on session metadata (tenant_id + expiry), not the token itself.
-// The JWT lives exclusively in the httpOnly cookie.
+// The JWT lives exclusively in the httpOnly cookie; metadata lives in
+// sessionStorage so it auto-clears on tab close and is XSS-bounded to the tab.
 const readSessionState = () => {
-  const tenantId = localStorage.getItem('tenant_id');
-  const expiry   = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
+  const tenantId = getSessionItem('tenant_id');
+  const expiry   = parseInt(getSessionItem('acp_token_expiry') || '0', 10);
   const isValid  = !!tenantId && expiry > Date.now();
   return {
     isAuthenticated: isValid,
-    user:            localStorage.getItem('user_email'),
+    user:            getSessionItem('user_email'),
     tenant_id:       isValid ? tenantId : null,
-    role:            isValid ? (localStorage.getItem('user_role') || null) : null,
+    role:            isValid ? (getSessionItem('user_role') || null) : null,
     token:           null,
   };
 };
@@ -219,7 +221,12 @@ function App() {
     }
   }, []);
 
-  // Multi-tab sync (other tabs calling logout / expiry)
+  // Multi-tab sync: sessionStorage is per-tab so the `storage` event will
+  // not fire across tabs. That is the intended security boundary — each
+  // tab carries its own Clerk session and ClerkAuthBridge mirrors metadata
+  // independently. A residual `storage` listener is kept for legacy
+  // localStorage writers (e.g. a future tab-shared logout signal) so a
+  // remote clearSessionMetadata still rehydrates auth state in this tab.
   useEffect(() => {
     const handleStorage = () => setAuth(readSessionState());
     window.addEventListener('storage', handleStorage);
@@ -252,7 +259,7 @@ function App() {
       });
     };
     const tick = () => {
-      const expiry = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
+      const expiry = parseInt(getSessionItem('acp_token_expiry') || '0', 10);
       if (expiry > 0 && Date.now() >= expiry) {
         fireExpired();
       }
@@ -286,7 +293,7 @@ function App() {
               />
             )}
 
-            {/* Mirrors Clerk session → legacy AuthContext + localStorage so the
+            {/* Mirrors Clerk session → legacy AuthContext + sessionStorage so the
                 existing ProtectedRoute / API client keep working without a
                 Clerk-specific rewrite of every consumer. */}
             <ClerkAuthBridge />

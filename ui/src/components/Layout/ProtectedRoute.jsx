@@ -3,18 +3,20 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { useUser } from '@clerk/react';
 import MainLayout from './MainLayout';
 import { clearSessionMetadata, authService } from '../../services/api';
+import { getSessionItem } from '../../lib/sessionStore';
 
 const ProtectedRoute = ({ children }) => {
   // Two truth sources during the Clerk migration:
   //   (1) Clerk session — authoritative for users that signed up via /signup.
-  //   (2) Legacy localStorage — covers the existing /auth/login flow that
+  //   (2) Legacy session metadata — covers the existing /auth/login flow that
   //       sets an httpOnly cookie + session metadata (admin@acp.local, etc).
   //
   // ClerkAuthBridge mirrors (1) into (2) so downstream consumers (Sidebar,
-  // NotificationCenter, api.js gate) keep working unchanged.
+  // NotificationCenter, api.js gate) keep working unchanged. Metadata lives
+  // in sessionStorage (N18) so it auto-clears on tab close.
   const { isLoaded: clerkLoaded, isSignedIn: clerkSignedIn } = useUser();
-  const tenantId = localStorage.getItem('tenant_id');
-  const expiry = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
+  const tenantId = getSessionItem('tenant_id');
+  const expiry = parseInt(getSessionItem('acp_token_expiry') || '0', 10);
   const legacyValid = !!tenantId && expiry > Date.now();
   const navigate = useNavigate();
   const verifiedRef = useRef(false);
@@ -23,7 +25,7 @@ const ProtectedRoute = ({ children }) => {
   // never swap back to the "syncing" screen on subsequent state churn —
   // background polls, SSE reconnects, Settings tab-switch query-string
   // navigations all cause a re-render, and any of them could read
-  // `tenant_id` from localStorage during the brief window where some
+  // `tenant_id` from sessionStorage during the brief window where some
   // unrelated fetch's 401 handler had cleared it. The original behaviour
   // unmounted the whole page on every such re-render, which the user
   // experienced as Settings tabs "blink and after that no content".
@@ -58,7 +60,7 @@ const ProtectedRoute = ({ children }) => {
   }
 
   // Bridge race: Clerk is signed in but tenant_id is still missing from
-  // localStorage. ONLY show the syncing screen if this is the FIRST render
+  // sessionStorage. ONLY show the syncing screen if this is the FIRST render
   // of this protected route — once we've handed off to MainLayout, never
   // unmount it on a transient tenant_id read miss. Without the
   // hasRenderedChildren gate, every Settings tab click that triggered a
