@@ -173,6 +173,13 @@ declare -A SSM_OVERLAY=(
     # /v1/messages proxy forwards to. Set in SSM as SecureString. Empty
     # disables the proxy (router returns 503 with config message).
     ["${SSM_PREFIX}/anthropic/upstream-key"]="UPSTREAM_ANTHROPIC_KEY"
+    # N11 deploy wiring (2026-06-21) — dedicated Prometheus /metrics scrape
+    # secret. After A11's middleware change, gateway /metrics rejects the
+    # raw INTERNAL_SECRET and only accepts X-Mesh-Token OR X-Prometheus-Secret
+    # (= PROMETHEUS_SCRAPE_SECRET). Without this overlay every fresh ASG
+    # instance launches with prometheus → gateway scrapes returning 401.
+    # SSM param is SecureString; rotate independently of every other secret.
+    ["${SSM_PREFIX}/prometheus/scrape-secret"]="PROMETHEUS_SCRAPE_SECRET"
 )
 {
     echo ""
