@@ -218,7 +218,20 @@ def internal_headers(request: Request | None = None) -> dict[str, str]:
     raises a validation error that surfaces as 500 (rather than the
     expected 200/4xx).
     """
-    headers: dict[str, str] = {**mesh_headers("gateway"),}
+    mesh = mesh_headers("gateway")
+    if not mesh:
+        # N6 — mesh_headers returned empty because mint_service_token raised
+        # (ACP_MESH_PRIVATE_KEY_PEM unset / SSM fetch failure / launch-template
+        # gap). The downstream call will receive no X-Mesh-Token and 403; the
+        # warning here gives operators the breadcrumb that the cause is local
+        # mint config, not a downstream service crash. The counter
+        # mesh_headers_mint_failures_total has already been incremented
+        # inside mesh_headers, so dashboards will light up in parallel.
+        logger.warning(
+            "internal_headers_mesh_token_unavailable",
+            note="downstream call will 403; check ACP_MESH_PRIVATE_KEY_PEM",
+        )
+    headers: dict[str, str] = {**mesh,}
     if request is not None:
         # Non-tenant client headers we forward (signature-bearing or
         # benign). X-Tenant-ID and X-Agent-ID are explicitly excluded
