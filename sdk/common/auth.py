@@ -1,11 +1,11 @@
 import hmac
 import json
-import logging
 import os
 import time
 from functools import lru_cache
 from typing import Any
 
+import structlog
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import APIKeyHeader
 from jose import ExpiredSignatureError, JWTError, jwt
@@ -13,7 +13,7 @@ from prometheus_client import Counter
 
 from sdk.common.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Metrics
@@ -23,6 +23,15 @@ MESH_JWT_AUTH_TOTAL = Counter(
     "mesh_jwt_auth_total",
     "Service mesh authentication attempts by method",
     ["method"],  # jwt | legacy | failed
+)
+
+# N22 (2026-06-21): operational visibility into ACP_MESH_TRUSTED_KEYS misconfiguration.
+# An unparseable trusted-keys env var fail-closes (all mesh JWTs fail to verify),
+# but the failure was silent — only a single ERROR-level log line. Surface it as a
+# Prometheus counter so monitoring/alerts fire immediately when this happens.
+MESH_TRUSTED_KEYS_PARSE_FAILURES = Counter(
+    "mesh_trusted_keys_parse_failures_total",
+    "Times ACP_MESH_TRUSTED_KEYS env var was unparseable",
 )
 
 # auto_error=False so we control the error message and status code (403 not 422)
@@ -108,6 +117,14 @@ def _mesh_trusted_public_keys() -> dict[str, bytes]:
 
     Empty when not configured — callers treat empty-registry as "fall back to
     the legacy HS256 path."
+
+    N22 (2026-06-21): a malformed env var used to log ERROR and silently
+    return ``{}``, which fails closed (every mesh JWT verification misses
+    the trusted_keys lookup and is rejected) but is operationally invisible.
+    Now we increment a Prometheus counter and log at CRITICAL so monitoring
+    fires immediately. Individually bad entries (e.g. a single non-string
+    PEM) are skipped instead of poisoning the whole dict — the rest of the
+    services keep working.
     """
     raw = (os.environ.get("ACP_MESH_TRUSTED_KEYS") or "").strip()
     if not raw:
@@ -115,14 +132,22 @@ def _mesh_trusted_public_keys() -> dict[str, bytes]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        logger.error("mesh_trusted_keys_malformed: %s", exc)
+        MESH_TRUSTED_KEYS_PARSE_FAILURES.inc()
+        logger.critical("mesh_trusted_keys_unparseable", error=str(exc))
         return {}
     if not isinstance(data, dict):
+        MESH_TRUSTED_KEYS_PARSE_FAILURES.inc()
+        logger.critical("mesh_trusted_keys_not_a_dict", type=type(data).__name__)
         return {}
     out: dict[str, bytes] = {}
     for name, pem_raw in data.items():
         if not isinstance(pem_raw, str):
-            continue
+            logger.warning(
+                "mesh_trusted_keys_bad_entry",
+                svc=name,
+                type=type(pem_raw).__name__,
+            )
+            continue  # Skip bad entries — don't poison the whole dict
         out[str(name)] = _b64_or_raw_pem(pem_raw)
     return out
 
@@ -208,7 +233,7 @@ def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
         trusted = _mesh_trusted_public_keys()
         pub_pem = trusted.get(kid)
         if pub_pem is None:
-            logger.warning("mesh_jwt_unknown_kid kid=%r", kid)
+            logger.warning("mesh_jwt_unknown_kid", kid=kid)
             return None
         try:
             return dict(
@@ -226,7 +251,7 @@ def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
             except Exception:
                 return {"_expired": True, "iss": kid}
         except JWTError as exc:
-            logger.warning("mesh_jwt_es256_invalid kid=%r error=%s", kid, exc)
+            logger.warning("mesh_jwt_es256_invalid", kid=kid, error=str(exc))
             return None
 
     # Back-compat HS256 lane.

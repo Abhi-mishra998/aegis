@@ -184,3 +184,66 @@ def test_verify_internal_secret_accepts_valid_es256_mesh_token(monkeypatch):
     token = mesh.mint_service_token("gateway")
     result = mesh.verify_internal_secret(secret=None, mesh_token=token)
     assert result.startswith("mesh:gateway")
+
+
+# ---------------------------------------------------------------------------
+# N22 — malformed ACP_MESH_TRUSTED_KEYS surfaces a Prometheus counter
+# ---------------------------------------------------------------------------
+
+
+def _parse_failures_count() -> float:
+    """Read the current value of the parse-failures counter."""
+    return mesh.MESH_TRUSTED_KEYS_PARSE_FAILURES._value.get()
+
+
+def test_unparseable_trusted_keys_increments_counter_and_returns_empty(monkeypatch):
+    """N22: a malformed JSON blob fails closed AND surfaces a metric.
+
+    Before this fix the failure was logged once at ERROR and silently swallowed.
+    Operators had no way to alert on the broken-config state from monitoring."""
+    before = _parse_failures_count()
+    monkeypatch.setenv("ACP_MESH_TRUSTED_KEYS", "{not valid json")
+    mesh._reset_mesh_caches_for_tests()
+
+    result = mesh._mesh_trusted_public_keys()
+    assert result == {}
+    after = _parse_failures_count()
+    assert after == before + 1, (
+        "MESH_TRUSTED_KEYS_PARSE_FAILURES must tick on JSON decode failure"
+    )
+
+
+def test_trusted_keys_top_level_non_dict_increments_counter(monkeypatch):
+    """A valid-JSON-but-wrong-shape payload (e.g. a list, a string) is also
+    a misconfiguration; the counter must fire so the alert path is the same."""
+    before = _parse_failures_count()
+    monkeypatch.setenv("ACP_MESH_TRUSTED_KEYS", json.dumps(["not", "a", "dict"]))
+    mesh._reset_mesh_caches_for_tests()
+
+    result = mesh._mesh_trusted_public_keys()
+    assert result == {}
+    after = _parse_failures_count()
+    assert after == before + 1
+
+
+def test_trusted_keys_skips_bad_entry_keeps_good_ones(monkeypatch):
+    """N22 (the silent-corruption corollary): if ONE entry is malformed (e.g.
+    a number where the PEM string should be), the function must NOT poison
+    the whole dict by returning ``{}``. The valid entries must survive so the
+    other services keep verifying tokens."""
+    _, good_pub = _gen_ec_keypair()
+    payload = {
+        "gateway": good_pub,  # valid string entry
+        "broken_svc": 12345,  # non-string entry — should be skipped, not poison the dict
+    }
+    before = _parse_failures_count()
+    monkeypatch.setenv("ACP_MESH_TRUSTED_KEYS", json.dumps(payload))
+    mesh._reset_mesh_caches_for_tests()
+
+    result = mesh._mesh_trusted_public_keys()
+    assert "gateway" in result, "valid entry must survive even when a sibling is bad"
+    assert "broken_svc" not in result, "non-string entries must be dropped"
+    # Bad individual entries warn but do NOT increment the parse-failures counter
+    # (that counter is reserved for top-level parse failures — alerting policy).
+    after = _parse_failures_count()
+    assert after == before
