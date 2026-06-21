@@ -144,7 +144,7 @@ Routes that legitimately need no role gate (`/health`, `/demo/spawn-workspace`, 
 /.well-known/security.txt (served by nginx)
 ```
 
-`/metrics` is **NOT** unauthed — gated on `X-Internal-Secret` (post-EH-2 hardening).
+`/metrics` is **NOT** unauthed — gated on `X-Mesh-Token` (ES256 mesh JWT) OR `X-Prometheus-Secret` (dedicated `PROMETHEUS_SCRAPE_SECRET`, independent of `INTERNAL_SECRET`). Post-N11 hardening (2026-06-21): the raw `INTERNAL_SECRET` lane was retired so a leak of the mesh secret can no longer scrape tenant-labelled counters.
 
 ## 7 · Cross-tenant invariants (every query)
 

@@ -29,7 +29,7 @@ RESTRICTED  → AWS Secrets Manager (per-key KMS CMK)
 ## Operator obligations per class
 
 - **Public** — verify integrity signature before publishing; never include PII.
-- **Internal** — Prometheus must scrape via `X-Internal-Secret`; never expose `/metrics` to the public ALB (verified in `services/gateway/middleware.py`).
+- **Internal** — Prometheus must scrape via `X-Prometheus-Secret` (a dedicated `PROMETHEUS_SCRAPE_SECRET` independent of the mesh `INTERNAL_SECRET`, so a mesh-secret leak cannot scrape tenant-labelled gauges) OR via a valid `X-Mesh-Token` (ES256). Never expose `/metrics` to the public ALB (verified in `services/gateway/middleware.py`).
 - **Confidential** — every SQL query MUST include `WHERE tenant_id = $1`. The RBAC matrix at `docs/security/rbac_matrix.md` enumerates which role can read which Confidential data. Cross-tenant access is structurally impossible (proved via `reports/e2e_test_2026_06_20/isolation_test.sh`).
 - **Restricted** — only `instance-role`-authenticated services may read SSM/Secrets Manager. CloudTrail logs every access. Suspected leak triggers the procedure in `docs/runbooks/secrets_rotation.md §5`.
 
