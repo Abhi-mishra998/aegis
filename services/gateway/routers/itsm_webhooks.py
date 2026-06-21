@@ -106,6 +106,36 @@ def _verify_hmac(secret: str, body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(expected.lower(), sig.lower())
 
 
+def _assert_url_tenant_matches_jwt(
+    request: Request,
+    url_tenant_id: uuid.UUID,
+) -> None:
+    """Defense-in-depth: if the request somehow arrives with a JWT-derived
+    ``request.state.tenant_id`` (e.g. someone removes the skip-list in
+    ``services/gateway/middleware.py`` or layers JWT auth on top of these
+    webhooks in the future), refuse cross-tenant payloads.
+
+    Today these endpoints are HMAC-only (see ``_SKIP_PATH_PREFIXES`` for
+    ``/webhooks/jira/`` + ``/webhooks/servicenow/``), so the per-tenant
+    ``webhook_secret`` IS the isolation mechanism — the URL ``tenant_id``
+    selects which row's secret to verify against, and an attacker forging
+    a webhook for tenant B would need tenant B's secret (which is a
+    256-bit value minted server-side, returned exactly once to an
+    OWNER/ADMIN JWT, and never re-exposed). N15 (audit 2026-06-21) flagged
+    a cross-check gap that does not exist as described today; this guard
+    pre-empts the regression risk.
+    """
+    jwt_tenant_id = getattr(request.state, "tenant_id", None)
+    if jwt_tenant_id is None:
+        # Skip-listed (or pre-auth phase) — HMAC is the only isolation.
+        return
+    if str(jwt_tenant_id) != str(url_tenant_id):
+        raise HTTPException(
+            status_code=403,
+            detail="JWT tenant does not match webhook URL tenant",
+        )
+
+
 async def _patch_incident_resolved(
     request: Request,
     tenant_id: uuid.UUID,
@@ -181,6 +211,12 @@ async def jira_webhook(
         # working" cause).
         await _touch_webhook_telemetry(db, JiraIntegration, tenant_id, "bad_signature")
         raise HTTPException(status_code=401, detail="bad signature")
+
+    # N15 (audit 2026-06-21) — defense-in-depth cross-check. No-op today
+    # (request.state.tenant_id is None because /webhooks/jira/ is in the
+    # middleware skip-list), but guards against a future regression that
+    # adds JWT auth on top without checking the URL tenant_id.
+    _assert_url_tenant_matches_jwt(request, tenant_id)
 
     try:
         body = await request.json()
@@ -269,6 +305,9 @@ async def servicenow_webhook(
                        tenant_id=str(tenant_id))
         await _touch_webhook_telemetry(db, ServicenowIntegration, tenant_id, "bad_signature")
         raise HTTPException(status_code=401, detail="bad signature")
+
+    # N15 (audit 2026-06-21) — defense-in-depth cross-check; see jira_webhook.
+    _assert_url_tenant_matches_jwt(request, tenant_id)
 
     try:
         body = await request.json()
