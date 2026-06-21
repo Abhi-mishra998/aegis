@@ -355,11 +355,18 @@ async def publish_event(
 
     Best-effort — never raises. SSE is a side channel and a publish failure
     must NOT bring down the originating handler.
+
+    N2 (2026-06-21) — the JSON body MUST carry a top-level ``tenant_id`` so the
+    SSE generator can independently verify the message was intended for the
+    authenticated client. The channel name alone is not a trust boundary —
+    any internal service with Redis access could publish to
+    ``acp:events:<otherTenant>`` and the receiver used to relay it blind.
     """
     if not tenant_id:
         return
     try:
         payload = json.dumps({
+            "tenant_id": tenant_id,
             "type": event_type,
             "data": data,
             "ts": int(time.time()),

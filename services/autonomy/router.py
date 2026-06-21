@@ -439,13 +439,19 @@ async def _publish_approval_resolved(
     reason: str | None,
 ) -> None:
     """Publish an ``approval_resolved`` SSE event mirroring the channel
-    convention used by services/gateway/_helpers.publish_event."""
+    convention used by services/gateway/_helpers.publish_event.
+
+    N2 (2026-06-21) — payload carries top-level ``tenant_id`` so the
+    gateway SSE generator can verify the message was intended for the
+    authenticated client. Trusting the channel name is not enough.
+    """
     import json as _json
     import time as _time
     global _redis_client
     if _redis_client is None:
         _redis_client = _Redis.from_url(_REDIS_URL, decode_responses=False)
     payload = _json.dumps({
+        "tenant_id": tenant_id,
         "type": "approval_resolved",
         "data": {
             "event_type":  event_type,
