@@ -53,7 +53,8 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -456,52 +457,96 @@ async def _handle_membership_created_or_updated(
 
     email = _extract_primary_email(user_payload)
 
-    user_q = await db.execute(
-        select(User).where(User.clerk_user_id == clerk_user_id),
-    )
-    user = user_q.scalar_one_or_none()
-
-    if user is None:
-        # Idempotent fallback: email-uniqueness can collide if the same person
-        # exists in a legacy row. Reuse that row instead of failing.
-        if email:
-            email_q = await db.execute(select(User).where(User.email == email))
-            user = email_q.scalar_one_or_none()
-
-    if user is None:
-        # Clerk owns the password; we store a placeholder hash so the
-        # NOT-NULL constraint is satisfied. The user cannot log in via the
-        # legacy /auth/login path with this row.
-        placeholder_hash = "$2b$12$ClerkOwnsThisPasswordPlaceholderHashXXXX"
-        # `users.org_id == users.tenant_id` is enforced by the
-        # ck_users_org_tenant_match check constraint (SaaS strict
-        # invariant). The legacy login path always sets both columns to
-        # the same UUID. For Clerk users, set both to tenant.tenant_id —
-        # the Organization PK (org.id) is a SEPARATE UUID and was the
-        # source of every Clerk-signup IntegrityError that prevented
-        # /auth/clerk/provision from ever completing.
-        user = User(
-            email=email or f"{clerk_user_id}@clerk.invalid",
-            hashed_password=placeholder_hash,
-            tenant_id=tenant.tenant_id,
-            org_id=tenant.tenant_id,
-            role=role_enum,
-            is_active=True,
-            clerk_user_id=clerk_user_id,
+    # N8 — Concurrent /auth/clerk/provision race. The pre-fix code did a
+    # SELECT WHERE clerk_user_id=X, then an INSERT if not found. Two
+    # concurrent provision calls for the same Clerk user could both pass
+    # the SELECT and both attempt INSERT; the second hit the UNIQUE
+    # constraint on clerk_user_id and surfaced as a 500 to the caller.
+    #
+    # Resolution is in two parts:
+    #
+    #   (1) Legacy-email-link path. If a pre-Clerk row exists with the
+    #       same email and a NULL clerk_user_id, we update *that* row to
+    #       link it to the Clerk identity. This is wrapped in a
+    #       try/except IntegrityError so that if two concurrent linkers
+    #       race on the same email row (or two requests linking
+    #       DIFFERENT legacy rows to the SAME clerk_user_id), the loser
+    #       falls through to the atomic UPSERT below instead of crashing.
+    #
+    #   (2) Atomic UPSERT keyed on clerk_user_id. Replaces the
+    #       SELECT-then-INSERT with INSERT ... ON CONFLICT
+    #       (clerk_user_id) DO UPDATE. The DO UPDATE branch idempotently
+    #       refreshes role/tenant_id/is_active so a concurrent loser
+    #       still sees the canonical post-write state.
+    if email:
+        legacy_q = await db.execute(
+            select(User).where(
+                User.email == email,
+                User.clerk_user_id.is_(None),
+            ),
         )
-        db.add(user)
-    else:
-        user.role = role_enum
-        user.tenant_id = tenant.tenant_id
-        user.org_id = tenant.tenant_id
-        user.is_active = True
-        if user.clerk_user_id is None:
-            user.clerk_user_id = clerk_user_id
+        legacy_user = legacy_q.scalar_one_or_none()
+        if legacy_user is not None:
+            legacy_user.clerk_user_id = clerk_user_id
+            legacy_user.role = role_enum
+            legacy_user.tenant_id = tenant.tenant_id
+            legacy_user.org_id = tenant.tenant_id
+            legacy_user.is_active = True
+            try:
+                await db.commit()
+                return {
+                    "user_id": str(legacy_user.id),
+                    "tenant_id": str(tenant.tenant_id),
+                    "role": role_enum.value,
+                }
+            except IntegrityError:
+                # Another concurrent request already linked a different
+                # row to this clerk_user_id (or this same legacy row was
+                # re-linked under us). Fall through to UPSERT — the
+                # winning side has the canonical row already.
+                await db.rollback()
 
+    # Clerk owns the password; we store a placeholder hash so the
+    # NOT-NULL constraint is satisfied. The user cannot log in via the
+    # legacy /auth/login path with this row.
+    placeholder_hash = "$2b$12$ClerkOwnsThisPasswordPlaceholderHashXXXX"
+    # `users.org_id == users.tenant_id` is enforced by the
+    # ck_users_org_tenant_match check constraint (SaaS strict
+    # invariant). The legacy login path always sets both columns to
+    # the same UUID. For Clerk users, set both to tenant.tenant_id —
+    # the Organization PK (org.id) is a SEPARATE UUID and was the
+    # source of every Clerk-signup IntegrityError that prevented
+    # /auth/clerk/provision from ever completing.
+    insert_values = {
+        "email": email or f"{clerk_user_id}@clerk.invalid",
+        "hashed_password": placeholder_hash,
+        "tenant_id": tenant.tenant_id,
+        "org_id": tenant.tenant_id,
+        "role": role_enum,
+        "is_active": True,
+        "clerk_user_id": clerk_user_id,
+    }
+    upsert_stmt = (
+        pg_insert(User)
+        .values(**insert_values)
+        .on_conflict_do_update(
+            index_elements=["clerk_user_id"],
+            set_={
+                "role": role_enum,
+                "tenant_id": tenant.tenant_id,
+                "org_id": tenant.tenant_id,
+                "is_active": True,
+                "updated_at": func.now(),
+            },
+        )
+        .returning(User.id)
+    )
+    result = await db.execute(upsert_stmt)
+    user_id = result.scalar_one()
     await db.commit()
 
     return {
-        "user_id": str(user.id),
+        "user_id": str(user_id),
         "tenant_id": str(tenant.tenant_id),
         "role": role_enum.value,
     }
