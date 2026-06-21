@@ -155,7 +155,9 @@ async def _commit_one(db: AsyncSession, tenant_id, day: date) -> None:
             )
             return
         leaves: list[str] = []
-        root = empty_epoch_root_hash(prev_hash)
+        # N28 (2026-06-21): pass `day` so the v2 seed includes the date —
+        # two consecutive empty days no longer collide on the same root.
+        root = empty_epoch_root_hash(prev_hash, day)
     else:
         leaves = [_leaf_for_row(r) for r in rows]
         root = build_root(leaves)

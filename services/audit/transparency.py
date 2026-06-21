@@ -131,15 +131,72 @@ async def _persist_root(
     await db.commit()
 
 
-def empty_epoch_root_hash(prev_root_hash: str | None) -> str:
-    """Deterministic root for an empty epoch (zero audit rows that day).
+def empty_epoch_root_hash_v1(prev_root_hash: str | None) -> str:
+    """Legacy v1 empty-epoch hash — retained ONLY for verifying historical roots.
 
-    Customers + auditors compute the same value offline from `prev_root_hash`.
-    Domain-separated with the sentinel `"transparency_empty_epoch_v1\\n"` so
-    no leaf-set hash can ever collide with an empty-epoch hash.
+    N28 (2026-06-21): the v1 formula was
+
+        sha256(prev_root_hash || "\\ntransparency_empty_epoch_v1\\n")
+
+    which collides whenever ``prev_root_hash`` is shared across two
+    empty-epoch markers — most concretely, every tenant's genesis empty
+    day (when prev=None) hashes to the same value, and any cross-tenant
+    coincidence of prev_root_hash bytes also collides.
+
+    The scheduler today never actually persists a v1 marker when
+    prev_hash is None (see ``transparency_scheduler._commit_one``),
+    so the genesis-collision case wasn't exploited in production, but
+    the cross-tenant collision still violates per-tenant unforgeability.
+
+    v2 (below) closes the collision by mixing the ``root_date`` into the
+    seed. Existing v1 roots stay verifiable by leaving this function on
+    disk — operators can re-derive the historical hash and confirm.
+
+    DO NOT call this for new markers. Use ``empty_epoch_root_hash``.
     """
     seed = (prev_root_hash or "").encode("ascii") + b"\ntransparency_empty_epoch_v1\n"
     return hashlib.sha256(seed).hexdigest()
+
+
+_EMPTY_EPOCH_DOMAIN_V2 = "transparency_empty_epoch_v2"
+
+
+def empty_epoch_root_hash(
+    prev_root_hash: str | None, root_date: date | None = None,
+) -> str:
+    """Deterministic root for an empty epoch (zero audit rows that day).
+
+    Customers + auditors compute the same value offline from
+    ``prev_root_hash`` + ``root_date``. Domain-separated with the
+    sentinel ``"transparency_empty_epoch_v2"`` so no leaf-set hash can
+    collide with an empty-epoch hash, and so no two distinct empty days
+    can share a root even when they share a prev (N28 fix).
+
+    Seed format (v2):
+
+        sha256(
+          (prev_root_hash or "")    +
+          "|" + root_date.isoformat() +
+          "|" + "transparency_empty_epoch_v2"
+        )
+
+    ``root_date`` is optional ONLY so existing v1 callers don't 422 the
+    instant this lands; if omitted, we route to the legacy v1 formula
+    and emit a structured warning. Every new caller in this module
+    passes the date explicitly.
+    """
+    if root_date is None:
+        # Back-compat shim: route to v1 so the caller's output is
+        # unchanged byte-for-byte. New callers (the same module's
+        # scheduler + compute_root paths, updated in this commit) pass
+        # the date and land in the v2 branch below.
+        return empty_epoch_root_hash_v1(prev_root_hash)
+    seed = (
+        (prev_root_hash or "")
+        + "|" + root_date.isoformat()
+        + "|" + _EMPTY_EPOCH_DOMAIN_V2
+    )
+    return hashlib.sha256(seed.encode("ascii")).hexdigest()
 
 
 def _sign_root(
@@ -223,9 +280,12 @@ async def compute_root(
     leaf_range_start_id: uuid.UUID | None = None
     leaf_range_end_id:   uuid.UUID | None = None
     if not rows:
-        # Empty-epoch marker: deterministic hash over prev_root_hash + domain
-        # separator. Keeps the Merkle-of-Merkles chain unbroken on quiet days.
-        root = empty_epoch_root_hash(prev_hash)
+        # Empty-epoch marker: deterministic hash over prev_root_hash + date
+        # + domain separator. Keeps the Merkle-of-Merkles chain unbroken on
+        # quiet days. N28 (2026-06-21): root_date is now in the seed so two
+        # consecutive empty days never collide (was a real bug — the
+        # genesis-empty case across tenants all hashed to the same value).
+        root = empty_epoch_root_hash(prev_hash, day)
         leaves: list[str] = []
     else:
         leaves = [_leaf_for_row(r) for r in rows]
