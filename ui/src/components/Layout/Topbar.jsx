@@ -6,7 +6,6 @@ import { authService, incidentService } from '../../services/api'
 import { LogOut, Menu, ChevronDown, Settings, User, Zap, Bot, Command, AlertTriangle } from 'lucide-react'
 import NotificationCenter from '../Common/NotificationCenter'
 import AgentScopePicker from './AgentScopePicker'
-import VoiceAgentButton from '../VoiceAgent/VoiceAgentButton'
 
 export default function Topbar({ onMenuClick, onCommandPalette }) {
   const navigate  = useNavigate()
@@ -91,11 +90,8 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
         <AgentScopePicker variant="header" />
       </div>
 
-      {/* Right: voice agent + SSE status + cmd palette + notifications + user menu */}
+      {/* Right: SSE status + cmd palette + notifications + user menu */}
       <div className="flex items-center gap-2 shrink-0">
-        {/* Voice Agent — opens the killer animated overlay */}
-        <VoiceAgentButton />
-
         {/* Live SSE indicator */}
         <div
           className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--bg-surface-elevated)] border border-[var(--border-subtle)]"
