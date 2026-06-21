@@ -42,6 +42,21 @@ MESH_TRUSTED_KEYS_PARSE_FAILURES = Counter(
     "Times ACP_MESH_TRUSTED_KEYS env var was unparseable",
 )
 
+# N27 (2026-06-21): clock-skew visibility for mesh JWTs. Mesh tokens have a
+# 5-minute TTL; a host whose NTP drifts past the boundary starts returning
+# `_expired: True` for every token from peer services. A clock-skew storm
+# (NTP daemon stopped, container time jump) becomes invisible without a
+# dedicated counter — both /metrics and the upstream caller see the token
+# as "expired" rather than "wrong clock". Labels: `issuer` from the
+# unverified payload (signature wasn't checked, but kid is cryptographically
+# bound to the issuer name, so this label is reliable enough for alerting).
+MESH_JWT_EXPIRED_TOTAL = Counter(
+    "mesh_jwt_expired_total",
+    "Mesh JWT verifications that failed because the token was past exp. "
+    "A spike per-issuer almost always means clock skew on either side.",
+    ["issuer"],
+)
+
 # auto_error=False so we control the error message and status code (403 not 422)
 internal_secret_header = APIKeyHeader(name="X-Internal-Secret", auto_error=False)
 
@@ -250,6 +265,20 @@ def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
     ``{"_expired": True, "iss": ...}`` so callers can distinguish expiry from
     other validation failures (mesh tokens rotate often; a 60-second skew
     during rotation must not 500 the request).
+
+    Clock-skew design (N27, 2026-06-21):
+      Mesh tokens use a 5-minute TTL (``_MESH_DEFAULT_TTL_SECONDS``). The
+      verifier passes no ``leeway`` to ``jose.jwt.decode``, so it enforces
+      strict ``exp``. The trade-off:
+        * Pro: a host with a drifting clock can't extend the effective
+          lifetime of a stolen token past the issuer's intent.
+        * Con: an NTP failure on one host turns the entire mesh into a
+          stream of ``ExpiredSignatureError`` events instead of a clean
+          authentication signal.
+      The ``mesh_jwt_expired_total{issuer}`` counter incremented in the
+      ExpiredSignatureError branch below makes that storm visible — a
+      Grafana alert on a per-issuer expired-rate spike maps directly to
+      a clock-skew incident on the named service.
     """
     try:
         header = jwt.get_unverified_header(token)
@@ -277,11 +306,21 @@ def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
             )
         )
     except ExpiredSignatureError:
+        # N27: increment the per-issuer expired counter so an NTP-skew
+        # storm on one peer is visible in Prometheus instead of silently
+        # turning into a mesh-wide auth failure. iss comes from the
+        # unverified payload — the kid is cryptographically bound to a
+        # trusted PEM, so it's a reliable label for alerting.
         try:
             unverified = jwt.get_unverified_claims(token)
-            return {"_expired": True, "iss": unverified.get("iss", kid)}
+            issuer = str(unverified.get("iss", kid) or kid or "unknown")
         except Exception:
-            return {"_expired": True, "iss": kid}
+            issuer = kid or "unknown"
+        try:
+            MESH_JWT_EXPIRED_TOTAL.labels(issuer=issuer).inc()
+        except Exception:  # pragma: no cover — metric backend down
+            pass
+        return {"_expired": True, "iss": issuer}
     except JWTError as exc:
         logger.warning("mesh_jwt_es256_invalid kid=%r error=%s", kid, exc)
         return None
