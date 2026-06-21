@@ -1,6 +1,14 @@
 # Prometheus scrape configuration for ACP (2026-05-14)
 # Each service exposes /metrics via prometheus_fastapi_instrumentator + our
 # custom counters/gauges in sdk/utils.py.
+#
+# N11 fix (2026-06-21) — the gateway /metrics endpoint now rejects raw
+# INTERNAL_SECRET. Prometheus authenticates with a DEDICATED secret
+# (PROMETHEUS_SCRAPE_SECRET), independent of the mesh shared secret so a
+# leak of the mesh secret cannot scrape tenant-labelled counters
+# (AUTH_FAILURES_TOTAL by role, TENANT_ISOLATION_VIOLATIONS_TOTAL, …).
+# Rotation: rotate PROMETHEUS_SCRAPE_SECRET independently of every
+# other credential; only the gateway middleware + this file need it.
 global:
   scrape_interval:     15s
   evaluation_interval: 15s
@@ -19,16 +27,17 @@ alerting:
 scrape_configs:
   - job_name: acp-services
     metrics_path: /metrics
-    # /metrics is internal-only on the gateway; ship the INTERNAL_SECRET
-    # in every scrape so the gateway middleware lets us through. Identity,
-    # audit, policy etc are reached on their direct ports (not via the
-    # gateway), so they don't enforce this — only the gateway does.
+    # /metrics is internal-only on the gateway; ship the dedicated
+    # PROMETHEUS_SCRAPE_SECRET in every scrape so the gateway middleware
+    # lets us through. Identity, audit, policy etc are reached on their
+    # direct ports (not via the gateway), so they don't enforce this —
+    # only the gateway does. The header is harmless extra noise to them.
     authorization:
       type: ""
     http_headers:
-      X-Internal-Secret:
+      X-Prometheus-Secret:
         secrets:
-          - "${INTERNAL_SECRET}"
+          - "${PROMETHEUS_SCRAPE_SECRET}"
     static_configs:
       - targets:
           - "gateway:8000"
