@@ -82,13 +82,28 @@ const _isIdentityPath = (url) => {
   return _IDENTITY_PATHS.has(path);
 };
 
+// Read a Response body exactly once, even if an upstream caller already
+// touched it. Returns "" if the body has been consumed elsewhere (rare —
+// happens when peek-then-fall-through paths race with a logging hook, or a
+// browser extension wraps fetch). Without this guard the second .text()
+// call throws "Failed to execute 'text' on 'Response': body stream already
+// read" and the whole error path collapses into a generic REQUEST_FAILED.
+const _readBodyOnce = async (res) => {
+  if (res.bodyUsed) return "";
+  try {
+    return await res.clone().text();
+  } catch (_) {
+    try { return await res.text(); } catch (_) { return ""; }
+  }
+};
+
 // Shared status → JSON pipeline. Used by request() AND by the
 // post-Clerk-refresh retry below so a fresh-token replay surfaces the
 // success body (or downstream 4xx/5xx) through the exact same handling
 // the caller already expects.
 const _handleResponse = async (res, url) => {
   if (res.status === 429) {
-    const txt = await res.text().catch(() => "");
+    const txt = await _readBodyOnce(res);
     let msg = "Too many requests — please wait a moment and try again.";
     try { const p = JSON.parse(txt); msg = p.detail || p.error || msg; } catch {}
     console.warn(`RATE_LIMITED [429] ${url}:`, msg);
@@ -98,7 +113,7 @@ const _handleResponse = async (res, url) => {
   }
 
   if (!res.ok) {
-    const errorText = await res.text();
+    const errorText = await _readBodyOnce(res);
     let parsedError = errorText;
     let parsedBody = null;
     try {
@@ -115,6 +130,8 @@ const _handleResponse = async (res, url) => {
       // downstream renders ("Decision: <HTML>…") don't leak raw markup.
       if (typeof errorText === "string" && /^\s*<(!doctype|html|head|body|center)/i.test(errorText)) {
         parsedError = `Upstream returned HTML ${res.status}`;
+      } else if (!errorText) {
+        parsedError = `Request failed (${res.status})`;
       }
     }
     console.error(`API_ERROR [${res.status}] ${url}:`, parsedError);
@@ -126,7 +143,7 @@ const _handleResponse = async (res, url) => {
     throw apiErr;
   }
 
-  const text = await res.text();
+  const text = await _readBodyOnce(res);
   const json = text ? JSON.parse(text) : {};
 
   const sessionTenant = getSessionItem("tenant_id");
