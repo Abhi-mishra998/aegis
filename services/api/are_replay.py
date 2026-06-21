@@ -15,6 +15,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from services.api.are_worker import _build_trace
 
 logger = structlog.get_logger(__name__)
@@ -75,7 +76,7 @@ async def replay_rules(
                 f"{_AUDIT_BASE}/logs",
                 params={"limit": min(limit, 500), "offset": 0},
                 headers={
-                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                    **mesh_headers("api"),
                     "X-Tenant-ID": str(tenant_id),
                 },
             )

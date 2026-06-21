@@ -34,6 +34,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from sdk.common.db import get_db
 
 logger = structlog.get_logger(__name__)
@@ -120,7 +121,7 @@ async def _patch_incident_resolved(
     client = getattr(request.app.state, "client", None) or httpx.AsyncClient()
     url = f"{settings.API_SERVICE_URL.rstrip('/')}/incidents/{incident_id}"
     headers = {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        **mesh_headers("gateway"),
         "X-Tenant-ID":       str(tenant_id),
         "X-ACP-Actor":       actor,
         "Content-Type":      "application/json",

@@ -181,6 +181,32 @@ def mint_service_token(service_name: str, ttl_seconds: int = _MESH_DEFAULT_TTL_S
     return jwt.encode(payload, _mesh_legacy_signing_key(), algorithm=_MESH_LEGACY_ALGORITHM)
 
 
+def mesh_headers(my_service: str) -> dict[str, str]:
+    """Return the dual mesh-auth headers every internal HTTP caller should send.
+
+    P1-1 Phase 1 (2026-06-21): until this helper landed, every caller
+    sent ``X-Internal-Secret`` raw and only the gateway minted ``X-Mesh-Token``.
+    Now every internal call dual-headers — receivers prefer the JWT and fall
+    back to the legacy shared secret. Once Phase 2 wires per-service ES256
+    keys (already in SSM at ``/aegis-prodha/mesh/{svc}/private``) the mint
+    flips to asymmetric and INTERNAL_SECRET stops being load-bearing.
+
+    Mint failures are swallowed: if jose or settings are unavailable the
+    caller still has the legacy header to fall back on. The receiver makes
+    the policy decision about whether legacy is acceptable; we just provide
+    the credentials.
+    """
+    h: dict[str, str] = {}
+    secret = (settings.INTERNAL_SECRET or "").strip()
+    if secret:
+        h["X-Internal-Secret"] = secret
+    try:
+        h["X-Mesh-Token"] = mint_service_token(my_service)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mesh_headers_mint_failed service=%r error=%s", my_service, exc)
+    return h
+
+
 def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
     """Validate a mesh JWT.
 

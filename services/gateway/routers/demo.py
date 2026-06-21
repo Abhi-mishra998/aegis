@@ -714,12 +714,12 @@ async def spawn_demo_workspace(
     # Pull internal_secret + identity URL through settings the same way
     # every other gateway-to-identity call does.
     identity_url = settings.IDENTITY_SERVICE_URL.rstrip("/")
-    internal_secret = settings.INTERNAL_SECRET
 
+    from sdk.common.auth import mesh_headers
     try:
         resp = await request.app.state.client.post(
             f"{identity_url}/auth/demo/spawn",
-            headers={"X-Internal-Secret": internal_secret},
+            headers=mesh_headers("gateway"),
             timeout=8.0,
         )
     except Exception as exc:  # noqa: BLE001 - any error => 503 to client

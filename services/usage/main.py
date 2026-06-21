@@ -10,6 +10,7 @@ import structlog
 from fastapi import FastAPI
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from sdk.common.db import engine, get_session_factory
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
@@ -21,7 +22,7 @@ from services.usage.router.usage import router as usage_router
 logger = structlog.get_logger(__name__)
 
 _INTERNAL_HEADERS = {
-    "X-Internal-Secret": settings.INTERNAL_SECRET,
+    **mesh_headers("usage"),
     "Content-Type": "application/json",
 }
 
@@ -296,7 +297,7 @@ async def pending_billing_recovery_worker() -> None:
                             f"{settings.USAGE_SERVICE_URL.rstrip('/')}/billing/events",
                             json=billing_payload,
                             headers={
-                                "X-Internal-Secret": settings.INTERNAL_SECRET,
+                                **mesh_headers("usage"),
                                 "X-Tenant-ID": row.tenant_id,
                                 "Content-Type": "application/json",
                             },
@@ -315,7 +316,7 @@ async def pending_billing_recovery_worker() -> None:
                             f"{settings.USAGE_SERVICE_URL.rstrip('/')}/usage/record",
                             json=usage_payload,
                             headers={
-                                "X-Internal-Secret": settings.INTERNAL_SECRET,
+                                **mesh_headers("usage"),
                                 "Content-Type": "application/json",
                             },
                         )

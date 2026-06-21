@@ -301,8 +301,9 @@ async def _patch_incident_external_link(
         logger.warning("incident_link_back_no_secret",
                        reason="INTERNAL_SECRET unset; cannot call api-svc")
         return
+    from sdk.common.auth import mesh_headers
     headers = {
-        "X-Internal-Secret": internal_secret,
+        **mesh_headers("autonomy"),
         "X-Tenant-ID":       str(tenant_id),
         "X-ACP-Actor":       "incident_watcher:link-back",
         "Content-Type":      "application/json",

@@ -16,6 +16,7 @@ import httpx
 import structlog
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 
 logger = structlog.get_logger(__name__)
 
@@ -74,7 +75,7 @@ async def _policy_gate(tenant_id: str, agent_id: str, tool: str,
                     "policy_version": "v1",
                     "metadata": {"source": "are_executor", "action": action_type},
                 },
-                headers={"X-Internal-Secret": settings.INTERNAL_SECRET,
+                headers={**mesh_headers("api"),
                          "X-Tenant-ID": tenant_id},
             )
             if resp.status_code == 200:
@@ -114,7 +115,7 @@ async def _do_isolate(agent_id: str) -> str:
         await c.patch(
             f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}",
             json={"status": "suspended"},
-            headers={"X-Internal-Secret": settings.INTERNAL_SECRET},
+            headers={**mesh_headers("api"),},
         )
     logger.warning("are_exec_isolate", agent=agent_id[:8])
     return f"ISOLATE_AGENT:{agent_id[:8]}"
@@ -125,7 +126,7 @@ async def _do_block_tool(agent_id: str, tool: str, ref: str) -> str:
         await c.post(
             f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}/permissions",
             json={"tool_name": tool, "action": "DENY", "granted_by": f"are:{ref[:8]}"},
-            headers={"X-Internal-Secret": settings.INTERNAL_SECRET},
+            headers={**mesh_headers("api"),},
         )
     return f"BLOCK_TOOL:{tool}"
 
@@ -152,7 +153,7 @@ async def _do_trigger_playbook(playbook_id: str, incident: dict, tenant_id: str)
                     "severity":     incident.get("severity", "HIGH"),
                 }},
                 headers={
-                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                    **mesh_headers("api"),
                     "X-Tenant-ID": tenant_id,
                 },
             )

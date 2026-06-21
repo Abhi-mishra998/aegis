@@ -16,6 +16,7 @@ import structlog
 from fastapi import Request, Response
 
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.auth import mesh_headers
 from services.decision.schemas import Decision
 from services.gateway.client import service_client
 from services.gateway.trust_emitter import emit_graph_event, map_decision_to_outcome
@@ -181,7 +182,7 @@ class _AuditMixin:
             from sdk.common.auth import mint_service_token as _mint
             dlq_headers = {
                 "X-Mesh-Token": _mint("gateway"),
-                "X-Internal-Secret": _settings.INTERNAL_SECRET,
+                **mesh_headers("gateway"),
                 "Content-Type": "application/json",
             }
             resp = await client.post(

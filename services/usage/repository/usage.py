@@ -9,13 +9,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from services.usage.models.usage import UsageRecord
 from services.usage.schemas.usage import UsageCreate, UsageSummary
 
 logger = structlog.get_logger(__name__)
 
 _INTERNAL_HEADERS = {
-    "X-Internal-Secret": settings.INTERNAL_SECRET,
+    **mesh_headers("usage"),
     "Content-Type": "application/json",
 }
 

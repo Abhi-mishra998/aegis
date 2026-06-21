@@ -79,6 +79,7 @@ import structlog
 from fastapi import HTTPException, Request, Response
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 
 logger = structlog.get_logger(__name__)
 
@@ -217,7 +218,7 @@ def internal_headers(request: Request | None = None) -> dict[str, str]:
     raises a validation error that surfaces as 500 (rather than the
     expected 200/4xx).
     """
-    headers: dict[str, str] = {"X-Internal-Secret": settings.INTERNAL_SECRET}
+    headers: dict[str, str] = {**mesh_headers("gateway"),}
     if request is not None:
         # Non-tenant client headers we forward (signature-bearing or
         # benign). X-Tenant-ID and X-Agent-ID are explicitly excluded

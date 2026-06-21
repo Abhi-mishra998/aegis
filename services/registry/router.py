@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.audit_stream import push_audit_event
+from sdk.common.auth import mesh_headers
 from sdk.common.auth import verify_internal_secret
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
@@ -227,7 +228,7 @@ async def get_agent_profile(
 
     audit_url = settings.AUDIT_SERVICE_URL.rstrip("/")
     headers = {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        **mesh_headers("registry"),
         "X-Tenant-ID": str(tenant_id),
     }
 

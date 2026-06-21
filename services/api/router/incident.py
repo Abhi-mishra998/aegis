@@ -12,6 +12,7 @@ from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import mesh_headers
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
@@ -300,7 +301,7 @@ async def _apply_action_effect(
             await client.post(
                 f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}/permissions",
                 json={"tool_name": "*", "action": "DENY", "granted_by": f"incident:{incident_id}"},
-                headers={"X-Internal-Secret": settings.INTERNAL_SECRET},
+                headers={**mesh_headers("api"),},
             )
         logger.warning("agent_blocked", agent_id=agent_id, incident_id=incident_id)
 
@@ -310,7 +311,7 @@ async def _apply_action_effect(
             await client.patch(
                 f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}",
                 json={"status": "suspended"},
-                headers={"X-Internal-Secret": settings.INTERNAL_SECRET},
+                headers={**mesh_headers("api"),},
             )
         logger.warning("agent_isolated", agent_id=agent_id, incident_id=incident_id)
 

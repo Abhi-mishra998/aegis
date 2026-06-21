@@ -36,6 +36,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
@@ -141,7 +142,7 @@ async def _apply_tier(tenant_id: str, tier: str) -> None:
         "monthly_request_cap":  quotas["monthly"],
     }
     headers = {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        **mesh_headers("gateway"),
         "Content-Type": "application/json",
     }
     url = f"{settings.IDENTITY_SERVICE_URL.rstrip('/')}/admin/tenants/{tenant_id}"

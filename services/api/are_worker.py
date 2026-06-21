@@ -21,6 +21,7 @@ import httpx
 import structlog
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from services.api.are_executor import AREExecutor
 from services.api.are_index import AREIndex
 
@@ -263,7 +264,7 @@ async def _audit_decision(
                         "trace":          trace,
                     },
                 },
-                headers={"X-Internal-Secret": settings.INTERNAL_SECRET,
+                headers={**mesh_headers("api"),
                          "X-Tenant-ID": tenant_id},
             )
     except Exception as exc:
