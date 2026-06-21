@@ -15,8 +15,13 @@ ON CONFLICT DO NOTHING). Same audit_id can never produce two usage rows.
 
 Failure modes
 -------------
-- transient (5xx, timeout, network): retry_count += 1, exponential backoff
-- terminal (4xx other than 409, malformed): retry_count += 1, eventually poisoned
+- success (2xx, 409): processed; 409 means "already recorded" — semantically
+  equivalent to the ON CONFLICT DO NOTHING idempotent-write outcome and MUST
+  NOT be treated as transient (retry forever) or terminal (poison the row).
+- transient (5xx, 408, 429, network): leave row pending, retry next poll;
+  do NOT increment retry_count (downstream fault, not the event's fault).
+- terminal (4xx other than 408/429/409, malformed): retry_count += 1,
+  eventually poisoned.
 - poisoned (retry_count > MAX): status='failed', alertable via OUTBOX_POISON_TOTAL
 
 The poll loop is single-threaded inside this process. To run multiple workers
@@ -109,10 +114,20 @@ async def _forward_to_usage(
             headers=headers,
             timeout=5.0,
         )
-        if 200 <= resp.status_code < 300:
+        # 2xx OR 409 = success-equivalent. 409 is the "already delivered /
+        # unique-constraint hit" response from idempotent endpoints (e.g.
+        # services/usage/billing_routes/router.py). The hot path
+        # /usage/record uses ON CONFLICT DO NOTHING and returns 2xx, but
+        # adjacent idempotent endpoints — and any new caller — may return
+        # 409 to mean "your event was already recorded; nothing to do."
+        # Treating 409 as terminal would poison legitimately-delivered
+        # events; treating it as transient would retry forever. Both are
+        # wrong. The right answer is: this event has been recorded, mark
+        # it completed.
+        if 200 <= resp.status_code < 300 or resp.status_code == 409:
             return True, None, False
         # 5xx, 408 (timeout), 429 (rate-limit), 503 (unavailable) = transient (downstream-side)
-        # 4xx other than the above = terminal (this event will never succeed; poison it)
+        # 4xx other than 408/429/409 = terminal (this event will never succeed; poison it)
         transient = resp.status_code >= 500 or resp.status_code in (408, 429)
         return False, f"http_{resp.status_code}:{resp.text[:120]}", transient
     except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
