@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, text
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, UniqueConstraint, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -260,6 +260,18 @@ class User(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
 
     __tablename__ = "users"
 
+    # Explicit, named UNIQUE constraint on clerk_user_id so the SaaS
+    # provisioning path can use ``INSERT ... ON CONFLICT (clerk_user_id)
+    # DO UPDATE`` with constraint inference. The matching alembic
+    # migration is
+    # ``d1f2e3a4b5c6_user_clerk_user_id_unique.py``, which dropped the
+    # earlier partial-unique index ``ix_users_clerk_user_id`` (the
+    # partial index could not be inferred without an ``index_where``
+    # predicate, which made prod and the test fixture diverge).
+    __table_args__ = (
+        UniqueConstraint("clerk_user_id", name="uq_users_clerk_user_id"),
+    )
+
     email: Mapped[str] = mapped_column(
         String(255), unique=True, index=True, nullable=False
     )
@@ -279,8 +291,13 @@ class User(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     # Clerk linkage — set when the user was either created by a Clerk webhook
     # OR self-served via the Clerk SignUp component. NULL on legacy users
     # (admin@acp.local, brutal-test agents, etc.) created before Sprint 1.
+    # Uniqueness is enforced by ``uq_users_clerk_user_id`` declared in
+    # ``__table_args__`` above — declaring ``unique=True`` here too would
+    # emit a second unnamed UNIQUE constraint at create_all() time. The
+    # UNIQUE constraint also serves point lookups, so we do not need a
+    # secondary non-unique index.
     clerk_user_id: Mapped[str | None] = mapped_column(
-        String(64), unique=True, nullable=True, index=True,
+        String(64), nullable=True,
     )
 
 # ---------------------------------------------------------------------------
