@@ -4,6 +4,7 @@ import { useAuth as useAegisAuth } from '../../hooks/useAuth';
 import { setSessionMetadata, clearSessionMetadata } from '../../services/api';
 import { setClerkTokenGetter } from '../../services/clerkAuth';
 import { emitAuthFailure } from '../../lib/authEvents';
+import { getSessionItem } from '../../lib/sessionStore';
 
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || '';
 
@@ -63,14 +64,16 @@ const REFRESH_FAILURE_BUDGET = 5;
 
 /**
  * ClerkAuthBridge — mirrors Clerk's session state into the legacy
- * AuthContext + localStorage so the rest of the app (ProtectedRoute,
+ * AuthContext + sessionStorage so the rest of the app (ProtectedRoute,
  * Sidebar, NotificationCenter, all 30+ pages) keeps working with no
  * Clerk awareness of its own.
  *
  * On Clerk sign-in:
  *   - Calls getToken({template: 'aegis'}) to receive a JWT carrying
  *     aegis_tenant_id + aegis_role + email claims.
- *   - Decodes the payload and writes session metadata to localStorage.
+ *   - Decodes the payload and writes session metadata to sessionStorage.
+ *     (N18) sessionStorage is per-tab and auto-clears on tab close so a
+ *     future XSS sink cannot exfiltrate metadata past the active tab.
  *   - Registers the token-getter so api.js can attach Authorization
  *     on every backend call.
  *
@@ -150,7 +153,7 @@ export default function ClerkAuthBridge() {
     const alreadyMirrored =
       lastMirroredRef.current.clerkUserId === currentUserId &&
       lastMirroredRef.current.clerkOrgId  === currentOrgId &&
-      Boolean(localStorage.getItem('tenant_id'));
+      Boolean(getSessionItem('tenant_id'));
 
     if (alreadyMirrored) {
       // The refresh effect below will handle JWT rotation; nothing to
@@ -300,9 +303,9 @@ export default function ClerkAuthBridge() {
         const expiresIn = payload.exp
           ? Math.max(60, payload.exp - Math.floor(Date.now() / 1000))
           : 3600;
-        const tenantId   = localStorage.getItem('tenant_id') || '';
-        const userEmail  = localStorage.getItem('user_email') || '';
-        const role       = localStorage.getItem('user_role') || '';
+        const tenantId   = getSessionItem('tenant_id') || '';
+        const userEmail  = getSessionItem('user_email') || '';
+        const role       = getSessionItem('user_role') || '';
         setSessionMetadata({
           tenant_id:   tenantId,
           expires_in:  expiresIn,
@@ -316,7 +319,7 @@ export default function ClerkAuthBridge() {
         inFlight = false;
         if (consecutiveFailures >= REFRESH_FAILURE_BUDGET && !cancelled) {
           // Stop the loop and surface the failure. The incident handler
-          // in App.jsx will clear localStorage + bounce to /login.
+          // in App.jsx will clear session metadata + bounce to /login.
           cancelled = true;
           emitAuthFailure({
             reason: 'refresh_failed',
@@ -329,9 +332,9 @@ export default function ClerkAuthBridge() {
 
     const tick = () => {
       if (cancelled) return;
-      const expiryMs = parseInt(localStorage.getItem('acp_token_expiry') || '0', 10);
+      const expiryMs = parseInt(getSessionItem('acp_token_expiry') || '0', 10);
       const remaining = expiryMs - Date.now();
-      // First load: localStorage hasn't been populated yet (the primary
+      // First load: sessionStorage hasn't been populated yet (the primary
       // sign-in effect hasn't completed). Refresh immediately so the
       // gateway gets the cookie before any page mounts.
       if (expiryMs === 0 || remaining < REFRESH_AHEAD_MS) {
@@ -340,7 +343,7 @@ export default function ClerkAuthBridge() {
     };
 
     // Kick after 2s so the primary effect has had time to land its
-    // localStorage write. Then poll every 10s.
+    // session-metadata write. Then poll every 10s.
     const kick = setTimeout(tick, 2_000);
     const interval = setInterval(tick, POLL_INTERVAL_MS);
     return () => {

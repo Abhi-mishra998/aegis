@@ -1,5 +1,6 @@
 import { emitAuthFailure } from "../lib/authEvents";
 import { parseRule, parseRuleList } from "../lib/schemas";
+import { getSessionItem, setSessionItem, removeSessionItem } from "../lib/sessionStore";
 import { attachClerkAuth, getFreshClerkToken, hasClerkAuth } from "./clerkAuth";
 
 // In dev: empty string → relative URLs → Vite proxy routes to :8000 (same-origin, no CORS/cookie issues).
@@ -13,27 +14,31 @@ const API_BASE = import.meta.env.VITE_GATEWAY_URL || "";
  * Authentication is handled exclusively via the httpOnly `acp_token` cookie
  * set by the Gateway on login. This eliminates the XSS token-theft vector.
  *
- * Session metadata (tenant_id, expiry, user_email) is stored in localStorage
- * as non-sensitive identifiers only — not the token itself.
+ * N18 FIX: Session metadata (tenant_id, expiry, user_email, user_role,
+ * agent_id) is now stored in sessionStorage rather than localStorage so
+ * that a future XSS sink cannot exfiltrate it past tab-close and so the
+ * blast radius of any XSS is bounded to the tab where it lands. The real
+ * Clerk JWT is never stored anywhere — Clerk's SDK keeps it in memory and
+ * the httpOnly `acp_token` cookie carries the gateway-side proof.
  */
 
 export const setSessionMetadata = (data) => {
-  if (data.tenant_id) localStorage.setItem("tenant_id", data.tenant_id);
-  if (data.user_email) localStorage.setItem("user_email", data.user_email);
-  if (data.role) localStorage.setItem("user_role", String(data.role).toUpperCase());
-  if (data.agent_id) localStorage.setItem("agent_id", data.agent_id);
+  if (data.tenant_id) setSessionItem("tenant_id", data.tenant_id);
+  if (data.user_email) setSessionItem("user_email", data.user_email);
+  if (data.role) setSessionItem("user_role", String(data.role).toUpperCase());
+  if (data.agent_id) setSessionItem("agent_id", data.agent_id);
   if (data.expires_in) {
-    localStorage.setItem("acp_token_expiry", String(Date.now() + data.expires_in * 1000));
+    setSessionItem("acp_token_expiry", String(Date.now() + data.expires_in * 1000));
   }
 };
 
 export const clearSessionMetadata = () => {
-  localStorage.removeItem("tenant_id");
-  localStorage.removeItem("user_email");
-  localStorage.removeItem("acp_token_expiry");
-  localStorage.removeItem("user_role");
-  localStorage.removeItem("agent_id");
-  localStorage.removeItem("sse_query_token");
+  removeSessionItem("tenant_id");
+  removeSessionItem("user_email");
+  removeSessionItem("acp_token_expiry");
+  removeSessionItem("user_role");
+  removeSessionItem("agent_id");
+  removeSessionItem("sse_query_token");
 };
 
 // Module-local: only the request() / blobRequest() helpers consume this.
@@ -49,18 +54,18 @@ const isSessionValid = () => {
   // Clerk path: if ClerkAuthBridge has registered a token getter, an active
   // Clerk session exists — the gateway will validate the Bearer JWT directly.
   // Accept that as session-valid even before the bridge has mirrored
-  // tenant_id into localStorage.
+  // tenant_id into sessionStorage.
   if (hasClerkAuth()) return true;
-  const tenantId = localStorage.getItem("tenant_id");
-  const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10);
+  const tenantId = getSessionItem("tenant_id");
+  const expiry = parseInt(getSessionItem("acp_token_expiry") || "0", 10);
   return !!tenantId && expiry > Date.now();
 };
 
 // Identity endpoints whose response IS the authoritative answer about
 // "who am I / what workspace am I in" — for these, a tenant_id that
-// differs from the cached localStorage value means the cache is stale
+// differs from the cached sessionStorage value means the cache is stale
 // (Clerk org switch, multi-tenant user, post-provision refresh), NOT a
-// cross-tenant leak. We reconcile localStorage from the response.
+// cross-tenant leak. We reconcile sessionStorage from the response.
 // Every OTHER endpoint scoped to a tenant is treated as a real leak
 // check: if the gateway accidentally returns another tenant's data, kill
 // the session.
@@ -124,7 +129,7 @@ const _handleResponse = async (res, url) => {
   const text = await res.text();
   const json = text ? JSON.parse(text) : {};
 
-  const sessionTenant = localStorage.getItem("tenant_id");
+  const sessionTenant = getSessionItem("tenant_id");
   const responseTenant = json?.data?.tenant_id ?? json?.tenant_id;
   if (sessionTenant && responseTenant && responseTenant !== sessionTenant) {
     if (_isIdentityPath(url)) {
@@ -138,7 +143,7 @@ const _handleResponse = async (res, url) => {
       console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", {
         sessionTenant, responseTenant, url,
       });
-      try { localStorage.setItem("tenant_id", responseTenant); } catch (_) {}
+      setSessionItem("tenant_id", responseTenant);
     } else {
       console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
       emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
@@ -151,7 +156,7 @@ const _handleResponse = async (res, url) => {
 
 const request = async (url, options = {}, retry = 1) => {
   try {
-    const tenantId = localStorage.getItem("tenant_id");
+    const tenantId = getSessionItem("tenant_id");
 
     // AUTH GATE: Block requests (except auth/health) if session is expired or missing.
     // /auth/sso/providers is public — Login page fetches it before any token
@@ -265,7 +270,7 @@ const blobRequest = async (url, options = {}) => {
     emitAuthFailure({ reason: "session_expired", url });
     throw new Error("UNAUTHENTICATED: Session expired.");
   }
-  const tenantId = localStorage.getItem("tenant_id");
+  const tenantId = getSessionItem("tenant_id");
   const headers = {
     ...(options.headers || {}),
     ...(tenantId && { "X-Tenant-ID": tenantId }),
@@ -409,7 +414,9 @@ export const authService = {
     // string fallback was retired in gateway sprint-1 because the token leaks
     // via nginx/ALB access logs, browser history, and Referer headers. Clear
     // any leftover value so useSSE doesn't append a ?token= that the gateway
-    // would now reject with 401.
+    // would now reject with 401. Also clear any pre-existing localStorage
+    // copy from the older code path so a fresh login fully migrates the user.
+    removeSessionItem("sse_query_token");
     try { localStorage.removeItem("sse_query_token"); } catch (_) {}
 
     setSessionMetadata({ tenant_id: tenantId, expires_in: expiresIn, role });

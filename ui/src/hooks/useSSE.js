@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
+import { getSessionItem } from '../lib/sessionStore'
 
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || ''
 const MAX_BACKOFF_MS = 32_000
@@ -172,7 +173,7 @@ export function useSSE({
       // - never reached 'open' AND no session signal → genuine auth_expired.
       // - was open before erroring → network drop.
       const wasOpen = es.readyState === EventSource.OPEN
-      const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10)
+      const expiry = parseInt(getSessionItem("acp_token_expiry") || "0", 10)
       const sessionLooksValid = expiry > Date.now()
       // Snapshot the previous error reason BEFORE we overwrite it — the
       // fast-reconnect branch needs to know that we weren't already in an
@@ -183,7 +184,7 @@ export function useSSE({
         nextError = 'network'
       } else if (sessionLooksValid) {
         nextError = 'network'
-      } else if (localStorage.getItem("tenant_id")) {
+      } else if (getSessionItem("tenant_id")) {
         // Session metadata present but expiry past → really expired.
         // (Was previously `getCurrentToken() || localStorage…` but
         // getCurrentToken was never imported — it threw a ReferenceError
