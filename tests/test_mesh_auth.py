@@ -184,3 +184,67 @@ def test_verify_internal_secret_accepts_valid_es256_mesh_token(monkeypatch):
     token = mesh.mint_service_token("gateway")
     result = mesh.verify_internal_secret(secret=None, mesh_token=token)
     assert result.startswith("mesh:gateway")
+
+
+# ---------------------------------------------------------------------------
+# N6 — mesh_headers() resilience on mint failure
+# ---------------------------------------------------------------------------
+
+
+def test_mesh_headers_returns_empty_when_private_key_missing(monkeypatch):
+    """N6 fix: when ACP_MESH_PRIVATE_KEY_PEM is unset (fresh ASG boot before
+    SSM populates env, misconfigured launch template, key rotation gap),
+    mint_service_token raises RuntimeError. Pre-N6 that RuntimeError
+    propagated out and FastAPI returned an opaque HTTP 500.
+
+    Post-N6: mesh_headers traps the failure, increments
+    mesh_headers_mint_failures_total{service=...}, and returns {} so the
+    caller can still build a request — the receiver naturally 403s on the
+    missing X-Mesh-Token (correct degraded behaviour, no silent bypass)."""
+    # Env vars are already cleared by the autouse fixture and caches reset,
+    # so _mesh_private_key_pem() will return None on first call — exactly
+    # the cold-boot condition we want to exercise.
+    assert mesh._mesh_private_key_pem() is None, (
+        "test prerequisite — ACP_MESH_PRIVATE_KEY_PEM must be empty"
+    )
+
+    # Snapshot the counter before (use a unique service label so this test
+    # is independent of other tests' counter state).
+    counter = mesh.MESH_HEADERS_MINT_FAILURES.labels(service="n6-test-service")
+    before = counter._value.get()
+
+    result = mesh.mesh_headers("n6-test-service")
+
+    # Empty dict instead of raising RuntimeError
+    assert result == {}, (
+        "mesh_headers must swallow RuntimeError from mint_service_token "
+        "and return an empty dict — otherwise FastAPI surfaces a generic 500"
+    )
+
+    # Counter incremented exactly once
+    after = counter._value.get()
+    assert after == before + 1, (
+        f"MESH_HEADERS_MINT_FAILURES counter for service=n6-test-service should "
+        f"increment by 1 (before={before}, after={after})"
+    )
+
+
+def test_mesh_headers_succeeds_when_private_key_present(monkeypatch):
+    """Happy-path sanity check: when keys are configured mesh_headers returns
+    the X-Mesh-Token header and does NOT increment the failure counter."""
+    a_priv, a_pub = _gen_ec_keypair()
+    monkeypatch.setenv("ACP_MESH_PRIVATE_KEY_PEM", a_priv)
+    monkeypatch.setenv("ACP_MESH_TRUSTED_KEYS", json.dumps({"gateway": a_pub}))
+    mesh._reset_mesh_caches_for_tests()
+
+    counter = mesh.MESH_HEADERS_MINT_FAILURES.labels(service="gateway")
+    before = counter._value.get()
+
+    headers = mesh.mesh_headers("gateway")
+    assert "X-Mesh-Token" in headers
+    assert headers["X-Mesh-Token"]  # non-empty
+
+    after = counter._value.get()
+    assert after == before, (
+        "MESH_HEADERS_MINT_FAILURES must NOT increment on the happy path"
+    )
