@@ -18,7 +18,14 @@ services:
   pgbouncer:
     volumes:
       - ./pgbouncer.aws.ini:/etc/pgbouncer/pgbouncer.ini:ro
-      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      # P1-4 partial (2026-06-21): userlist.txt now lives in /run/aegis tmpfs
+      # rather than /opt/aegis on EBS. EBS snapshot theft / disk forensics
+      # no longer surface the plaintext per-db passwords. Live shell on the
+      # EC2 still reads them — the full fix (pgbouncer auth_query + SCRAM
+      # password hashes) needs Postgres schema work and is tracked separately.
+      # user_data renders /run/aegis/pgbouncer/userlist.txt at boot from
+      # the SSM SecureString; tmpfs means it never persists to disk.
+      - /run/aegis/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
     depends_on: []
     restart: always
     deploy:
