@@ -251,9 +251,15 @@ class _AuthMixin:
                         # EH-3 security counter
                         from services.gateway.middleware import AUTH_FAILURES_TOTAL  # noqa: PLC0415
                         AUTH_FAILURES_TOTAL.labels(reason=reason).inc()
+                        # P3-1 fix (2026-06-21): body unified to "Unauthorized" so
+                        # an attacker cannot use the response text to distinguish
+                        # "bad token" from "no token". WWW-Authenticate.realm still
+                        # carries the slug (session_expired / invalid_token / ...)
+                        # because the UI needs it to render the targeted toast —
+                        # that is the documented U10 contract.
                         raise HTTPException(
                             status_code=401,
-                            detail="Invalid or expired token",
+                            detail="Unauthorized",
                             headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
                         )
 
@@ -298,7 +304,8 @@ class _AuthMixin:
                     jti = auth_data.get("jti")
                     if jti and is_execute_path and request.method not in ("GET", "HEAD", "OPTIONS"):
                         if await self.redis.get(f"{REDIS_REVOKE_PREFIX}jti:{jti}"):
-                            raise HTTPException(status_code=401, detail="Token ID revoked")
+                            # P3-1 — body unified to "Unauthorized".
+                            raise HTTPException(status_code=401, detail="Unauthorized")
 
                         replay_key = f"acp:jti_last_used:{jti}"
                         now_ts = time.time()
@@ -338,7 +345,8 @@ class _AuthMixin:
                         tenant_id = uuid.UUID(tenant_id_str)
                         agent_id = uuid.UUID(agent_id_str) if agent_id_str else uuid.UUID(int=0)
                     except ValueError:
-                        raise HTTPException(status_code=401, detail="Invalid identity claims in token")
+                        # P3-1 — body unified to "Unauthorized".
+                        raise HTTPException(status_code=401, detail="Unauthorized")
 
                     # Store full JWT claims so downstream code can use embedded permissions
                     # without making any Registry or Policy HTTP calls.
@@ -362,9 +370,10 @@ class _AuthMixin:
                 request.state.jwt_claims = {}
 
         if not tenant_id:
+            # P3-1 — body unified; realm kept for UI contract.
             raise HTTPException(
                 status_code=401,
-                detail="Authentication required",
+                detail="Unauthorized",
                 headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
             )
 
@@ -372,7 +381,7 @@ class _AuthMixin:
         if not x_tenant:
             raise HTTPException(
                 status_code=401,
-                detail="Tenant ID required",
+                detail="Unauthorized",
                 headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
             )
 

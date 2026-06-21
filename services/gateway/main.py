@@ -1497,6 +1497,9 @@ async def events_stream(request: Request) -> Response:
         # `except Exception:` swallowing a NameError when token_validator
         # was not imported — the user-visible "Invalid token" was actually
         # a missing-import crash.
+        # P3-1 (2026-06-21): body unified to "Unauthorized"; the exception
+        # type used to leak via `detail` (good for debug, bad for an attacker
+        # probing forged tokens). Type info stays in the log line above.
         logger.warning(
             "sse_auth_failed",
             error_type=type(exc).__name__,
@@ -1504,7 +1507,7 @@ async def events_stream(request: Request) -> Response:
         )
         return Response(
             status_code=401,
-            content='{"error":"Invalid token","detail":"' + type(exc).__name__ + '"}',
+            content='{"error":"Unauthorized"}',
             media_type="application/json",
         )
 
@@ -1512,7 +1515,7 @@ async def events_stream(request: Request) -> Response:
     if not tenant_id_str:
         return Response(
             status_code=401,
-            content='{"error":"Missing tenant claim"}',
+            content='{"error":"Unauthorized"}',
             media_type="application/json",
         )
 
