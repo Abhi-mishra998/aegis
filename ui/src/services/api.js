@@ -1,17 +1,11 @@
 import { emitAuthFailure } from "../lib/authEvents";
 import { parseRule, parseRuleList } from "../lib/schemas";
+import { getSessionItem, setSessionItem, removeSessionItem } from "../lib/sessionStore";
 import { attachClerkAuth, getFreshClerkToken, hasClerkAuth } from "./clerkAuth";
 
 // In dev: empty string → relative URLs → Vite proxy routes to :8000 (same-origin, no CORS/cookie issues).
 // In production (Docker/k8s): set VITE_GATEWAY_URL=https://your-gateway or leave empty for nginx proxy.
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || "";
-
-// Refresh-on-401 mutex. N concurrent requests that simultaneously 401 must
-// not spawn N parallel Clerk refresh roundtrips: coalesce them onto a single
-// in-flight refresh so the SDK only burns one rotation slot and the gateway
-// only sees one /auth/refresh call per real expiry event.
-let refreshInFlight = false;
-let refreshWaiters = [];
 
 /**
  * ACP API Client
@@ -20,27 +14,31 @@ let refreshWaiters = [];
  * Authentication is handled exclusively via the httpOnly `acp_token` cookie
  * set by the Gateway on login. This eliminates the XSS token-theft vector.
  *
- * Session metadata (tenant_id, expiry, user_email) is stored in localStorage
- * as non-sensitive identifiers only — not the token itself.
+ * N18 FIX: Session metadata (tenant_id, expiry, user_email, user_role,
+ * agent_id) is now stored in sessionStorage rather than localStorage so
+ * that a future XSS sink cannot exfiltrate it past tab-close and so the
+ * blast radius of any XSS is bounded to the tab where it lands. The real
+ * Clerk JWT is never stored anywhere — Clerk's SDK keeps it in memory and
+ * the httpOnly `acp_token` cookie carries the gateway-side proof.
  */
 
 export const setSessionMetadata = (data) => {
-  if (data.tenant_id) localStorage.setItem("tenant_id", data.tenant_id);
-  if (data.user_email) localStorage.setItem("user_email", data.user_email);
-  if (data.role) localStorage.setItem("user_role", String(data.role).toUpperCase());
-  if (data.agent_id) localStorage.setItem("agent_id", data.agent_id);
+  if (data.tenant_id) setSessionItem("tenant_id", data.tenant_id);
+  if (data.user_email) setSessionItem("user_email", data.user_email);
+  if (data.role) setSessionItem("user_role", String(data.role).toUpperCase());
+  if (data.agent_id) setSessionItem("agent_id", data.agent_id);
   if (data.expires_in) {
-    localStorage.setItem("acp_token_expiry", String(Date.now() + data.expires_in * 1000));
+    setSessionItem("acp_token_expiry", String(Date.now() + data.expires_in * 1000));
   }
 };
 
 export const clearSessionMetadata = () => {
-  localStorage.removeItem("tenant_id");
-  localStorage.removeItem("user_email");
-  localStorage.removeItem("acp_token_expiry");
-  localStorage.removeItem("user_role");
-  localStorage.removeItem("agent_id");
-  localStorage.removeItem("sse_query_token");
+  removeSessionItem("tenant_id");
+  removeSessionItem("user_email");
+  removeSessionItem("acp_token_expiry");
+  removeSessionItem("user_role");
+  removeSessionItem("agent_id");
+  removeSessionItem("sse_query_token");
 };
 
 // Module-local: only the request() / blobRequest() helpers consume this.
@@ -56,18 +54,18 @@ const isSessionValid = () => {
   // Clerk path: if ClerkAuthBridge has registered a token getter, an active
   // Clerk session exists — the gateway will validate the Bearer JWT directly.
   // Accept that as session-valid even before the bridge has mirrored
-  // tenant_id into localStorage.
+  // tenant_id into sessionStorage.
   if (hasClerkAuth()) return true;
-  const tenantId = localStorage.getItem("tenant_id");
-  const expiry = parseInt(localStorage.getItem("acp_token_expiry") || "0", 10);
+  const tenantId = getSessionItem("tenant_id");
+  const expiry = parseInt(getSessionItem("acp_token_expiry") || "0", 10);
   return !!tenantId && expiry > Date.now();
 };
 
 // Identity endpoints whose response IS the authoritative answer about
 // "who am I / what workspace am I in" — for these, a tenant_id that
-// differs from the cached localStorage value means the cache is stale
+// differs from the cached sessionStorage value means the cache is stale
 // (Clerk org switch, multi-tenant user, post-provision refresh), NOT a
-// cross-tenant leak. We reconcile localStorage from the response.
+// cross-tenant leak. We reconcile sessionStorage from the response.
 // Every OTHER endpoint scoped to a tenant is treated as a real leak
 // check: if the gateway accidentally returns another tenant's data, kill
 // the session.
@@ -131,7 +129,7 @@ const _handleResponse = async (res, url) => {
   const text = await res.text();
   const json = text ? JSON.parse(text) : {};
 
-  const sessionTenant = localStorage.getItem("tenant_id");
+  const sessionTenant = getSessionItem("tenant_id");
   const responseTenant = json?.data?.tenant_id ?? json?.tenant_id;
   if (sessionTenant && responseTenant && responseTenant !== sessionTenant) {
     if (_isIdentityPath(url)) {
@@ -142,10 +140,12 @@ const _handleResponse = async (res, url) => {
       // currently-active workspace. Killing the session here is the
       // single biggest source of "Authentication boundary violated"
       // overlay flashes during normal usage.
-      console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", "[redacted]");
-      try { localStorage.setItem("tenant_id", responseTenant); } catch (_) {}
+      console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", {
+        sessionTenant, responseTenant, url,
+      });
+      setSessionItem("tenant_id", responseTenant);
     } else {
-      console.error("TENANT_MISMATCH: response tenant differs from session", "[redacted]");
+      console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
       emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
       throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
     }
@@ -156,18 +156,15 @@ const _handleResponse = async (res, url) => {
 
 const request = async (url, options = {}, retry = 1) => {
   try {
-    const tenantId = localStorage.getItem("tenant_id");
+    const tenantId = getSessionItem("tenant_id");
 
     // AUTH GATE: Block requests (except auth/health) if session is expired or missing.
     // /auth/sso/providers is public — Login page fetches it before any token
     // exists, so it must be exempt or the gate throws before we even reach login.
-    // /demo/* endpoints are the anonymous "Try live demo" CTA path — they must
-    // be reachable from an unauthenticated browser.
     const isAuthPath =
       url.includes("/auth/token") ||
       url.includes("/auth/sso/providers") ||
-      url.includes("/health") ||
-      url.startsWith("/demo/");
+      url.includes("/health");
 
     if (!isSessionValid() && !isAuthPath) {
       console.warn("API_GATED: Session expired or not found.", url);
@@ -207,41 +204,24 @@ const request = async (url, options = {}, retry = 1) => {
       const isClerkSession = hasClerkAuth();
       if (isClerkSession && !options._authRetried) {
         try {
-          let freshToken = null;
-          // Mutex: if another request already triggered a refresh, wait for
-          // it to settle instead of issuing a parallel Clerk call. Once the
-          // leader resolves, every waiter falls through to attachClerkAuth()
-          // on its retry fetch and picks up the now-current token.
-          if (refreshInFlight) {
-            await new Promise(resolve => refreshWaiters.push(resolve));
-          } else {
-            refreshInFlight = true;
-            try {
-              freshToken = await getFreshClerkToken();
-            } finally {
-              refreshInFlight = false;
-              refreshWaiters.splice(0).forEach(r => r());
-            }
-          }
-          // Waiters skip the explicit Authorization override and let
-          // attachClerkAuth handle it on the retry headers below.
-          const retryHeaders = { ...headers };
+          const freshToken = await getFreshClerkToken();
           if (freshToken) {
-            retryHeaders.Authorization = `Bearer ${freshToken}`;
-          } else {
-            await attachClerkAuth(retryHeaders);
-          }
-          const retryRes = await fetch(finalUrl, {
-            ...options,
-            headers: retryHeaders,
-            credentials: "include",
-          });
-          if (retryRes.status !== 401) {
-            // Quiet success — the first 401 is a Clerk-rotation artifact,
-            // not a real auth failure; the user's network panel still
-            // shows it, but the application path is OK so no console
-            // noise here.
-            return await _handleResponse(retryRes, url);
+            const retryHeaders = {
+              ...headers,
+              Authorization: `Bearer ${freshToken}`,
+            };
+            const retryRes = await fetch(finalUrl, {
+              ...options,
+              headers: retryHeaders,
+              credentials: "include",
+            });
+            if (retryRes.status !== 401) {
+              // Quiet success — the first 401 is a Clerk-rotation artifact,
+              // not a real auth failure; the user's network panel still
+              // shows it, but the application path is OK so no console
+              // noise here.
+              return await _handleResponse(retryRes, url);
+            }
           }
         } catch (refreshErr) {
           console.warn("Clerk refresh-on-401 failed", refreshErr);
@@ -290,7 +270,7 @@ const blobRequest = async (url, options = {}) => {
     emitAuthFailure({ reason: "session_expired", url });
     throw new Error("UNAUTHENTICATED: Session expired.");
   }
-  const tenantId = localStorage.getItem("tenant_id");
+  const tenantId = getSessionItem("tenant_id");
   const headers = {
     ...(options.headers || {}),
     ...(tenantId && { "X-Tenant-ID": tenantId }),
@@ -367,10 +347,42 @@ export const parseApiError = (error, fallback = "Something went wrong. Please tr
   return error.message || fallback;
 };
 
+// Voice Agent — LiveKit token mint. Wraps the gateway /voice/token endpoint
+// behind the same fetch convention as the other services so auth headers,
+// credentials, and 401 surfacing stay consistent. Previously the panel did a
+// raw fetch() that bypassed Clerk token attachment.
+export const voiceService = {
+  getToken: async () => {
+    const headers = {};
+    await attachClerkAuth(headers);
+    const res = await fetch(`${API_BASE}/voice/token`, {
+      credentials: "include",
+      headers,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      let parsedBody = null;
+      let parsedError = txt;
+      try {
+        parsedBody = JSON.parse(txt);
+        parsedError = parsedBody.error || parsedBody.detail || parsedBody.message || txt;
+      } catch (_) { /* non-JSON body */ }
+      const err = new Error(parsedError || `Voice token request failed (${res.status})`);
+      err._status = res.status;
+      err._body = parsedBody;
+      err._wwwAuth = res.headers.get("WWW-Authenticate") || "";
+      err._noRetry = true;
+      throw err;
+    }
+    const body = await res.json();
+    return body.data || body;
+  },
+};
+
 // Auth Service
 export const authService = {
   login: async (data) => {
-    console.info("AUTHENTICATION_ATTEMPT", "[redacted]");
+    console.info("AUTHENTICATION_ATTEMPT", { email: data.email });
 
     const headers = { "Content-Type": "application/json" };
     // Always send X-Tenant-ID. Browser login never knows the tenant upfront,
@@ -402,12 +414,14 @@ export const authService = {
     // string fallback was retired in gateway sprint-1 because the token leaks
     // via nginx/ALB access logs, browser history, and Referer headers. Clear
     // any leftover value so useSSE doesn't append a ?token= that the gateway
-    // would now reject with 401.
+    // would now reject with 401. Also clear any pre-existing localStorage
+    // copy from the older code path so a fresh login fully migrates the user.
+    removeSessionItem("sse_query_token");
     try { localStorage.removeItem("sse_query_token"); } catch (_) {}
 
     setSessionMetadata({ tenant_id: tenantId, expires_in: expiresIn, role });
 
-    console.info("AUTHENTICATION_SUCCESS", "[redacted]");
+    console.info("AUTHENTICATION_SUCCESS", { tenantId, role });
 
     return {
       data: {
@@ -422,33 +436,6 @@ export const authService = {
   logout: async () => {
     try {
       await fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "include" });
-      // Server-side revocation validation: a successful POST /auth/logout
-      // SHOULD have killed the session cookie + revoked the Clerk session,
-      // but if the gateway returns 200 while leaving the cookie intact
-      // (mis-set Domain attribute, proxy strip, etc.) the next tab navigation
-      // would walk straight back into /dashboard. Probe /auth/session (fall
-      // back to /auth/me) to confirm we really are logged out; if not, force
-      // a hard navigation to /login to break stale in-memory state.
-      let probeUrl = `${API_BASE}/auth/session`;
-      let probe = await fetch(probeUrl, { credentials: "include" }).catch(() => null);
-      if (probe && probe.status === 404) {
-        probeUrl = `${API_BASE}/auth/me`;
-        probe = await fetch(probeUrl, { credentials: "include" }).catch(() => null);
-      }
-      if (probe && probe.ok) {
-        const body = await probe.json().catch(() => ({}));
-        const stillAuthed =
-          body?.authenticated === true ||
-          !!(body?.data?.user_id || body?.user_id || body?.data?.user || body?.user);
-        if (stillAuthed) {
-          console.warn("LOGOUT_INCOMPLETE: server reports session still active after /auth/logout; forcing redirect");
-          window.location.href = "/login";
-        }
-      } else if (!probe) {
-        console.warn(
-          "LOGOUT_PROBE_UNAVAILABLE: backend should expose /auth/session or /auth/me; relying on cookie clearing + normal redirect"
-        );
-      }
     } finally {
       clearSessionMetadata();
     }
@@ -482,18 +469,6 @@ export const workspaceService = {
       method: "PATCH",
       body: JSON.stringify(values || {}),
     }),
-  // Sprint S1 (2026-06-19) — OWNER-only. Apply an industry preset from
-  // the OnboardingWizard Step 0. Enables matching policy packs +
-  // stashes dashboard_preset on tenant.system_values in one call.
-  applyPreset: (preset) =>
-    request("/workspace/apply-preset", {
-      method: "POST",
-      body: JSON.stringify({
-        industry_id: preset?.id || "custom",
-        policy_packs: preset?.policy_packs || [],
-        dashboard_preset: preset?.dashboard_preset || null,
-      }),
-    }),
   // Sprint 21 — Slack approvals config. The GET surface returns
   // {webhook_url, configured} (the signing secret is stripped by the
   // gateway). The PUT body is {webhook_url, rotate_secret?}.
@@ -512,59 +487,6 @@ export const workspaceService = {
       method: "PUT",
       body: JSON.stringify(body || {}),
     }),
-};
-
-
-// Sprint EI-2 (2026-06-20) — Per-tenant Jira ITSM integration.
-// Sprint EI-6 (2026-06-20) — Per-tenant ServiceNow ITSM integration.
-// GET returns {data: {has_*, instance_url, ...}} — never the secret.
-// PUT upserts the row. Test fires one real ticket to verify the wiring.
-export const integrationsService = {
-  // Jira
-  getJira: () => request("/integrations/jira"),
-  setJira: (body) =>
-    request("/integrations/jira", {
-      method: "PUT",
-      body: JSON.stringify(body || {}),
-    }),
-  deleteJira: () => request("/integrations/jira", { method: "DELETE" }),
-  testJira: () => request("/integrations/jira/test", { method: "POST" }),
-
-  // ServiceNow
-  getServiceNow: () => request("/integrations/servicenow"),
-  setServiceNow: (body) =>
-    request("/integrations/servicenow", {
-      method: "PUT",
-      body: JSON.stringify(body || {}),
-    }),
-  deleteServiceNow: () => request("/integrations/servicenow", { method: "DELETE" }),
-  testServiceNow: () =>
-    request("/integrations/servicenow/test", { method: "POST" }),
-
-  // Sprint EI-18 — webhook-secret rotate for the EI-17 inbound flow.
-  // Returns { plaintext, webhook_url, has_webhook_secret } in the
-  // response body — plaintext shown ONCE in the Settings UI.
-  rotateJiraWebhookSecret: () =>
-    request("/integrations/jira/webhook-secret/rotate", { method: "POST" }),
-  rotateServiceNowWebhookSecret: () =>
-    request("/integrations/servicenow/webhook-secret/rotate", { method: "POST" }),
-};
-
-
-// Sprint EI-3 (2026-06-20) — SCIM bearer tokens for Okta provisioning.
-// POST returns the plaintext exactly once; GET only returns the prefix +
-// last_used_at. Each token grants full directory write to the tenant —
-// the Settings UI surfaces a clear "copy now, we won't show this again"
-// banner on POST so the operator doesn't paste the wrong value into Okta.
-export const scimService = {
-  listTokens: () => request("/scim/v2/tokens"),
-  createToken: (label) =>
-    request("/scim/v2/tokens", {
-      method: "POST",
-      body: JSON.stringify({ label: label || "Okta" }),
-    }),
-  revokeToken: (tokenId) =>
-    request(`/scim/v2/tokens/${tokenId}`, { method: "DELETE" }),
 };
 
 
@@ -870,11 +792,6 @@ export const incidentService = {
     body: JSON.stringify(data),
   }),
   exportPdf: (id) => blobRequest(`/incidents/${id}/export`, { method: 'POST' }),
-  // Sprint EI-19 — per-incident AEVF bundle (cryptographically-verifiable
-  // evidence for THIS incident). Auditor opens offline with `aegis-verify`.
-  // Returns JSON; UI saves as <incident-number>.aegis.json.
-  exportAevfBundle: (id, framework = 'eu-ai-act') =>
-    blobRequest(`/incidents/${id}/aevf-bundle?framework=${encodeURIComponent(framework)}`),
 };
 
 export const autoResponseService = {
@@ -1197,11 +1114,6 @@ export const webhookService = {
 export const siemService = {
   getConfig:    ()     => request('/siem/config'),
   saveConfig:   (data) => request('/siem/config', { method: 'POST', body: JSON.stringify(data) }),
-  // Sprint S3 — unified per-vendor test endpoint
-  vendors:      ()     => request('/siem/vendors'),
-  test:         (data) => request('/siem/test', { method: 'POST', body: JSON.stringify(data) }),
-  // Legacy split-by-vendor endpoints — retained for callers that haven't
-  // migrated to the unified .test() yet.
   testSplunk:   (data) => request('/siem/test/splunk', { method: 'POST', body: JSON.stringify(data || {}) }),
   testDatadog:  (data) => request('/siem/test/datadog', { method: 'POST', body: JSON.stringify(data || {}) }),
   push:         (data) => request('/siem/push', { method: 'POST', body: JSON.stringify(data || { limit: 100 }) }),
@@ -1335,18 +1247,6 @@ export const demoService = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
-  // Anonymous-CTA: spin up a seeded read-only demo tenant and return a
-  // short-lived JWT. The Landing "Try live demo" button posts here so a
-  // prospect can click through the full UI without signing up.
-  // Sprint EI-9 (2026-06-20) — sends the Cloudflare Turnstile token in
-  // the body if Landing.jsx managed to get one. Server bypasses the
-  // check if TURNSTILE_SECRET_KEY is unset (local dev / staging).
-  spawnWorkspace: (turnstileToken = '') => request('/demo/spawn-workspace', {
-    method: 'POST',
-    body: JSON.stringify({ 'cf-turnstile-response': turnstileToken || '' }),
-  }),
-  // Read-only scenario catalog. Drives the demo prompt picker on Landing.
-  listScenarios: () => request('/demo/scenarios'),
 }
 
 // Sprint 17 — Aegis for Teams. The /team page lists each employee's
@@ -1354,24 +1254,6 @@ export const demoService = {
 // new keys here too. The /v1/messages Anthropic-proxy endpoint that
 // uses these keys is server-only — the browser never calls it
 // directly.
-// Sprint S2 — Slack OAuth status + disconnect. The /sso/slack/initiate
-// redirect is full-page (assigned via window.location), not fetched here.
-export const slackOAuthService = {
-  status: () => request('/sso/slack/status'),
-  disconnect: () => request('/sso/slack/disconnect', { method: 'POST' }),
-};
-
-// Sprint S5 — Hierarchical Teams CRUD. Backs TeamSettings.jsx; the
-// existing /team page (per-employee + per-department rollups) keeps
-// its own teamService below.
-export const teamsService = {
-  list:    ()                          => request('/teams'),
-  create:  (body)                      => request('/teams', { method: 'POST', body: JSON.stringify(body) }),
-  update:  (teamId, body)              => request(`/teams/${teamId}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  remove:  (teamId)                    => request(`/teams/${teamId}`, { method: 'DELETE' }),
-  assign:  (teamId, user_ids)          => request(`/teams/${teamId}/assign`, { method: 'POST', body: JSON.stringify({ user_ids }) }),
-};
-
 export const teamService = {
   // List every employee virtual key for the current tenant joined with
   // their Redis-tracked spend.
