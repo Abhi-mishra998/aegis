@@ -144,6 +144,36 @@ _register(SignalDefinition(
     description="Query carries SQL injection payload (UNION, stacked DROP, tautology, comment evasion).",
 ))
 
+# P0-1 fix 2026-06-21: SSRF detector family. Brutal-review found that
+# `http.get` with url=file:///etc/passwd / 169.254.169.254 / localhost
+# returned action=allow with risk=0.0 — the canonical normalizer had no
+# detector for these. Three flavours map to three findings so SOC can
+# triage by attack class.
+_register(SignalDefinition(
+    id="ssrf_local_file",
+    objective=SecurityObjective.INITIAL_ACCESS,
+    severity=Severity.CRITICAL,
+    mitre_technique="T1552.001 Unsecured Credentials: Credentials In Files",
+    default_score=95, default_response="deny",
+    description="HTTP tool call with file:// URL — local-file read via SSRF.",
+))
+_register(SignalDefinition(
+    id="ssrf_cloud_metadata",
+    objective=SecurityObjective.INITIAL_ACCESS,
+    severity=Severity.CRITICAL,
+    mitre_technique="T1552.005 Unsecured Credentials: Cloud Instance Metadata API",
+    default_score=95, default_response="deny",
+    description="HTTP tool call to cloud metadata endpoint (169.254.169.254, metadata.google.internal, etc).",
+))
+_register(SignalDefinition(
+    id="ssrf_internal_network",
+    objective=SecurityObjective.INITIAL_ACCESS,
+    severity=Severity.HIGH,
+    mitre_technique="T1190 Exploit Public-Facing Application",
+    default_score=80, default_response="deny",
+    description="HTTP tool call targeting RFC1918 / loopback / link-local / *.internal / *.local — pivoting into private network.",
+))
+
 # ───── PERSISTENCE (TA0003) ────────────────────────────────────────────────
 _register(SignalDefinition(
     id="credential_artifact_write",

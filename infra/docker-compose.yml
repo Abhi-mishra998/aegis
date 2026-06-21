@@ -119,12 +119,19 @@ services:
       - GOMAXPROCS=2
     volumes:
       - ./opa-config.yaml:/opa-config.yaml:ro
+      # P0-2 fix 2026-06-21 — loaded as a regular policy at startup; OPA's
+      # `--authorization=basic` then queries data.system.authz.allow on every
+      # request and 403s anything not explicitly allowed. Blocks PUT /v1/policies/*
+      # which was the policy-bypass attack vector.
+      - ./system-authz.rego:/system-authz.rego:ro
     command:
       - "run"
       - "--server"
       - "--addr=0.0.0.0:8181"
       - "--config-file=/opa-config.yaml"
+      - "--authorization=basic"
       - "--log-level=info"
+      - "/system-authz.rego"
     depends_on:
       bundle-server:
         condition: service_healthy

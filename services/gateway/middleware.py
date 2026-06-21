@@ -520,6 +520,26 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                     status_code=403,
                 )
 
+            # P0-0 defense-in-depth (2026-06-21):
+            # The RBAC table now requires ROOT for /admin/*, but a forged or
+            # mis-issued token that claims role=ROOT must STILL be rejected
+            # for /admin/* if it carries is_demo=True. Demo workspaces are
+            # minted anonymously by /demo/spawn-workspace — there is no path
+            # where a legitimately-issued demo JWT would ever need to enter
+            # the platform-staff /admin/* namespace.
+            if _path.startswith("/admin/") or _path == "/admin":
+                _claims = getattr(request.state, "jwt_claims", {}) or {}
+                if _claims.get("is_demo") is True:
+                    logger.warning(
+                        "admin_path_demo_token_blocked",
+                        path=_path, tenant_id=t_id_str,
+                    )
+                    from fastapi.responses import JSONResponse as _JSON  # noqa: PLC0415
+                    return _JSON(
+                        {"error": "Forbidden", "detail": "demo workspaces cannot access /admin/*"},
+                        status_code=403,
+                    )
+
             # EH-3: mass-export watch. Both /audit/logs/export and
             # /compliance/export are read-once-write-many: a customer
             # legitimately calls each once per audit period (≤1/day).
