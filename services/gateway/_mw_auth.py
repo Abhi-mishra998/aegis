@@ -19,6 +19,7 @@ from fastapi import HTTPException, Request
 from starlette.responses import Response
 
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.exceptions import ACPAuthError
 from sdk.utils import IDEMPOTENCY_HITS_TOTAL
 from services.gateway.auth import REDIS_REVOKE_PREFIX
 from services.gateway.client import service_client
