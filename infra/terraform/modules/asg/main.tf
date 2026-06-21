@@ -93,6 +93,10 @@ fi
 
 mkdir -p /opt/aegis
 tar -xzf /tmp/bundle.tar.gz -C /opt/aegis
+# AppleDouble files (._*) leak from macOS-authored tars and crash alembic
+# with `SyntaxError: source code string cannot contain null bytes` when
+# imported as migration modules. Recurring landmine — nuke post-extract.
+find /opt/aegis -name "._*" -delete 2>/dev/null || true
 cd /opt/aegis
 
 ssm() { aws ssm get-parameter --region "$REGION" --name "$1" --with-decryption --query Parameter.Value --output text 2>/dev/null || echo ""; }
@@ -180,6 +184,19 @@ ENV
 chmod 600 /opt/aegis/infra/.env
 chown root:root /opt/aegis/infra/.env
 
+# pgbouncer.aws.ini + userlist.txt are credential-bearing — kept out of the
+# release tar by build_release_bundle.sh. Render from SSM SecureString so
+# every fresh ASG launch has a real file (not a docker-auto-created dir).
+PGB_B64=$(ssm "/$${PARAM_PREFIX}/pgbouncer/aws-ini-b64")
+ULIST_B64=$(ssm "/$${PARAM_PREFIX}/pgbouncer/userlist-b64")
+if [ -n "$${PGB_B64}" ]; then
+  echo "$${PGB_B64}" | base64 -d > /opt/aegis/infra/pgbouncer.aws.ini
+  chmod 644 /opt/aegis/infra/pgbouncer.aws.ini
+fi
+if [ -n "$${ULIST_B64}" ]; then
+  echo "$${ULIST_B64}" | base64 -d > /opt/aegis/infra/userlist.txt
+  chmod 644 /opt/aegis/infra/userlist.txt
+fi
 if [ -f /opt/aegis/infra/pgbouncer.aws.ini ]; then
   sed -i "s|host=[^ ]*\.rds\.amazonaws\.com|host=$${RDS_HOST_ONLY}|g" /opt/aegis/infra/pgbouncer.aws.ini
 fi
