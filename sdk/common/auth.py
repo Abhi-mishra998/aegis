@@ -1,10 +1,10 @@
 import json
-import logging
 import os
 import time
 from functools import lru_cache
 from typing import Any
 
+import structlog
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import APIKeyHeader
 from jose import ExpiredSignatureError, JWTError, jwt
@@ -12,7 +12,7 @@ from prometheus_client import Counter
 
 from sdk.common.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Metrics
@@ -24,18 +24,22 @@ MESH_JWT_AUTH_TOTAL = Counter(
     ["method"],  # jwt | legacy | failed
 )
 
-# N6 fix (2026-06-21): mint_service_token raises RuntimeError when
-# ACP_MESH_PRIVATE_KEY_PEM is empty (Phase 3 fail-loud behaviour). Without
-# the per-call try/except in mesh_headers below, that RuntimeError used to
-# bubble out to FastAPI as an opaque HTTP 500 — operators saw a generic
-# crash instead of the actual config issue. mesh_headers now traps the
-# mint failure, increments this counter, and returns an empty dict so the
-# caller can still build a request; the receiver naturally 403s on a
-# missing mesh token, which is the correct degraded behaviour.
+# N6 (2026-06-21): mint_service_token raises RuntimeError when
+# ACP_MESH_PRIVATE_KEY_PEM is empty (Phase 3 fail-loud behaviour). mesh_headers
+# now traps the mint failure, increments this counter, and returns {} so the
+# caller can still build a request; receiver naturally 403s on missing token.
 MESH_HEADERS_MINT_FAILURES = Counter(
     "mesh_headers_mint_failures_total",
     "Times mesh_headers() returned empty because mint_service_token failed",
     ["service"],
+)
+
+# N22 (2026-06-21): operational visibility into ACP_MESH_TRUSTED_KEYS
+# misconfiguration. Unparseable trusted-keys env var fail-closes (all mesh
+# JWTs fail to verify); this counter surfaces the silent failure for alerts.
+MESH_TRUSTED_KEYS_PARSE_FAILURES = Counter(
+    "mesh_trusted_keys_parse_failures_total",
+    "Times ACP_MESH_TRUSTED_KEYS env var was unparseable",
 )
 
 # auto_error=False so we control the error message and status code (403 not 422)
@@ -120,6 +124,14 @@ def _mesh_trusted_public_keys() -> dict[str, bytes]:
 
     Empty when not configured — callers treat empty-registry as "fall back to
     the legacy HS256 path."
+
+    N22 (2026-06-21): a malformed env var used to log ERROR and silently
+    return ``{}``, which fails closed (every mesh JWT verification misses
+    the trusted_keys lookup and is rejected) but is operationally invisible.
+    Now we increment a Prometheus counter and log at CRITICAL so monitoring
+    fires immediately. Individually bad entries (e.g. a single non-string
+    PEM) are skipped instead of poisoning the whole dict — the rest of the
+    services keep working.
     """
     raw = (os.environ.get("ACP_MESH_TRUSTED_KEYS") or "").strip()
     if not raw:
@@ -127,14 +139,22 @@ def _mesh_trusted_public_keys() -> dict[str, bytes]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        logger.error("mesh_trusted_keys_malformed: %s", exc)
+        MESH_TRUSTED_KEYS_PARSE_FAILURES.inc()
+        logger.critical("mesh_trusted_keys_unparseable", error=str(exc))
         return {}
     if not isinstance(data, dict):
+        MESH_TRUSTED_KEYS_PARSE_FAILURES.inc()
+        logger.critical("mesh_trusted_keys_not_a_dict", type=type(data).__name__)
         return {}
     out: dict[str, bytes] = {}
     for name, pem_raw in data.items():
         if not isinstance(pem_raw, str):
-            continue
+            logger.warning(
+                "mesh_trusted_keys_bad_entry",
+                svc=name,
+                type=type(pem_raw).__name__,
+            )
+            continue  # Skip bad entries — don't poison the whole dict
         out[str(name)] = _b64_or_raw_pem(pem_raw)
     return out
 
