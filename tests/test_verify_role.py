@@ -94,7 +94,9 @@ def test_missing_header_returns_401_with_bearer_challenge():
     with pytest.raises(HTTPException) as exc:
         _run(dep, authorization=None)
     assert exc.value.status_code == 401
-    assert exc.value.headers["WWW-Authenticate"] == "Bearer"
+    # N17: realm collapsed to the single literal "aegis" so the slug
+    # cannot leak the validator branch.
+    assert exc.value.headers["WWW-Authenticate"] == 'Bearer realm="aegis"'
 
 
 def test_malformed_header_returns_401():

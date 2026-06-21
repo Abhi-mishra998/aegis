@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import secrets
 import time
 import uuid
 
@@ -18,7 +19,6 @@ from fastapi import HTTPException, Request
 from starlette.responses import Response
 
 from sdk.common.background import safe_bg as _safe_bg
-from sdk.common.exceptions import ACPAuthError
 from sdk.utils import IDEMPOTENCY_HITS_TOTAL
 from services.gateway.auth import REDIS_REVOKE_PREFIX
 from services.gateway.client import service_client
@@ -239,13 +239,49 @@ class _AuthMixin:
                         except Exception as _re:
                             logger.debug("auth_fail_counter_error", error=str(_re))
 
-                        reason = getattr(_validation_exc, "reason", None) if isinstance(_validation_exc, ACPAuthError) else None
-                        reason = reason or "invalid_token"
+                        # N17: collapse the WWW-Authenticate realm slug to a
+                        # single literal so it does not leak which validator
+                        # branch tripped (invalid_token / session_expired /
+                        # revoked_token / insufficient_role) — that detail is
+                        # an oracle equivalent to the response body, which we
+                        # already collapsed to "Unauthorized" in P3-1.
                         raise HTTPException(
                             status_code=401,
                             detail="Invalid or expired token",
-                            headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
+                            headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
                         )
+
+                    # N7: demo-token expiry guard. Demo tokens carry an
+                    # ``is_demo`` flag plus a ``demo_expires_at`` epoch
+                    # second. The JWT's own ``exp`` is normally set equal
+                    # to ``demo_expires_at`` at issuance, but the demo
+                    # cleanup background task runs only hourly — so there is
+                    # a window where the JWT signature is still cryptograph-
+                    # ically valid AND the tenant row has already been
+                    # deleted. Letting such a token reach the tenant lookup
+                    # surfaces 500-style errors that leak DB state. Reject
+                    # at 401 BEFORE any DB lookup and BEFORE the body-shape
+                    # collapse so the response is indistinguishable from any
+                    # other invalid-token rejection.
+                    if auth_data.get("is_demo") is True:
+                        demo_exp = auth_data.get("demo_expires_at")
+                        if demo_exp is not None:
+                            try:
+                                demo_exp_ts = float(demo_exp)
+                            except (TypeError, ValueError):
+                                demo_exp_ts = 0.0
+                            if demo_exp_ts and demo_exp_ts <= time.time():
+                                logger.info(
+                                    "demo_token_post_expiry_rejected",
+                                    jti=auth_data.get("jti"),
+                                    tenant_id=auth_data.get("tenant_id"),
+                                    demo_expires_at=demo_exp_ts,
+                                )
+                                raise HTTPException(
+                                    status_code=401,
+                                    detail="Unauthorized",
+                                    headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                                )
 
                     # Active RBAC Mapping
                     # Sprint 1 — Role enum extended (OWNER + SECURITY_ANALYST + DEVELOPER + READ_ONLY).
@@ -275,10 +311,12 @@ class _AuthMixin:
                     if request.method not in ("GET", "HEAD", "OPTIONS"):
                         if role not in _write_roles:
                             if not (is_execute_path and role == "agent"):
+                                # N17: realm collapsed to "aegis" — the slug
+                                # otherwise leaks the validator branch.
                                 raise HTTPException(
                                     status_code=403,
                                     detail="Write operations require OWNER, ADMIN, or SECURITY_ANALYST role",
-                                    headers={"WWW-Authenticate": 'Bearer realm="insufficient_role"'},
+                                    headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
                                 )
 
                     # Enterprise JTI Atomic Burst Lock — tool executions only.
@@ -355,7 +393,7 @@ class _AuthMixin:
             raise HTTPException(
                 status_code=401,
                 detail="Authentication required",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         x_tenant = request.headers.get("X-Tenant-ID") or tenant_id_str
@@ -363,10 +401,16 @@ class _AuthMixin:
             raise HTTPException(
                 status_code=401,
                 detail="Tenant ID required",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
-        if x_tenant != tenant_id_str:
+        # N1: constant-time compare. Python's `!=` short-circuits on the first
+        # mismatched byte, leaking byte-by-byte tenant-UUID enumeration via
+        # the latency of the 403 response. secrets.compare_digest is constant
+        # time over equal-length inputs and length-aware (an attacker who
+        # supplies a short prefix gets a non-match in the same time as a
+        # near-match), closing the timing oracle.
+        if not secrets.compare_digest(x_tenant, tenant_id_str):
             logger.critical("tenant_isolation_violation", token_tenant=tenant_id_str, header_tenant=x_tenant)
             raise HTTPException(status_code=403, detail="Tenant mismatch detected")
 
@@ -404,7 +448,8 @@ class _AuthMixin:
                 (request.state.jwt_claims if hasattr(request.state, "jwt_claims") else {})
                 .get("org_id", tenant_id_str)
             )
-            if x_org_id != token_org_id:
+            # N1: constant-time compare (see tenant compare above for rationale).
+            if not secrets.compare_digest(str(x_org_id), str(token_org_id)):
                 logger.critical(
                     "org_isolation_violation",
                     token_org=token_org_id,
