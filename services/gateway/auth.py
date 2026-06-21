@@ -21,10 +21,10 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+import structlog
+from fastapi import Header, HTTPException, status
 from jose import ExpiredSignatureError, JWTError, jwt
 from redis.asyncio import Redis
-
-from fastapi import Header, HTTPException, status
 
 from sdk.common.auth import extract_bearer_token
 from sdk.common.config import settings
@@ -34,6 +34,8 @@ from sdk.common.roles import Role, canonical_role
 from services.gateway.auth_clerk import get_clerk_validator, looks_like_clerk_token
 
 REDIS_TOKEN_VALIDATION_PREFIX = "acp:token_validation:"
+
+logger = structlog.get_logger(__name__)
 
 # In-process LRU cache for validated JWT payloads. Sits in front of the
 # Redis cache so /execute's hot path can answer "is this token valid?"
@@ -418,18 +420,20 @@ def verify_role(*allowed):
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         if not authorization:
+            # P3-1 + N17 — unified body + realm so the FastAPI route-level
+            # dependency matches the middleware-level contract exactly.
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing Authorization header",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         raw = extract_bearer_token(authorization)
         if not raw:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Malformed Authorization header — expected 'Bearer <token>'",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         if token_validator is None:
@@ -441,11 +445,17 @@ def verify_role(*allowed):
         try:
             claims = await token_validator.validate(raw)
         except ACPAuthError as exc:
-            reason = getattr(exc, "reason", None) or "invalid_token"
+            # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+            # The per-reason slug stays on the structlog line for observability
+            # but does not leak to the client.
+            logger.info(
+                "verify_role_auth_failed",
+                reason=getattr(exc, "reason", None) or "invalid_token",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=str(exc),
-                headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             ) from exc
 
         role_canonical = canonical_role(claims.get("role"))
@@ -456,7 +466,7 @@ def verify_role(*allowed):
                     f"Role {role_canonical!r} is not permitted on this endpoint. "
                     f"Required: {sorted(allowed_set)}."
                 ),
-                headers={"WWW-Authenticate": 'Bearer realm="insufficient_role"'},
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         # Stamp the canonical projection onto the claims so route handlers

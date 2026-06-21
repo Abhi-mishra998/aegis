@@ -133,7 +133,19 @@ class _AuthMixin:
                             await self.redis.expire(auth_fail_key, 300)
                         except Exception:
                             pass
-                        raise HTTPException(status_code=401, detail="Invalid or expired API key")
+                        # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+                        # The "API key" wording previously leaked the auth method
+                        # an attacker had probed; the unified body collapses that
+                        # oracle while AUTH_FAILURES_TOTAL keeps the internal slug.
+                        from services.gateway.middleware import (
+                            AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                        )
+                        AUTH_FAILURES_TOTAL.labels(reason="invalid_api_key").inc()
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Unauthorized",
+                            headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                        )
 
                     tenant_id_str = str(key_data["tenant_id"])
                     tenant_id = uuid.UUID(tenant_id_str)
@@ -217,7 +229,17 @@ class _AuthMixin:
                             failures = await self.redis.get(auth_fail_key)
                             if failures and int(failures) > 1000:
                                 raise HTTPException(status_code=429, detail="Too many authentication failures")
-                            raise HTTPException(status_code=401, detail="Token revoked")
+                            # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+                            # Per-reason breakdown still ticks the internal counter.
+                            from services.gateway.middleware import (
+                                AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                            )
+                            AUTH_FAILURES_TOTAL.labels(reason="revoked_token").inc()
+                            raise HTTPException(
+                                status_code=401,
+                                detail="Unauthorized",
+                                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                            )
                     except HTTPException:
                         raise
                     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
@@ -241,10 +263,22 @@ class _AuthMixin:
 
                         reason = getattr(_validation_exc, "reason", None) if isinstance(_validation_exc, ACPAuthError) else None
                         reason = reason or "invalid_token"
+                        # P3-1 + N17 (2026-06-21): the response body is unified to
+                        # "Unauthorized" AND the WWW-Authenticate realm is unified
+                        # to "aegis" so an attacker cannot use either the body
+                        # text OR the realm slug to distinguish "bad token" from
+                        # "expired token" from "no token". The per-reason
+                        # breakdown is still emitted to the internal counter
+                        # ``AUTH_FAILURES_TOTAL`` so our dashboards and alerts
+                        # retain the diagnostic fidelity.
+                        from services.gateway.middleware import (
+                            AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                        )
+                        AUTH_FAILURES_TOTAL.labels(reason=reason).inc()
                         raise HTTPException(
                             status_code=401,
-                            detail="Invalid or expired token",
-                            headers={"WWW-Authenticate": f'Bearer realm="{reason}"'},
+                            detail="Unauthorized",
+                            headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
                         )
 
                     # Active RBAC Mapping
@@ -275,10 +309,16 @@ class _AuthMixin:
                     if request.method not in ("GET", "HEAD", "OPTIONS"):
                         if role not in _write_roles:
                             if not (is_execute_path and role == "agent"):
+                                # N17 — realm unified to "aegis"; per-reason
+                                # breakdown lives in AUTH_FAILURES_TOTAL only.
+                                from services.gateway.middleware import (
+                                    AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                                )
+                                AUTH_FAILURES_TOTAL.labels(reason="insufficient_role").inc()
                                 raise HTTPException(
                                     status_code=403,
                                     detail="Write operations require OWNER, ADMIN, or SECURITY_ANALYST role",
-                                    headers={"WWW-Authenticate": 'Bearer realm="insufficient_role"'},
+                                    headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
                                 )
 
                     # Enterprise JTI Atomic Burst Lock — tool executions only.
@@ -288,7 +328,16 @@ class _AuthMixin:
                     jti = auth_data.get("jti")
                     if jti and is_execute_path and request.method not in ("GET", "HEAD", "OPTIONS"):
                         if await self.redis.get(f"{REDIS_REVOKE_PREFIX}jti:{jti}"):
-                            raise HTTPException(status_code=401, detail="Token ID revoked")
+                            # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+                            from services.gateway.middleware import (
+                                AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                            )
+                            AUTH_FAILURES_TOTAL.labels(reason="revoked_jti").inc()
+                            raise HTTPException(
+                                status_code=401,
+                                detail="Unauthorized",
+                                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                            )
 
                         replay_key = f"acp:jti_last_used:{jti}"
                         now_ts = time.time()
@@ -328,7 +377,16 @@ class _AuthMixin:
                         tenant_id = uuid.UUID(tenant_id_str)
                         agent_id = uuid.UUID(agent_id_str) if agent_id_str else uuid.UUID(int=0)
                     except ValueError:
-                        raise HTTPException(status_code=401, detail="Invalid identity claims in token")
+                        # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+                        from services.gateway.middleware import (
+                            AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                        )
+                        AUTH_FAILURES_TOTAL.labels(reason="invalid_identity_claims").inc()
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Unauthorized",
+                            headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                        )
 
                     # Store full JWT claims so downstream code can use embedded permissions
                     # without making any Registry or Policy HTTP calls.
@@ -352,18 +410,24 @@ class _AuthMixin:
                 request.state.jwt_claims = {}
 
         if not tenant_id:
+            # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+            from services.gateway.middleware import AUTH_FAILURES_TOTAL  # noqa: PLC0415
+            AUTH_FAILURES_TOTAL.labels(reason="missing_token").inc()
             raise HTTPException(
                 status_code=401,
-                detail="Authentication required",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         x_tenant = request.headers.get("X-Tenant-ID") or tenant_id_str
         if not x_tenant:
+            # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+            from services.gateway.middleware import AUTH_FAILURES_TOTAL  # noqa: PLC0415
+            AUTH_FAILURES_TOTAL.labels(reason="missing_tenant").inc()
             raise HTTPException(
                 status_code=401,
-                detail="Tenant ID required",
-                headers={"WWW-Authenticate": 'Bearer realm="invalid_token"'},
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
         if x_tenant != tenant_id_str:
@@ -385,9 +449,16 @@ class _AuthMixin:
                         "agent_revoked_by_remediation",
                         tenant_id=tenant_id_str, agent_id=agent_id_str,
                     )
+                    # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+                    # Reason slug preserved in the internal counter.
+                    from services.gateway.middleware import (
+                        AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                    )
+                    AUTH_FAILURES_TOTAL.labels(reason="agent_revoked_by_remediation").inc()
                     raise HTTPException(
                         status_code=401,
-                        detail="agent_revoked_by_remediation",
+                        detail="Unauthorized",
+                        headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
                     )
             except HTTPException:
                 raise

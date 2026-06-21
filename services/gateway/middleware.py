@@ -228,6 +228,18 @@ SHADOW_DOWNGRADES_TOTAL = Counter(
     ["tenant_id", "original_action"],
 )
 
+# P3-1 + N17 — auth failure counter. The WWW-Authenticate realm slug is
+# unified to "aegis" (no per-reason leak in the client-visible header),
+# but we still need the per-reason breakdown internally for dashboards /
+# alerting. The `reason` label carries values like ``invalid_token``,
+# ``session_expired``, ``revoked_token``, ``insufficient_role``,
+# ``missing_token``, ``missing_tenant``, ``invalid_identity_claims``.
+AUTH_FAILURES_TOTAL = Counter(
+    "acp_auth_failures_total",
+    "Gateway authentication failures, partitioned by internal reason slug",
+    ["reason"],
+)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Sprint 10 — Production hardening (PRODUCT_PLAN.md §14).
@@ -1053,7 +1065,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # window per (tenant, agent, table). L2 only saw
                         # `row_limit` per call; this is the cumulative.
                         from services.gateway._behavior_aggregator import (
-                            extract_table_norm, record_and_sum_rows,
+                            extract_table_norm,
+                            record_and_sum_rows,
                         )
                         _table_norm = extract_table_norm(_qry_norm)
                         _cumulative_rows_1h = 0
@@ -1079,7 +1092,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         _action_class = "benign"
                         try:
                             from services.gateway._session_intelligence import (
-                                classify_action, match_attack_chain,
+                                classify_action,
+                                match_attack_chain,
                                 record_session_action,
                             )
                             _action_class = classify_action(
@@ -1185,7 +1199,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             # when the agent's behaviour deviates from its
                             # 100-call rolling baseline by >3σ.
                             try:
-                                from services.policy.canonical import normalize as _cn_for_drift
+                                from services.policy.canonical import (
+                                    normalize as _cn_for_drift,
+                                )
                                 _c_for_drift = _cn_for_drift(tool_name, _all_params)
                                 _inh = int(_c_for_drift.get("risk_score_inherent") or 0)
                                 _drift = await record_risk_score(
@@ -1237,7 +1253,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # raw arg paths. Closes the entire class of
                         # "rule reads x.y, gateway puts at x.z" bugs.
                         try:
-                            from services.policy.canonical import normalize as _canonical_normalize
+                            from services.policy.canonical import (
+                                normalize as _canonical_normalize,
+                            )
                             _canonical = _canonical_normalize(tool_name, _all_params)
                             # Carry the session-intel chain + baseline into
                             # the canonical view so all signals live in one
@@ -1281,11 +1299,19 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # into the canonical so the policy engine quarantines.
                         try:
                             from services.policy.cross_agent_correlation import (
-                                record_action as _xa_record,
-                                detect_chain as _xa_detect,
                                 derive_target_key as _xa_target,
+                            )
+                            from services.policy.cross_agent_correlation import (
+                                detect_chain as _xa_detect,
+                            )
+                            from services.policy.cross_agent_correlation import (
                                 flag_agents as _xa_flag,
+                            )
+                            from services.policy.cross_agent_correlation import (
                                 is_flagged as _xa_is_flagged,
+                            )
+                            from services.policy.cross_agent_correlation import (
+                                record_action as _xa_record,
                             )
                             _xa_already = await _xa_is_flagged(
                                 self.redis, t_id_str, str(agent_id),
@@ -1346,11 +1372,19 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # and folds it into the tier decision.
                         try:
                             from services.policy.risk_pipeline import (
-                                record_signals as _rp_record,
-                                cumulative_scores as _rp_scores,
                                 combine_scores as _rp_combine,
-                                tier_from_score as _rp_tier,
+                            )
+                            from services.policy.risk_pipeline import (
+                                cumulative_scores as _rp_scores,
+                            )
+                            from services.policy.risk_pipeline import (
                                 explain_cumulative as _rp_explain,
+                            )
+                            from services.policy.risk_pipeline import (
+                                record_signals as _rp_record,
+                            )
+                            from services.policy.risk_pipeline import (
+                                tier_from_score as _rp_tier,
                             )
                             _per_call_findings = list(_canonical.get("signal_findings") or [])
                             if _attack_chain:
@@ -1428,7 +1462,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             # to enforce. Disabled in environments without the audit DB by
             # design — the schedule() helper returns None and we move on.
             try:
-                from services.gateway.shadow_eval_hook import schedule as _schedule_shadow
+                from services.gateway.shadow_eval_hook import (
+                    schedule as _schedule_shadow,
+                )
                 _payload_for_shadow = None
                 try:
                     _payload_for_shadow = (
@@ -1656,11 +1692,13 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 # middleware via request.state.session_id (set when the JWT
                 # carries one, empty otherwise).
                 try:
-                    from services.security.incidents import recorder as _storyline_recorder
                     from services.security import signal_registry as _sigreg
+                    from services.security.incidents import (
+                        recorder as _storyline_recorder,
+                    )
 
                     _findings_for_story = list(
-                        (decision.findings or _canonical.get("signal_findings") or [])
+                        decision.findings or _canonical.get("signal_findings") or []
                     )
                     # Primary finding = first non-attack-chain finding; falls
                     # back to the attack_chain wrapper itself if that's all
@@ -1864,8 +1902,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             if response.status_code >= 400:
                 try:
                     from services.gateway._behavior_aggregator import (
-                        record_failure, quarantine_agent,
                         RUNAWAY_FAILURE_THRESHOLD,
+                        quarantine_agent,
+                        record_failure,
                     )
                     cumulative_failures = await record_failure(
                         self.redis, t_id_str, str(agent_id), tool_name,
@@ -2139,8 +2178,10 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         try:
             if e.status_code >= 400 and t_id_str != "unknown" and tool_name and tool_name != "unknown_tool":
                 from services.gateway._behavior_aggregator import (
-                    record_failure, quarantine_agent, is_quarantined,
                     RUNAWAY_FAILURE_THRESHOLD,
+                    is_quarantined,
+                    quarantine_agent,
+                    record_failure,
                 )
                 cumulative = await record_failure(
                     self.redis, t_id_str, str(agent_id), tool_name,
@@ -2167,7 +2208,17 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         except Exception as _runx:
             logger.warning("runaway_loop_record_failed", error=str(_runx))
 
-        return self._deny(e.detail, e.status_code)
+        # N17 / P3-1 — forward the WWW-Authenticate header (and any other
+        # auth-relevant headers) the originating HTTPException attached, so
+        # 401s carry the unified ``Bearer realm="aegis"`` challenge instead
+        # of dropping the header at the response boundary.
+        _fwd_headers: dict[str, str] | None = None
+        if e.headers:
+            _fwd_headers = {
+                k: v for k, v in e.headers.items()
+                if k.lower() in ("www-authenticate", "retry-after")
+            } or None
+        return self._deny(e.detail, e.status_code, headers=_fwd_headers)
 
     async def _enforce_bounded_autonomy(
         self,

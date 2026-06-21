@@ -15,8 +15,8 @@ from fastapi import Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from sdk.common.background import safe_bg as _safe_bg
-from services.gateway.inference_proxy import OutputFilter, inference_proxy
 from services.gateway._helpers import publish_event
+from services.gateway.inference_proxy import OutputFilter, inference_proxy
 
 logger = structlog.get_logger(__name__)
 
@@ -139,7 +139,8 @@ class _ResponseMixin:
               explanation: str | None = None,
               security: dict | None = None,
               governance: dict | None = None,
-              mitre: dict | None = None) -> JSONResponse:
+              mitre: dict | None = None,
+              headers: dict[str, str] | None = None) -> JSONResponse:
         ctx = structlog.contextvars.get_contextvars()
 
         logger.warning("security_rejection", **{
@@ -237,7 +238,16 @@ class _ResponseMixin:
         # Sprint 1 2026-06-15 — MITRE ATT&CK mapping for the primary finding.
         if mitre:
             body["mitre"] = mitre
-        return JSONResponse(status_code=status_code, content=body)
+        # N17 / P3-1 — propagate auth headers (WWW-Authenticate realm) when
+        # the caller supplies them. Without this the JSONResponse strips the
+        # ``Bearer realm="aegis"`` header that the originating ``HTTPException``
+        # set, breaking the WWW-Authenticate contract the UI uses to decide
+        # which login-redirect / re-auth toast to render.
+        return JSONResponse(
+            status_code=status_code,
+            content=body,
+            headers=headers or None,
+        )
 
     async def _record_runaway_failure(self, tenant_id: str, agent_id: str, tool: str,
                                        reason: str = "") -> None:
@@ -252,9 +262,12 @@ class _ResponseMixin:
         """
         try:
             from services.gateway._behavior_aggregator import (
-                record_failure, quarantine_agent, is_quarantined,
+                BULK_PII_QUARANTINE_THRESHOLD,
+                RUNAWAY_FAILURE_THRESHOLD,
+                is_quarantined,
+                quarantine_agent,
                 record_bulk_pii_attempt,
-                RUNAWAY_FAILURE_THRESHOLD, BULK_PII_QUARANTINE_THRESHOLD,
+                record_failure,
             )
             cumulative = await record_failure(self.redis, tenant_id, agent_id, tool)
             if cumulative > RUNAWAY_FAILURE_THRESHOLD:
