@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from services.gateway.routers.itsm_webhooks import (  # noqa: E402
     JIRA_DONE_NAMES,
     SNOW_DONE_STATES,
+    _assert_url_tenant_matches_jwt,
     _verify_hmac,
 )
 
@@ -140,3 +141,57 @@ class TestSchema:
         assert u.status == "RESOLVED"
         assert u.servicenow_sys_id == "abc123def456"
         assert u.servicenow_number == "INC0010001"
+
+
+# ── N15 defense-in-depth: URL tenant_id ↔ JWT tenant_id cross-check ─────
+class TestUrlTenantCrossCheck:
+    """N15 (audit 2026-06-21) — these webhooks are HMAC-only today (no JWT,
+    skip-listed in the middleware), so the per-tenant ``webhook_secret``
+    IS the isolation mechanism. The cross-check helper is a defense-in-
+    depth no-op guard against a future regression that adds JWT auth
+    without checking the URL tenant_id.
+    """
+
+    @staticmethod
+    def _req(state_tenant_id):
+        """Build a minimal Request-shaped object whose ``state.tenant_id``
+        is the value we want to assert on. We can't easily construct a
+        real Starlette Request without an ASGI scope, so a duck-typed
+        object is enough — the helper only reads ``getattr(state, 'tenant_id')``.
+        """
+        import types
+        return types.SimpleNamespace(
+            state=types.SimpleNamespace(tenant_id=state_tenant_id),
+        )
+
+    def test_no_jwt_tenant_passes(self):
+        """Today's reality — skip-list means state.tenant_id is None."""
+        import uuid as _u
+        url_tid = _u.uuid4()
+        # Must NOT raise.
+        _assert_url_tenant_matches_jwt(self._req(None), url_tid)
+
+    def test_matching_tenant_passes(self):
+        import uuid as _u
+        tid = _u.uuid4()
+        _assert_url_tenant_matches_jwt(self._req(tid), tid)
+
+    def test_matching_tenant_str_vs_uuid_passes(self):
+        """Defense-in-depth: stringification on both sides means the
+        helper still accepts a JWT that stored tenant_id as a str."""
+        import uuid as _u
+        tid = _u.uuid4()
+        _assert_url_tenant_matches_jwt(self._req(str(tid)), tid)
+
+    def test_mismatched_tenant_raises_403(self):
+        """If a JWT for tenant A arrives at /webhooks/jira/<B>, refuse."""
+        import uuid as _u
+
+        from fastapi import HTTPException
+        url_tenant = _u.uuid4()  # B
+        jwt_tenant = _u.uuid4()  # A
+        assert url_tenant != jwt_tenant
+        with pytest.raises(HTTPException) as exc_info:
+            _assert_url_tenant_matches_jwt(self._req(jwt_tenant), url_tenant)
+        assert exc_info.value.status_code == 403
+        assert "JWT tenant does not match" in str(exc_info.value.detail)
