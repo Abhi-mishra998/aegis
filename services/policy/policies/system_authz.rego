@@ -37,12 +37,29 @@ allow if {
     input.path == ["metrics"]
 }
 
-# 3. The hot path: policy/decision-svc calls `POST /v1/data/<pkg>/<rule>`
-#    with the input body for evaluation.
+# 3. Hot path — POST /v1/data/<package>/<rule> for evaluation.
+# N21 defense-in-depth (2026-06-21): exclude `system.*` from this broad allow
+# so an attacker can never probe the authz rule itself via POST evaluate.
+# The aegis namespace is opened back up explicitly below — that's where the
+# live decision pipeline posts evaluate requests.
 allow if {
     input.method == "POST"
     input.path[0] == "v1"
     input.path[1] == "data"
+    not _path_in_restricted_namespace
+}
+
+_path_in_restricted_namespace if {
+    input.path[2] == "system"
+}
+
+# 3a. The live decision pipeline DOES POST to evaluate aegis rules
+# (e.g. /v1/data/aegis/agent_policy/allow). Allow that explicitly.
+allow if {
+    input.method == "POST"
+    input.path[0] == "v1"
+    input.path[1] == "data"
+    input.path[2] == "aegis"
 }
 
 # 4. Occasional `GET /v1/data/<pkg>` for status/introspection by ops scripts.
@@ -56,4 +73,5 @@ allow if {
 #    - PUT  /v1/policies/*     ← the P0-2 attack vector
 #    - DELETE /v1/policies/*
 #    - PATCH /v1/data/*
+#    - POST /v1/data/system/*  ← N21: blocks probing of system.authz itself
 #    - any other admin endpoint
