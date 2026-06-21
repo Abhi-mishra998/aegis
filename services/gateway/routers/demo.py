@@ -648,6 +648,18 @@ async def spawn_demo_workspace(
     # client's public IP. If the first hop is empty, loopback, or private
     # (RFC1918 / RFC4193 / link-local / docker bridge), the request is
     # not coming from a real user and we refuse it.
+    #
+    # N20 (2026-06-21) — belt-and-suspenders against XFF spoofing from
+    # inside the cluster. An attacker who lands an RCE on any service can
+    # forge ``X-Forwarded-For: 8.8.8.8`` and pass the ``is_global`` check
+    # above, then share the 5-spawn budget across each spoofed IP. The
+    # primary defence is still the XFF check (it forces an attacker to
+    # think about XFF at all); the secondary defence below validates that
+    # the immediate TCP peer (``request.client.host``) is the ALB —
+    # i.e. a non-loopback, non-docker-bridge private IP. Production ALB
+    # ALWAYS sits in the VPC private subnet (RFC1918 10/8); if the request
+    # arrived from 127.0.0.1 or 172.17/16 it did NOT come through the
+    # load balancer.
     import ipaddress as _ip
     def _is_external_public(addr: str) -> bool:
         try:
@@ -658,16 +670,79 @@ async def spawn_demo_workspace(
         # loopback (127.0.0.0/8), link-local (169.254/16, ::1, fe80::),
         # private (10/8, 172.16/12, 192.168/16, fc00::/7), reserved, etc.
         return ip.is_global
+
+    # The docker default bridge subnet is configurable so non-default
+    # compose networks (192.168.x via custom user_defined_subnet) can be
+    # added to the deny-list without a code change.
+    _docker_bridge_cidrs_raw = os.environ.get(
+        "DEMO_DOCKER_BRIDGE_CIDRS", "172.17.0.0/16,172.18.0.0/16",
+    )
+    _docker_bridge_nets: list[_ip.IPv4Network | _ip.IPv6Network] = []
+    for _c in _docker_bridge_cidrs_raw.split(","):
+        _c = _c.strip()
+        if not _c:
+            continue
+        try:
+            _docker_bridge_nets.append(_ip.ip_network(_c, strict=False))
+        except ValueError:
+            logger.warning("demo_spawn_bad_docker_bridge_cidr", cidr=_c)
+
+    def _is_docker_bridge(ip: _ip.IPv4Address | _ip.IPv6Address) -> bool:
+        return any(ip in net for net in _docker_bridge_nets)
+
+    def _is_alb_hop(client_host: str | None) -> bool:
+        """True if the immediate TCP peer looks like the ALB.
+
+        The ALB lives in the VPC private subnet, so an RFC1918 10/8 (or
+        any other strictly-private, non-loopback, non-docker-bridge IP)
+        is expected. Loopback (127/8) and the docker default bridge
+        (172.17/16) are NOT — those mean the request never traversed
+        the ALB and is therefore from inside the fleet.
+        """
+        if not client_host:
+            return False
+        try:
+            ip = _ip.ip_address(client_host)
+        except ValueError:
+            return False
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            return False
+        if _is_docker_bridge(ip):
+            return False
+        # Production ALB always shows up as an RFC1918 private peer; in
+        # local dev neither this check nor the XFF check should fire (the
+        # caller is loopback and the XFF is empty), so we land in 403
+        # cleanly with the same error.
+        return ip.is_private
+
+    client_host = request.client.host if request.client else None
     if not source_ip or source_ip == "unknown" or not _is_external_public(source_ip):
         logger.warning(
             "demo_spawn_blocked_internal_origin",
             source_ip=source_ip or "<empty>",
             xff=x_forwarded_for or "<empty>",
-            client_host=(request.client.host if request.client else None),
+            client_host=client_host,
+            reason="xff_not_public",
         )
         raise HTTPException(
             status_code=403,
             detail="Demo spawn is only available from a public client through the load balancer.",
+        )
+    if not _is_alb_hop(client_host):
+        # XFF says public but the TCP peer is loopback / docker bridge —
+        # someone inside the cluster is spoofing XFF to bypass the
+        # primary check. Refuse and log loudly: this is an indicator of
+        # a fleet-internal compromise attempt.
+        logger.warning(
+            "demo_spawn_blocked_xff_spoof",
+            source_ip=source_ip,
+            xff=x_forwarded_for or "<empty>",
+            client_host=client_host,
+            reason="client_host_not_alb",
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Demo spawn requires routing through the load balancer.",
         )
 
     # EI-9 (2026-06-20) — Cloudflare Turnstile proof-of-human. WAF + per-IP
