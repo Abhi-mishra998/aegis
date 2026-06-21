@@ -309,7 +309,10 @@ async def _patch_incident_external_link(
         "Content-Type":      "application/json",
     }
     try:
-        async with httpx.AsyncClient(timeout=5.0) as c:
+        # N16 (2026-06-21) — no redirects on internal-cluster calls. If the
+        # api-svc ever 301s for an /incidents PATCH it would be a misconfig
+        # we want to see, not silently chase to a different host.
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as c:
             r = await c.patch(
                 f"{api_url}/incidents/{incident_id}",
                 headers=headers,

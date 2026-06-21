@@ -79,6 +79,19 @@ SLACK_WEBHOOK_URL     = _alert_creds.get("SLACK_WEBHOOK_URL", "")
 PAGERDUTY_ROUTING_KEY = _alert_creds.get("PAGERDUTY_ROUTING_KEY", "")
 WEBHOOK_TIMEOUT       = 10.0
 
+# N16 (2026-06-21) — every outbound httpx.AsyncClient in this module is
+# constructed with ``follow_redirects=False``. The SSRF guard
+# (``_assert_safe_webhook_url``) only validates the INITIAL URL. An attacker
+# who controls a registered webhook host can return a 301 to
+# ``http://127.0.0.1:8181`` (OPA admin) or ``http://169.254.169.254/...``
+# (cloud-metadata) and exfiltrate IAM creds / pivot through internal
+# admin surfaces. Refusing redirects forces the destination owner to host
+# the real endpoint directly, where it stays inside the SSRF allow-list.
+# Same rule applies to the internal-call _do_* functions: redirects from
+# the registry/api are never expected; if one shows up we want to surface it
+# rather than chase it.
+_FOLLOW_REDIRECTS = False
+
 _REGISTRY_URL     = os.environ.get("REGISTRY_SERVICE_URL", "http://registry:8001")
 _API_URL          = os.environ.get("API_SERVICE_URL", "http://api:8005")
 _INTERNAL_SECRET  = os.environ["INTERNAL_SECRET"]  # fail-fast: no placeholder default
@@ -157,7 +170,7 @@ async def fire_slack(message: str, webhook_url: str = "", context: dict | None =
         blocks.append({"type": "section", "fields": fields})
 
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.post(url, json={"blocks": blocks, "text": message})
         status = "sent" if r.status_code == 200 else "error"
         logger.info("slack_alert_fired", status=status, http_status=r.status_code)
@@ -194,7 +207,7 @@ async def fire_pagerduty(
         },
     }
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.post("https://events.pagerduty.com/v2/enqueue", json=payload)
         status = "triggered" if r.status_code in (200, 202) else "error"
         logger.info("pagerduty_alert_fired", status=status, http_status=r.status_code)
@@ -275,7 +288,7 @@ async def fire_jira(
     url = f"{base_url.rstrip('/')}/rest/api/3/issue"
 
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.post(url, json={"fields": fields}, headers=headers)
         if r.status_code == 201:
             body = r.json()
@@ -421,7 +434,7 @@ async def fire_servicenow(
     url = f"{instance_url.rstrip('/')}/api/now/table/incident"
 
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.post(url, json=body, headers=headers)
         if r.status_code == 201:
             data = r.json().get("result", {}) or {}
@@ -478,7 +491,7 @@ async def fire_generic_webhook(
 
     hdrs = {"Content-Type": "application/json", **(headers or {})}
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as c:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
             if method.upper() == "GET":
                 r = await c.get(url, headers=hdrs)
             else:
@@ -501,7 +514,7 @@ def _internal_headers(tenant_id: str = "") -> dict:
 async def _do_kill_agent(agent_id: str, tenant_id: str = "") -> dict:
     """Suspend agent in the registry and write a kill-switch key via the gateway."""
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.patch(
                 f"{_REGISTRY_URL.rstrip('/')}/agents/{agent_id}",
                 json={"status": "suspended"},
@@ -518,7 +531,7 @@ async def _do_kill_agent(agent_id: str, tenant_id: str = "") -> dict:
 async def _do_isolate_agent(agent_id: str, tenant_id: str = "") -> dict:
     """Set agent status to 'isolated' in the registry (rate-limit without full suspend)."""
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.patch(
                 f"{_REGISTRY_URL.rstrip('/')}/agents/{agent_id}",
                 json={"status": "isolated"},
@@ -535,7 +548,7 @@ async def _do_isolate_agent(agent_id: str, tenant_id: str = "") -> dict:
 async def _do_block_tool(agent_id: str, tool: str, tenant_id: str = "") -> dict:
     """Add a DENY permission for the tool on the agent."""
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.post(
                 f"{_REGISTRY_URL.rstrip('/')}/agents/{agent_id}/permissions",
                 json={"tool_name": tool, "action": "DENY", "granted_by": "playbook"},
@@ -552,7 +565,7 @@ async def _do_block_tool(agent_id: str, tool: str, tenant_id: str = "") -> dict:
 async def _do_throttle(agent_id: str, rate: str, tenant_id: str = "") -> dict:
     """Write a Redis throttle key via the API service's internal throttle endpoint."""
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.post(
                 f"{_API_URL.rstrip('/')}/internal/throttle",
                 json={"agent_id": agent_id, "tenant_id": tenant_id, "rate": rate},
@@ -571,7 +584,7 @@ async def _do_revoke_key(key_id: str, tenant_id: str = "") -> dict:
     if not key_id:
         return {"status": "skipped", "reason": "no key_id provided"}
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=_FOLLOW_REDIRECTS) as c:
             r = await c.delete(
                 f"{_API_URL.rstrip('/')}/api-keys/{key_id}",
                 headers=_internal_headers(tenant_id),
