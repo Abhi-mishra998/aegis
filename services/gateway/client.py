@@ -372,11 +372,9 @@ class ServiceClient:
             headers["X-Trace-ID"] = str(ctx["trace_id"])
         if ctx.get("deadline"):
             headers["X-ACP-Deadline"] = str(ctx["deadline"])
-        # Dual-header: X-Mesh-Token (new) + X-Internal-Secret (legacy fallback).
-        # Services that have been updated to verify_internal_secret() accept both;
-        # old services that only check X-Internal-Secret continue to work.
+        # P1-1 Phase 3 (2026-06-21): X-Mesh-Token only. Receivers reject
+        # X-Internal-Secret since Phase 2 wired per-service ES256 keys.
         headers["X-Mesh-Token"] = mint_service_token("gateway")
-        headers["X-Internal-Secret"] = settings.INTERNAL_SECRET
         return headers
 
     # ------------------------------------------------------------------
@@ -572,12 +570,8 @@ class ServiceClient:
             payload = {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in req_data.items()}
 
             headers = self._get_headers()
-            # P1-1 Phase 1 (2026-06-21): dual-header for gateway→decision call.
-            headers["X-Internal-Secret"] = str(settings.INTERNAL_SECRET or "")
-            try:
-                headers["X-Mesh-Token"] = mint_service_token("gateway")
-            except Exception:
-                pass
+            # P1-1 Phase 3 (2026-06-21): X-Mesh-Token only.
+            headers["X-Mesh-Token"] = mint_service_token("gateway")
 
             # NOTE: timeout is handled by ResilientClient via SLA/deadline logic.
             # Passing it here leads to "multiple values for timeout" TypeError.
