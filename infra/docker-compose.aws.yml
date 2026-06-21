@@ -51,6 +51,9 @@ services:
       # the OS OOM-killer fires under any concurrent demo load.
       - MALLOC_ARENA_MAX=2
       - PYTHONMALLOC=malloc
+      - ACP_MESH_SERVICE_NAME=gateway
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_GATEWAY_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     restart: always
     deploy:
       resources:
@@ -74,6 +77,10 @@ services:
   # New allocation prioritizes the demo hot path (gateway / audit /
   # policy / decision / opa) and trims low-traffic services.
   identity:
+    environment:
+      - ACP_MESH_SERVICE_NAME=identity
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_IDENTITY_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -89,6 +96,10 @@ services:
           memory: 128M
 
   registry:
+    environment:
+      - ACP_MESH_SERVICE_NAME=registry
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_REGISTRY_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -104,6 +115,10 @@ services:
           memory: 96M
 
   policy:
+    environment:
+      - ACP_MESH_SERVICE_NAME=policy
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_POLICY_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -119,6 +134,10 @@ services:
           memory: 128M
 
   audit:
+    environment:
+      - ACP_MESH_SERVICE_NAME=audit
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_AUDIT_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -140,6 +159,10 @@ services:
           memory: 64M
 
   decision:
+    environment:
+      - ACP_MESH_SERVICE_NAME=decision
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_DECISION_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -157,6 +180,10 @@ services:
           memory: 128M
 
   behavior:
+    environment:
+      - ACP_MESH_SERVICE_NAME=behavior
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_BEHAVIOR_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -173,6 +200,10 @@ services:
           memory: 128M
 
   usage:
+    environment:
+      - ACP_MESH_SERVICE_NAME=usage
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_USAGE_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -185,6 +216,10 @@ services:
           memory: 48M
 
   api:
+    environment:
+      - ACP_MESH_SERVICE_NAME=api
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_API_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -197,6 +232,10 @@ services:
           memory: 48M
 
   insight:
+    environment:
+      - ACP_MESH_SERVICE_NAME=insight
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_INSIGHT_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -221,6 +260,10 @@ services:
           memory: 32M
 
   forensics:
+    environment:
+      - ACP_MESH_SERVICE_NAME=forensics
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_FORENSICS_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -233,6 +276,10 @@ services:
           memory: 64M
 
   identity_graph:
+    environment:
+      - ACP_MESH_SERVICE_NAME=identity_graph
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_IDENTITY_GRAPH_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -245,6 +292,10 @@ services:
           memory: 48M
 
   flight_recorder:
+    environment:
+      - ACP_MESH_SERVICE_NAME=flight_recorder
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_FLIGHT_RECORDER_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
@@ -257,6 +308,10 @@ services:
           memory: 32M
 
   autonomy:
+    environment:
+      - ACP_MESH_SERVICE_NAME=autonomy
+      - ACP_MESH_PRIVATE_KEY_PEM=${MESH_AUTONOMY_PRIVATE_KEY:-}
+      - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
     depends_on: []
     restart: always
     deploy:
