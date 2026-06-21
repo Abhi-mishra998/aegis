@@ -198,6 +198,12 @@ RULES: tuple[Rule, ...] = (
     _R("/threat-intel*",               ("*",),           min_role="SECURITY_ANALYST"),
     _R("/remediation*",                ("*",),           min_role="SECURITY_ANALYST"),
     _R("/system/values*",              ("GET",),         min_role="READ_ONLY"),
+
+    # P2-2 fix 2026-06-21 — /openapi.json is the machine-readable API
+    # contract. Auditors + partner integrations need it; anonymous attackers
+    # don't. Allow any authenticated principal (including READ_ONLY) so demo
+    # tenants can browse the surface, but no anonymous fetches.
+    _R("/openapi.json",                ("GET",),         min_role="READ_ONLY"),
 )
 
 

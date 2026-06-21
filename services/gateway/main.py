@@ -402,12 +402,18 @@ async def _refresh_queue_age_gauges_loop(_redis) -> None:
             return
 
 
-# M3 closure 2026-06-18: hide OpenAPI + Swagger UI in production.
-# Anonymous attackers should not be able to enumerate 246 paths or craft
-# requests in /docs. Set ENVIRONMENT=production in the deploy env to gate.
+# M3 closure 2026-06-18: hide Swagger UI + Redoc in production.
+# Anonymous attackers should not be able to craft requests in /docs or read
+# the rendered API surface. Set ENVIRONMENT=production in the deploy env to gate.
+#
+# P2-2 fix 2026-06-21: /openapi.json is the machine-readable contract.
+# Hiding it entirely broke partner integrations + auditor reviews. Keep the
+# JSON enabled in prod but auth-gate it via the RBAC matrix
+# (`/openapi.json` → min_role=READ_ONLY in _rbac_map.py + removed from
+# `_SKIP_PATHS` in middleware.py). Anonymous attackers still get 401.
 _ENV = os.environ.get("ENVIRONMENT", "development").lower()
 _IS_PROD = _ENV == "production"
-_OPENAPI_URL = None if _IS_PROD else "/openapi.json"
+_OPENAPI_URL = "/openapi.json"
 _DOCS_URL = None if _IS_PROD else "/docs"
 _REDOC_URL = None if _IS_PROD else "/redoc"
 
