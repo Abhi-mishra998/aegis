@@ -98,8 +98,37 @@ GRANT ALL ON SCHEMA public TO identity_user;
 ALTER SCHEMA public OWNER TO identity_user;
 
 \c acp_audit
-GRANT ALL ON SCHEMA public TO audit_user;
-ALTER SCHEMA public OWNER TO audit_user;
+-- N24 (2026-06-21): least-privilege grants for audit_user. Schema-level
+-- ALL PRIVILEGES used to be granted here, which combined with the P0-3
+-- break-glass (see scripts/sql/p0_3_audit_owner_protection.sql) gave a
+-- compromised superuser the ability to DISABLE the event trigger,
+-- forge backdated audit rows, and re-enable — leaving only a one-line
+-- log_statement that nobody alerts on (also closed via N23). Pinning
+-- audit_user to the minimum it actually needs at runtime caps that
+-- blast radius: even with the trigger disabled, audit_user can't ALTER
+-- the table, drop columns, or relax the trigger from inside the app.
+--
+-- Why we still GRANT CREATE on schema public (option (b) in N24):
+-- alembic runs at audit-svc startup and needs CREATE to add new tables
+-- + alembic_version. Running migrations as a separate superuser is the
+-- cleaner long-term answer (audit chain says so too) but is a bigger
+-- change. CREATE-on-schema is strictly smaller than ALL — it lets the
+-- user create tables but not USAGE/DROP arbitrary objects already in
+-- the schema. The audit_logs table itself is owned by audit_owner
+-- (P0-3) so audit_user cannot DROP or ALTER it via DDL even with
+-- CREATE rights here.
+REVOKE ALL PRIVILEGES ON SCHEMA public FROM audit_user;
+GRANT USAGE ON SCHEMA public TO audit_user;
+GRANT CREATE ON SCHEMA public TO audit_user;  -- for alembic; NOT ALL
+GRANT INSERT, SELECT, REFERENCES ON ALL TABLES IN SCHEMA public TO audit_user;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO audit_user;
+-- Ownership intentionally NOT transferred to audit_user — audit_logs
+-- belongs to audit_owner (P0-3) and the trigger enforces append-only
+-- at the DML layer.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT INSERT, SELECT, REFERENCES ON TABLES TO audit_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT ON SEQUENCES TO audit_user;
 
 \c acp_api
 GRANT ALL ON SCHEMA public TO api_user;
