@@ -550,6 +550,7 @@ from jose import jwt as _jwt
 from sqlalchemy import delete as _delete, select as _select
 from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 
+from sdk.common.auth import verify_internal_secret
 from sdk.common.db import get_db
 
 
@@ -773,18 +774,22 @@ async def spawn_demo_workspace(
 
 @router.post("/cleanup-expired")
 async def cleanup_expired_demos(
+    request: Request,
     db: _Annot[_AsyncSession, _Depends(get_db)],
-    x_internal_secret: _Annot[str | None, _Header(alias="X-Internal-Secret")] = None,
+    _auth: _Annot[str, _Depends(verify_internal_secret)],
 ) -> dict[str, Any]:
     """Hard-delete every expired demo tenant. Operator-only.
 
-    Gated on X-Internal-Secret so a passing-through Anthropic key on
-    the public path can never trigger a tenant wipe. Intended invocation
-    is a 24h cron or a Lambda at the demo_expires_at deadline.
-    """
-    if not x_internal_secret or x_internal_secret != settings.INTERNAL_SECRET:
-        raise HTTPException(status_code=403, detail="Operator-only endpoint.")
+    N12 fix (2026-06-21) — auth migrated from raw INTERNAL_SECRET equality
+    check to ``verify_internal_secret`` (ES256 mesh JWT). A leaked
+    INTERNAL_SECRET can no longer trigger a tenant wipe; only a caller
+    presenting a valid X-Mesh-Token signed by a trusted service key gets
+    in. The mesh-caller identity (``_auth``) is recorded on the audit row.
 
+    Intended invocation: a 24h cron or a Lambda mints a mesh JWT (using
+    its own ACP_MESH_PRIVATE_KEY_PEM) and POSTs here at the
+    demo_expires_at deadline.
+    """
     from services.identity.models import Tenant
     cutoff = datetime.now(UTC)
     result = await db.execute(
@@ -801,7 +806,39 @@ async def cleanup_expired_demos(
         )
         await db.commit()
 
-    logger.info("demo_cleanup_swept", count=len(expired_ids))
+    # N12 fix — record a tamper-evident audit row for every cleanup run.
+    # Destructive multi-tenant deletes must always be traceable to the
+    # mesh caller that triggered them. Uses the same on-demand Redis
+    # client pattern as routers/openai_messages.py so we don't depend on
+    # app.state.redis being populated (the gateway boot path doesn't set it).
+    try:
+        from sdk.common.audit_stream import push_audit_event
+        from sdk.common.redis import get_redis_client
+        _audit_redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
+        await push_audit_event(
+            redis=_audit_redis,
+            tenant_id="system",
+            agent_id=None,
+            action="demo_cleanup_swept",
+            tool="demo.cleanup-expired",
+            decision="allow",
+            reason=f"swept {len(expired_ids)} expired demo tenant(s)",
+            metadata={
+                "triggered_by": _auth,
+                "swept_count":  len(expired_ids),
+                "swept_ids":    expired_ids,
+                "cutoff":       cutoff.isoformat(),
+            },
+            request_id=request.headers.get("X-Request-ID"),
+        )
+    except Exception as exc:  # noqa: BLE001 — audit write must never fail the sweep
+        logger.warning("demo_cleanup_audit_emit_failed", error=str(exc))
+
+    logger.info(
+        "demo_cleanup_swept",
+        count=len(expired_ids),
+        triggered_by=_auth,
+    )
     return {
         "success": True,
         "data": {"swept_count": len(expired_ids), "swept_ids": expired_ids},

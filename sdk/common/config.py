@@ -127,6 +127,22 @@ class ACPSettings(BaseSettings):
         default="",
         description="Signing key for service mesh JWTs. Falls back to INTERNAL_SECRET if empty."
     )
+    # N11 fix (2026-06-21) — Prometheus /metrics scrape gate, independent
+    # of INTERNAL_SECRET. Prometheus runs in the docker network without a
+    # mesh ES256 keypair, so it can't speak the new mesh JWT path. Keep
+    # the scrape behind its OWN secret so a leak of INTERNAL_SECRET no
+    # longer hands an attacker a path to scrape tenant-labelled gauges
+    # (AUTH_FAILURES_TOTAL by role, TENANT_ISOLATION_VIOLATIONS_TOTAL, …).
+    # Rotates independently; only Prometheus + the gateway's middleware
+    # need to know it.
+    PROMETHEUS_SCRAPE_SECRET: str = Field(
+        default="",
+        description=(
+            "Dedicated secret for Prometheus /metrics scrape. Independent of "
+            "INTERNAL_SECRET so a leak of the mesh secret cannot scrape tenant "
+            "metrics. Empty string ⇒ /metrics requires X-Mesh-Token (no legacy lane)."
+        ),
+    )
 
     # Sprint EI-9 (2026-06-20) — Cloudflare Turnstile bot-defence on
     # /demo/spawn-workspace. If unset (local dev), the verifier is bypassed
