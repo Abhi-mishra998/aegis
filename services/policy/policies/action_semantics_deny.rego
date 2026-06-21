@@ -361,6 +361,13 @@ action_semantics_deny if { _iac_destruction }
 action_semantics_deny if { _wire_above_hard_cap }
 action_semantics_deny if { _wire_external_escalate }
 action_semantics_deny if { _pii_cumulative_threshold_breached }
+# P0-1 2026-06-21 — SSRF triad. Each is independently a hard-deny because
+# every flavour is an unambiguous exfil / pivot vector with no legitimate
+# agent use case. Findings + MITRE tactics live in the signal registry
+# (services/security/signal_registry.py).
+action_semantics_deny if { _ssrf_local_file }
+action_semantics_deny if { _ssrf_cloud_metadata }
+action_semantics_deny if { _ssrf_internal_network }
 # FUP-1 2026-06-15 — canonical signal forwarder. The fast path emits
 # `signal_findings[]` inside arguments.canonical with the full vocabulary
 # (sql_injection_detected, cloud_credential_path, system_sensitive_path,
@@ -427,6 +434,11 @@ _canonical_deny_signals := {
 	"sql_injection_detected",
 	"external_pii_exfil",
 	"bulk_pii_egress_dump",
+	# P0-1 2026-06-21 — SSRF family. Each variant maps to its own MITRE
+	# technique (T1083 file://, T1552.005 cloud-metadata, T1190 internal).
+	"ssrf_local_file",
+	"ssrf_cloud_metadata",
+	"ssrf_internal_network",
 }
 
 _canonical_deny_finding if {
@@ -588,6 +600,51 @@ reason := "wire_above_hard_cap" if {
 
 reason := "wire_external_high_value_approval_required" if {
 	_wire_external_escalate
+}
+
+# =========================================================================
+# P0-1 2026-06-21 — SSRF (Server-Side Request Forgery) triad
+# =========================================================================
+# Three orthogonal SSRF flavours, each its own hard-deny rule. The flag
+# is set by services/policy/canonical._extract_http() and surfaced under
+# arguments.canonical for the slow path. Each rule also accepts the
+# top-level input.is_ssrf_* form so a future upstream that lifts the
+# flag onto the OPA root doesn't need a Rego change.
+
+_ssrf_local_file if {
+	object.get(input, ["metadata", "arguments", "canonical", "is_ssrf_local_file"], false) == true
+}
+
+_ssrf_local_file if {
+	object.get(input, "is_ssrf_local_file", false) == true
+}
+
+_ssrf_cloud_metadata if {
+	object.get(input, ["metadata", "arguments", "canonical", "is_ssrf_cloud_metadata"], false) == true
+}
+
+_ssrf_cloud_metadata if {
+	object.get(input, "is_ssrf_cloud_metadata", false) == true
+}
+
+_ssrf_internal_network if {
+	object.get(input, ["metadata", "arguments", "canonical", "is_ssrf_internal_network"], false) == true
+}
+
+_ssrf_internal_network if {
+	object.get(input, "is_ssrf_internal_network", false) == true
+}
+
+reason := "ssrf_local_file" if {
+	_ssrf_local_file
+}
+
+reason := "ssrf_cloud_metadata" if {
+	_ssrf_cloud_metadata
+}
+
+reason := "ssrf_internal_network" if {
+	_ssrf_internal_network
 }
 
 # ADR-shift 2026-06-15 — session intel + baseline reasons

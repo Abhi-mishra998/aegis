@@ -553,6 +553,34 @@ def evaluate_full(
         }
 
     # ── HARD DENY (one-of) ─────────────────────────────────────────────
+    # P0-1 2026-06-21 — SSRF triad takes priority. file:// + cloud-metadata
+    # + RFC1918 internal-network pivot are unambiguous data-exfil vectors
+    # with no legitimate agent use case. Each variant carries its own MITRE
+    # technique so the response surfaces the correct one to the SOC.
+    if canonical.get("is_ssrf_local_file"):
+        add("ssrf_local_file")
+        explanation_parts.append(
+            f"SSRF blocked: URL fetcher pointed at file:// scheme "
+            f"({(canonical.get('url') or '')[:120]}) — local file read."
+        )
+        return _deny("SEC-SSRF-001", "ssrf_local_file", findings, 95, explanation_parts)
+    if canonical.get("is_ssrf_cloud_metadata"):
+        add("ssrf_cloud_metadata")
+        explanation_parts.append(
+            f"SSRF blocked: URL fetcher pointed at cloud-instance metadata "
+            f"endpoint ({(canonical.get('url') or '')[:120]}) — IAM-credential "
+            f"theft vector (T1552.005)."
+        )
+        return _deny("SEC-SSRF-002", "ssrf_cloud_metadata", findings, 95, explanation_parts)
+    if canonical.get("is_ssrf_internal_network"):
+        add("ssrf_internal_network")
+        explanation_parts.append(
+            f"SSRF blocked: URL fetcher pointed at internal-network address "
+            f"({(canonical.get('url') or '')[:120]}) — RFC1918 / loopback / "
+            f"link-local pivot."
+        )
+        return _deny("SEC-SSRF-003", "ssrf_internal_network", findings, 95, explanation_parts)
+
     # Sprint 2 — Aegis control-plane DML (INSERT/UPDATE/DELETE against
     # audit_logs/policies/kill_switches/decisions/api_keys/…) takes
     # priority over both `destructive_sql_dml_no_predicate` (which the
