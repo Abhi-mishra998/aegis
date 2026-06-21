@@ -197,6 +197,22 @@ async def verify_audit_integrity(request: Request) -> Any:
     return passthrough(resp)
 
 
+# P1-3 fix 2026-06-21 — auditor-facing alias.
+# F500 SOC2 reviewers expect `GET /audit/chain/verify` as the canonical
+# "is the audit chain still cryptographically intact?" check. The
+# functionally identical handler already lives at /audit/logs/verify, but
+# the URL path didn't match the industry convention so the brutal-review
+# flagged it as missing. Same proxy, friendlier path.
+@router.get("/audit/chain/verify", tags=["audit"])
+async def verify_audit_chain_alias(request: Request) -> Any:
+    """Proxy → Audit logs integrity verification (auditor-friendly alias)."""
+    resp = await request.app.state.client.get(
+        f"{_base()}/logs/verify",
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
+
+
 @router.get("/audit/logs/{audit_id}/explain", tags=["audit"])
 async def explain_decision_proxy(audit_id: str, request: Request) -> Any:
     """Proxy → Audit service root-cause explanation for one decision."""
