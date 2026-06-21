@@ -23,7 +23,6 @@ import pytest
 import redis.exceptions
 from fastapi import HTTPException
 
-
 # ---------------------------------------------------------------------------
 # Test scaffolding
 # ---------------------------------------------------------------------------
@@ -246,3 +245,106 @@ async def test_revocation_check_fail_closed_remains_intact():
     with pytest.raises(HTTPException) as exc:
         await inst._authenticate(request, is_execute_path=True)
     assert exc.value.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# P3-1 + N17 — body unified to "Unauthorized" + WWW-Authenticate realm unified
+# to "aegis". These tests pin the contract so a future merge cannot silently
+# regress us back to "Invalid or expired token" / per-reason realm leak that
+# the brutal review flagged as a probing oracle.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_p3_1_malformed_jwt_returns_unauthorized_with_aegis_realm():
+    """The headline regression check: a syntactically-broken JWT must be
+    rejected at the auth middleware with HTTPException(401, "Unauthorized",
+    WWW-Authenticate: Bearer realm="aegis") — NOT fall through to the
+    downstream decision-svc path that would yield a 403 fail-closed.
+    """
+    redis_stub = _StubRedis()
+    inst = _make_mixin(redis_stub)
+
+    # No revocation entry, so the validator gets called and decodes "xxx",
+    # which jose treats as "Not enough segments" → ACPAuthError → 401.
+    request = _make_request(auth_header="Bearer xxx", method="GET", url_path="/agents")
+
+    with pytest.raises(HTTPException) as exc:
+        await inst._authenticate(request, is_execute_path=False)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Unauthorized"
+    assert exc.value.headers is not None
+    assert exc.value.headers.get("WWW-Authenticate") == 'Bearer realm="aegis"'
+
+
+@pytest.mark.asyncio
+async def test_p3_1_no_token_returns_unauthorized_with_aegis_realm():
+    """A request with no Authorization header at all must surface the
+    SAME body + realm as a malformed-token request, so the response is
+    not an oracle for "did the attacker even send a token?".
+    """
+    redis_stub = _StubRedis()
+    inst = _make_mixin(redis_stub)
+
+    request = _make_request(auth_header=None, method="GET", url_path="/agents")
+
+    with pytest.raises(HTTPException) as exc:
+        await inst._authenticate(request, is_execute_path=False)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Unauthorized"
+    assert exc.value.headers is not None
+    assert exc.value.headers.get("WWW-Authenticate") == 'Bearer realm="aegis"'
+
+
+@pytest.mark.asyncio
+async def test_p3_1_invalid_api_key_returns_unauthorized_with_aegis_realm():
+    """API key (acp_…) rejections must also use the unified body + realm
+    so the response does not leak which auth method an attacker probed.
+    """
+    redis_stub = _StubRedis()
+    inst = _make_mixin(redis_stub)
+    inst._validate_api_key_cached = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+
+    request = _make_request(
+        auth_header="Bearer acp_definitely_not_a_real_key",
+        method="GET",
+        url_path="/agents",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await inst._authenticate(request, is_execute_path=False)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Unauthorized"
+    assert exc.value.headers is not None
+    assert exc.value.headers.get("WWW-Authenticate") == 'Bearer realm="aegis"'
+
+
+@pytest.mark.asyncio
+async def test_p3_1_auth_failures_counter_keeps_per_reason_label():
+    """The WWW-Authenticate realm is unified, but the internal counter
+    AUTH_FAILURES_TOTAL must still receive the per-reason slug so our
+    dashboards keep their diagnostic fidelity (invalid_token vs
+    session_expired vs missing_token etc.).
+    """
+    from services.gateway.middleware import AUTH_FAILURES_TOTAL
+
+    # Snapshot the metric for the invalid_token reason — _value._value is
+    # the prometheus_client internal accessor that exposes the raw count.
+    before = AUTH_FAILURES_TOTAL.labels(reason="invalid_token")._value.get()
+
+    redis_stub = _StubRedis()
+    inst = _make_mixin(redis_stub)
+    request = _make_request(auth_header="Bearer xxx", method="GET", url_path="/agents")
+
+    with pytest.raises(HTTPException):
+        await inst._authenticate(request, is_execute_path=False)
+
+    after = AUTH_FAILURES_TOTAL.labels(reason="invalid_token")._value.get()
+    assert after == before + 1, (
+        f"AUTH_FAILURES_TOTAL{{reason=invalid_token}} did not tick "
+        f"(before={before} after={after}) — the per-reason internal counter "
+        f"is the only place the per-reason slug is still allowed to live."
+    )
