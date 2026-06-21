@@ -297,6 +297,16 @@ SHADOW_DOWNGRADES_TOTAL = Counter(
     "Policy deny/escalate decisions downgraded to would_have_blocked under shadow mode",
     ["tenant_id", "original_action"],
 )
+# N2 (2026-06-21) — SSE handler verifies the payload's `tenant_id` matches
+# the authenticated client's tenant before yielding the message. Any
+# cross-tenant publish that slips into the channel (rogue internal service
+# with Redis access, mis-keyed publisher, replay attack) gets silently
+# dropped and counted here so the SOC can spot a spike.
+SSE_CROSS_TENANT_DROP_TOTAL = Counter(
+    "acp_sse_cross_tenant_drop_total",
+    "SSE messages dropped because payload tenant_id != authenticated tenant_id",
+    [],
+)
 
 # ── EH-3: security-specific counters (separate from operational ones) ──
 # These get their own Prometheus rule group so the SOC has one place to

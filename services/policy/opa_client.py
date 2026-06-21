@@ -125,7 +125,12 @@ class OPAClient:
                 tool = str(input_data.get("tool", "") or "")
                 redis_client = _get_publish_redis()
                 if redis_client is not None:
+                    # N2 (2026-06-21) — payload carries top-level
+                    # ``tenant_id`` so the SSE generator can verify a
+                    # cross-tenant publish never leaks. The channel name is
+                    # not a trust boundary on its own.
                     payload = json.dumps({
+                        "tenant_id": tenant_id,
                         "type": "policy_decision",
                         "data": {
                             "agent_id": agent_id or None,

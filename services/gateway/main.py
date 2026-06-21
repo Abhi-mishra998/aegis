@@ -139,11 +139,18 @@ async def _publish_event(
     If `agent_id` is provided, the event is ALSO published on the per-agent channel
     `acp:events:{tenant_id}:{agent_id}` so EventSource clients scoped to one agent
     receive a filtered stream alongside the tenant-wide subscription.
+
+    N2 (2026-06-21) — the JSON body MUST carry a top-level ``tenant_id`` so the
+    SSE generator can independently verify the message was intended for the
+    authenticated client. Trusting the channel name alone is not enough — any
+    internal service with Redis access could publish to
+    ``acp:events:<otherTenant>`` and the generator used to relay it blind.
     """
     if not tenant_id:
         return
     try:
         payload = json.dumps({
+            "tenant_id": tenant_id,
             "type": event_type,
             "data": data,
             "ts": int(time.time()),
@@ -1534,6 +1541,120 @@ async def events_stream(request: Request) -> Response:
             logger.warning("sse_invalid_agent_id", value=agent_filter_raw[:64])
             agent_filter = None
 
+    # N19 (2026-06-21) — when ?agent_id= is supplied we MUST verify the
+    # agent record exists AND belongs to the authenticated tenant BEFORE
+    # subscribing to the per-agent channel. Previously any caller could
+    # provide an arbitrary UUID (including a system/other-tenant agent's
+    # ID) and silently subscribe to its event stream. The registry's
+    # GET /agents/{id} is tenant-scoped (Agent.tenant_id == tenant_id
+    # in the SELECT) so it returns 404 for both "agent does not exist"
+    # and "agent belongs to another tenant" — that's exactly the
+    # primitive we need.
+    #
+    # Role-gate: OWNER / ADMIN / SECURITY_ANALYST see any agent in their
+    # tenant. DEVELOPER / READ_ONLY are limited to agents whose
+    # ``owner_id`` matches the JWT actor (``sub`` claim).
+    actor_role = (payload.get("role") or "").upper()
+    actor_sub = payload.get("sub", "")
+    _PRIVILEGED_SSE_ROLES = frozenset((
+        "OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY",
+    ))
+    if agent_filter:
+        # Build a service-to-service request to the registry. We pin the
+        # tenant header from the validated JWT — never from the client —
+        # so the registry's tenant-scoped query returns 404 for any agent
+        # that doesn't belong to the JWT tenant.
+        try:
+            registry_headers = {
+                "X-Internal-Secret": settings.INTERNAL_SECRET,
+                "X-Tenant-ID": tenant_id_str,
+                "Authorization": f"Bearer {token}",
+            }
+            agent_lookup = await request.app.state.client.get(
+                f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_filter}",
+                headers=registry_headers,
+                timeout=2.0,
+            )
+        except Exception as exc:
+            logger.warning(
+                "sse_agent_lookup_failed",
+                agent_id=agent_filter,
+                tenant_id=tenant_id_str,
+                error=str(exc),
+            )
+            return Response(
+                status_code=503,
+                content='{"error":"registry_unreachable","detail":"could not verify agent ownership"}',
+                media_type="application/json",
+            )
+
+        if agent_lookup.status_code == 404:
+            # Either the agent does not exist OR it belongs to a different
+            # tenant. We do not distinguish — leaking "exists in other
+            # tenant" lets an attacker enumerate cross-tenant agent IDs.
+            logger.info(
+                "sse_agent_subscribe_blocked",
+                reason="agent_not_found_or_cross_tenant",
+                agent_id=agent_filter,
+                tenant_id=tenant_id_str,
+                actor=actor_sub,
+                role=actor_role,
+            )
+            return Response(
+                status_code=404,
+                content='{"error":"Not Found","detail":"agent not found"}',
+                media_type="application/json",
+            )
+
+        if agent_lookup.status_code != 200:
+            logger.warning(
+                "sse_agent_lookup_non_200",
+                status=agent_lookup.status_code,
+                agent_id=agent_filter,
+                tenant_id=tenant_id_str,
+            )
+            return Response(
+                status_code=503,
+                content='{"error":"registry_unreachable","detail":"could not verify agent ownership"}',
+                media_type="application/json",
+            )
+
+        # Optional role-gate — DEVELOPER / READ_ONLY can only subscribe
+        # to events for agents they own. OWNER / ADMIN / SECURITY_ANALYST
+        # see every agent in their tenant.
+        if actor_role and actor_role not in _PRIVILEGED_SSE_ROLES:
+            try:
+                agent_body = agent_lookup.json()
+            except Exception:
+                agent_body = {}
+            # APIResponse wraps the payload in a ``data`` envelope.
+            agent_data = (
+                agent_body.get("data", agent_body)
+                if isinstance(agent_body, dict)
+                else {}
+            )
+            owner_id = ""
+            if isinstance(agent_data, dict):
+                owner_id = str(agent_data.get("owner_id", "") or "")
+            if actor_sub and owner_id and owner_id != actor_sub:
+                logger.info(
+                    "sse_agent_subscribe_blocked",
+                    reason="role_not_owner",
+                    agent_id=agent_filter,
+                    tenant_id=tenant_id_str,
+                    actor=actor_sub,
+                    role=actor_role,
+                    owner_id=owner_id,
+                )
+                return Response(
+                    status_code=403,
+                    content=(
+                        '{"error":"Forbidden",'
+                        '"detail":"role not permitted to subscribe to another user\'s agent"}'
+                    ),
+                    media_type="application/json",
+                )
+
     tenant_channel = f"acp:events:{tenant_id_str}"
     agent_channel = (
         f"acp:events:{tenant_id_str}:{agent_filter}" if agent_filter else None
@@ -1602,6 +1723,45 @@ async def events_stream(request: Request) -> Response:
                     data = msg.get("data", b"")
                     if isinstance(data, bytes):
                         data = data.decode("utf-8", errors="replace")
+                    # N2 (2026-06-21) — defence-in-depth: re-parse the
+                    # payload and verify the publisher claimed our tenant
+                    # before relaying to the client. The channel name
+                    # already isolates per-tenant in the happy path, but
+                    # any internal service with Redis credentials can
+                    # ``PUBLISH acp:events:<otherTenant> ...`` and the old
+                    # generator would relay it blind. Drop + count
+                    # mismatches so the SOC sees the spike. We intentionally
+                    # do NOT update last_heartbeat on a drop — a slow
+                    # drip of cross-tenant publishes must not be allowed
+                    # to suppress the per-client heartbeat either.
+                    try:
+                        parsed = json.loads(data)
+                    except (ValueError, TypeError):
+                        # Legacy / non-JSON publishers — drop silently
+                        # (no tenant claim means we cannot verify).
+                        logger.debug(
+                            "sse_drop_unparseable_payload",
+                            tenant_id=tenant_id_str,
+                        )
+                        continue
+                    msg_tenant_id = ""
+                    if isinstance(parsed, dict):
+                        msg_tenant_id = str(parsed.get("tenant_id", "") or "")
+                    if not msg_tenant_id or msg_tenant_id != tenant_id_str:
+                        try:
+                            from services.gateway.middleware import (
+                                SSE_CROSS_TENANT_DROP_TOTAL,
+                            )
+                            SSE_CROSS_TENANT_DROP_TOTAL.inc()
+                        except Exception:
+                            pass
+                        logger.warning(
+                            "sse_cross_tenant_drop",
+                            authenticated_tenant=tenant_id_str,
+                            payload_tenant=msg_tenant_id or "<missing>",
+                            channel=msg.get("channel"),
+                        )
+                        continue
                     yield f"data: {data}\n\n"
                     last_heartbeat = now
                 elif now - last_heartbeat >= 15.0:
