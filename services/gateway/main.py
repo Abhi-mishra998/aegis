@@ -1031,6 +1031,13 @@ async def system_health(request: Request) -> dict[str, Any]:
         "identity_graph":  settings.IDENTITY_GRAPH_SERVICE_URL,
         "flight_recorder": settings.FLIGHT_RECORDER_SERVICE_URL,
         "autonomy":        settings.AUTONOMY_SERVICE_URL,
+        # P0-2b fix 2026-06-21: OPA was NOT in the health probe set, so an
+        # OPA outage (container crash, OOM, network blip) reported
+        # `down_services=0` and no alert fired. The /execute path could
+        # silently fail-open (a separate finding still under investigation).
+        # Adding OPA here gives operators a Prometheus signal + page within
+        # 60s of OPA going down.
+        "opa":             settings.OPA_URL,
     }
 
     from services.gateway.latency_window import end_to_end_window

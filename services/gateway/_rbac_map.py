@@ -25,7 +25,13 @@ from dataclasses import dataclass
 from typing import Iterable
 
 # Canonical Aegis role tier (highest → lowest).
-ROLE_TIERS = ("OWNER", "ADMIN", "SECURITY_ANALYST", "DEVELOPER", "READ_ONLY")
+# ROOT is the platform-staff role added 2026-06-21 to close P0-0 (any tenant
+# OWNER could enumerate the full tenant table via /admin/tenants because the
+# rule below said `roles=("OWNER",)` without distinguishing tenant-owner from
+# platform-owner). ROOT sits above OWNER in the tier so `min_role=OWNER` rules
+# still accept ROOT, but rules explicitly listing only `OWNER` do NOT — and
+# the /admin* rule now lists only ROOT.
+ROLE_TIERS = ("ROOT", "OWNER", "ADMIN", "SECURITY_ANALYST", "DEVELOPER", "READ_ONLY")
 
 
 def _meets(actual: str, minimum: str) -> bool:
@@ -182,7 +188,13 @@ RULES: tuple[Rule, ...] = (
     _R("/autonomy/playbooks/*",        ("POST",),        min_role="SECURITY_ANALYST"),
     _R("/autonomy/playbooks*",         ("*",),           min_role="SECURITY_ANALYST"),
     _R("/kill-switch*",                ("POST",),        roles=("OWNER", "SECURITY_ANALYST")),
-    _R("/admin*",                      ("*",),           roles=("OWNER",)),
+    # /admin/* is Aegis platform-staff surface, NOT tenant-owner surface.
+    # Tenant-self-administration lives under /workspace/*. This was previously
+    # `roles=("OWNER",)` which let any demo workspace OWNER (and any real
+    # customer OWNER) call /admin/tenants and enumerate every other tenant in
+    # the database — P0-0 in the 2026-06-21 brutal review. ROOT is set only
+    # via direct DB grant; no signup flow ever produces it.
+    _R("/admin*",                      ("*",),           roles=("ROOT",)),
     _R("/threat-intel*",               ("*",),           min_role="SECURITY_ANALYST"),
     _R("/remediation*",                ("*",),           min_role="SECURITY_ANALYST"),
     _R("/system/values*",              ("GET",),         min_role="READ_ONLY"),

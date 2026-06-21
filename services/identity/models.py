@@ -55,6 +55,16 @@ class UserRole(StrEnum):
     DEVELOPER = "DEVELOPER"
     READ_ONLY = "READ_ONLY"
 
+    # Platform-staff role (P0-0 fix 2026-06-21).
+    # Granted ONLY to Aegis-internal staff, never via signup. The /admin/*
+    # routes (cross-tenant list/export/redact) require ROOT — the previous
+    # rule allowed any tenant OWNER, which leaked the full tenant table to
+    # any demo workspace. No code path mints ROOT; it is set via:
+    #   psql ... -c "UPDATE users SET role='ROOT' WHERE email='staff@aegisagent.in';"
+    # The Clerk signup + /demo/spawn-workspace handlers MUST NOT allow ROOT
+    # in the role field (defense in depth — enforce in router code).
+    ROOT = "ROOT"
+
 
 # Canonical role vocabulary lives in sdk.common.roles so the gateway's
 # verify_role middleware and the identity writer share one source of truth.

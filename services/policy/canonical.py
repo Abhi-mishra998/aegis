@@ -667,7 +667,52 @@ def _extract_http(params: dict[str, Any], blob_lower: str) -> dict[str, Any]:
     # GAP-1 2026-06-15 — privilege URL pattern (password reset, IAM mutation,
     # role grant). Surface alongside whatever HTTP intent the agent emitted.
     out["is_privilege_url"] = any(p in url.lower() for p in _PRIVILEGE_URL_PATTERNS)
+
+    # P0-1 fix 2026-06-21 — SSRF detection. The brutal review found that
+    # http.get with url=file:///etc/passwd / 169.254.169.254 / localhost
+    # was returned as action=allow with risk=0.0. The fix is to classify
+    # those URLs here so the initial_access detector can emit the right
+    # finding (ssrf_local_file, ssrf_cloud_metadata, ssrf_internal_network)
+    # and the score reduction in canonical → deny tier hits.
+    url_lower = url.lower()
+    out["is_ssrf_local_file"] = url_lower.startswith(("file://", "gopher://", "ftp://"))
+    out["is_ssrf_cloud_metadata"] = any(
+        marker in url_lower for marker in _CLOUD_METADATA_MARKERS
+    )
+    out["is_ssrf_internal_network"] = _host_is_internal(host) if host else False
     return out
+
+
+# Cloud-metadata exfil endpoints. Every IaaS publishes one; treat any HTTP
+# call to these from an agent as adversarial.
+_CLOUD_METADATA_MARKERS = (
+    "169.254.169.254",          # AWS / GCP / Azure / Alibaba / OpenStack
+    "metadata.google.internal", # GCP-preferred hostname
+    "metadata.azure.com",       # Azure variant
+    "fd00:ec2::254",            # AWS IMDSv6
+    "100.100.100.200",          # Alibaba Cloud
+)
+
+
+def _host_is_internal(host: str) -> bool:
+    """True if host resolves to an RFC1918 / loopback / link-local /
+    *.internal / *.local target — i.e. an SSRF pivot into private network.
+    Host is already lowercased + has no scheme. May include `:port`.
+    """
+    if not host:
+        return False
+    host = host.split(":", 1)[0]  # drop :port
+    if host in ("localhost", "0.0.0.0"):
+        return True
+    if host.endswith((".internal", ".local", ".corp", ".intra", ".lan")):
+        return True
+    # Numeric-IP check — RFC1918 ranges + loopback + link-local
+    try:
+        import ipaddress
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
