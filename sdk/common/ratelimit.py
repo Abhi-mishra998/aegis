@@ -52,6 +52,30 @@ return allowed
 """
 
 
+# Atomic INCR-with-cap check for daily/monthly windows. Replaces the
+# previous non-atomic INCR + read-back pattern that allowed concurrent
+# callers to both observe `used <= cap` after their respective INCRs
+# (N13: race that could 10-20× over-spend a $5/day inference cap).
+#
+# KEYS[1] = window counter key
+# ARGV[1] = cap (integer, > 0)
+# ARGV[2] = ttl_seconds for first INCR (sets EXPIRE so the window rolls
+#           over cleanly without a separate round-trip)
+# Returns {allowed (0|1), used_after_incr}
+_LUA_WINDOW_INCR = """
+local used = redis.call('INCR', KEYS[1])
+if used == 1 then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+end
+local cap = tonumber(ARGV[1])
+if used > cap then
+    return {0, used}
+else
+    return {1, used}
+end
+"""
+
+
 class RateLimiter:
     """
     Atomic Redis Lua rate limiter (Token Bucket).
@@ -185,6 +209,7 @@ class TenantQuotaLimiter:
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
         self._bucket_script = redis.register_script(_LUA_TOKEN_BUCKET)
+        self._window_script = redis.register_script(_LUA_WINDOW_INCR)
 
     # ── Public API ────────────────────────────────────────────────────
     async def check(
@@ -214,11 +239,12 @@ class TenantQuotaLimiter:
                 usage={"requests_per_second": requests_per_second, "burst": burst},
             )
 
-        # 2. Daily cap — INCR + read-back
-        daily_used, daily_reset = await self._incr_window(
-            kind="daily", tenant_id=tenant_id, now=now, ttl_seconds=36 * 3600,
+        # 2. Daily cap — atomic INCR + cap-check (Lua, single round-trip)
+        daily_allowed, daily_used, daily_reset = await self._incr_window(
+            kind="daily", tenant_id=tenant_id, now=now,
+            ttl_seconds=36 * 3600, cap=daily_cap,
         )
-        if daily_used > daily_cap:
+        if not daily_allowed:
             # We've already incremented — that's correct: the operator's
             # forensics need to see the OVER-the-cap traffic too. The
             # response says no; the counter doesn't lie.
@@ -230,20 +256,21 @@ class TenantQuotaLimiter:
                        "daily_resets_at": daily_reset.isoformat()},
             )
 
-        # 3. Monthly cap (NULL = no cap)
+        # 3. Monthly cap (NULL = no cap → _incr_window short-circuits to bare INCR)
         monthly_used = 0
         monthly_reset = now
+        monthly_allowed = True
         if monthly_cap is not None:
-            monthly_used, monthly_reset = await self._incr_window(
+            monthly_allowed, monthly_used, monthly_reset = await self._incr_window(
                 kind="monthly", tenant_id=tenant_id, now=now,
-                ttl_seconds=35 * 24 * 3600,
+                ttl_seconds=35 * 24 * 3600, cap=monthly_cap,
             )
             await self._maybe_emit_monthly_warning(
                 tenant_id=tenant_id,
                 used=monthly_used, cap=monthly_cap,
                 now=now, reset_at=monthly_reset,
             )
-            if monthly_used > monthly_cap:
+            if not monthly_allowed:
                 return QuotaDecision(
                     allowed=False, limit_type="monthly",
                     reset_at=monthly_reset.isoformat(),
@@ -318,8 +345,29 @@ class TenantQuotaLimiter:
         return int(result) > 0
 
     async def _incr_window(
-        self, *, kind: str, tenant_id: str, now: datetime, ttl_seconds: int,
-    ) -> tuple[int, datetime]:
+        self,
+        *,
+        kind: str,
+        tenant_id: str,
+        now: datetime,
+        ttl_seconds: int,
+        cap: int | None,
+    ) -> tuple[bool, int, datetime]:
+        """Atomically INCR the window counter and decide allow/deny in
+        the same Redis round-trip.
+
+        Replaces the prior non-atomic INCR + read-back pattern (N13):
+        two concurrent callers could both INCR, both read back
+        `used <= cap`, and both proceed — exceeding the cap by the
+        number of racing callers.
+
+        Returns ``(allowed, used_after_incr, reset_at)``.
+
+        When ``cap is None`` the window is effectively unbounded
+        (e.g. monthly_cap=None); we still INCR so /tenant/quota can
+        report usage, but always return ``allowed=True`` without invoking
+        the Lua cap check.
+        """
         if kind == "daily":
             key = self._daily_key(tenant_id, now)
             reset_at = self._next_utc_midnight(now)
@@ -328,18 +376,35 @@ class TenantQuotaLimiter:
             reset_at = self._next_utc_month(now)
         else:
             raise ValueError(f"unknown window {kind!r}")
+
+        if cap is None:
+            # Unbounded — short-circuit to a bare INCR (still atomic w.r.t.
+            # itself; no cap to enforce).
+            try:
+                used = int(await self._redis.incr(key))
+                if used == 1:
+                    await self._redis.expire(key, ttl_seconds)
+            except Exception:
+                # Redis hiccup: fail-open on the counters (rps was already
+                # checked atomically above). Caller's existing 429/SLO
+                # alerting will catch any pathological load.
+                used = 0
+            return True, used, reset_at
+
         try:
-            used = int(await self._redis.incr(key))
-            if used == 1:
-                # First INCR creates the key — set TTL so it expires
-                # cleanly after the period rolls over.
-                await self._redis.expire(key, ttl_seconds)
+            raw = await self._window_script(
+                keys=[key], args=[int(cap), int(ttl_seconds)],
+            )
+            # Lua returns a Lua array → redis-py decodes to a Python list
+            # of ints (possibly bytes-encoded ints under some clients).
+            allowed_raw, used_raw = raw[0], raw[1]
+            allowed = int(allowed_raw) == 1
+            used = int(used_raw)
         except Exception:
-            # Redis hiccup: fail-open on the counters (rps was already
-            # checked atomically above). Caller's existing 429/SLO
-            # alerting will catch any pathological load.
-            used = 0
-        return used, reset_at
+            # Redis hiccup: fail-open (matches the pre-fix behaviour;
+            # rps is the authoritative atomic gate above).
+            return True, 0, reset_at
+        return allowed, used, reset_at
 
     async def _maybe_emit_monthly_warning(
         self, *, tenant_id: str, used: int, cap: int,

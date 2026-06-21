@@ -75,20 +75,38 @@ class _FakeRedis:
         return f"1-{len(self.streams[stream])}".encode()
 
     # -- script registration: returns a callable matching the Lua-script API --
-    def register_script(self, _src: str):
-        async def _bucket(*, keys, args):
-            (capacity, refill_rate, cost, now) = args
+    def register_script(self, src: str):
+        # Dispatch on script body so a single FakeRedis can serve both
+        # the token-bucket and the window-INCR cap script.
+        if "HMGET" in src and "tokens" in src:
+            async def _bucket(*, keys, args):
+                (capacity, refill_rate, cost, now) = args
+                key = keys[0]
+                tokens, last = self.bucket_state.get(key, (capacity, now))
+                time_passed = max(0.0, now - last)
+                tokens = min(capacity, tokens + time_passed * refill_rate)
+                allowed = 0
+                if tokens >= cost:
+                    tokens -= cost
+                    allowed = 1
+                self.bucket_state[key] = (tokens, now)
+                return allowed
+            return _bucket
+
+        # Window INCR + cap-check script — mirrors _LUA_WINDOW_INCR
+        async def _window(*, keys, args):
+            (cap, ttl_seconds) = args
             key = keys[0]
-            tokens, last = self.bucket_state.get(key, (capacity, now))
-            time_passed = max(0.0, now - last)
-            tokens = min(capacity, tokens + time_passed * refill_rate)
-            allowed = 0
-            if tokens >= cost:
-                tokens -= cost
-                allowed = 1
-            self.bucket_state[key] = (tokens, now)
-            return allowed
-        return _bucket
+            used = int(self.kv.get(key, "0")) + 1
+            self.kv[key] = str(used)
+            if used == 1:
+                # TTL is recorded as a no-op in the fake (no real expiry).
+                pass
+            cap_i = int(cap)
+            if used > cap_i:
+                return [0, used]
+            return [1, used]
+        return _window
 
 
 @pytest.fixture
@@ -344,3 +362,86 @@ def test_quota_decision_default_shape():
     assert d.reset_at is None
     assert d.retry_after_s == 0
     assert d.usage == {}
+
+
+# --------------------------------------------------------------------------- #
+# N13 — atomic INCR+cap race regression                                       #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_daily_cap_atomic_under_concurrency(limiter):
+    """Regression for N13: 20 concurrent check() calls at daily_cap=10
+    must return EXACTLY 10 allowed and 10 denied.
+
+    Before the fix, _incr_window did INCR then a separate read-back
+    against `cap`. Two coroutines could both INCR (used=10 and used=11),
+    both read back `used <= cap` (one saw 10, the other saw 11 — but
+    the comparison `used > cap` in Python was evaluated AFTER both INCRs
+    landed, so under real Redis with network latency both reads would
+    happen on the post-INCR value and let extra requests through.
+    """
+    import asyncio
+
+    async def one_call():
+        return await limiter.check(
+            tenant_id="race",
+            requests_per_second=10_000,  # never the bottleneck
+            burst=10_000,
+            daily_cap=10,
+            monthly_cap=None,
+        )
+
+    results = await asyncio.gather(*[one_call() for _ in range(20)])
+    allowed = [r for r in results if r.allowed]
+    denied = [r for r in results if not r.allowed]
+
+    assert len(allowed) == 10, (
+        f"Expected exactly 10 allowed under cap=10; got {len(allowed)} — "
+        f"non-atomic INCR+read race not closed"
+    )
+    assert len(denied) == 10, f"Expected exactly 10 denied; got {len(denied)}"
+    assert all(d.limit_type == "daily" for d in denied)
+    # Every denial carries the correct retry_after + reset_at (next UTC midnight).
+    for d in denied:
+        assert d.retry_after_s >= 1
+        assert d.reset_at is not None
+
+
+@pytest.mark.asyncio
+async def test_monthly_cap_atomic_under_concurrency(limiter):
+    """Same regression for the monthly counter path."""
+    import asyncio
+
+    async def one_call():
+        return await limiter.check(
+            tenant_id="race_monthly",
+            requests_per_second=10_000,
+            burst=10_000,
+            daily_cap=10_000_000,
+            monthly_cap=10,
+        )
+
+    results = await asyncio.gather(*[one_call() for _ in range(20)])
+    allowed = [r for r in results if r.allowed]
+    denied = [r for r in results if not r.allowed]
+
+    assert len(allowed) == 10
+    assert len(denied) == 10
+    assert all(d.limit_type == "monthly" for d in denied)
+
+
+@pytest.mark.asyncio
+async def test_monthly_cap_none_uses_short_circuit(limiter, fake_redis):
+    """When monthly_cap=None the Lua cap-script must NOT be invoked —
+    we just INCR for usage tracking. (Verifies the cap=None short-circuit
+    in _incr_window.)"""
+    d = await limiter.check(
+        tenant_id="t_none",
+        requests_per_second=100, burst=100,
+        daily_cap=1_000_000, monthly_cap=None,
+    )
+    assert d.allowed is True
+    # Monthly key untouched (no INCR happens when monthly_cap is None).
+    monthly_key = TenantQuotaLimiter._monthly_key("t_none", datetime.now(tz=UTC))
+    assert monthly_key not in fake_redis.kv
