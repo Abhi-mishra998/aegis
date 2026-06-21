@@ -92,6 +92,13 @@ _SKIP_PATHS = frozenset(
         "/demo/spawn-workspace",
         # Scenario catalog is read-only metadata for the demo picker.
         "/demo/scenarios",
+        # /receipts/key returns the public ed25519 verification key. By
+        # design anyone who holds a signed receipt MUST be able to fetch
+        # this key without an Aegis tenant token to verify the signature
+        # offline (auditors, customers under NDA, transparency-log readers).
+        # Hardening accidentally auth-gated this in an earlier sprint —
+        # regression caught by deploy smoke 2026-06-20.
+        "/receipts/key",
     ]
 )
 
