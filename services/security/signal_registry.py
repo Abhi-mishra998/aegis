@@ -143,6 +143,33 @@ _register(SignalDefinition(
     default_score=95, default_response="deny",
     description="Query carries SQL injection payload (UNION, stacked DROP, tautology, comment evasion).",
 ))
+# P0-1 2026-06-21 — SSRF (Server-Side Request Forgery) family. Three
+# orthogonal flavours sharing the Initial Access tactic. Each gets its
+# own MITRE technique so SIEMs route them correctly.
+_register(SignalDefinition(
+    id="ssrf_local_file",
+    objective=SecurityObjective.INITIAL_ACCESS,
+    severity=Severity.CRITICAL,
+    mitre_technique="T1083 File and Directory Discovery",
+    default_score=95, default_response="deny",
+    description="URL fetcher pointed at a file:// scheme — local file read via SSRF.",
+))
+_register(SignalDefinition(
+    id="ssrf_cloud_metadata",
+    objective=SecurityObjective.INITIAL_ACCESS,
+    severity=Severity.CRITICAL,
+    mitre_technique="T1552.005 Cloud Instance Metadata API",
+    default_score=95, default_response="deny",
+    description="URL fetcher pointed at a cloud-instance-metadata endpoint (169.254.169.254, metadata.google.internal, …) — IAM-credential theft vector.",
+))
+_register(SignalDefinition(
+    id="ssrf_internal_network",
+    objective=SecurityObjective.INITIAL_ACCESS,
+    severity=Severity.CRITICAL,
+    mitre_technique="T1190 Exploit Public-Facing Application",
+    default_score=95, default_response="deny",
+    description="URL fetcher pointed at an RFC1918 / loopback / link-local address — internal-network pivot via SSRF.",
+))
 
 # P0-1 fix 2026-06-21: SSRF detector family. Brutal-review found that
 # `http.get` with url=file:///etc/passwd / 169.254.169.254 / localhost

@@ -668,51 +668,81 @@ def _extract_http(params: dict[str, Any], blob_lower: str) -> dict[str, Any]:
     # role grant). Surface alongside whatever HTTP intent the agent emitted.
     out["is_privilege_url"] = any(p in url.lower() for p in _PRIVILEGE_URL_PATTERNS)
 
-    # P0-1 fix 2026-06-21 — SSRF detection. The brutal review found that
-    # http.get with url=file:///etc/passwd / 169.254.169.254 / localhost
-    # was returned as action=allow with risk=0.0. The fix is to classify
-    # those URLs here so the initial_access detector can emit the right
-    # finding (ssrf_local_file, ssrf_cloud_metadata, ssrf_internal_network)
-    # and the score reduction in canonical → deny tier hits.
+    # P0-1 2026-06-21 — SSRF classification (Server-Side Request Forgery).
+    # Three orthogonal flavours, each its own MITRE-tagged signal under
+    # TA0001 Initial Access:
+    #   * file://             — local file read via URL fetcher (T1083)
+    #   * 169.254.169.254     — cloud instance metadata (T1552.005)
+    #   * RFC1918 / loopback  — internal-network pivot (T1190 / T1133)
+    # Detection runs on the URL string itself so the canonical orchestrator
+    # picks them up regardless of which downstream HTTP client is used.
     url_lower = url.lower()
-    out["is_ssrf_local_file"] = url_lower.startswith(("file://", "gopher://", "ftp://"))
-    out["is_ssrf_cloud_metadata"] = any(
-        marker in url_lower for marker in _CLOUD_METADATA_MARKERS
+    out["is_ssrf_local_file"] = url_lower.startswith(("file:", "file://"))
+
+    # Cloud metadata endpoints across major providers.
+    # AWS/OpenStack/DO use 169.254.169.254; GCP uses metadata.google.internal
+    # (also reachable via 169.254.169.254); Azure uses 169.254.169.254 too.
+    # Alibaba uses 100.100.100.200. All belong to the same SSRF class.
+    _META_HOSTS = (
+        "169.254.169.254",
+        "metadata.google.internal",
+        "metadata.goog",
+        "100.100.100.200",         # Alibaba Cloud ECS metadata
+        "fd00:ec2::254",           # AWS IMDSv2 IPv6 endpoint
     )
-    out["is_ssrf_internal_network"] = _host_is_internal(host) if host else False
+    out["is_ssrf_cloud_metadata"] = any(h in (host or url_lower) for h in _META_HOSTS)
+
+    # RFC1918 internal networks + loopback + link-local. We match against
+    # the parsed host so a legitimate external URL that happens to embed
+    # an IP-shaped substring in its query string doesn't trigger.
+    out["is_ssrf_internal_network"] = _is_internal_network_host(host) if host else False
     return out
 
 
-# Cloud-metadata exfil endpoints. Every IaaS publishes one; treat any HTTP
-# call to these from an agent as adversarial.
-_CLOUD_METADATA_MARKERS = (
-    "169.254.169.254",          # AWS / GCP / Azure / Alibaba / OpenStack
-    "metadata.google.internal", # GCP-preferred hostname
-    "metadata.azure.com",       # Azure variant
-    "fd00:ec2::254",            # AWS IMDSv6
-    "100.100.100.200",          # Alibaba Cloud
-)
+def _is_internal_network_host(host: str) -> bool:
+    """True when the URL host points at a private / loopback / link-local
+    address that an external agent has no legitimate reason to reach.
 
+    Pure-substring/regex check (no DNS) — we evaluate exactly what the
+    agent said, not what it would resolve to. DNS rebinding is out of
+    scope for this layer; if needed it's a separate egress-firewall job.
 
-def _host_is_internal(host: str) -> bool:
-    """True if host resolves to an RFC1918 / loopback / link-local /
-    *.internal / *.local target — i.e. an SSRF pivot into private network.
-    Host is already lowercased + has no scheme. May include `:port`.
+    Excludes 169.254.169.254 (cloud metadata) because that's a SEPARATE
+    finding (is_ssrf_cloud_metadata) with its own MITRE technique
+    (T1552.005), and the orchestrator emits both findings when both apply
+    so the SOC sees the most-specific MITRE mapping.
     """
     if not host:
         return False
-    host = host.split(":", 1)[0]  # drop :port
-    if host in ("localhost", "0.0.0.0"):
-        return True
-    if host.endswith((".internal", ".local", ".corp", ".intra", ".lan")):
-        return True
-    # Numeric-IP check — RFC1918 ranges + loopback + link-local
-    try:
-        import ipaddress
-        ip = ipaddress.ip_address(host)
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
-    except ValueError:
+    h = host.split(":", 1)[0].lower()  # strip :port
+    # Cloud metadata gets its own classification; don't double-count.
+    if h in ("169.254.169.254", "metadata.google.internal", "metadata.goog",
+             "100.100.100.200"):
         return False
+    # Loopback IPv4 (127.0.0.0/8) and IPv6 (::1).
+    if h == "localhost" or h == "::1" or h.startswith("127."):
+        return True
+    # RFC1918 ranges. Match by leading octet then refine the 172.16/12 band.
+    if h.startswith("10."):
+        return True
+    if h.startswith("192.168."):
+        return True
+    if h.startswith("172."):
+        m = re.match(r"172\.(\d{1,3})\.", h)
+        if m:
+            try:
+                second = int(m.group(1))
+                if 16 <= second <= 31:
+                    return True
+            except ValueError:
+                pass
+    # Link-local IPv4 (169.254/16, but NOT the metadata IP — caught above).
+    if h.startswith("169.254."):
+        return True
+    # IPv6 unique-local fc00::/7 and link-local fe80::/10.
+    if h.startswith(("fc", "fd", "fe80:", "[fc", "[fd", "[fe80:")):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------

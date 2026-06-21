@@ -27,6 +27,9 @@ def detect(c: dict) -> list[str]:
     findings: list[str] = []
     if c.get("sql_injection_detected"):
         findings.append("sql_injection_detected")
+    # P0-1 2026-06-21 — SSRF triad. Flags are mutually compatible (a URL
+    # could in principle be both file:// and internal-network); emit each
+    # independently so the response carries the most precise MITRE map.
     if c.get("is_ssrf_local_file"):
         findings.append("ssrf_local_file")
     if c.get("is_ssrf_cloud_metadata"):
