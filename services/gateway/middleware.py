@@ -70,7 +70,11 @@ _SKIP_PATHS = frozenset(
         # `/metrics` is intentionally NOT here — it leaks tenant-labelled
         # Prom series. It's gated by an in-process X-Internal-Secret check
         # inside the middleware dispatch (see _maybe_allow_metrics below).
-        "/health", "/docs", "/openapi.json", "/redoc",
+        # P2-2 fix 2026-06-21: /openapi.json removed from this no-auth list.
+        # It's now auth-gated by an RBAC rule in _rbac_map.py so partners +
+        # auditors can fetch the API contract with any token but anonymous
+        # attackers cannot enumerate the path surface.
+        "/health", "/docs", "/redoc",
         "/system/health",  # ops aggregate — must be reachable by k8s/ALB/Datadog probes (no tenant data)
         "/status",         # public customer-shareable status page (no tenant data)
         "/auth/token", "/auth/login", "/auth/agent/token",  # public auth endpoints
