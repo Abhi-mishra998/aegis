@@ -21,10 +21,10 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+import structlog
+from fastapi import Header, HTTPException, status
 from jose import ExpiredSignatureError, JWTError, jwt
 from redis.asyncio import Redis
-
-from fastapi import Header, HTTPException, status
 
 from sdk.common.auth import extract_bearer_token
 from sdk.common.config import settings
@@ -34,6 +34,8 @@ from sdk.common.roles import Role, canonical_role
 from services.gateway.auth_clerk import get_clerk_validator, looks_like_clerk_token
 
 REDIS_TOKEN_VALIDATION_PREFIX = "acp:token_validation:"
+
+logger = structlog.get_logger(__name__)
 
 # In-process LRU cache for validated JWT payloads. Sits in front of the
 # Redis cache so /execute's hot path can answer "is this token valid?"
@@ -260,15 +262,7 @@ class LocalTokenValidator:
             # by checking the active_key it sets at issuance. Without this,
             # anyone with JWT_SECRET_KEY can mint accepted tokens indefinitely.
             # Fails CLOSED on Redis error.
-            #
-            # Sprint S4 exception: anonymous demo tokens (is_demo=true) are
-            # minted directly by the gateway's /demo/spawn-workspace endpoint
-            # and never round-trip through Identity, so they cannot register
-            # an active_key. They're safe because (a) the JWT is HS256 + signed
-            # by JWT_SECRET_KEY which only the gateway holds, (b) the 30-min
-            # TTL bounds the blast radius, and (c) the spawn endpoint is
-            # rate-limited per source IP at the WAF.
-            if self._redis is not None and not payload.get("is_demo"):
+            if self._redis is not None:
                 active_key = f"{REDIS_TOKEN_PREFIX}{token_hash}"
                 try:
                     if not await self._redis.exists(active_key):
@@ -425,15 +419,12 @@ def verify_role(*allowed):
     async def _dependency(
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        # N17: every WWW-Authenticate realm slug is collapsed to a single
-        # literal ("aegis") so the realm value does not leak the validator
-        # branch (invalid_token / session_expired / insufficient_role /
-        # revoked_token). That distinction is the same oracle the P3-1
-        # body-shape collapse already closed on the response body.
         if not authorization:
+            # P3-1 + N17 — unified body + realm so the FastAPI route-level
+            # dependency matches the middleware-level contract exactly.
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing Authorization header",
+                detail="Unauthorized",
                 headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
@@ -441,7 +432,7 @@ def verify_role(*allowed):
         if not raw:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Malformed Authorization header — expected 'Bearer <token>'",
+                detail="Unauthorized",
                 headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             )
 
@@ -454,9 +445,16 @@ def verify_role(*allowed):
         try:
             claims = await token_validator.validate(raw)
         except ACPAuthError as exc:
+            # P3-1 + N17 — body unified to "Unauthorized" + realm "aegis".
+            # The per-reason slug stays on the structlog line for observability
+            # but does not leak to the client.
+            logger.info(
+                "verify_role_auth_failed",
+                reason=getattr(exc, "reason", None) or "invalid_token",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=str(exc),
+                detail="Unauthorized",
                 headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
             ) from exc
 

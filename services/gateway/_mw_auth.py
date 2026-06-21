@@ -133,7 +133,19 @@ class _AuthMixin:
                             await self.redis.expire(auth_fail_key, 300)
                         except Exception:
                             pass
-                        raise HTTPException(status_code=401, detail="Invalid or expired API key")
+                        # P3-1 + N17 + FU-1 — body unified to "Unauthorized" + realm "aegis".
+                        # The "API key" wording previously leaked the auth method
+                        # an attacker had probed; the unified body collapses that
+                        # oracle while AUTH_FAILURES_TOTAL keeps the internal slug.
+                        from services.gateway.middleware import (
+                            AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                        )
+                        AUTH_FAILURES_TOTAL.labels(reason="invalid_api_key").inc()
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Unauthorized",
+                            headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                        )
 
                     tenant_id_str = str(key_data["tenant_id"])
                     tenant_id = uuid.UUID(tenant_id_str)
@@ -224,7 +236,13 @@ class _AuthMixin:
                             AUTH_FAILURES_TOTAL.labels(reason="revoked_token").inc()
                             if failures and int(failures) > 1000:
                                 raise HTTPException(status_code=429, detail="Too many authentication failures")
-                            raise HTTPException(status_code=401, detail="Token revoked")
+                            # P3-1 + N17 + FU-1 — body unified to "Unauthorized" + realm "aegis".
+                            # (counter already ticked above; don't double-count)
+                            raise HTTPException(
+                                status_code=401,
+                                detail="Unauthorized",
+                                headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                            )
                     except HTTPException:
                         raise
                     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as _re:
