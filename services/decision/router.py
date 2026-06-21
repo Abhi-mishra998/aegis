@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import mesh_headers
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.redis import get_redis_client
@@ -218,7 +219,7 @@ async def get_risk_summary(
                 params={"days": 1},
                 headers={
                     "X-Tenant-ID": tid,
-                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                    **mesh_headers("decision"),
                 },
             )
         if resp.status_code == 200:
@@ -375,7 +376,7 @@ async def get_decision_history(
                 params={"limit": limit, "action": "execute_tool"},
                 headers={
                     "X-Tenant-ID": str(tenant_id),
-                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                    **mesh_headers("decision"),
                 },
             )
         if resp.status_code == 200:

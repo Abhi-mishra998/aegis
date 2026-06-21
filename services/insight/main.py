@@ -5,6 +5,7 @@ import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException
 
 from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import mesh_headers
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
@@ -32,7 +33,7 @@ async def _synthetic_insights_from_audit(tenant_id: str, limit: int) -> list[dic
                 f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/soc-timeline",
                 params={"limit": min(limit, 20)},
                 headers={
-                    "X-Internal-Secret": settings.INTERNAL_SECRET,
+                    **mesh_headers("insight"),
                     "X-Tenant-ID": tenant_id,
                 },
             )

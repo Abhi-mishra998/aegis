@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.gateway.auth import init_token_validator
@@ -177,7 +178,7 @@ def _internal_headers(request: Request | None = None) -> dict[str, str]:
     X-ACP-Role is injected from the JWT-validated request.state.role — never from
     the client header — to prevent privilege escalation via forged role claims.
     """
-    headers: dict[str, str] = {"X-Internal-Secret": settings.INTERNAL_SECRET}
+    headers: dict[str, str] = {**mesh_headers("gateway"),}
     if request is not None:
         for h in ("X-Tenant-ID", "X-Agent-ID", "Authorization", "X-Request-ID", "X-Trace-ID"):
             val = request.headers.get(h)
@@ -1133,7 +1134,7 @@ async def system_health(request: Request) -> dict[str, Any]:
     try:
         ob_resp = await client.get(
             f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/outbox-depth",
-            headers={"X-Internal-Secret": settings.INTERNAL_SECRET},
+            headers={**mesh_headers("gateway"),},
             timeout=2.0,
         )
         if ob_resp.status_code == 200:

@@ -178,12 +178,13 @@ async def _push_to_opa_bundle(
         ),
     }
     try:
+        from sdk.common.auth import mesh_headers
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 upload_url,
                 json=body,
                 headers={
-                    "X-Internal-Secret": _settings.INTERNAL_SECRET,
+                    **mesh_headers("audit"),
                     "X-Tenant-ID":       str(policy.tenant_id),
                     "Content-Type":      "application/json",
                 },

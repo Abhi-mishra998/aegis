@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
 from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import mesh_headers
 from sdk.common.config import settings
 
 logger = structlog.get_logger(__name__)
@@ -160,7 +161,7 @@ class ExportResponse(BaseModel):
 def _internal_headers(tenant_id: str) -> dict[str, str]:
     """Build headers for service-to-service calls."""
     return {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        **mesh_headers("forensics"),
         "X-Tenant-ID": tenant_id,
     }
 

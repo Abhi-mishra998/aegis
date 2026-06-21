@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
 from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import mesh_headers
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings as policy_settings
 from sdk.common.db import get_tenant_id
@@ -114,7 +115,7 @@ async def _fetch_agent(tenant_id: uuid.UUID, agent_id: uuid.UUID) -> dict[str, A
     url = f"{policy_settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}"
     request_id = structlog.contextvars.get_contextvars().get("request_id")
     headers = {
-        "X-Internal-Secret": policy_settings.INTERNAL_SECRET,
+        **mesh_headers("policy"),
         "X-Tenant-ID": str(tenant_id),
     }
     if request_id:
@@ -463,7 +464,7 @@ async def simulate_policy(payload: SimulateRequest) -> APIResponse[SimulateRespo
         resp   = await client.get(
             f"{policy_settings.AUDIT_SERVICE_URL.rstrip('/')}/logs",
             params={"agent_id": str(payload.agent_id), "limit": 200, "offset": 0},
-            headers={"X-Internal-Secret": policy_settings.INTERNAL_SECRET,
+            headers={**mesh_headers("policy"),
                      "X-Tenant-ID": str(payload.tenant_id) if payload.tenant_id else ""},
         )
         logs: list[dict] = resp.json().get("data", {}).get("items", []) if resp.status_code == 200 else []

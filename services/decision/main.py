@@ -11,6 +11,7 @@ import structlog
 from fastapi import Depends, FastAPI
 
 from sdk.common.audit_stream import push_audit_event
+from sdk.common.auth import mesh_headers
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
@@ -459,7 +460,7 @@ async def evaluate_decision(
     4. Computes final Decision via DecisionEngine
     """
     headers = {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        **mesh_headers("decision"),
         "X-Tenant-ID": str(req.tenant_id)
     }
 

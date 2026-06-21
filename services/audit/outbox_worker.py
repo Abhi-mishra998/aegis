@@ -95,8 +95,9 @@ async def _forward_to_usage(
         "cost": float(ev.cost),
         "audit_id": str(ev.audit_id),
     }
+    from sdk.common.auth import mesh_headers
     headers = {
-        "X-Internal-Secret": settings.INTERNAL_SECRET,
+        **mesh_headers("audit"),
         "X-Tenant-ID": str(ev.tenant_id),
         "X-Request-ID": str(ev.audit_id),
         "Content-Type": "application/json",

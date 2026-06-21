@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 
 import httpx
 import structlog
+from sdk.common.auth import mesh_headers
 
 logger = structlog.get_logger(__name__)
 
@@ -492,7 +493,7 @@ async def fire_generic_webhook(
 
 def _internal_headers(tenant_id: str = "") -> dict:
     return {
-        "X-Internal-Secret": _INTERNAL_SECRET,
+        **mesh_headers("autonomy"),
         **({"X-Tenant-ID": tenant_id} if tenant_id else {}),
     }
 

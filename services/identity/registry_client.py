@@ -7,6 +7,7 @@ import httpx
 import structlog
 
 from sdk.common.config import settings
+from sdk.common.auth import mesh_headers
 from services.identity.exceptions import AgentNotFoundError
 
 # =========================
@@ -23,7 +24,7 @@ class RegistryClient:
 
     def _get_headers(self, tenant_id: uuid.UUID | None = None) -> dict[str, str]:
         """Always include X-Internal-Secret for service mesh auth (P0-4 fix)."""
-        headers: dict[str, str] = {"X-Internal-Secret": settings.INTERNAL_SECRET}
+        headers: dict[str, str] = {**mesh_headers("identity"),}
         if tenant_id:
             headers["X-Tenant-ID"] = str(tenant_id)
         request_id = structlog.contextvars.get_contextvars().get("request_id")

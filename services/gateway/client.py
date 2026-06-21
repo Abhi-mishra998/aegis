@@ -572,7 +572,12 @@ class ServiceClient:
             payload = {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in req_data.items()}
 
             headers = self._get_headers()
+            # P1-1 Phase 1 (2026-06-21): dual-header for gateway→decision call.
             headers["X-Internal-Secret"] = str(settings.INTERNAL_SECRET or "")
+            try:
+                headers["X-Mesh-Token"] = mint_service_token("gateway")
+            except Exception:
+                pass
 
             # NOTE: timeout is handled by ResilientClient via SLA/deadline logic.
             # Passing it here leads to "multiple values for timeout" TypeError.

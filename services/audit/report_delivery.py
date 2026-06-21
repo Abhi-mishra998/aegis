@@ -174,9 +174,10 @@ async def _process_trigger(redis, session_factory, report_id: str, trigger_key: 
 
                 from services.audit.llm_cost_report import generate_llm_cost_email
                 _api_url = os.environ.get("API_SERVICE_URL", "http://api:8001")
+                from sdk.common.auth import mesh_headers
                 resp = await _httpx.AsyncClient(timeout=10.0).get(
                     f"{_api_url}/billing/cost-attribution?weeks=4",
-                    headers={"X-Internal-Secret": os.environ.get("INTERNAL_SECRET", ""),
+                    headers={**mesh_headers("audit"),
                              "X-Tenant-ID": str(report.tenant_id)},
                 )
                 cost_data = resp.json().get("data", {}) if resp.status_code == 200 else {}
