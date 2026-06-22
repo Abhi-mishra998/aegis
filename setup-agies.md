@@ -96,7 +96,7 @@ Live verification against `aegisagent.in` (latest pentest evidence in `22-testin
 | `/transparency/{key,keys,roots,consistency}` anonymous-verifiable | ✅ LIVE | All return 200 anon (P1-2 closed) |
 | Path-traversal detection (Path A) | ✅ LIVE | `read_file({"path":"/etc/passwd"})` → HTTP 403, `risk_score=95`, `findings=["system_sensitive_path"]` |
 | SSH-credential detection (Path A) | ✅ LIVE | `read_file({"path":"~/.ssh/id_rsa"})` → HTTP 403, `findings=["policy_deny","ssh_credential_path","SEC-CR…"]` |
-| 5-tier amount-aware wire-transfer policy | ✅ LIVE | $100k → `money_transfer_external`; cumulative across attempts (`SEC-CUMULATIVE-E1`); $5M → `anomalous_behavior_detected` |
+| 5-tier amount-aware wire-transfer policy | ✅ LIVE | $100k → `money_transfer_external` (`FIN-WIRE-002`, risk 50, MITRE TA0040 / T1657); cumulative session risk → `SEC-CUMULATIVE-E1`; `anomalous_behavior_detected` fires when cumulative tier rolls over the next threshold |
 | Path B requires `acp_emp_*` virtual key | ✅ LIVE | Raw Anthropic key → 401 `"x-api-key must be an Aegis employee virtual key (acp_emp_…)"` |
 | SCIM bearer never returns 500 on garbage | ✅ LIVE | 4 garbage-bearer variants → all 401 with SCIM-shaped error body |
 | Demo workspace spawn — anonymous, rate-limited 5/10min/IP | ✅ LIVE | 7-burst → 5×200 then 2×429 with `"Demo spawn rate limit hit — try again in 10 minutes."` |
@@ -454,7 +454,7 @@ Click an employee's name → `/team/<email>` for the per-employee drill-down (bu
 - Path traversal (URL-encoded, double-encoded) → **denied at edge** ✅
 - SQL `DROP TABLE`, `TRUNCATE` without WHERE, `OR 1=1`, comment evasion → denied
 - Bulk PII reads above threshold (50k+ rows of email/SSN-shaped cols) → escalate
-- Wire transfers — **5-tier amount-aware policy** ✅: `money_transfer_external` (>$100k), `SEC-CUMULATIVE-E1` (cumulative across attempts), `anomalous_behavior_detected` (>$5M)
+- Wire transfers — **amount-aware policy** ✅: `money_transfer_external` (`FIN-WIRE-002`, risk 50) fires on every wire above the per-tenant threshold; `SEC-CUMULATIVE-E1` raises risk when the same session has already had wires escalated; `anomalous_behavior_detected` fires when the cumulative session risk crosses the next tier (≥70)
 - `kubectl delete` / `drain` on production namespaces → ESCALATE to SRE LEAD
 - `terraform destroy` on prod-tagged paths → ESCALATE
 - HTTP POSTs of PII-shaped bodies to known exfil hosts (transfer.sh, pastebin) → DENY
@@ -493,6 +493,8 @@ Extend either side with custom Rego policies — see Section 13.
 ## 9. Cryptographic evidence (the moat that compounds)
 
 Every decision — allow, deny, escalate, quarantine, on both Path A and Path B — is rowed into `audit_logs`. **PostgreSQL trigger `deny_audit_log_mutation` physically forbids any UPDATE or DELETE at the database level**, regardless of role privileges.
+
+> **First-day caveat:** `audit_logs` rows + per-row signed receipts appear immediately. The **daily Merkle root** is sealed by a background job (default: midnight UTC). A workspace created today won't show any rows at `GET /transparency/roots` until the first seal runs — typically <24 h after signup. Receipts are still cryptographically verifiable on day 1 via `GET /receipts/<execution_id>` + the public verification key at `GET /receipts/key`. Operators who need an on-demand seal can call `POST /transparency/compute` from an OWNER session.
 
 A daily job seals an ed25519-signed Merkle root over every row and mirrors it to a public S3 bucket. Any auditor can verify your evidence bundles without trusting Aegis:
 

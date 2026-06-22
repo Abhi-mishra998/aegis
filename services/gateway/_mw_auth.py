@@ -212,11 +212,43 @@ class _AuthMixin:
                             agent_id = uuid.UUID(int=0)
                     agent_id_str = str(agent_id)
 
+                    # GAP-4 closure (audit-final-22 §3): honor the role the
+                    # API minted the key with. Previously every acp_* /
+                    # acp_emp_* key was hardcoded to legacy "agent", which
+                    # silently overrode the API-side default of "DEVELOPER"
+                    # and broke the documented capability matrix. The
+                    # _rbac_map.py is_authorized() check now decides whether
+                    # the role can call the path, with the legacy "agent"
+                    # value preserved as the default for keys minted before
+                    # the role column existed.
+                    _key_role = key_data.get("role") or "agent"
+                    if _key_role not in (
+                        "ROOT", "OWNER", "ADMIN", "SECURITY_ANALYST",
+                        "DEVELOPER", "READ_ONLY", "agent",
+                    ):
+                        _key_role = "agent"
                     request.state.permissions = ["execute_agent", "view_risk"]
-                    request.state.role = "agent"
+                    request.state.role = _key_role
                     request.state.actor = f"apikey:{key_data.get('key_prefix', token[:8])}"
                     request.state.jwt_claims = {}
                     jti = None
+
+                    # GAP-5 closure (audit-final-22 §3): defense-in-depth
+                    # write-path enforcement. The JWT branch below carries
+                    # an equivalent check at line 357; mirroring it here
+                    # ensures that API-key requests (acp_* / acp_emp_*) are
+                    # gated even if a future route is added without an
+                    # explicit _rbac_map.py rule — the previous fall-through
+                    # was the root cause of the P0 RBAC bypass.
+                    _write_roles_apikey = ("ROOT", "OWNER", "ADMIN", "SECURITY_ANALYST", "SECURITY")
+                    if request.method not in ("GET", "HEAD", "OPTIONS"):
+                        if _key_role not in _write_roles_apikey:
+                            if not (is_execute_path and _key_role in ("agent", "DEVELOPER")):
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="Write operations require OWNER, ADMIN, or SECURITY_ANALYST role",
+                                    headers={"WWW-Authenticate": 'Bearer realm="aegis"'},
+                                )
 
                 # ── JWT Bearer path ────────────────────────────────────────
                 else:
