@@ -181,7 +181,30 @@ def setup_exception_handlers(app: FastAPI) -> None:
     async def unhandled_exception_handler(
         request: Request, exc: Exception
     ) -> JSONResponse:
-        logger.error("unhandled_exception", error=str(exc), path=request.url.path)
+        # P1-3 fix (2026-06-22) — redact `[SQL: ...]`, `[parameters: ...]`,
+        # and SQLAlchemy "Background on this error" pointers from logged
+        # exception strings. Schema names + parameter values must not leak
+        # into log forwarders (Datadog/CloudWatch) where ops + 3rd-party
+        # log indexers see them.
+        raw = str(exc)
+        redacted = raw
+        for marker in ("\n[SQL:", "[SQL:", "\n[parameters:", "[parameters:",
+                       "(Background on this error at:", "Background on this error at:"):
+            idx = redacted.find(marker)
+            if idx != -1:
+                redacted = redacted[:idx].rstrip()
+                redacted += " ...[sql+params redacted]"
+                break
+        # Hard cap log message length so a multi-line traceback embedded in
+        # the message string can't OOM the log forwarder.
+        if len(redacted) > 600:
+            redacted = redacted[:600] + "...[truncated]"
+        logger.error(
+            "unhandled_exception",
+            error=redacted,
+            error_type=type(exc).__name__,
+            path=request.url.path,
+        )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=APIResponse(

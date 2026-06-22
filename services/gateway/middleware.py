@@ -105,6 +105,19 @@ _SKIP_PATHS = frozenset(
         # Hardening accidentally auth-gated this in an earlier sprint —
         # regression caught by deploy smoke 2026-06-20.
         "/receipts/key",
+        # P1-2 fix (2026-06-22) — the whole transparency log surface is
+        # the cryptographic-verifiability story. Auditors / customers /
+        # the aegis-aevf CLI MUST be able to fetch the latest Merkle root,
+        # walk the prev_root_hash chain, verify the ed25519 root signature,
+        # and check epoch-to-epoch consistency without an Aegis tenant
+        # token. The earlier sprint that auth-gated /receipts/key (caught
+        # in 2026-06-20) silently auth-gated these too. None of these
+        # endpoints expose tenant data — they only serve Merkle roots,
+        # signatures, and the historical public-key index.
+        "/transparency/latest-root",
+        "/transparency/verify-root",
+        "/transparency/consistency",
+        "/transparency/keys",
     ]
 )
 
