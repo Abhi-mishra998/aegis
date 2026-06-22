@@ -656,3 +656,56 @@ eed63b6 docs(setup-agies): SSE auth — Authorization Bearer / Cookie only, no q
 b33c0b0 docs(setup-agies): fix every command to match live behaviour; harden itsm webhook 500→200
 ```
 
+
+---
+
+# POST-AUDIT REMEDIATION DEPLOY (commit `c8a8c67b4f3a`, 2026-06-23 00:55 IST)
+
+Five audit findings landed in code + deployed to the healthy production host (single-host phase B deploy, verified ALB-safe):
+
+| ID | Title | Status post-deploy |
+|---|---|---|
+| GAP-2 | Nginx SPA fallback on `/identity/health` + `/behavior/health` | ✅ FIXED — both now return 401 (gateway-proxied + auth-gated). Verified live |
+| GAP-4 | API mints `acp_emp_*` with role=DEVELOPER but runtime hardcoded "agent" | ✅ FIXED — `_mw_auth.py:215` now honors `key_data["role"]`; unknown roles fall back to legacy "agent". Verified emp key's role at runtime now matches mint role |
+| GAP-5 | Write-path enforcement only in JWT branch (P0 root-cause class) | ✅ FIXED — defense-in-depth write check added inside the api-key branch. Verified: stolen emp key → POST `/api-keys/employees` now returns `403 "Write operations require OWNER, ADMIN, or SECURITY_ANALYST role"` (the new shared check fires BEFORE the explicit `_rbac_map.py` rule, proving the systemic protection works) |
+| GAP-6 | `anomalous_behavior_detected` doc claim (only fires on cumulative tier rollover) | ✅ FIXED (doc-only) — setup-agies.md §1 table + §7 wire-transfer bullet now state the tier-rollover behavior correctly |
+| GAP-7 | First-day workspaces have receipts but no transparency root | ✅ FIXED (doc-only) — setup-agies.md §9 transparency block carries the first-day caveat + opt-in `POST /transparency/compute` |
+| P1-DEPLOY-001 | SSM parallel deploys cause both-host outages | ✅ FIXED — `scripts/ops/rolling_deploy.sh` enforces one-host-at-a-time + ALB recovery probe between |
+| P1-DEPLOY-003 | `safe_deploy.sh` not idempotent against partial-failure state | ✅ FIXED — `safe_deploy.sh` v2 detects userlist.txt-as-directory state, nukes it, re-renders from Secrets Manager (`aegis-prod-db-master-password`), and writes `/aegis-prodha/current-sha` to SSM Parameter Store on success |
+
+## Post-deploy verification (all live against `https://aegisagent.in`)
+
+| Probe | Result |
+|---|---|
+| `/status` 13/13 healthy, p95=0–3ms | ✅ |
+| `/identity/health` (anon) | 401 (was: SPA HTML) |
+| `/behavior/health` (anon) | 401 (was: SPA HTML) |
+| P0 escalation attempt with stolen emp key | 403 — and the new defense-in-depth message ("Write operations require…") fires *before* the explicit RBAC rule, proving the systemic GAP-5 fix is live |
+| /execute ALLOW + DENY + ESCALATE matrix | unchanged: 200 / 403 system_sensitive_path risk=95 / 403 approval_required FIN-WIRE-002 |
+| Receipt offline ed25519 verify | PASS without Aegis-side trust |
+| `/audit/logs/verify` | `valid=True processed=14 violations=0` |
+| SSE `/events/stream` Live Feed | 6 events streamed in <8s (3 llm_proxy_call + 2 policy_decision + 1 tool_executed); UI dashboard receives same payloads |
+
+## What did NOT land in this session (escalated to next session)
+
+- **NEW P0 discovered during remediation: launch-template `user_data` references stale secret names** (`acp-prodha/rds_master_password`) when the actual AWS secret is `aegis-prod-db-master-password`. Every ASG-replacement host comes up with an incomplete `.env` (2096 bytes vs. the working host's 10335 bytes), so pgbouncer / audit / registry containers fail. **Today's broken fresh host `i-09d2f1b719b4fa684` is ALB-excluded and customer traffic is unaffected, but capacity is permanently halved until the LT is patched.** Remediation requires:
+  - 1 day terraform-level change to `infra/terraform/environments/prod-ha/user_data.sh` (replace `${NAME_PREFIX}/<old_name>` → actual hyphenated secret IDs) + terraform apply to bump LT version.
+  - Catchup deploy `safe_deploy.sh c8a8c67b4f3a --force-clean` against the broken fresh host once the LT is patched, OR ASG-terminate the broken host so it gets re-bootstrapped from the fixed LT.
+
+- **GAP-1 audit DLQ drain** — drained-and-investigated checks not run in this session (queue depth 10009 events + 10 DLQ visible per `/status.queues.*`); requires direct DB / Redis read which is out of scope from this shell.
+
+- **GAP-3 paid-tenant forensics replay** — staging-only verification.
+- **GAP-8 cosign verify** at docker pull.
+- **GAP-9 in-product incident view** — 1 week effort.
+- **GAP-10 RTO/RPO drill publication** — 1 day, owner: SRE.
+- **GAP-11 soak/load result publication** — 1 day, owner: SRE.
+
+## Current production state (audit-finalize time, 2026-06-23 01:00 IST)
+
+```
+Healthy host:   i-0bc73eeff3f29dd90   (LT v15, code c8a8c67b4f3a, ALB target healthy)
+Broken host:    i-09d2f1b719b4fa684   (ASG-Healthy, ALB-excluded, broken .env from stale-secret user_data)
+ALB:            serving 100% from healthy host
+Customer test:  go ahead — site behaves identically to the audit envelope
+```
+
