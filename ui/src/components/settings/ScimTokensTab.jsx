@@ -94,12 +94,50 @@ export default function ScimTokensTab() {
         <p className="text-xs text-neutral-500 mt-1">
           Issue one bearer token, paste it into Okta → App → Provisioning →
           Authentication. Okta then mirrors User + Group changes into Aegis
-          via <code className="text-neutral-400">/scim/v2/</code>. Setup walkthrough at{' '}
-          <a className="text-white underline hover:no-underline"
-             href="/docs/security/okta-scim-setup">
-            docs/security/okta-scim-setup.md
-          </a>.
+          via <code className="text-neutral-400">/scim/v2/</code>.
         </p>
+        <details className="mt-3 group">
+          <summary className="cursor-pointer text-xs text-blue-400 hover:text-blue-300 select-none">
+            Okta setup walkthrough (click to expand)
+          </summary>
+          <div className="mt-3 space-y-3 rounded-lg border border-neutral-800 bg-neutral-950/40 p-4 text-xs leading-relaxed text-neutral-300">
+            <p className="font-semibold text-white">1. Issue a token here</p>
+            <p className="pl-4">Sign in as <span className="text-white">OWNER</span>, enter a label
+              like <code>Okta-prod</code>, click <span className="text-white">Issue token</span>,
+              and <span className="text-amber-300">copy the plaintext immediately</span> — Aegis
+              hashes it on save and cannot show it again.</p>
+
+            <p className="font-semibold text-white pt-2">2. Wire Aegis into Okta</p>
+            <p className="pl-4">In Okta admin: <span className="text-neutral-400">Applications → Browse App
+              Catalog → Search "SCIM 2.0 Test App"</span> (or your custom app) → Add Integration.</p>
+            <p className="pl-4">On the new app: <span className="text-white">Provisioning</span> tab → enable
+              API integration with:</p>
+            <ul className="pl-8 list-disc space-y-1 text-neutral-400">
+              <li>SCIM connector base URL: <code className="text-neutral-200">https://aegisagent.in/scim/v2</code></li>
+              <li>Unique identifier field for users: <code className="text-neutral-200">userName</code></li>
+              <li>Supported provisioning actions: Push New Users, Push Profile Updates, Push Groups</li>
+              <li>Authentication Mode: <span className="text-white">HTTP Header</span></li>
+              <li>HTTP Header → Authorization: <code className="text-neutral-200">Bearer &lt;token from step 1&gt;</code></li>
+            </ul>
+            <p className="pl-4">Click <span className="text-white">Test API Credentials</span>. Aegis returns
+              <code className="text-neutral-200 mx-1">200 OK</code> on
+              <code className="text-neutral-200 mx-1">GET /scim/v2/ServiceProviderConfig</code> — green check.</p>
+
+            <p className="font-semibold text-white pt-2">3. Assign users + groups</p>
+            <p className="pl-4">Push assignments from Okta — each <code>user.created</code> /
+              <code>user.deactivated</code> hits <code>POST /scim/v2/Users</code> on Aegis. Roles
+              map from Okta group → Aegis role via the User schema custom attribute
+              <code className="text-neutral-200 mx-1">aegis:role</code>
+              (one of <code>OWNER</code> / <code>ADMIN</code> / <code>SECURITY_ANALYST</code> /
+              <code>DEVELOPER</code> / <code>READ_ONLY</code>).</p>
+
+            <p className="font-semibold text-white pt-2">4. Audit + rotate</p>
+            <p className="pl-4">Every SCIM call is recorded in <code>/audit-logs</code> with
+              <code className="mx-1">action=scim.provision</code>. Rotate by issuing a new token,
+              pasting it into Okta, and revoking the old one here — Okta keeps running on the new
+              bearer; no downtime.</p>
+          </div>
+        </details>
       </header>
 
       {error && (

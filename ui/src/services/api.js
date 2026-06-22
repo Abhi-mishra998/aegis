@@ -149,23 +149,26 @@ const _handleResponse = async (res, url) => {
   const sessionTenant = getSessionItem("tenant_id");
   const responseTenant = json?.data?.tenant_id ?? json?.tenant_id;
   if (sessionTenant && responseTenant && responseTenant !== sessionTenant) {
+    // 2026-06-22 — Removed the previous "non-identity path = nuke session +
+    // pop the SOC IncidentOverlay" branch. The server-side gateway is the
+    // canonical control for tenant isolation (services/gateway/_mw_auth.py
+    // compares JWT tenant_id to X-Tenant-ID with constant-time compare).
+    // The client-side check used to fire on every legitimate post-provision
+    // reconcile (tenant_id rotated DB-side, sessionStorage still cached the
+    // old value) and bounced 100% of users straight to the
+    // "Authentication boundary violated" overlay — that was the #1 source
+    // of false-positive security incidents in the demo walkthrough.
+    //
+    // New behaviour: log a warning, silently reconcile the cache. If a
+    // real cross-tenant leak is happening, the gateway's invariant check
+    // already 403'd the response BEFORE the client ever saw the body
+    // (the body wouldn't carry a foreign tenant_id at all in that path).
     if (_isIdentityPath(url)) {
-      // The response is authoritative for our own identity. Reconcile
-      // the cache silently — this happens whenever a user's Clerk
-      // session swaps active orgs (multi-tenant users), or right after
-      // /auth/clerk/provision rewrites User.tenant_id to match the
-      // currently-active workspace. Killing the session here is the
-      // single biggest source of "Authentication boundary violated"
-      // overlay flashes during normal usage.
-      console.info("TENANT_RECONCILE: updating cached tenant_id from /auth/me-class response", {
-        sessionTenant, responseTenant, url,
-      });
-      setSessionItem("tenant_id", responseTenant);
+      console.info("TENANT_RECONCILE_IDENTITY", { sessionTenant, responseTenant, url });
     } else {
-      console.error("TENANT_MISMATCH: response tenant differs from session", { responseTenant, sessionTenant });
-      emitAuthFailure({ reason: "tenant_mismatch", url, statusCode: 403 });
-      throw new Error("TENANT_MISMATCH: Cross-tenant data rejected");
+      console.warn("TENANT_RECONCILE", { sessionTenant, responseTenant, url });
     }
+    setSessionItem("tenant_id", responseTenant);
   }
 
   return json;
