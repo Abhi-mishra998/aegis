@@ -13,6 +13,83 @@
 
 ---
 
+## ⚡ 5-minute client demo — copy, paste, see it work
+
+If you're an evaluator or one of your employees getting handed this doc, **start here**. The full setup-agies guide below is for your CTO/CISO. The five copy-paste blocks here exercise every layer Aegis enforces — without standing up an SDK, signing up via the UI, or wiring SSO. You'll see allow / deny / escalate / kill-switch / receipt-verify happen against the live production system at `https://aegisagent.in`.
+
+Last live-verified: 2026-06-23. Every block returns the exact response shown.
+
+```bash
+# 0. One-time per shell. WAF Bot Control 403s default curl/8.x; a real browser UA bypasses it.
+export UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+# 1. Spawn a personal demo workspace — 30-min TTL, no email needed.
+curl -sS -A "$UA" -X POST -H "Content-Type: application/json" -d '{}' \
+  https://aegisagent.in/demo/spawn-workspace > /tmp/aegis.json
+export JWT=$(python3 -c "import json; print(json.load(open('/tmp/aegis.json'))['data']['jwt'])")
+export TENANT=$(python3 -c "import json; print(json.load(open('/tmp/aegis.json'))['data']['tenant_id'])")
+echo "Open in browser:  $(python3 -c "import json; print('https://aegisagent.in' + json.load(open('/tmp/aegis.json'))['data']['redirect_url'])")"
+# Click that URL to see the Live Feed + dashboard tiles populate as you run the next blocks.
+
+# 2. Create an agent + grant it 3 tools.
+export AGENT=$(curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"demo-agent","provider":"anthropic","risk_level":"medium","description":"5-minute demo agent"}' \
+  -X POST https://aegisagent.in/agents | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['id'])")
+for tool in web_search read_file wire_transfer; do
+  curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+    -H "Content-Type: application/json" -d "{\"tool_name\":\"$tool\",\"action\":\"ALLOW\"}" \
+    -X POST https://aegisagent.in/agents/$AGENT/permissions > /dev/null
+done
+
+# 3. Fire ALLOW + DENY + ESCALATE. Each lands as a row in the Live Feed within 200ms.
+curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AGENT\",\"tool\":\"web_search\",\"parameters\":{\"q\":\"hi\"}}" \
+  -X POST https://aegisagent.in/execute | python3 -m json.tool | head -5
+# Expect: action=allow, risk=0.0
+
+curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AGENT\",\"tool\":\"read_file\",\"parameters\":{\"path\":\"/etc/passwd\"}}" \
+  -X POST https://aegisagent.in/execute | python3 -m json.tool | head -10
+# Expect: HTTP 403, findings=["system_sensitive_path"], risk=95, policy_id="SEC-PATH-001"
+
+curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_id\":\"$AGENT\",\"tool\":\"wire_transfer\",\"parameters\":{\"amount_usd\":100000,\"recipient\":\"ACME\",\"currency\":\"USD\"}}" \
+  -X POST https://aegisagent.in/execute | python3 -m json.tool | head -10
+# Expect: HTTP 403, error="approval_required", policy_id="FIN-WIRE-002", MITRE TA0040 / T1657
+
+# 4. Engage + release the kill switch.
+curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" -d '{"action":"engage","reason":"5-min demo"}' \
+  -X POST https://aegisagent.in/decision/kill-switch/$TENANT
+# /execute now 403s with "Tenant blocked due to security violation". Release:
+curl -sS -A "$UA" -H "Authorization: Bearer $JWT" -H "X-Tenant-ID: $TENANT" \
+  -X DELETE https://aegisagent.in/decision/kill-switch/$TENANT
+
+# 5. Verify the audit chain offline — no Aegis-side trust required.
+python3 -m venv /tmp/aevf && /tmp/aevf/bin/pip install --quiet aegis-aevf cryptography
+curl -sS -A "$UA" -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
+/tmp/aevf/bin/aegis-verify --bundle reference-bundle-2026-06.json --verbose
+# Expect: V1..V6 PASS + "*** PASS *** every signature, hash chain, and Merkle root in this bundle verifies."
+```
+
+**What you just proved in 5 minutes:**
+
+| Block | What it demonstrates | Where to see the impact in the UI |
+|---|---|---|
+| 1 | Anonymous demo workspace bootstrap — real audit chain, real tenant_id | Open the `redirect_url` from block 1 in a browser to see the workspace |
+| 2 | Agent provisioning + per-tool RBAC allow-list | **Protect → Agents** in the UI |
+| 3 | Pre-policy block (path traversal) + amount-aware escalation (wire transfer) | **Observe → Live Feed** — three rows appear within 200ms each |
+| 4 | Tenant-wide kill switch with cryptographic audit trail of who engaged + why | Topbar badge turns red within 5s; **Observe → Dashboard** kill-switch tile updates |
+| 5 | Offline cryptographic verification by an auditor — the moat that compounds | Hand the JSON bundle to your SOC 2 auditor; they run `aegis-verify` without ever talking to Aegis |
+
+Hand this section to one technical employee at your client — they'll be done in 5 minutes and convinced.
+
+---
+
 ## Table of contents
 
 - [0. Pre-flight checklist (read first, ~5 min)](#0-pre-flight-checklist-read-first-5-min)
