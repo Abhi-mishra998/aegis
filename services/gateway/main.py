@@ -1689,7 +1689,29 @@ async def events_stream(request: Request) -> Response:
 
             last_heartbeat = time.time()
             last_reauth = time.time()
-            _REAUTH_INTERVAL_SECONDS = 30.0
+            # P1-4 (2026-06-22) — Clerk JWT template `aegis` lifetime MUST
+            # be > _REAUTH_INTERVAL_SECONDS + 60s safety buffer.
+            #
+            #   Clerk template `aegis` lifetime: 300 s  (manual setting in
+            #     console.clerk.com → JWT Templates → aegis → Token lifetime)
+            #   Reauth interval here          : 240 s
+            #   Safety buffer                 :  60 s (re-validate before
+            #                                          the token actually
+            #                                          expires, so the
+            #                                          re-check sees a
+            #                                          still-valid token
+            #                                          and the SSE stays
+            #                                          open through the
+            #                                          natural rotation)
+            #
+            # The previous value (30 s) combined with the previous 60 s
+            # template lifetime caused the SSE to drop every 60 s on
+            # every active user (re-validate at T=60 used the now-expired
+            # token → ACPAuthError → server emits auth_expired, browser
+            # reconnects). Audit log filled with sse_reauth_failed noise.
+            # If the Clerk template lifetime is changed back below 300,
+            # update this constant to match (template - 60 buffer).
+            _REAUTH_INTERVAL_SECONDS = 240.0
             while True:
                 if await request.is_disconnected():
                     break

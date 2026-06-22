@@ -36,12 +36,35 @@ def _base() -> str:
 
 @router.get("/receipts/key", tags=["receipts"])
 async def receipts_public_key(request: Request) -> Any:
-    """Proxy → Audit signer public key. Cache this client-side."""
+    """Proxy → Audit signer public key. Cache this client-side.
+
+    P3-2 (2026-06-22) — wrap the upstream bare-shape response
+    (``{algorithm, public_key_pem, fingerprint, …}``) in the standard
+    APIResponse envelope so SDK consumers that call ``.data.public_key_pem``
+    succeed without a special-case. Both Python (``sdk/acp_client/archive.py``)
+    and JS (``sdk/acp-js/src/archive.ts``) SDKs already read with
+    ``body.public_key_pem ?? body.data.public_key_pem`` so the wrap is
+    backwards-compatible for every existing caller; the aegis-aevf CLI
+    archive flow keeps working unchanged.
+    """
     resp = await request.app.state.client.get(
         f"{_base()}/receipts/key",
         headers=internal_headers(request),
     )
-    return passthrough(resp)
+    if resp.status_code >= 400:
+        return passthrough(resp)
+    try:
+        body = resp.json()
+    except Exception:
+        return passthrough(resp)
+    # If already wrapped (defence against double-wrap on future upstream
+    # changes), passthrough unchanged.
+    if isinstance(body, dict) and "success" in body and "data" in body:
+        return passthrough(resp)
+    return JSONResponse(
+        status_code=resp.status_code,
+        content={"success": True, "data": body, "error": None, "meta": None},
+    )
 
 
 # /receipts/verify must precede /receipts/{execution_id} so FastAPI does
@@ -108,12 +131,27 @@ async def transparency_root_public_key(request: Request) -> Any:
     Distinct from /receipts/key. Customers archive both: the receipt
     key to verify per-receipt signatures, the root key to verify daily
     roots.
+
+    P3-2 (2026-06-22) — wrap bare upstream into APIResponse envelope
+    for shape-consistency. Same backwards-compat reasoning as
+    /receipts/key above.
     """
     resp = await request.app.state.client.get(
         f"{_base()}/transparency/key",
         headers=internal_headers(request),
     )
-    return passthrough(resp)
+    if resp.status_code >= 400:
+        return passthrough(resp)
+    try:
+        body = resp.json()
+    except Exception:
+        return passthrough(resp)
+    if isinstance(body, dict) and "success" in body and "data" in body:
+        return passthrough(resp)
+    return JSONResponse(
+        status_code=resp.status_code,
+        content={"success": True, "data": body, "error": None, "meta": None},
+    )
 
 
 @router.get("/transparency/keys", tags=["transparency"])

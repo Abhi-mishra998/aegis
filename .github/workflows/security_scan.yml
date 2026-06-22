@@ -156,3 +156,28 @@ jobs:
           # at next sign-bundle.sh run. Architect's intent: SBOM lives next to
           # the cosign-signed bundle so CISO sees both in one fetch.
           ls -la reports/sbom.cyclonedx.json
+
+  stale-config-grep:
+    name: Stale infra hostname grep
+    # P2-2 (2026-06-22) — guards against the pgbouncer DB-host regression
+    # where infra/pgbouncer.aws.ini referenced the old `acp-postgres-prod`
+    # hostname and required a deploy-time sed in safe_deploy.sh. The fix
+    # rewrote the file to the live `aegis-prod-postgres` hostname; this
+    # CI step keeps the regression from creeping back in via any future
+    # edit to .ini / .conf / .env.aws.template files.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail on stale `acp-postgres-prod` references
+        run: |
+          MATCHES=$(grep -rn "acp-postgres-prod" infra/ \
+            --include="*.ini" --include="*.conf" --include="*.template" \
+            --include="*.tf" --include="*.tfvars" --include="*.yml" --include="*.yaml" \
+            || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Stale pgbouncer hostname 'acp-postgres-prod' found in infra/. Use 'aegis-prod-postgres.cz0qqg60keaj.ap-south-1.rds.amazonaws.com'."
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "ok — no stale hostname in infra/"

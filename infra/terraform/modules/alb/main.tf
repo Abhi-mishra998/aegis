@@ -16,7 +16,13 @@ resource "aws_lb" "main" {
   # Drop in-flight requests within 60 s when an instance deregisters.
   idle_timeout = 60
 
-  enable_deletion_protection = false
+  # P3-3 (2026-06-22) — block accidental destruction of the prod ALB.
+  # Deleting the ALB tears down the listener + cert binding + TG; the
+  # only recovery is recreate-and-re-DNS, with an outage window equal
+  # to ACM cert validation. Set to true for any aegisagent.in-serving
+  # ALB. Operators who genuinely need to delete must `terraform apply`
+  # this flag back to false in a deliberate change set.
+  enable_deletion_protection = true
   drop_invalid_header_fields = true
 
   access_logs {
