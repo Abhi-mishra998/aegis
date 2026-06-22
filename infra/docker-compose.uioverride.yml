@@ -18,3 +18,10 @@ services:
   ui:
     volumes:
       - /opt/aegis/ui/dist:/usr/share/nginx/html:ro
+      # 2026-06-22 — also bind-mount nginx.conf so route-prefix changes
+      # ship via the same tar-update path as the dist. Without this, any
+      # change to the API-prefix regex (e.g. adding /sso, /scim, etc.)
+      # requires a UI image rebuild and the routes 404 → SPA fallback
+      # serves index.html, the frontend tries to JSON.parse the HTML,
+      # and you get "SyntaxError: Unexpected token '<'" everywhere.
+      - /opt/aegis/ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
