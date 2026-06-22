@@ -1,7 +1,7 @@
 """2026-06-22 — clean up duplicate personal Org/Tenant rows from the abhi986 incident.
 
 Revision ID: p2q3r4s5t6u7
-Revises: o1p2q3r4s5t6
+Revises: d1f2e3a4b5c6
 Create Date: 2026-06-22
 
 Background
@@ -46,7 +46,7 @@ from alembic import op
 
 
 revision = "p2q3r4s5t6u7"
-down_revision = "o1p2q3r4s5t6"
+down_revision = "d1f2e3a4b5c6"
 branch_labels = None
 depends_on = None
 
