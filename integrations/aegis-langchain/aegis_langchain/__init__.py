@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __all__ = ["AegisMiddleware", "AegisCallbackHandler", "AegisClient", "__version__"]
 
 
