@@ -114,10 +114,12 @@ _SKIP_PATHS = frozenset(
         # in 2026-06-20) silently auth-gated these too. None of these
         # endpoints expose tenant data — they only serve Merkle roots,
         # signatures, and the historical public-key index.
-        "/transparency/latest-root",
-        "/transparency/verify-root",
-        "/transparency/consistency",
-        "/transparency/keys",
+        # Routes confirmed in services/gateway/routers/transparency.py.
+        "/transparency/key",          # current active signing key (PEM)
+        "/transparency/keys",         # historical key index (rotation evidence)
+        "/transparency/roots",        # latest signed Merkle root
+        "/transparency/consistency",  # consistency proof between two roots
+        "/transparency/verify-root",  # POST: client supplies a root, server verifies sig
     ]
 )
 
@@ -170,6 +172,13 @@ _SKIP_PATH_PREFIXES = (
     # itsm_webhooks.py does the verification before any DB write.
     "/webhooks/jira/",
     "/webhooks/servicenow/",
+    # P1-2 fix (2026-06-22) — date-keyed transparency roots
+    # (/transparency/roots/<YYYY-MM-DD>) and execution-keyed inclusion
+    # proofs (/transparency/inclusion/<execution_id>) must also be anon
+    # for offline verification by holders of a receipt. Same threat
+    # model as /receipts/key — no tenant data.
+    "/transparency/roots/",
+    "/transparency/inclusion/",
 )
 
 # Management paths: require auth + rate-limiting, but bypass the agent
