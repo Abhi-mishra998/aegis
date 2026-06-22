@@ -256,6 +256,30 @@ def internal_headers(request: Request | None = None) -> dict[str, str]:
             client_tenant = request.headers.get("X-Tenant-ID")
             if client_tenant:
                 headers["X-Tenant-ID"] = client_tenant
+            else:
+                # P2-10 fix (2026-06-22) — anonymous public-transparency
+                # paths (/transparency/{key,keys,roots,consistency,verify-root}
+                # and /receipts/key) are skip-listed in the middleware so
+                # they never reach the auth handler; request.state.tenant_id
+                # stays unset. Without an X-Tenant-ID downstream the
+                # audit-svc returns 400. These endpoints serve only
+                # global Merkle-root + signing-key data (no tenant scope),
+                # so injecting the zero/system tenant_id is correct: it
+                # satisfies the audit-svc contract WITHOUT widening any
+                # tenant boundary. Identified by path prefix; everything
+                # else falls through to "no tenant context" as before.
+                path = (request.url.path or "")
+                _ANON_TRANSPARENCY_PATHS = (
+                    "/transparency/key",
+                    "/transparency/keys",
+                    "/transparency/roots",
+                    "/transparency/consistency",
+                    "/transparency/verify-root",
+                    "/transparency/inclusion/",
+                    "/receipts/key",
+                )
+                if any(path == p or path.startswith(p) for p in _ANON_TRANSPARENCY_PATHS):
+                    headers["X-Tenant-ID"] = "00000000-0000-0000-0000-000000000000"
 
         if hasattr(request.state, "agent_id") and request.state.agent_id is not None:
             headers["X-Agent-ID"] = str(request.state.agent_id)
