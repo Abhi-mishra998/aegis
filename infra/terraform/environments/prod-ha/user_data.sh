@@ -180,6 +180,29 @@ declare -A SSM_OVERLAY=(
     # instance launches with prometheus → gateway scrapes returning 401.
     # SSM param is SecureString; rotate independently of every other secret.
     ["${SSM_PREFIX}/prometheus/scrape-secret"]="PROMETHEUS_SCRAPE_SECRET"
+    # P2-3 (2026-06-22) — mesh ES256 keys. Each service mints its own
+    # outbound X-Mesh-Token with MESH_<SVC>_PRIVATE_KEY and verifies
+    # inbound mesh tokens against ACP_MESH_TRUSTED_KEYS (the public-key
+    # bundle of every trusted service). Previously these were injected
+    # post-boot by scripts/ops/safe_deploy.sh, which meant a freshly
+    # scaled-out ASG instance had no mesh keys and every cross-service
+    # call failed with 403 until an operator ran the script. Pulling
+    # them at user_data time closes that window.
+    ["${SSM_PREFIX}/mesh/trusted-keys"]="ACP_MESH_TRUSTED_KEYS"
+    ["${SSM_PREFIX}/mesh/api/private"]="MESH_API_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/audit/private"]="MESH_AUDIT_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/autonomy/private"]="MESH_AUTONOMY_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/behavior/private"]="MESH_BEHAVIOR_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/decision/private"]="MESH_DECISION_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/flight_recorder/private"]="MESH_FLIGHT_RECORDER_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/forensics/private"]="MESH_FORENSICS_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/gateway/private"]="MESH_GATEWAY_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/identity/private"]="MESH_IDENTITY_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/identity_graph/private"]="MESH_IDENTITY_GRAPH_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/insight/private"]="MESH_INSIGHT_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/policy/private"]="MESH_POLICY_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/registry/private"]="MESH_REGISTRY_PRIVATE_KEY"
+    ["${SSM_PREFIX}/mesh/usage/private"]="MESH_USAGE_PRIVATE_KEY"
 )
 {
     echo ""
