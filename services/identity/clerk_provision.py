@@ -119,27 +119,42 @@ def derive_clerk_org_id(
 async def _get_or_create_organization(
     db: AsyncSession, *, clerk_org_id: str, display_name: str, slug: str,
 ) -> tuple[Organization, bool]:
-    """SELECT ⊕ INSERT race-safe via ON CONFLICT DO NOTHING."""
-    stmt = (
-        pg_insert(Organization)
-        .values(
-            clerk_org_id=clerk_org_id,
-            name=display_name[:255],
-            slug=slug[:100],
-            is_active=True,
-        )
-        .on_conflict_do_nothing(index_elements=["clerk_org_id"])
-        .returning(Organization.id)
-    )
-    result = await db.execute(stmt)
-    inserted_id = result.scalar_one_or_none()
-    created = inserted_id is not None
+    """SELECT then INSERT with race recovery.
 
-    fetch = await db.execute(
+    We do not use ``ON CONFLICT (clerk_org_id) DO NOTHING`` because the
+    ``organizations.clerk_org_id`` UNIQUE was created from
+    ``unique=True`` on the column in models.py, which Postgres can't
+    always disambiguate for ON CONFLICT inference vs. the auto-created
+    ``ix_organizations_clerk_org_id`` (raises
+    ``InvalidColumnReferenceError`` if the planner picks the partial
+    index). The SELECT-then-INSERT-with-rollback pattern is race-safe
+    via the same UNIQUE constraint catching the loser's INSERT.
+    """
+    existing = await db.execute(
         select(Organization).where(Organization.clerk_org_id == clerk_org_id)
     )
-    org = fetch.scalar_one()
-    return org, created
+    org = existing.scalar_one_or_none()
+    if org is not None:
+        return org, False
+
+    org = Organization(
+        clerk_org_id=clerk_org_id,
+        name=display_name[:255],
+        slug=slug[:100],
+        is_active=True,
+    )
+    db.add(org)
+    try:
+        await db.flush()
+        return org, True
+    except IntegrityError:
+        # Concurrent caller created it first. Refetch.
+        await db.rollback()
+        again = await db.execute(
+            select(Organization).where(Organization.clerk_org_id == clerk_org_id)
+        )
+        org = again.scalar_one()
+        return org, False
 
 
 async def _get_or_create_tenant(
