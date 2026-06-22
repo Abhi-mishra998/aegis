@@ -81,12 +81,33 @@ async def list_teams(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    """List teams in the caller's tenant.
+
+    The ``teams`` table lives in the ``acp_identity`` schema (migration
+    e2f3a4b5c6d7_sprint_s5_hierarchical_teams). The gateway runs against
+    ``acp_api`` and does not have the table — querying it raises
+    UndefinedTableError and falls through to the gateway's generic
+    fail-closed wrapper, surfacing as "Fail-Closed: decision service
+    unavailable" on every /settings/teams page load. Until the cross-DB
+    read is wired correctly (proxy to identity / replicate the table),
+    return an empty list so the page renders cleanly. Fresh tenants
+    legitimately have no teams.
+    """
     from services.identity.models import Team
+    from sqlalchemy.exc import ProgrammingError
     tenant_id = _tenant_id_from_request(request)
-    res = await db.execute(
-        select(Team).where(Team.tenant_id == tenant_id).order_by(Team.name),
-    )
-    teams = [_to_dict(t) for t in res.scalars().all()]
+    try:
+        res = await db.execute(
+            select(Team).where(Team.tenant_id == tenant_id).order_by(Team.name),
+        )
+        teams = [_to_dict(t) for t in res.scalars().all()]
+    except ProgrammingError as exc:
+        logger.warning(
+            "teams_query_undefined_table",
+            error=str(exc).split("\n", 1)[0][:200],
+        )
+        await db.rollback()
+        teams = []
     return {"data": teams}
 
 
