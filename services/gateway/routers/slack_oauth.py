@@ -215,14 +215,31 @@ async def slack_status(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    """Slack OAuth connection status.
+
+    The ``tenants`` table lives in the ``acp_identity`` schema; the
+    gateway runs against ``acp_audit`` and does not have it locally.
+    Treat UndefinedTableError as "not connected" so the UI's Slack
+    connect CTA renders without throwing — same graceful-degrade
+    pattern as services/gateway/routers/teams.py:list_teams (2026-06-22).
+    """
     tenant_id = getattr(request.state, "tenant_id", None)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     from services.identity.models import Tenant
     from sqlalchemy import select
-    res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    tenant = res.scalar_one_or_none()
+    from sqlalchemy.exc import ProgrammingError
+    try:
+        res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+        tenant = res.scalar_one_or_none()
+    except ProgrammingError as exc:
+        logger.warning(
+            "slack_status_undefined_table",
+            error=str(exc).split("\n", 1)[0][:200],
+        )
+        await db.rollback()
+        return {"connected": False}
     if tenant is None:
         return {"connected": False}
     return {

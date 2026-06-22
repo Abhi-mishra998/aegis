@@ -239,6 +239,32 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/admin",
     "/dashboard",
     "/policy",
+    # 2026-06-22 — same fix as /integrations above. Slack OAuth status
+    # (/sso/slack/status), Slack OAuth disconnect (/sso/slack/disconnect),
+    # SCIM token CRUD (/scim/v2/tokens), team CRUD (/teams) are management
+    # surfaces, NOT agent tool executions. Without them in the skip list
+    # the tool-extractor middleware returned 400 "Tool name is required"
+    # before the handler ran.
+    "/sso",
+    "/scim",
+    "/teams",
+    "/quota",
+    "/rbac",
+    "/kill-switch",
+    "/fleet",
+    "/evaluation",
+    "/shadow-mode",
+    "/shadow-review",
+    "/approval-inbox",
+    "/policies",
+    "/developer",
+    "/webhook-settings",
+    "/siem",
+    "/scheduled-reports",
+    "/sessions",
+    "/decisions",
+    "/signals",
+    "/simulations",
     # Voice Guide bridge — mints LiveKit JWTs and reports worker status.
     # Pure read-only management surface, no agent execution semantics.
     "/voice",
