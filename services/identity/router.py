@@ -1590,8 +1590,12 @@ async def provision_from_clerk(
             detail="Clerk JWT missing `sub` (user id) claim",
         )
 
-    # Pull the native Clerk org_id off the unverified payload — we already
-    # know the JWT is signature-valid, so it's safe to consult.
+    # Read the RAW Clerk JWT `org_id` claim. The canonicalised `claims["org_id"]`
+    # is intentionally overwritten by the gateway validator with the Aegis
+    # tenant UUID for an unrelated invariant check downstream — trusting it
+    # here would feed a UUID into `Organization.clerk_org_id` (a string slot),
+    # which caused the abhi986 incident 2026-06-22 (duplicate Org/Tenant rows
+    # for one Clerk user).
     from jose import jwt as _jose_jwt  # local import keeps cold start lean
     try:
         unverified = _jose_jwt.get_unverified_claims(raw)
@@ -1600,48 +1604,23 @@ async def provision_from_clerk(
             status_code=400,
             detail=f"Cannot read Clerk JWT claims: {exc}",
         ) from exc
-    clerk_org_id = str(
-        unverified.get("org_id") or claims.get("org_id") or "",
-    )
-    if not clerk_org_id:
-        # Sprint-1 follow-up: if the Clerk JWT carries no org claim,
-        # auto-create a personal workspace keyed on the Clerk user id
-        # instead of returning 409. The original behaviour forced
-        # individual-account users into a "create an org" dialog that
-        # most never completed — they'd just close the tab and the
-        # signup funnel dropped them. Personal workspaces are first-class:
-        # one user, one tenant, no org switcher, no team-management
-        # surface. Same upsert path as the real org flow so a later
-        # invitation to a multi-user org tier is a no-op upgrade.
-        clerk_org_id = f"personal_{clerk_user_id}"
+    raw_jwt_org_id = unverified.get("org_id") or ""
 
-    # Need org name + user email + role. Try the Clerk Backend API first
-    # for the richest payload; fall back to claims-only if Clerk is down.
-    org_name = clerk_org_id
-    org_slug = clerk_org_id
-    try:
-        org_obj = await get_organization(clerk_org_id)
-        org_name = str(org_obj.get("name") or clerk_org_id)[:255]
-        org_slug = str(org_obj.get("slug") or clerk_org_id)[:100]
-    except ClerkBackendAPIError as exc:
-        logger.warning(
-            "clerk_get_organization_failed",
-            clerk_org_id=clerk_org_id, status=exc.status_code,
-        )
+    # Resolve a display name. Best-effort — Clerk API outage doesn't block.
+    org_display_name: str | None = None
+    if raw_jwt_org_id:
+        try:
+            org_obj = await get_organization(raw_jwt_org_id)
+            org_display_name = str(org_obj.get("name") or "")[:255] or None
+        except ClerkBackendAPIError as exc:
+            logger.warning(
+                "clerk_get_organization_failed",
+                clerk_org_id=raw_jwt_org_id, status=exc.status_code,
+            )
 
-    org_role = str(unverified.get("org_role") or "org:owner")
-
-    # Step 1 — Organization + Tenant (idempotent)
-    org_result = await _handle_organization_created(
-        db, redis,
-        {"id": clerk_org_id, "name": org_name, "slug": org_slug},
-    )
-
-    # Step 2 — User row (idempotent). Synthesise the same membership shape
-    # the webhook would deliver so we share the upsert path.
-    email = claims.get("email") or ""
+    # Resolve email. Prefer the JWT claim; fall back to Clerk Backend API.
+    email = (claims.get("email") or "").strip()
     if not email:
-        # Pull from Clerk's API for accuracy
         try:
             memberships = await list_user_organizations(clerk_user_id)
             for m in memberships:
@@ -1656,33 +1635,33 @@ async def provision_from_clerk(
                 clerk_user_id=clerk_user_id, status=exc.status_code,
             )
 
-    membership_data = {
-        "organization": {"id": clerk_org_id},
-        "role": org_role,
-        "public_user_data": {
-            "user_id": clerk_user_id,
-            "identifier": email,
-            "email_addresses": (
-                [{"id": "primary", "email_address": email}] if email else []
-            ),
-            "primary_email_address_id": "primary",
-        },
-    }
-    user_result = await _handle_membership_created_or_updated(
-        db, redis, membership_data,
-    )
+    org_role = str(unverified.get("org_role") or "org:owner")
 
-    return APIResponse(
-        data={
-            "tenant_id":        org_result.get("tenant_id"),
-            "organization_id":  org_result.get("organization_id"),
-            "user_id":          user_result.get("user_id"),
-            "role":             user_result.get("role"),
-            "shadow_mode_until": org_result.get("shadow_mode_until"),
-            "clerk_user_id":    clerk_user_id,
-            "clerk_org_id":     clerk_org_id,
-        },
-    )
+    from services.identity.clerk_provision import provision_aegis_identity
+
+    try:
+        result = await provision_aegis_identity(
+            db, redis,
+            clerk_user_id=clerk_user_id,
+            raw_jwt_org_id=raw_jwt_org_id,
+            org_role_claim=org_role,
+            email=email,
+            org_display_name=org_display_name,
+        )
+    except IntegrityError as exc:
+        await db.rollback()
+        logger.error(
+            "clerk_provision_integrity_error",
+            clerk_user_id=clerk_user_id,
+            raw_jwt_org_id=raw_jwt_org_id,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Provisioning failed due to DB constraint violation",
+        ) from exc
+
+    return APIResponse(data=result.as_dict())
 
 
 # =============================================================================
