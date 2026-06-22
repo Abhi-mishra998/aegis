@@ -736,13 +736,33 @@ async def spawn_demo_workspace(
         return any(ip in net for net in _docker_bridge_nets)
 
     def _is_alb_hop(client_host: str | None) -> bool:
-        """True if the immediate TCP peer looks like the ALB.
+        """True if the immediate TCP peer is a plausible ALB-path hop.
 
-        The ALB lives in the VPC private subnet, so an RFC1918 10/8 (or
-        any other strictly-private, non-loopback, non-docker-bridge IP)
-        is expected. Loopback (127/8) and the docker default bridge
-        (172.17/16) are NOT — those mean the request never traversed
-        the ALB and is therefore from inside the fleet.
+        P1-1 fix (2026-06-22): the prod architecture is
+        ``ALB → acp_ui (nginx) → acp_gateway`` over the compose docker
+        bridge. The gateway's immediate TCP peer is therefore ALWAYS the
+        UI container's docker-bridge IP (e.g. ``172.18.0.24``), never the
+        ALB itself. The previous version of this check rejected every
+        ``172.17/16`` + ``172.18/16`` peer and 403'd every legitimate
+        marketing-CTA click.
+
+        Defence-in-depth thinking with this relaxed check:
+          - The PRIMARY defence is the `_is_external_public(source_ip)`
+            check above. ALB STRIPS any client-supplied X-Forwarded-For
+            on its public listener and rewrites it to the real client
+            public IP, so a request that arrives with XFF starting with
+            a globally-routable address came through the ALB.
+          - An attacker who has RCE inside the cluster can still spoof
+            XFF when calling the gateway directly — that path is bounded
+            by the same per-IP rate limit (5 spawns / 10 min / IP) and
+            by mesh-JWT verification for any operator-tier flow. The old
+            check tried to add a second layer but was structurally
+            incompatible with the proxy chain, so it provided zero
+            defence in steady state (it 403'd EVERY legitimate request).
+          - Loopback / link-local / multicast / reserved peers are still
+            rejected — those would mean the request originated on the
+            gateway's own host (not via the UI proxy), which never
+            happens in prod.
         """
         if not client_host:
             return False
@@ -752,12 +772,10 @@ async def spawn_demo_workspace(
             return False
         if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
             return False
+        # Docker-bridge peer (legitimate UI → gateway hop) and VPC-private
+        # peer (rare: direct ALB → gateway shape) are both accepted.
         if _is_docker_bridge(ip):
-            return False
-        # Production ALB always shows up as an RFC1918 private peer; in
-        # local dev neither this check nor the XFF check should fire (the
-        # caller is loopback and the XFF is empty), so we land in 403
-        # cleanly with the same error.
+            return True
         return ip.is_private
 
     client_host = request.client.host if request.client else None

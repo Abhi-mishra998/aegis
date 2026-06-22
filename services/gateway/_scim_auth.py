@@ -40,10 +40,38 @@ async def resolve_scim_bearer(request: Request, db: AsyncSession) -> uuid.UUID:
     sha = hashlib.sha256(token.encode()).hexdigest()
 
     from services.identity.models import ScimToken  # noqa: PLC0415
-    res = await db.execute(
-        select(ScimToken).where(ScimToken.token_hash == sha),
-    )
-    row = res.scalar_one_or_none()
+
+    # P0-1 fix (2026-06-22) — wrap the DB lookup in a narrow try/except so
+    # infrastructure errors (table missing, pgbouncer down, DB unreachable)
+    # surface as 503 with a SCIM-shaped body instead of bubbling raw
+    # SQLAlchemy exceptions through to the generic 500 handler. Without
+    # this, every malformed SCIM bearer request — including reachability
+    # probes from Okta — paged ops with a 500 + leaked the SQL string in
+    # error logs.
+    try:
+        res = await db.execute(
+            select(ScimToken).where(ScimToken.token_hash == sha),
+        )
+        row = res.scalar_one_or_none()
+    except Exception as db_exc:
+        logger.error(
+            "scim_db_unreachable",
+            error_type=type(db_exc).__name__,
+            # NOTE: error string deliberately not logged here — SQLAlchemy
+            # ProgrammingError stringifies the full SQL + parameters which
+            # is exactly the data we redact in the global exception
+            # handler (sdk.common.exceptions). Type alone is enough to
+            # alert on.
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+                "status":  "503",
+                "detail":  "SCIM authentication backend unavailable",
+            },
+            headers={"Retry-After": "30", "WWW-Authenticate": 'Bearer realm="SCIM"'},
+        ) from None
     if row is None:
         logger.warning(
             "scim_bearer_unknown",
