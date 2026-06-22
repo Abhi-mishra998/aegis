@@ -171,35 +171,15 @@ _register(SignalDefinition(
     description="URL fetcher pointed at an RFC1918 / loopback / link-local address — internal-network pivot via SSRF.",
 ))
 
-# P0-1 fix 2026-06-21: SSRF detector family. Brutal-review found that
-# `http.get` with url=file:///etc/passwd / 169.254.169.254 / localhost
-# returned action=allow with risk=0.0 — the canonical normalizer had no
-# detector for these. Three flavours map to three findings so SOC can
-# triage by attack class.
-_register(SignalDefinition(
-    id="ssrf_local_file",
-    objective=SecurityObjective.INITIAL_ACCESS,
-    severity=Severity.CRITICAL,
-    mitre_technique="T1552.001 Unsecured Credentials: Credentials In Files",
-    default_score=95, default_response="deny",
-    description="HTTP tool call with file:// URL — local-file read via SSRF.",
-))
-_register(SignalDefinition(
-    id="ssrf_cloud_metadata",
-    objective=SecurityObjective.INITIAL_ACCESS,
-    severity=Severity.CRITICAL,
-    mitre_technique="T1552.005 Unsecured Credentials: Cloud Instance Metadata API",
-    default_score=95, default_response="deny",
-    description="HTTP tool call to cloud metadata endpoint (169.254.169.254, metadata.google.internal, etc).",
-))
-_register(SignalDefinition(
-    id="ssrf_internal_network",
-    objective=SecurityObjective.INITIAL_ACCESS,
-    severity=Severity.HIGH,
-    mitre_technique="T1190 Exploit Public-Facing Application",
-    default_score=80, default_response="deny",
-    description="HTTP tool call targeting RFC1918 / loopback / link-local / *.internal / *.local — pivoting into private network.",
-))
+# 2026-06-22 — removed the second SSRF block (lines 174-202 in the
+# previous revision). It was a merge-conflict residue from the
+# P0-1 brutal-review fix that already lives in the block just above
+# (ssrf_local_file / ssrf_cloud_metadata / ssrf_internal_network at
+# lines 149-172). The duplicate _register() calls raised
+# ``ValueError: duplicate signal id`` at module import time, which the
+# gateway middleware then caught as an "unhandled error" and surfaced as
+# "Fail-Closed: decision service unavailable" on every /iag/mitre-coverage
+# request (the endpoint imports services.security.signal_registry inline).
 
 # ───── PERSISTENCE (TA0003) ────────────────────────────────────────────────
 _register(SignalDefinition(

@@ -178,7 +178,13 @@ RULES: tuple[Rule, ...] = (
     _R("/scim/v2/tokens",              ("GET",),         roles=("OWNER",)),
     _R("/billing/checkout",            ("POST",),        roles=("OWNER",)),
     _R("/billing/portal",              ("POST",),        roles=("OWNER",)),
-    _R("/billing*",                    ("GET",),         roles=("OWNER",)),
+    # 2026-06-22 — billing GETs are read-only views (plan, invoices, cost
+    # attribution, budget requests). Org ADMIN should see them to do
+    # ops/finance work even though only OWNER can move money via the
+    # POST endpoints above. Personal workspaces are auto-promoted to
+    # OWNER in sdk/common/clerk_auth.py so single-user accounts always
+    # land here regardless.
+    _R("/billing*",                    ("GET",),         roles=("OWNER", "ADMIN")),
     _R("/tenant/quota",                ("GET",),         min_role="READ_ONLY"),
     _R("/auto-response/*",             ("*",),           min_role="SECURITY_ANALYST"),
     _R("/autonomy/contracts/*",        ("POST", "PATCH", "DELETE"), roles=("OWNER", "ADMIN")),

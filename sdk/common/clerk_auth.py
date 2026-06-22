@@ -272,6 +272,18 @@ class ClerkTokenValidator:
         if (not canonical.get("role") or canonical.get("role") == "OWNER") and payload.get("org_role"):
             canonical["role"] = normalize_clerk_role(payload.get("org_role"))
 
+        # 2026-06-22 — personal Clerk workspaces (no native org membership)
+        # have exactly one member: the signing-up human. That person is
+        # by definition the OWNER of the workspace. The default `aegis`
+        # JWT template ships with `aegis_role: "org:admin"` (Clerk
+        # template default), which would deny these users from /billing,
+        # /workspace, and other OWNER-gated routes on their own
+        # workspace. Promote to OWNER when there is no Clerk org_id on
+        # the raw claim — the existence of a real Clerk org would imply
+        # multi-tenant membership where the role distinction matters.
+        if not payload.get("org_id"):
+            canonical["role"] = "OWNER"
+
         return canonical
 
     async def _resolve_tenant_id_from_redis(self, clerk_org_id: str | None) -> str | None:
