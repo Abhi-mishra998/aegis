@@ -27,6 +27,60 @@
 
 ---
 
+## Round 3 — terraform apply landed 2026-06-22 18:15 UTC
+
+After round 2 surfaced N1-1 (DoW on the newly anon transparency endpoints) plus the legacy P2-1 / P2-5 / P3-3 / P2-3 plan-only debt, I ran the targeted terraform apply for ALB + WAF + ASG launch template (excluded RDS PG + the dangerous full-plan S3 destroy from drift unrelated to today's commits).
+
+### Apply scope (targeted, deliberately narrow)
+
+| Resource | Change | Why scoped this way |
+|---|---|---|
+| `module.alb.aws_lb.main` | `enable_deletion_protection: false → true` | P3-3 |
+| `module.waf.aws_wafv2_web_acl.main` | Bot Control `override count→none` + scope_down NOT(Authorization). NEW rule `UnAuthPerIPRateLimit` priority 5, 200/5min on requests lacking Authorization. | P2-1 + P2-5 + N1-1 (same scope_down covers transparency) |
+| `module.asg.aws_launch_template.main` | user_data adds 15 MESH_* SSM pulls + restores P1-4 userlist-on-tmpfs hardening that had drifted out of source | P2-3 |
+
+A separate full `terraform plan` showed **10 S3 resources marked "must be replaced"** (would destroy the prod backups + CloudTrail buckets). That is **pre-existing infra drift unrelated to today's commits** — never touched, left for a separate operation.
+
+### Live verification post-apply
+
+| ID | Probe | Result |
+|---|---|---|
+| P2-1 Bot Control Block + scope_down | curl with `User-Agent: python-urllib` (anon) | 403 (Bot Control catches automated UA) |
+| P2-1 scope_down lets auth header through | curl with `Authorization: Bearer fake` | 401 from gateway (not 403 from WAF) — proves scope_down skips authenticated traffic |
+| P2-5 UnAuthPerIPRateLimit fires | 300 anon (browser UA) over 116s | All 300 → 403 (WAF block; rate limit firing as designed — WAFv2 `block{}` returns 403, not 429) |
+| N1-1 transparency DoW | same probe covers it (NOT-Authorization scope_down) | mitigated by same rule |
+| P3-3 ALB DP | `describe-load-balancer-attributes` | `deletion_protection.enabled = true` |
+| P2-3 user_data mesh keys | new LT version applied | effective on next ASG churn for existing instances; immediate for new launches |
+| ALB targets | `describe-target-health` | 2/2 healthy |
+
+### Source repair surfaced during apply
+
+The `infra/terraform/environments/prod-ha/user_data.sh` source file had **lost** the P1-4 partial hardening (userlist.txt on tmpfs with chown 70:70). That hardening had been applied to the live launch template on 2026-06-21 but never committed back to source. An unfettered `terraform apply` would have **silently regressed disk-forensics resistance**. Caught in plan review, source repaired in commit, re-planned, then applied.
+
+### Unit tests added — `tests/test_p_hard_1_fixes.py`
+
+13 tests covering every P-Hard-1 fix: 4 file-only (run anywhere), 9 integration-marked (skip when no localhost:8000). All 4 file-only tests pass locally. The integration set runs in CI / dev-stack environments.
+
+```
+tests/test_p_hard_1_fixes.py::test_p2_2_pgbouncer_source_has_live_hostname PASSED
+tests/test_p_hard_1_fixes.py::test_p1_4_sse_reauth_interval_is_240 PASSED
+tests/test_p_hard_1_fixes.py::test_p2_11_audit_alembic_chain_has_single_head PASSED
+tests/test_p_hard_1_fixes.py::test_p2_11_identity_scim_migration_is_noop_superseded PASSED
+```
+
+### What's still TODO (founder-only)
+
+| # | What | Why blocked on you |
+|---|---|---|
+| 1 | `git push origin main` of the 11 local commits | git creds in keychain are wrong account (Abhishek-Mishra-ai vs Abhi-mishra998) |
+| 2 | Clerk template `aegis` lifetime → 300 s in console.clerk.com | Can't access Clerk dashboard from CLI |
+| 3 | Rotate the Anthropic API key | Already burned in chat twice |
+| 4 | Run `PENTEST_BLOCKED_ITEMS.md` recipes with your tokens | Needs your Clerk JWT + acp_emp_* key + 2-tenant setup |
+| 5 | Separately address the S3 Object-Lock drift the full terraform plan would replace-destroy buckets to apply | Needs a `aws s3api put-object-lock-configuration` adopt-then-import sequence, not a terraform replace |
+| 6 | (Optional) Cycle existing ASG instances so the new LT user_data with mesh keys + tmpfs hardening takes effect on them | safe_deploy.sh already injects mesh keys post-boot on existing instances, so this is non-urgent |
+
+---
+
 ## Round 2 adversarial pass — 2026-06-22 17:30 UTC — bundle `8491838aee9e`
 
 After landing the P-Hard-1 sprint commits (`c3a9a3a` + `f56e0a4` + `8491838`) and deploying, ran the full adversarial battery a second time looking specifically for regressions and new gaps. Verdict: **all P0/P1 from round 1 confirmed closed live; 1 new P2 finding (N1-1) introduced by the P1-2 fix; one operational issue surfaced (ASG-Avail).**

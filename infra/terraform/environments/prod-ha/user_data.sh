@@ -254,9 +254,26 @@ EOF
 chmod 644 /opt/aegis/infra/pgbouncer.aws.ini
 
 # ── 6. Render userlist.txt — master + per-service users ────────────────
-# For 20-user testing infra every per-service user shares the master
-# password. Bootstrap SQL later splits these into distinct creds.
-cat > /opt/aegis/infra/userlist.txt <<EOF
+#
+# P1-4 partial (2026-06-21, re-committed to source 2026-06-22):
+# write userlist to tmpfs (/run is RAM-backed on AL2023). Plaintext
+# per-db passwords never persist to EBS — snapshot theft / disk
+# forensics can't read them. Live shell on EC2 still can (the full
+# fix is pgbouncer auth_query + SCRAM, tracked separately).
+#
+# pgbouncer in the edoburu image runs as uid 70 (postgres). It needs
+# read access to /etc/pgbouncer/userlist.txt; without chown the bind
+# mount makes the file root-owned and the postgres user gets EACCES,
+# which surfaces as "no such user: <name>" on every login attempt
+# (pgbouncer treats unreadable userlist as an empty userlist).
+#
+# This block had drifted between live state and source — the
+# hardening was applied to the running LT in June but never committed
+# back to user_data.sh. P-Hard-1 (2026-06-22) re-syncs it so terraform
+# apply does not silently regress disk-forensics resistance.
+mkdir -p /run/aegis/pgbouncer
+chmod 755 /run/aegis/pgbouncer
+cat > /run/aegis/pgbouncer/userlist.txt <<EOF
 "postgres"            "${RDS_PASSWORD}"
 "registry_user"       "${RDS_PASSWORD}"
 "identity_user"       "${RDS_PASSWORD}"
@@ -268,7 +285,12 @@ cat > /opt/aegis/infra/userlist.txt <<EOF
 "autonomy_user"       "${RDS_PASSWORD}"
 "behavior_user"       "${RDS_PASSWORD}"
 EOF
-chmod 644 /opt/aegis/infra/userlist.txt
+chown 70:70 /run/aegis/pgbouncer/userlist.txt
+chmod 640 /run/aegis/pgbouncer/userlist.txt
+# Defence in depth: if a stale copy ever lands on EBS (e.g. from a
+# manual operator script), wipe it. The docker-compose bind mount
+# points at /run/aegis/pgbouncer/userlist.txt, NOT /opt/aegis/infra/.
+rm -f /opt/aegis/infra/userlist.txt
 
 # ── 6b. Docker Hub login (prevents anonymous rate-limit on burst pulls) ─
 # Recurring outage root cause: Docker Hub's 100/6h anonymous limit on the
