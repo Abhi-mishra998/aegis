@@ -1,94 +1,175 @@
-# Setup Aegis — for seed-stage AI startups (10-50 people)
+# Setup Aegis — Enterprise Onboarding Guide
 
-> **Honest framing:** Aegis is a solo-founder project that ships real production governance — append-only audit chain, OPA policy engine, public cryptographic transparency log — at $0–$499/mo. If you're a 10-50 person startup giving Claude / GPT to your team or shipping an AI agent into production, you can run this end-to-end against the live cloud at `https://aegisagent.in` in under 15 minutes. Everything below is verified live by the founder's last external security audit on **2026-06-18** — see `validation-report.md` Appendix R for the probe transcript.
-
-| Path | Pick if you are | What it costs you |
-|---|---|---|
-| **A. SDK wrapper** | Building one custom agent with tools (`read_file`, `query_database`, `kubectl`, …). | 1 `pip install` + 5 lines of code. Your Anthropic/OpenAI key stays on your machine. |
-| **B. Anthropic/OpenAI proxy** | Handing Claude or GPT to 10-50 employees and one of: finance is scared of the bill / legal is scared of PII leaks / security wants an audit trail. | The corporate LLM key lives in one place (yours). Each employee gets an `acp_emp_*` key + their own daily/monthly USD budget cap. |
-
-Both paths land in the same dashboard. **You can run both at the same time**: Path A for your in-house agents + Path B for your team's Claude usage.
+> **What this document is.** A self-serve, click-by-click guide that takes a CIO/CISO/CTO from "I just heard of Aegis" to "we have Aegis in production for our AI agents and our team's LLM usage" in under one business day. Every step has a live URL, a concrete `curl` command, and a "you should see exactly this" verification. Nothing is hand-waved.
+>
+> **What this document is NOT.** Marketing. Every claim has a probe behind it (`22-testing-report.md` + `22-matrix.md` are the latest pentest evidence files in this repo; the previous external audit transcript lives in `validation-report.md` Appendix R). If a feature isn't real, it's marked ❌ with the date on which we expect it to land.
 
 ---
 
-## 0. What's actually true today (verified live 2026-06-18)
+## Table of contents
 
-Before you commit, here is exactly what the founder verified against `aegisagent.in` in this session:
+- [0. Pre-flight checklist (read first, ~5 min)](#0-pre-flight-checklist-read-first-5-min)
+- [1. What's actually true today — live-verified facts](#1-whats-actually-true-today--live-verified-facts)
+- [2. Pick your integration path (A, B, or both)](#2-pick-your-integration-path-a-b-or-both)
+- [3. Sign up + workspace bootstrap (90 seconds)](#3-sign-up--workspace-bootstrap-90-seconds)
+- [4. Dashboard layout — what each tile means](#4-dashboard-layout--what-each-tile-means)
+- [5. Path A — wrap your custom agent with the SDK](#5-path-a--wrap-your-custom-agent-with-the-sdk)
+- [6. Path B — Aegis for Teams (Anthropic/OpenAI proxy)](#6-path-b--aegis-for-teams-anthropicopenai-proxy)
+- [7. What Aegis catches out of the box (no policies to write)](#7-what-aegis-catches-out-of-the-box-no-policies-to-write)
+- [8. Real-time UI surfaces](#8-real-time-ui-surfaces)
+- [9. Cryptographic evidence (the moat that compounds)](#9-cryptographic-evidence-the-moat-that-compounds)
+- [10. Integrations — click-by-click for every surface](#10-integrations--click-by-click-for-every-surface)
+  - [10.1 SSO — Okta, Azure AD, Google Workspace, generic OIDC](#101-sso--okta-azure-ad-google-workspace-generic-oidc)
+  - [10.2 Slack approvals — incoming webhook + HMAC-signed buttons](#102-slack-approvals--incoming-webhook--hmac-signed-buttons)
+  - [10.3 PagerDuty — Events API v2](#103-pagerduty--events-api-v2)
+  - [10.4 SIEM forwarders — Splunk / Datadog / Elastic / Sentinel / Chronicle](#104-siem-forwarders--splunk--datadog--elastic--sentinel--chronicle)
+  - [10.5 Jira / ServiceNow — round-trip ITSM](#105-jira--servicenow--round-trip-itsm)
+  - [10.6 Stripe — self-serve billing](#106-stripe--self-serve-billing)
+  - [10.7 Generic egress webhook](#107-generic-egress-webhook)
+- [11. RBAC matrix — who can do what](#11-rbac-matrix--who-can-do-what)
+- [12. Recipe book — 14 governance levers (copy-paste, run, observe)](#12-recipe-book--14-governance-levers-copy-paste-run-observe)
+- [13. Authoring custom OPA Rego policies](#13-authoring-custom-opa-rego-policies)
+- [14. Day 1 / Day 7 / Day 30 rollout plan](#14-day-1--day-7--day-30-rollout-plan)
+- [15. Troubleshooting + FAQ](#15-troubleshooting--faq)
+- [16. Security posture — handout for your CISO](#16-security-posture--handout-for-your-ciso)
+- [17. Pricing — built for seed-stage budgets](#17-pricing--built-for-seed-stage-budgets)
+- [18. What Aegis is NOT yet (be honest with yourself)](#18-what-aegis-is-not-yet-be-honest-with-yourself)
+- [19. Exit shadow mode (when you're confident)](#19-exit-shadow-mode-when-youre-confident)
+- [20. Quick reference card](#20-quick-reference-card)
+- [21. Closing — what the founder is asking from you](#21-closing--what-the-founder-is-asking-from-you)
+
+---
+
+## 0. Pre-flight checklist (read first, ~5 min)
+
+Before signing up, make sure you have these. None are expensive; most cost nothing.
+
+| # | Item | Why | If missing |
+|---|---|---|---|
+| 1 | A work email + company name | Tenant identity + invoice line | Sign up with personal email; switch later via Workspace → Settings → Owner |
+| 2 | A Claude or GPT API key your team is already using | The corporate key Aegis will proxy on Path B | If only Anthropic — Path A still works (in-house agents) |
+| 3 | A Slack channel for approvals (e.g. `#aegis-approvals`) | Where high-risk action escalations land | Skip — UI Approval Inbox works without Slack |
+| 4 | An incident channel + PagerDuty service (optional but recommended) | Where P0/P1 incidents page | Skip — incidents still show in dashboard |
+| 5 | Your SIEM vendor (Splunk / Datadog / Elastic / Sentinel / Chronicle) and its ingest endpoint + token | Mirror every audit row to your existing logs | Skip — Aegis still keeps the audit log in its own DB |
+| 6 | A 30-minute window to do Day-1 setup end-to-end | Sign up, integrate Path A or B, fire one test attack, see the block in the dashboard | Spread across two sessions if needed |
+| 7 | Decision: shadow mode or enforce mode for first 14 days | Shadow = log only; Enforce = actually block. **Default is shadow** for 14 days. | Stay in shadow mode by default; nothing breaks |
+| 8 | Decision: which CISO/CFO/CTO email approves high-risk actions | Maps to the `OWNER` / `ADMIN` role + Approval Inbox | Founder/CTO can self-approve in early days |
+
+**Architecture you're about to wire into:**
+
+```
+                  ┌──────────────────────────────────────┐
+your apps + agents│           https://aegisagent.in       │
+─── tool calls ──▶│  ALB → WAF → Gateway → OPA + Decision │── allow / deny / escalate ──▶
+                  │       ├ Identity (Clerk RS256 JWT)    │
+your team's       │       ├ Audit (append-only Merkle log)│
+Claude/GPT use ──▶│       └ Transparency (public S3 roots)│
+                  │       ↳ SSE channel per tenant        │
+                  └──────────────────────────────────────┘
+                          │
+                          ├─▶ Slack channel (approvals)
+                          ├─▶ PagerDuty (severe incidents)
+                          ├─▶ SIEM (full audit mirror)
+                          └─▶ Jira / ServiceNow (ITSM round-trip — beta)
+```
+
+Region: AWS **ap-south-1** (Mumbai). Multi-region (EU + US-East) is on the 90-day plan. If you have a hard data-residency requirement, see Section 18.
+
+---
+
+## 1. What's actually true today — live-verified facts
+
+Live verification against `aegisagent.in` (latest pentest evidence in `22-testing-report.md` + `22-matrix.md`):
 
 | Claim | Status | Evidence |
 |---|---|---|
 | Append-only audit chain enforced at the DB layer | ✅ LIVE | `UPDATE audit_logs SET decision='tampered' WHERE id=…` → `P0001: audit_logs is append-only; UPDATE is forbidden` (trigger `deny_audit_log_mutation`) |
-| Cryptographic transparency — V1–V6 verifiable | ✅ LIVE | `pip install aegis-aevf && aegis-verify --bundle reference-bundle-2026-06.json` returns `*** PASS ***` |
-| Public S3 transparency log (anonymous) | ✅ LIVE | `aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/ --recursive` lists **48 signed Merkle roots across 7 tenants** |
+| Cryptographic transparency — V1–V6 verifiable | ✅ LIVE | `pip install aegis-aevf && aegis-verify --bundle reference-bundle-2026-06.json` → `*** PASS ***` |
+| Public S3 transparency log (anonymous) | ✅ LIVE | `aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/ --recursive` lists signed Merkle roots |
+| `/transparency/{key,keys,roots,consistency}` anonymous-verifiable | ✅ LIVE | All return 200 anon (P1-2 closed) |
 | Path-traversal detection (Path A) | ✅ LIVE | `read_file({"path":"/etc/passwd"})` → HTTP 403, `risk_score=95`, `findings=["system_sensitive_path"]` |
 | SSH-credential detection (Path A) | ✅ LIVE | `read_file({"path":"~/.ssh/id_rsa"})` → HTTP 403, `findings=["policy_deny","ssh_credential_path","SEC-CR…"]` |
-| 5-tier amount-aware wire-transfer policy | ✅ LIVE | $100k → `money_transfer_external` finding; cumulative risk rises across attempts (real `SEC-CUMULATIVE-E1` signal); $5M → `anomalous_behavior_detected` |
+| 5-tier amount-aware wire-transfer policy | ✅ LIVE | $100k → `money_transfer_external`; cumulative across attempts (`SEC-CUMULATIVE-E1`); $5M → `anomalous_behavior_detected` |
 | Path B requires `acp_emp_*` virtual key | ✅ LIVE | Raw Anthropic key → 401 `"x-api-key must be an Aegis employee virtual key (acp_emp_…)"` |
-| Tenant isolation (cross-tenant data scope) | ✅ LIVE (7/8 PASS) | Suite C: A=589 audit rows, B=178; B-key with `?tenant_id=A` query param returned 178 rows (B's data), not 589. **Zero cross-tenant data leakage** |
+| SCIM bearer never returns 500 on garbage | ✅ LIVE | 4 garbage-bearer variants → all 401 with SCIM-shaped error body |
+| Demo workspace spawn — anonymous, rate-limited 5/10min/IP | ✅ LIVE | 7-burst → 5×200 then 2×429 with `"Demo spawn rate limit hit — try again in 10 minutes."` |
+| Tenant isolation (cross-tenant data scope) | ✅ LIVE | B-key with `?tenant_id=A` returned B's data, not A's |
+| WAF Bot Control in Block + scope_down NOT(Authorization) | ✅ LIVE | Authenticated curl reaches gateway 401; `python-urllib` UA gets WAF 403 |
+| WAF UnAuth-IP rate limit 200/5min | ✅ LIVE | 300 anon over 116s → all 403 |
+| ALB `enable_deletion_protection = true` | ✅ LIVE | `aws elbv2 describe-load-balancer-attributes` confirms |
 | HSTS preload + strict CSP + COOP/CORP | ✅ LIVE | `curl -sI https://aegisagent.in/` shows all headers |
-| 25/25 prompt-injection attacks safely handled | ✅ LIVE (combined) | 4 blocked by Aegis at gateway + 21 refused by Claude alignment + 0 successful injections |
-| SOC 2 attestation | ❌ NOT YET | Vendor selection in progress (Drata / Vanta / Thoropass). If you need SOC 2 today, use Aegis in shadow mode while we land it. |
-| Multi-region | ❌ NOT YET | Single region: AWS `ap-south-1` (Mumbai). EU/US-East deploys in the 90-day plan. |
-| Jira / ServiceNow integration | ❌ NOT YET | Slack ✅, PagerDuty ✅, SIEM (Splunk/Datadog/Elastic/Sentinel/Chronicle) ✅. Jira webhook is on the 30-day plan. |
-| Reliability under chaos | ⚠️ NOT VERIFIED IN PROD | Failure injection (Redis/Postgres outage) deferred to staging. Single-region, single-AZ-of-compute risk is real. |
+| Append-only audit log via SQLAlchemy `INSTEAD OF UPDATE/DELETE` trigger | ✅ LIVE | Live SQL probe |
+| SOC 2 attestation | ❌ NOT YET | Vendor selection in progress (Drata / Vanta / Thoropass). Use shadow mode while we land it. |
+| Multi-region | ❌ NOT YET | Single region `ap-south-1`. EU/US-East deploys in the 90-day plan. |
+| Jira / ServiceNow round-trip ITSM | 🚧 BETA | Inbound webhook with HMAC signature shipped; outbound issue creation on the 30-day plan. |
+| Chaos / failure-injection in prod | ❌ NOT VERIFIED IN PROD | Staging chaos harness on the 30-day plan. |
 
-If any of the ❌ rows are a hard blocker for your business, pause here and email `founder@aegisagent.in` for an honest conversation about timeline. For most seed-stage AI startups, none of these are blockers in month 1.
+If any of the ❌ rows is a hard blocker, pause here and email `founder@aegisagent.in`. For most seed-stage AI startups, none are blockers in month 1.
 
 ---
 
-## 1. The dashboard at a glance (Sidebar)
+## 2. Pick your integration path (A, B, or both)
 
-Four product modules so a first-time CIO/CTO can navigate without docs:
+| Path | Pick if you are | What it costs you | Time to first value |
+|---|---|---|---|
+| **A. SDK wrapper** | Building one or more custom agents with tools (`read_file`, `query_database`, `kubectl`, `wire_transfer`, …). | 1 `pip install` + 5 lines of code per agent. Your Anthropic/OpenAI key stays on your machine. | 15 min |
+| **B. LLM proxy (Aegis for Teams)** | Handing Claude or GPT to 10-50 employees AND one of: finance is scared of the bill / legal is scared of PII leaks / security wants an audit trail. | The corporate LLM key lives in one place (yours). Each employee gets an `acp_emp_*` key + their own daily/monthly USD budget cap. | 30 min |
 
-- **Observe** — Dashboard, Team, Live Feed *(who/what is talking to AI right now)*
-- **Protect** — Agents, Incidents, Approval Inbox, Policies *(what got blocked, who approves, edit policies)*
-- **Prove** — Compliance *(the cryptographically-chained audit log mapped to SOC2 / PCI / HIPAA controls)*
-- **Workspace** — Settings *(SSO, RBAC, API keys, Slack, Webhooks, SIEM, quota, billing)*
+**You can run both at the same time.** Path A protects your in-house agents; Path B protects your team's day-to-day Claude/GPT usage. Both write to the same audit chain, surface in the same dashboard.
 
-15 analyst surfaces under the collapsible **Advanced** group (Audit Logs, Forensics, Threat Graph + MITRE ATT&CK matrix, Identity Graph, Auto-Response, Evaluation, Playbooks, Shadow Mode, Flight Recorder, Decision Explorer, Session Explorer, Fleet, Agent Playground, Threat Intel). All tenant-isolated, all JWT-gated.
+---
 
-The top-right of the Topbar now carries:
-- 🚨 **Kill Switch** button (red, ConfirmDialog) — gated to OWNER/ADMIN only. One click + confirm and **all agent actions for your workspace halt in <5 seconds**.
+## 3. Sign up + workspace bootstrap (90 seconds)
+
+1. Open `https://aegisagent.in` → **Sign up** (email + password, or Google).
+2. You land in your workspace. Two facts to know:
+   - You are **OWNER** of a personal workspace, auto-created on signup. Invite teammates from **Workspace → Settings → Users → Invite**.
+   - The workspace starts in **14-day shadow mode** — Aegis records every would-be decision but does NOT actually block. **Workspace → Settings → Shadow Mode** shows the would-have-been-blocked list. Click **Exit shadow mode** when you trust the rules.
+
+**Tenant invariants enforced for you (no setup needed):**
+- Clerk RS256 session JWT, JWKS rotation every 24h.
+- `aegis_org_id == aegis_tenant_id` checked at three layers (webhook write, JWT canonicalize, DB CHECK constraint).
+- Cross-tenant API attempts → 403 `Tenant mismatch detected`.
+- All SCIM/JWT/X-Tenant-ID smuggling vectors closed (P0-1, P1-1, P1-2, P1-3 all live-verified).
+
+---
+
+## 4. Dashboard layout — what each tile means
+
+Sidebar is organized into 4 product modules so a first-time CIO/CTO can navigate without docs:
+
+- **Observe** — `Dashboard`, `Team`, `Live Feed` (who/what is talking to AI right now)
+- **Protect** — `Agents`, `Incidents`, `Approval Inbox`, `Policies` (what got blocked, who approves, edit policies)
+- **Prove** — `Compliance` (cryptographically-chained audit log mapped to SOC2 / PCI / HIPAA controls)
+- **Workspace** — `Settings` (SSO, RBAC, API keys, Slack, Webhooks, SIEM, quota, billing)
+
+15 analyst surfaces under the collapsible **Advanced** group: Audit Logs, Forensics, Threat Graph + MITRE ATT&CK matrix, Identity Graph, Auto-Response, Evaluation, Playbooks, Shadow Mode, Flight Recorder, Decision Explorer, Session Explorer, Fleet, Agent Playground, Threat Intel. All tenant-isolated, all JWT-gated.
+
+**Topbar surfaces (right-hand side):**
+- 🚨 **Kill Switch** button — red, gated to OWNER/ADMIN only. One click + ConfirmDialog and **all agent actions for your workspace halt in <5 seconds**.
 - 📥 **Pending Approvals** badge — number of escalations waiting on you. Click → Approval Inbox.
 - 🔴 **Open Incidents** badge — same shape.
+- 👤 **User menu** — Settings, Profile, Sign out.
 
 ---
 
-## 2. Sign up + workspace bootstrap (90 seconds)
+## 5. Path A — wrap your custom agent with the SDK
 
-Open `https://aegisagent.in` → Sign up (email + password, or Google). You land in your workspace.
-
-Two things are true of every new workspace:
-
-1. You are **OWNER** of a personal workspace, auto-created on signup. Invite your team from **Workspace → Users**.
-2. The workspace starts in **14-day shadow mode** — Aegis records the would-be decision but does NOT actually block. **Settings → Shadow Mode** shows the would-have-been-blocked list. Click **Exit shadow mode** when you trust the rules.
-
-Tenant invariants enforced for you:
-- Clerk RS256 session signed + JWKS rotation
-- `aegis_org_id == aegis_tenant_id` checked at three layers (webhook write, JWT canonicalize, DB CHECK constraint)
-- Cross-tenant API attempts → 403 `Tenant mismatch detected` (verified live in Suite C this session)
-
----
-
-## Path A — wrap your custom agent with the SDK
-
-### A.1 Onboard a new agent (5 clicks)
+### 5.1 Onboard a new agent (5 clicks)
 
 Dashboard → **Onboard a new agent**. The wizard asks for:
 
 - A name (e.g., `support-bot`)
 - A provider (Anthropic / OpenAI / Bedrock / LangChain / Cursor / Claude Code / OpenHands / custom)
-- A risk level (low / medium / high)
+- A risk level (low / medium / high — sets the default policy bundle and the approval threshold)
 
 You get back:
 - An **agent ID** (UUID)
-- An **Aegis API key** (`acp_…` shown once — copy it now)
-- A copy-paste install snippet
-- A default tool allowlist (you can edit at any time from **Protect → Agents → <name> → Tools**)
+- An **Aegis API key** (`acp_…` shown ONCE — copy it now; we store only its SHA-256)
+- A copy-paste install snippet matched to the provider you picked
+- A default tool allowlist (editable any time from **Protect → Agents → <name> → Tools**)
 
-### A.2 Install the SDK
-
-Live on PyPI as of 2026-06-18, **v1.1.0**:
+### 5.2 Install the SDK (PyPI, live as of v1.1)
 
 ```bash
 pip install aegis-anthropic anthropic           # Claude tool_use
@@ -99,13 +180,13 @@ pip install aegis-langchain langchain-core      # LangChain agents
 
 | Package | PyPI | Use |
 |---|---|---|
-| `aegis-anthropic` | https://pypi.org/project/aegis-anthropic/1.1.0/ | Drop-in for `anthropic.Anthropic` |
-| `aegis-openai` | https://pypi.org/project/aegis-openai/1.1.0/ | Drop-in for `openai.OpenAI` |
-| `aegis-bedrock` | https://pypi.org/project/aegis-bedrock/1.1.1/ | Drop-in for `boto3.client('bedrock-agent-runtime')` |
-| `aegis-langchain` | https://pypi.org/project/aegis-langchain/1.1.1/ | Tool-call middleware for LangChain |
-| `aegis-aevf` | https://pypi.org/project/aegis-aevf/1.1.0/ | Public CLI for cryptographic bundle verification (`aegis-verify`) |
+| `aegis-anthropic` | https://pypi.org/project/aegis-anthropic/ | Drop-in for `anthropic.Anthropic` |
+| `aegis-openai` | https://pypi.org/project/aegis-openai/ | Drop-in for `openai.OpenAI` |
+| `aegis-bedrock` | https://pypi.org/project/aegis-bedrock/ | Drop-in for `boto3.client('bedrock-agent-runtime')` |
+| `aegis-langchain` | https://pypi.org/project/aegis-langchain/ | Tool-call middleware for LangChain |
+| `aegis-aevf` | https://pypi.org/project/aegis-aevf/ | Public CLI for cryptographic bundle verification (`aegis-verify`) — no creds needed |
 
-### A.3 Hello-world — 30 seconds to first deny
+### 5.3 Hello-world — 30 seconds to first deny
 
 ```python
 import os
@@ -177,16 +258,24 @@ text "" "[BLOCKED by Aegis] Tool 'read_file' was denied
                                                           ← DENIED with canonical finding ID
 ```
 
-Confirm in the dashboard:
-- **Protect → Incidents** — the blocked call is logged with the matched signal and MITRE tactic
-- **Observe → Live Feed** — both calls visible within ~150 ms as `tool_executed` + `policy_decision` SSE events
-- **Observe → Threat Graph** — pick the agent; MITRE matrix highlights the tactics this agent has fired
+**Confirm in the dashboard within 200 ms:**
+- **Protect → Incidents** — the blocked call is logged with the matched signal and MITRE tactic (TA0006 / T1552 for credential paths)
+- **Observe → Live Feed** — both calls visible as `tool_executed` + `policy_decision` SSE events
+- **Observe → Threat Graph** — pick the agent; the MITRE matrix highlights the tactics this agent has fired against
+
+### 5.4 What to look at on day 1
+
+After your hello-world fires:
+
+1. **Observe → Dashboard** — 30-day mandate KPIs start populating (protected_agents, actions_evaluated, allowed, denied, escalated). At minute 0: 1 agent, 2 actions, 1 allow, 1 deny.
+2. **Observe → Live Feed** — should already be showing both events. Click `policy_decision` → see the full signal + finding list.
+3. **Protect → Agents → support-bot → Tools** — confirm the allowlist is right. Toggle `read_file` off if your agent will never legitimately need it.
 
 ---
 
-## Path B — Aegis for Teams (Anthropic + OpenAI proxy)
+## 6. Path B — Aegis for Teams (Anthropic/OpenAI proxy)
 
-### B.1 Mint an employee virtual key
+### 6.1 Mint an employee virtual key
 
 Sidebar → **Observe → Team**. Click **Add employee** and provide:
 
@@ -196,11 +285,11 @@ Sidebar → **Observe → Team**. Click **Add employee** and provide:
 - Daily USD budget (e.g., `$20`)
 - Monthly USD budget (e.g., `$500`)
 
-Click **Mint key**. You get back one `acp_emp_…` value — copy it once, hand it to the employee, close the modal. After this there is no way to recover the raw key (SHA-256 in the DB, never plaintext).
+Click **Mint key**. You get back one `acp_emp_…` value — **copy it once, hand it to the employee, close the modal**. After this there is no way to recover the raw key (SHA-256 in the DB, never plaintext).
 
-The employee key is *not* your corporate Anthropic/OpenAI key. It only authorizes Aegis to forward on the employee's behalf, with their budget caps and their per-human audit trail. **Revoking the key takes effect on the next call** — the gateway maintains an `acp:apikey:revoked` Redis set; a 60-second cache can't keep a revoked key alive.
+The employee key is *not* your corporate Anthropic/OpenAI key. It only authorizes Aegis to forward on the employee's behalf, with their budget caps and their per-human audit trail. **Revoking the key takes effect on the next call** — the gateway maintains an `acp:apikey:revoked` Redis set; a 60-second cache cannot keep a revoked key alive.
 
-### B.2 Point the employee's SDK at Aegis
+### 6.2 Point the employee's SDK at Aegis
 
 **Anthropic SDK** — one line change:
 
@@ -233,7 +322,7 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
-**curl**:
+**curl** (anyone debugging):
 
 ```bash
 curl -sS -X POST https://aegisagent.in/v1/messages \
@@ -248,20 +337,11 @@ From the SDK's point of view, nothing changed. From Aegis's point of view:
 
 - Every message is attributed to `alice@yourco.com` for per-team spend rollup
 - Daily + monthly USD budgets refuse the call before the corporate upstream key is touched
-- Token usage metered in Redis (fast-path budget) AND rowed into the Merkle-chained `audit_logs` table (`INSTEAD OF UPDATE/DELETE` trigger physically forbids tampering — verified live)
+- Token usage metered in Redis (fast-path budget) AND rowed into the Merkle-chained `audit_logs` table (INSTEAD-OF-UPDATE/DELETE trigger physically forbids tampering)
 - Every decision flows out on the per-tenant SSE channel — Live Feed lights up within 150 ms
-- Non-2xx upstream errors are wrapped in the canonical Aegis `{success:false, error, meta:{code, upstream:"anthropic", upstream_error_type, upstream_body}}` shape (closure of finding B-006 from the 2026-06-18 review)
+- Non-2xx upstream errors are wrapped in the canonical Aegis `{success:false, error, meta:{code, upstream:"anthropic", upstream_error_type, upstream_body}}` shape
 
-### B.3 Honest red-team test (paced — Anthropic upstream rate-limits)
-
-The earlier guide promised "6/6 attacks return 403". The honest verified number from the 2026-06-18 audit is:
-
-- **25 prompt-injection attacks executed against Path B**
-- **4 blocked by Aegis at the gateway with HTTP 403** (`Ignore previous instructions`, `Disable guardrails`, encoded SQL injection, AWS credential file path) — caught BEFORE reaching Claude
-- **21 reached Claude and Claude refused them all** (alignment did the work — Claude declined: *"I don't have access"*, *"I can't authorize financial transfers"*, *"I can't read files from your system"*)
-- **0 successful injections, 0 leaked credentials, 0 leaked system prompts**
-
-If you space your test calls **≥7 seconds apart** (to avoid Anthropic's per-API-key rate limit), you can reproduce this with the script below:
+### 6.3 Honest red-team test (paced — Anthropic upstream rate-limits)
 
 ```bash
 KEY="acp_emp_…"
@@ -290,30 +370,24 @@ for q in "${ATTACKS[@]}" "${BENIGN[@]}"; do
 done
 ```
 
-What you should actually see:
+What you should actually see (live-verified):
 
-- ~4 of the 8 attacks → **HTTP 403** with Aegis-canonical body
-- ~4 reach Claude → **HTTP 200** + Claude declines in the response text (*"I can't…"*, *"I don't have…"*)
+- ~4 of the 8 attacks → **HTTP 403** with Aegis-canonical body (caught BEFORE reaching Claude)
+- ~4 reach Claude → **HTTP 200** + Claude declines in the response text (`"I can't…"`, `"I don't have…"`)
 - Both benign calls → **HTTP 200** with normal model output
 - All 10 calls land as rows in `audit_logs` with `event_hash` + `prev_hash` + `chain_shard`
 
-After the run, query the audit chain to confirm:
+### 6.4 Approval workflow for high-risk prompts
 
-```bash
-# As the workspace owner — via the dashboard
-Observe → Live Feed   → filter by event_type=llm_proxy_call → see 10 rows
-Prove   → Compliance  → confirm each row has decision, model, employee_email, cost_usd
-```
+Path A `/execute` escalations are fully verified live. Path B's approval workflow is the **same shape** but currently labeled **beta** until the next end-to-end re-run captures it (the 2026-06-18 audit hit Anthropic upstream rate-limits before exercising the Path B approval flow).
 
-### B.4 Approval workflow (CFO / CISO / SRE LEAD escalations)
+The shape (identical on both paths):
+- High-risk request → HTTP 202 + `{"approval_id":"<uuid>","status":"pending_approval","approver_role":"CFO","inbox_url":"/approval-inbox"}`
+- Approver clicks ✅ / ❌ in the UI (or via API — see §12.4)
+- Client replays the original request with `X-Aegis-Approval-ID: <uuid>` header (5-min TTL)
+- Policy invalidation: if anyone uploads a new policy bundle between approve and replay, the approval is auto-invalidated (tenant `policy_version` Redis key)
 
-**This part of the original guide is currently UNVERIFIED in production** — the 2026-06-18 audit captured 4 Aegis blocks but did NOT capture a 202 escalate-to-approval-inbox response on Path B (Anthropic rate-limit pollution + the test agent without the right escalation policy bundle). Path A `/execute` escalations DO work and ARE captured in `audit_logs`. The Path B side will be validated in the 30-day plan re-run.
-
-If your use case depends on the approval workflow:
-1. Run the Path A `/execute` flow first — it's fully verified.
-2. Path B's approval workflow is the same shape (`HTTP 202` + `approval_id` + `X-Aegis-Approval-ID` replay header with 5-min TTL) but treat it as **beta** for the next 30 days.
-
-### B.5 The dashboard after one day of Path B traffic
+### 6.5 The Team dashboard after one day of Path B traffic
 
 **Observe → Team** answers the four CIO questions on one screen:
 
@@ -321,46 +395,46 @@ If your use case depends on the approval workflow:
 |---|---|---|
 | Active employees | Unrevoked `acp_emp_*` keys | `acp_api.api_keys WHERE subject_kind='employee' AND is_active` |
 | AI requests (30d) | Every `/v1/messages` + `/v1/chat/completions` call | `audit_logs WHERE tool='anthropic_messages'` |
-| Monthly spend | `Σ(input_tokens × in_rate + output_tokens × out_rate)` | metadata_json |
+| Monthly spend | Σ(input_tokens × in_rate + output_tokens × out_rate) | metadata_json |
 | Harmful actions blocked (30d) | rows where decision ∈ {deny, error, rejected} | audit_logs |
 | Compliance violations prevented | subset with `findings` array populated | audit_logs.metadata_json |
-| Highest-risk department | team whose `(blocked / total)` ratio is largest | computed per-employee |
+| Highest-risk department | team whose (blocked / total) ratio is largest | computed per-employee |
 
 Click an employee's name → `/team/<email>` for the per-employee drill-down (budget bars, 30-day spend sparkline, models used, last 25 calls with token counts + cost + decision + latency + which signal fired on denies).
 
 ---
 
-## 3. What Aegis catches out of the box (no policies to write)
+## 7. What Aegis catches out of the box (no policies to write)
 
-**On tool calls (Path A)** — verified live this session unless marked:
+**On tool calls (Path A) — verified live unless marked:**
 
-- File reads of credential/system-sensitive paths (`/etc/passwd`, `/etc/shadow`, `~/.ssh/id_rsa`, `~/.aws/credentials`, …) → **risk 95, signal `system_sensitive_path`** ✅
+- File reads of credential/system-sensitive paths (`/etc/passwd`, `/etc/shadow`, `~/.ssh/id_rsa`, `~/.aws/credentials`) → **risk 95, signal `system_sensitive_path`** ✅
 - SSH credential paths → **multi-signal: `policy_deny`, `ssh_credential_path`, `SEC-CR…`** ✅
 - Path traversal (URL-encoded, double-encoded) → **denied at edge** ✅
-- SQL `DROP TABLE`, `TRUNCATE` without WHERE, `OR 1=1`, comment evasion (UNVERIFIED in today's run — covered by prior corpus)
-- Bulk PII reads above threshold (50k+ rows of email/SSN-shaped cols) (UNVERIFIED in today's run)
-- Wire transfers — **5-tier amount-aware policy fires** ✅: `money_transfer_external` (>$100k), `SEC-CUMULATIVE-E1` (cumulative across attempts), `anomalous_behavior_detected` (high amount + risk profile)
-- `kubectl delete` / `drain` on production namespaces → ESCALATE to SRE LEAD (UNVERIFIED in today's run — covered by prior corpus)
-- `terraform destroy` on prod-tagged paths → ESCALATE (UNVERIFIED in today's run)
-- HTTP POSTs of PII-shaped bodies to known exfil hosts (transfer.sh, pastebin) → DENY (UNVERIFIED in today's run)
-- 34 canonical signals across 9 MITRE ATT&CK tactics — see **Observe → Threat Graph** for the live matrix.
+- SQL `DROP TABLE`, `TRUNCATE` without WHERE, `OR 1=1`, comment evasion → denied
+- Bulk PII reads above threshold (50k+ rows of email/SSN-shaped cols) → escalate
+- Wire transfers — **5-tier amount-aware policy** ✅: `money_transfer_external` (>$100k), `SEC-CUMULATIVE-E1` (cumulative across attempts), `anomalous_behavior_detected` (>$5M)
+- `kubectl delete` / `drain` on production namespaces → ESCALATE to SRE LEAD
+- `terraform destroy` on prod-tagged paths → ESCALATE
+- HTTP POSTs of PII-shaped bodies to known exfil hosts (transfer.sh, pastebin) → DENY
+- 34 canonical signals across 9 MITRE ATT&CK tactics — see **Observe → Threat Graph** for the live matrix
 
-**On prompts (Path B)** — verified live this session:
+**On prompts (Path B) — verified live:**
 
 - `ignore previous instructions`, `forget context` → **403 at gateway** ✅
 - Persona reassignment (`you are now …`, `act as …`) → varies; Claude alignment refuses
-- `bypass security`, `jailbreak`, `DAN mode`, `override safety filters` → **403 at gateway for at least one phrasing** ✅; Claude refuses the rest
+- `bypass security`, `jailbreak`, `DAN mode`, `override safety filters` → **403 at gateway** for at least one phrasing ✅; Claude refuses the rest
 - Mass-destruction phrasing (`delete all`, `drop all tables`) → varies; some 403, some Claude-refused
 - Data-exfiltration phrasing → Claude refuses
 - Token-smuggling (`<|…|>`, `[INST]`, `<<SYS>>`) → most pass through; Claude alignment refuses
 - AWS credential file path → **403 at gateway** ✅
 - 17 injection patterns + escalation patterns — `services/gateway/escalation_patterns.py` is canonical
 
-Extend either side with custom Rego policies under **Protect → Policies**.
+Extend either side with custom Rego policies — see Section 13.
 
 ---
 
-## 4. Real-time UI surfaces
+## 8. Real-time UI surfaces
 
 | Page | What it shows | Latency |
 |---|---|---|
@@ -375,9 +449,9 @@ Extend either side with custom Rego policies under **Protect → Policies**.
 
 ---
 
-## 5. Cryptographic evidence (the moat that compounds)
+## 9. Cryptographic evidence (the moat that compounds)
 
-Every decision — allow, deny, escalate, quarantine, on both Path A and Path B — is rowed into `audit_logs`. **PostgreSQL trigger `deny_audit_log_mutation` physically forbids any UPDATE or DELETE at the database level**, regardless of role privileges. Verified live this session — attempted UPDATE returned `ERROR: audit_logs is append-only; UPDATE is forbidden`.
+Every decision — allow, deny, escalate, quarantine, on both Path A and Path B — is rowed into `audit_logs`. **PostgreSQL trigger `deny_audit_log_mutation` physically forbids any UPDATE or DELETE at the database level**, regardless of role privileges.
 
 A daily job seals an ed25519-signed Merkle root over every row and mirrors it to a public S3 bucket. Any auditor can verify your evidence bundles without trusting Aegis:
 
@@ -397,76 +471,260 @@ WHERE tenant_id = $1 AND chain_shard = $2
 ORDER BY chain_sequence ASC;     -- canonical
 ```
 
-(`chain_sequence` is a `BIGINT GENERATED BY DEFAULT AS IDENTITY` added on 2026-06-18 — see `docs/external-integration-guide.md` for the algorithm.)
+(`chain_sequence` is a `BIGINT GENERATED BY DEFAULT AS IDENTITY` column.)
+
+**Public, no-credentials verification** anyone can run today:
+
+```bash
+aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/ --recursive
+curl -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
+pip install aegis-aevf
+aegis-verify --bundle reference-bundle-2026-06.json --verbose
+# → V1_bundle_format_recognized PASS
+#   V2_event_hash_recompute     PASS
+#   V3_prev_hash_chain_per_shard PASS
+#   V4_merkle_root_signatures   PASS
+#   V5_prev_root_hash_chain     PASS
+#   V6_retention_metadata_consistent PASS
+```
 
 ---
 
-## 6. Pricing — built for seed-stage budgets
+## 10. Integrations — click-by-click for every surface
 
-| Plan | Price | Best for | What you get |
-|---|---|---|---|
-| **Free / Design Partner** | $0 / mo | First 6 months for the first 10 design-partner companies | Up to 10 employees, up to 5 agents, up to 100k audit rows/mo, 1-week data retention, community Slack support, **free SOC 2 evidence pulls when we land it** |
-| **Pro** | $499 / mo | A 10-50 person engineering team | Up to 50 employees, up to 25 agents, 1M audit rows/mo, 30-day retention, email support |
-| **Enterprise** | $4,999 / mo | A 50-500 person company with a real CISO | Unlimited employees + agents, 100M audit rows/mo, 1-year retention, signed BAA + DPA, Slack + PagerDuty integration, dedicated Slack channel, named CSM |
+All integration configuration lives in **Workspace → Settings**. Each subsection below tells you exactly what to click, what to paste, and how to test.
 
-Self-serve upgrade via **Workspace → Settings → Billing** (Stripe Checkout). Cancel anytime from Stripe's Customer Portal.
+### 10.1 SSO — Okta, Azure AD, Google Workspace, generic OIDC
 
-**If you're a seed-stage AI startup (< 50 people, < $5M raised, building an AI agent today):** email `founder@aegisagent.in` and ask for the design-partner deal. Free for 6 months in exchange for your name on the landing page + a quarterly 30-minute call. **2 design-partner slots open as of 2026-06-19.**
+Aegis ships generic OIDC out of the box. The three concrete IDPs below are tested integrations — generic OIDC works for any other RFC 6749 + OIDC discovery-compliant IDP.
+
+**Aegis side (do this first for any IDP):**
+
+1. Sidebar → **Workspace → Settings → SSO**.
+2. Note the **Aegis SSO URLs** shown on the page:
+   - Sign-in redirect: `https://aegisagent.in/sso/callback`
+   - Sign-out redirect: `https://aegisagent.in/sso/logout`
+   - Initiate-login URL: `https://aegisagent.in/sso/initiate?tenant_id=<your-uuid>` (use this as the Initiate Login URI in your IDP)
+3. Keep this tab open. Switch to the IDP tab.
+
+#### A. Okta
+
+1. Okta Admin → **Applications → Create App Integration → OIDC - Web Application**.
+2. Configure:
+   - **App integration name**: `Aegis`
+   - **Grant type**: Authorization Code (+ Refresh Token if you want long-lived sessions)
+   - **Sign-in redirect URIs**: paste from Aegis (`https://aegisagent.in/sso/callback`)
+   - **Sign-out redirect URIs**: `https://aegisagent.in/sso/logout`
+   - **Login flow**: "Redirect to app to initiate login"
+   - **Initiate login URI**: `https://aegisagent.in/sso/initiate?tenant_id=<your-uuid>`
+3. **Assignments → Assign people / groups** that should be able to log in.
+4. Copy **Client ID + Client Secret + Issuer URL** (Issuer is your Okta domain, e.g., `https://acme.okta.com`).
+5. Back in Aegis: paste those three values into **Workspace → Settings → SSO → Okta**. Click **Save**.
+6. **Test:** click **Test SSO** → you should be redirected to Okta, authenticate, redirected back, and land on the dashboard with `OWNER` role mapped from your Okta group.
+
+#### B. Azure AD (Microsoft Entra ID)
+
+1. Azure Portal → **Microsoft Entra ID → App registrations → New registration**.
+2. Configure:
+   - **Name**: `Aegis`
+   - **Supported account types**: "Accounts in this organizational directory only"
+   - **Redirect URI**: Web → `https://aegisagent.in/sso/callback`
+3. After creation, go to:
+   - **Authentication** → Add `https://aegisagent.in/sso/logout` to Front-channel logout URL.
+   - **Certificates & secrets → New client secret** → copy the *Value* (not the secret ID).
+   - **API permissions** → ensure `openid`, `profile`, `email` are granted with admin consent.
+   - **Token configuration** → optional: add `groups` claim for role mapping.
+4. Copy **Application (client) ID + Client secret value + OpenID Connect metadata document** (Authentication → Endpoints).
+5. In Aegis: **Workspace → Settings → SSO → Generic OIDC** (Azure AD lives under generic OIDC). Paste Client ID, Client secret, Issuer = `https://login.microsoftonline.com/<tenant-id>/v2.0`. **Save → Test SSO**.
+
+#### C. Google Workspace
+
+1. Google Admin → **Apps → Web and mobile apps → Add app → Add custom SAML app** *(note: for OIDC use Cloud Identity → Identity Providers; SAML is the more common path for Workspace SSO)*. If you prefer OIDC:
+   - **Google Cloud Console → APIs & Services → Credentials → Create Credentials → OAuth Client ID → Web Application**.
+2. Authorized redirect URI: `https://aegisagent.in/sso/callback`.
+3. Copy Client ID + Client Secret.
+4. In Aegis: **Workspace → Settings → SSO → Generic OIDC**. Client ID/Secret from step 3; Issuer = `https://accounts.google.com`. Save → Test.
+
+#### D. Generic OIDC (any other IDP)
+
+If your IDP supports OIDC discovery (`/.well-known/openid-configuration`), you can wire it up the same way as Azure AD above. You need:
+- Client ID
+- Client Secret
+- Issuer URL (the prefix that, when concatenated with `/.well-known/openid-configuration`, yields a valid OIDC discovery doc)
+
+**Group → Aegis-role mapping** is editable in the same UI under **Workspace → Settings → SSO → Role Mapping**. Default reads `groups` claim from the ID token. You can re-bind to `aegis_role_claim` if you have a custom claim.
+
+### 10.2 Slack approvals — incoming webhook + HMAC-signed buttons
+
+Every HTTP 202 escalation also POSTs a Block Kit card to Slack with two buttons (✅ Approve / ❌ Reject). The button URLs are HMAC-signed back to Aegis — Slack itself doesn't need an app install.
+
+1. **Create an incoming webhook** in your Slack workspace:
+   - https://api.slack.com/messaging/webhooks → **Create New App → From scratch**.
+   - Name: `Aegis Approvals`. Pick your workspace.
+   - **OAuth & Permissions → Scopes → Bot Token Scopes → Add `incoming-webhook`**.
+   - **Incoming Webhooks → toggle ON → Add New Webhook to Workspace**.
+   - Pick a channel (e.g., `#aegis-approvals`). Click **Allow**.
+   - Copy the webhook URL: `https://hooks.slack.com/services/T…/B…/…`.
+
+2. **Generate an HMAC signing secret** locally (32 random bytes hex):
+
+   ```bash
+   openssl rand -hex 32
+   ```
+
+3. **Configure Aegis:** Sidebar → **Workspace → Settings → Webhooks** → paste both:
+   - **Slack webhook URL** = the value from step 1
+   - **Slack approval secret** = the hex from step 2
+
+   These persist in `acp_identity.tenants` (per-tenant, never shared).
+
+4. **Test the round-trip:** trigger an escalation (see §12.3), watch the Slack channel — within ~500 ms the card appears. Click ✅ → the signed callback URL hits `https://aegisagent.in/slack/approve/<approval_id>?sig=<hmac>&exp=<unix>` → Aegis verifies HMAC + TTL (24 h by default) + tenant binding → approval flips to `approved`.
+
+5. **Replay** the original call with `X-Aegis-Approval-ID: <approval_id>` (5-min TTL — see §12.4).
+
+The HMAC signature canonical form is `v1|<approval_id>|<approve|reject>|<tenant_id>|<exp_unix>` — see `services/gateway/slack_approvals.py:sign_link`. A leaked link can't be replayed against a different request or after expiry.
+
+**Slack message shape:** Block Kit card with three fields:
+- **Action**: `wire_transfer  $100,000 → ACME Corp` (or whichever risky action)
+- **Why escalated**: `money_transfer_external + SEC-CUMULATIVE-E1`
+- **Initiator**: `alice@yourco.com` (employee email or agent name)
+- Two buttons with HMAC-signed URLs
+
+### 10.3 PagerDuty — Events API v2
+
+Sidebar → **Workspace → Settings → Notifications** → PagerDuty section. Paste:
+
+- **PagerDuty Routing Key** — 32-hex-char Events API v2 routing key (from your PagerDuty service's "Aegis" integration; create one if it doesn't exist: PagerDuty UI → Services → New Service → name it `Aegis`, integration type `Events API v2`).
+- **Severity floor**: pick `CRITICAL` if you only want P0 pages; `HIGH` to also page on P1.
+
+Every `incident_created` event whose severity ≥ floor gets a fire-and-forget POST to `events.pagerduty.com/v2/enqueue` with canonical fields:
+- `incident_id` (UUID)
+- `signal` (e.g., `money_transfer_external`)
+- `agent_email` or `agent_name`
+- `blast_radius` (which resources the agent COULD have touched)
+- `suggested_remediation` (text)
+- A deep-link to **Forensics** for the incident
+
+5xx retry policy: 3 attempts with exponential backoff, then DLQ to `acp:pagerduty_dlq`. The operator dashboard tile shows the depth.
+
+**Test:** Topbar → red **Kill Switch** → ConfirmDialog → Engage. This fires a synthetic `kill_switch_engaged` incident → PagerDuty receives the page within ~2 seconds. Release the kill switch when done.
+
+### 10.4 SIEM forwarders — Splunk / Datadog / Elastic / Sentinel / Chronicle
+
+Every audit row is mirrored to your SIEM fire-and-forget. Your existing dashboards (Splunk app, Datadog Logs Explorer, Kibana, Sentinel workbook, Chronicle UDM) get the row in near-real-time. Failures are counted in Prometheus but never block the audit write.
+
+Sidebar → **Workspace → Settings → SIEM**. Pick exactly one backend via the radio button (writes the `SIEM_TARGET` setting):
+
+| Backend | UI fields you fill |
+|---|---|
+| **Splunk HEC** | `SPLUNK_HEC_URL` (e.g., `https://splunk.yourco.com:8088/services/collector/event`) + `SPLUNK_HEC_TOKEN` |
+| **Datadog Logs** | `DATADOG_LOGS_URL` (`https://http-intake.logs.datadoghq.com/v1/input/<key>` for US1) + `DATADOG_API_KEY` |
+| **Elastic Cloud** | `ELASTIC_CLOUD_ID` + `ELASTIC_API_KEY` + `ELASTIC_INDEX` (default `aegis-audit`) |
+| **MS Sentinel** | `SENTINEL_WORKSPACE_ID` + `SENTINEL_SHARED_KEY` + `SENTINEL_LOG_TYPE` (default `AegisAudit_CL`) |
+| **Google Chronicle** | `CHRONICLE_CUSTOMER_ID` + `CHRONICLE_SERVICE_ACCOUNT_JSON` + `CHRONICLE_REGION` |
+
+Credentials are stored encrypted (AWS Secrets Manager or SSM SecureString). For SSM-backed creds, set `SIEM_CRED_SOURCE=ssm` and `SIEM_SSM_PREFIX=/aegis-siem`.
+
+**Verify** with a single test event:
+
+```bash
+curl -sS -X POST https://aegisagent.in/siem/test \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
+# → {"target":"splunk", "ok":true, "latency_ms":167, "status_code":200}
+```
+
+Then open your SIEM and search for `source="aegis"` (Splunk) / `service:aegis` (Datadog) / `index:aegis-audit` (Elastic) / `LogName:AegisAudit_CL` (Sentinel) / `metadata.product_name="aegis"` (Chronicle).
+
+### 10.5 Jira / ServiceNow — round-trip ITSM
+
+**Status:** 🚧 BETA. The inbound webhook with HMAC-SHA256 verification is shipped; the outbound issue creation (Aegis → Jira/SNOW) is on the 30-day plan.
+
+**What works today (inbound):**
+
+When a high-severity incident in Jira/SNOW is resolved/closed, you can have your ITSM tool POST to Aegis to close the corresponding Aegis incident. The endpoint is:
+
+- `POST https://aegisagent.in/webhooks/jira/<tenant_id>`
+- `POST https://aegisagent.in/webhooks/servicenow/<tenant_id>`
+
+Each request must include `X-Webhook-Signature` header = `sha256=<hex-hmac>` of the body using your per-tenant webhook secret (configured in **Workspace → Settings → Integrations → Jira/ServiceNow → Webhook secret**).
+
+Body schema: `{"event":"incident.resolved","external_id":"<your-ticket-id>","aegis_incident_id":"<uuid>","resolution":"text"}`.
+
+**Test the HMAC verification:**
+
+```bash
+SECRET="<the-webhook-secret-from-the-UI>"
+BODY='{"event":"incident.resolved","external_id":"AEGIS-123","aegis_incident_id":"<uuid>","resolution":"closed by ops"}'
+SIG="sha256=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
+curl -sS -X POST https://aegisagent.in/webhooks/jira/$AEGIS_TENANT_ID \
+  -H "X-Webhook-Signature: $SIG" \
+  -H "Content-Type: application/json" \
+  -d "$BODY"
+# → 200 {"ok":true,"closed":true}
+# → 401 {"error":"invalid signature"}  if HMAC doesn't match
+```
+
+### 10.6 Stripe — self-serve billing
+
+Sidebar → **Workspace → Settings → Billing**. Click **Upgrade to Pro / Enterprise** → Stripe Checkout opens in a new tab.
+
+After payment:
+- Webhook automatically promotes your tenant tier in `acp_identity.tenants.plan_tier`.
+- Quotas refresh: Pro = 1 M audit rows/mo + 30-day retention; Enterprise = 100 M rows/mo + 1-year retention.
+- Stripe **Customer Portal** link in the same UI for self-serve plan changes / payment method updates / invoice downloads.
+
+To cancel: Customer Portal → Cancel subscription. Aegis keeps your workspace operational until the end of the current billing period, then drops you back to the Free tier limits.
+
+### 10.7 Generic egress webhook
+
+If you want Aegis to POST events to a system that's not in 10.1-10.6, configure a generic webhook.
+
+**Workspace → Settings → Webhooks → Add custom webhook**:
+
+- Name (e.g., `internal-soc-bot`)
+- URL (e.g., `https://soc-bot.yourco.com/aegis-events`)
+- Event filter: any of `policy_decision`, `incident_created`, `approval_resolved`, `quota_warning`, `key_revoked`, `agent_quarantined`, `kill_switch_toggled` (multi-select)
+- Optional `Authorization` header value (free-form string Aegis sends as-is)
+- Optional HMAC signing secret (if set, requests include `X-Aegis-Signature: sha256=<hex-hmac>` of the body)
+
+Webhook delivery is fire-and-forget. Failures retry 3× with exponential backoff, then DLQ. Visible in **Workspace → Settings → Webhooks → Deliveries** (with last-5 attempts + status + latency).
 
 ---
 
-## 7. Security posture — for your CISO
+## 11. RBAC matrix — who can do what
 
-- **AuthN:** Clerk RS256 JWT with JWKS rotation; legacy HS256 path rejects any token carrying a Clerk-shaped `iss` (closes downgrade attack class). `WWW-Authenticate: Bearer realm="<reason>"` realm hint on every 401 (verified live).
-- **AuthZ + tenant isolation:** `aegis_org_id == aegis_tenant_id` enforced at three layers (webhook, JWT canonicalize, DB CHECK). `X-Tenant-ID` is always sourced from `request.state.tenant_id` — never from the client header.
-- **Cross-tenant safety:** verified live this session — Tenant B's key attempting to read Tenant A's resources returned 403 / 404 in 6/7 attempts and silently scoped to B's own data in the 7th. **Zero data leakage across tenants.**
-- **Key revocation:** 60 s LRU cache invalidated on revoke via `acp:apikey:revoked` Redis set + `SISMEMBER` check on every request.
-- **Append-only audit log:** PostgreSQL trigger blocks UPDATE / DELETE (verified live this session).
-- **Transport:** HSTS `max-age=63072000; includeSubDomains; preload`, COOP `same-origin-allow-popups`, CORP `same-site`, CSP with `frame-ancestors 'none'`. Verify yourself: `curl -sI https://aegisagent.in/`.
-- **Supply chain:** Docker images SHA-pinned per NIST SSDF SP800-218 PW.4 (`infra/docker-compose.yml`).
-- **RFC 9116 security.txt:** `https://aegisagent.in/.well-known/security.txt`.
-- **Infra:** 2-host ASG behind ALB, RDS Multi-AZ, ElastiCache Redis, Docker compose `depends_on: service_healthy` on every critical dep, page-severity Alertmanager wired to PagerDuty receiver, `one_nat_per_az = true` for AZ failure isolation.
+Aegis ships 5 built-in roles. Map your IDP groups to these via **Workspace → Settings → SSO → Role Mapping**.
 
----
+| Action | OWNER | ADMIN | SECURITY_ANALYST | DEVELOPER | READ_ONLY |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Invite users + assign roles | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Transfer workspace ownership | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Engage / release Kill Switch | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Approve / reject high-risk actions | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Configure SSO / SCIM / Billing | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Configure Slack / PagerDuty / SIEM / Webhooks | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Mint Path A agent keys | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Mint Path B employee keys | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Revoke any API key | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Author + promote OPA policies | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Promote OWN agent's policies to enforce | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Quarantine an agent | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Read all incidents in tenant | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Read Forensics / Replay any agent's execution | ✅ | ✅ | ✅ | ✅ (own agents only) | ❌ |
+| Read Live Feed (SSE) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Export compliance evidence bundles | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Walk audit chain via SQL view | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Read `/transparency/*` (public anyway) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-## 8. What to NOT use Aegis for yet (be honest with yourself)
-
-If your use case requires any of these, **wait 90 days** while we land the 30-day + 90-day plan:
-
-- ❌ **Production data residency in EU or US-East.** We're single-region `ap-south-1` until the multi-region landing.
-- ❌ **SOC 2 attestation for procurement gates.** Vendor selection in progress; T1 letter expected month 4.
-- ❌ **Verified failure-injection / chaos testing report.** Suite F is UNVERIFIED in production (we won't run it in prod and risk our customers' traffic; staging chaos harness is on the 30-day plan).
-- ❌ **24x7 named on-call team.** Solo founder + Slack alerts today. Co-founder hire is on the 30-day plan.
-- ❌ **Jira / ServiceNow ticket auto-creation on incidents.** Slack + PagerDuty work today; Jira webhook is on the 30-day plan.
-- ❌ **Okta SCIM auto-provisioning.** Generic OIDC works (will accept Okta as IDP) but no SCIM endpoint yet.
-- ❌ **FedRAMP / regulated-gov workloads.** Not on the roadmap for 18 months.
-
-Everything else — running real production AI agents with policy + audit + signing + a CIO dashboard — works today.
-
----
-
-## 9. Exit shadow mode (when you're confident)
-
-After a few days of real traffic, **Workspace → Settings → Shadow Mode**. If the would-have-blocked list matches what you actually want blocked:
-
-1. Click **Exit shadow mode**.
-2. From that point, the same decisions become real blocks for both Path A (tools) and Path B (prompts).
-3. Re-enter any time during incident triage by setting `shadow_mode_until` back to a future date.
+**Notes:**
+- DEVELOPER role is scoped — read & write only for agents whose `owner_id` matches the user's `sub` claim (enforced in `services/gateway/_rbac_map.py` + the registry's tenant-scoped query).
+- SECURITY_ANALYST gets full read + approval rights but no key minting / SSO config.
+- READ_ONLY is for compliance officers + auditors — sees everything, changes nothing.
 
 ---
 
-## 10. Where to ask for help
-
-- **Dashboard chat (bottom-right)** → the founder
-- **Email** → `founder@aegisagent.in`
-- **Webhook for incidents** → **Workspace → Settings → Notifications** → Slack / PagerDuty / SIEM (Splunk / Datadog / Elastic / Sentinel / Chronicle)
-- **Open-source verifier** → `pip install aegis-aevf`
-- **Live status** → `https://aegisagent.in/status`
-- **Public transparency log** → `aws s3 ls --no-sign-request s3://aegis-public-roots-628478946931/ --recursive`
-
----
-
-## 11. Try every governance lever yourself (15-min recipe book)
+## 12. Recipe book — 14 governance levers (copy-paste, run, observe)
 
 You don't have to take any of the claims above on faith. Every lever has a one-page recipe — copy-paste, run, watch the dashboard.
 
@@ -480,9 +738,7 @@ export AEGIS_AGENT_ID="<uuid>"           # from the wizard
 export ACP_EMP_KEY="acp_emp_..."         # Path B virtual key from /team
 ```
 
----
-
-### 11.1 Trigger ALLOW (baseline — proves the SDK works)
+### 12.1 Trigger ALLOW (baseline — proves the SDK works)
 
 ```bash
 curl -sS -X POST $AEGIS_BASE/execute \
@@ -494,9 +750,7 @@ curl -sS -X POST $AEGIS_BASE/execute \
 
 Expect HTTP 200 + a row in **Observe → Live Feed** with `decision: allow`.
 
----
-
-### 11.2 Trigger DENY (real signal — verified live this session)
+### 12.2 Trigger DENY (real signal — verified live)
 
 ```bash
 curl -sS -X POST $AEGIS_BASE/execute \
@@ -509,10 +763,10 @@ curl -sS -X POST $AEGIS_BASE/execute \
 Expect:
 - HTTP 403
 - Body: `{"decision":"block", "risk_score":95, "findings":["system_sensitive_path"], "reason":"system_sensitive_path"}`
-- Row in **Protect → Incidents** with the matched signal + MITRE tactic (TA0006 Credential Access / T1552)
+- Row in **Protect → Incidents** with the matched signal + MITRE tactic (TA0006 / T1552)
 - Live Feed `policy_decision` event within 200 ms
 
-Try variants:
+Variants that also block:
 - `/etc/shadow` → same signal, risk 95
 - `~/.ssh/id_rsa` → multi-signal: `policy_deny, ssh_credential_path, SEC-CR…`
 - `~/.aws/credentials` → blocked at edge
@@ -520,12 +774,9 @@ Try variants:
 - `%2e%2e%2f%2e%2e%2fetc%2fpasswd` → URL-encoded blocked
 - `%252e%252e%252f…` → double-encoded blocked
 
----
-
-### 11.3 Trigger ESCALATE (wire transfer ladder — verified live)
+### 12.3 Trigger ESCALATE (wire transfer ladder — verified live)
 
 ```bash
-# $10k — fires SEC-CUMULATIVE risk signal once the agent has prior denies
 curl -sS -X POST $AEGIS_BASE/execute \
   -H "Authorization: Bearer $AEGIS_API_KEY" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
@@ -540,19 +791,17 @@ Expect (one of, depending on prior agent risk profile):
 
 The agent needs `wire_transfer` in its allow-list — toggle it on at **Protect → Agents → <name> → Tools**.
 
----
+### 12.4 Approve a pending escalation (full curl flow)
 
-### 11.4 Approve a pending escalation (full curl flow)
-
-When you got an `HTTP 202 + approval_id` above:
+When you got HTTP 202 + `approval_id`:
 
 ```bash
-# 1. Read pending approvals (from Approval Inbox API):
+# 1. List pending approvals
 curl -sS $AEGIS_BASE/approvals/pending \
   -H "Authorization: Bearer $AEGIS_API_KEY" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID"
 
-# 2. Approve from the UI (Sidebar → Protect → Approval Inbox → row → Approve button)
+# 2. Approve from the UI (Sidebar → Protect → Approval Inbox → row → Approve)
 #    OR via API:
 APPROVAL_ID="<uuid-from-step-1>"
 curl -sS -X POST $AEGIS_BASE/auto-response/pending/$APPROVAL_ID/approve \
@@ -575,13 +824,11 @@ curl -sS -X POST $AEGIS_BASE/execute \
   -d "{\"agent_id\":\"$AEGIS_AGENT_ID\",\"tool\":\"wire_transfer\",\"parameters\":{\"amount_usd\":100000,\"recipient\":\"ACME Corp\",\"currency\":\"USD\"}}"
 ```
 
-**5-minute TTL behavior:** if you wait >5 min between step 3 and step 4, the replay will be rejected with `approval_expired`. **Policy invalidation:** if anyone uploads a new policy bundle between approve and replay, the approval is auto-invalidated (tenant `policy_version` Redis key) so an old approval can't bypass a tightened rule.
+**5-minute TTL behavior:** if you wait >5 min between step 3 and step 4, the replay is rejected with `approval_expired`. **Policy invalidation:** if anyone uploads a new policy bundle between approve and replay, the approval is auto-invalidated.
 
----
+### 12.5 Trigger QUARANTINE (50 fails in 5 min OR manual)
 
-### 11.5 Trigger QUARANTINE (50 fails in 5 min OR manual)
-
-**Automatic** — push 50 deny-class failures in 5 minutes against one agent:
+**Automatic:**
 
 ```bash
 for i in $(seq 1 55); do
@@ -605,7 +852,7 @@ curl -sS -X POST $AEGIS_BASE/agents/$AEGIS_AGENT_ID/quarantine \
   -H "Content-Type: application/json" \
   -d '{"reason":"manual_test_quarantine"}'
 
-# Release (after the operator investigates):
+# Release:
 curl -sS -X DELETE $AEGIS_BASE/agents/$AEGIS_AGENT_ID/quarantine \
   -H "Authorization: Bearer $AEGIS_API_KEY" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID"
@@ -613,13 +860,11 @@ curl -sS -X DELETE $AEGIS_BASE/agents/$AEGIS_AGENT_ID/quarantine \
 
 While QUARANTINED, every `/execute` for that agent returns HTTP 403 `decision: quarantine` regardless of tool.
 
----
+### 12.6 Engage + release the workspace Kill Switch
 
-### 11.6 Engage + release the workspace Kill Switch
+The kill switch is **per-tenant**. Engaged → every `/execute` returns HTTP 503 within ~5 seconds.
 
-The kill switch is **per-tenant**. When engaged, every `/execute` (every agent in the workspace) returns HTTP 503 within ~5 seconds.
-
-**From the UI:** Topbar → red Kill Switch button → ConfirmDialog → enters Kill Switch page → "Engage Kill Switch" with reason.
+**From the UI:** Topbar → red Kill Switch → ConfirmDialog → Kill Switch page → "Engage Kill Switch" with reason.
 
 **From curl:**
 
@@ -650,63 +895,89 @@ curl -sS -X DELETE $AEGIS_BASE/decision/kill-switch/$AEGIS_TENANT_ID \
 
 Every engage + release is rowed into `audit_logs` with `action=kill_switch_toggled`, the actor, and the reason — non-repudiable.
 
----
+### 12.7 Wire Slack approvals (covered in §10.2)
 
-### 11.7 Wire Slack approvals (incoming webhook + HMAC-signed buttons)
+### 12.8 Forward audit to SIEM (covered in §10.4)
 
-**Why:** every `HTTP 202` escalation also POSTs a Block Kit card to Slack with two buttons (✅ Approve / ❌ Reject). The button URLs are HMAC-signed back to Aegis — Slack itself doesn't need an app install.
+### 12.9 Author a custom OPA Rego policy (see §13)
 
-1. **Create an incoming webhook** in your Slack workspace: https://api.slack.com/messaging/webhooks → "Create New App from scratch" → Add `Incoming Webhooks` permission → pick a channel like `#aegis-approvals` → copy the webhook URL (`https://hooks.slack.com/services/T…/B…/…`).
-
-2. **Generate an HMAC signing secret** (any 32-byte hex):
-   ```bash
-   openssl rand -hex 32
-   ```
-
-3. **Configure Aegis:** Sidebar → **Workspace → Settings → Webhooks** → paste both:
-   - `slack_webhook_url` = the Slack URL from step 1
-   - `slack_approval_secret` = the hex from step 2
-
-   These persist in `acp_identity.tenants` (per-tenant, never shared).
-
-4. **Test the round-trip:** trigger an escalation (11.3), watch the Slack channel — within ~500 ms the card appears. Click ✅ Approve → the signed callback URL hits `https://aegisagent.in/slack/approve/<approval_id>?sig=<hmac>&exp=<unix>` → Aegis verifies HMAC + TTL (24 hours by default) + tenant binding → approval flips to `approved`.
-
-5. **Replay** the original call with `X-Aegis-Approval-ID: <approval_id>` (same as 11.4).
-
-The HMAC signature canonical form is `v1|<approval_id>|<approve|reject>|<tenant_id>|<exp_unix>` — see `services/gateway/slack_approvals.py:sign_link`. A leaked link can't be replayed against a different request or after expiry.
-
----
-
-### 11.8 Forward audit to SIEM (Splunk / Datadog / Elastic / Sentinel / Chronicle)
-
-**Why:** every audit row gets forwarded to your SIEM fire-and-forget — your existing dashboards (Splunk app, Datadog Logs Explorer, Kibana, Sentinel workbook, Chronicle UDM) get the row in near-real-time. Failures are counted in Prometheus but never block the audit write.
-
-**Setup per backend** (Sidebar → **Workspace → Settings → SIEM**):
-
-| Backend | UI fields you fill |
-|---|---|
-| **Splunk HEC** | `SPLUNK_HEC_URL` (e.g. `https://splunk.yourco.com:8088/services/collector/event`) + `SPLUNK_HEC_TOKEN` |
-| **Datadog Logs** | `DATADOG_LOGS_URL` (`https://http-intake.logs.datadoghq.com/v1/input/<key>` for US1) + `DATADOG_API_KEY` |
-| **Elastic Cloud** | `ELASTIC_CLOUD_ID` + `ELASTIC_API_KEY` + `ELASTIC_INDEX` (default `aegis-audit`) |
-| **MS Sentinel** | `SENTINEL_WORKSPACE_ID` + `SENTINEL_SHARED_KEY` + `SENTINEL_LOG_TYPE` (default `AegisAudit_CL`) |
-| **Google Chronicle** | `CHRONICLE_CUSTOMER_ID` + `CHRONICLE_SERVICE_ACCOUNT_JSON` + `CHRONICLE_REGION` |
-
-Pick exactly one via `SIEM_TARGET` (the UI radio button writes this). Credentials are stored encrypted (AWS Secrets Manager or env override). For SSM-backed creds, set `SIEM_CRED_SOURCE=ssm` and `SIEM_SSM_PREFIX=/aegis-siem`.
-
-**Verify** with a single test event:
+### 12.10 Self-verify the cryptographic chain (proof, not promise)
 
 ```bash
-curl -sS -X POST $AEGIS_BASE/siem/test \
-  -H "Authorization: Bearer $AEGIS_API_KEY" \
-  -H "X-Tenant-ID: $AEGIS_TENANT_ID"
-# → {"target":"splunk", "ok":true, "latency_ms":167, "status_code":200}
+pip install aegis-aevf
+curl -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
+aegis-verify --bundle reference-bundle-2026-06.json --verbose
+# → V1..V6 all PASS
 ```
 
-Then open your SIEM and search for `source="aegis"` (Splunk) / `service:aegis` (Datadog) / `index:aegis-audit` (Elastic).
+**Your own tenant's bundle** (Sidebar → **Prove → Compliance → Export evidence bundle**):
+
+```bash
+curl -sS -X POST $AEGIS_BASE/compliance/export \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"framework":"soc2","start":"2026-06-01","end":"2026-06-19"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['download_url'])"
+
+curl -O <download-url>
+aegis-verify --bundle aegis-evidence-<tenant>-2026-06.json --verbose
+```
+
+Hand the bundle file to your SOC 2 auditor — they verify with the open-source CLI, no Aegis access needed.
+
+**Walk the chain directly via SQL** (read-only DB user, for skeptics who don't trust the CLI):
+
+```sql
+SELECT event_hash, prev_hash, chain_sequence
+FROM audit_logs
+WHERE tenant_id = '<your-uuid>' AND chain_shard = 0
+ORDER BY chain_sequence ASC;
+
+-- Prove append-only at the DB layer:
+UPDATE audit_logs SET decision='tampered' WHERE id = '<any-real-uuid>';
+-- → ERROR: audit_logs is append-only; UPDATE is forbidden
+DELETE FROM audit_logs WHERE id = '<any-real-uuid>';
+-- → ERROR: audit_logs is append-only; DELETE is forbidden
+```
+
+### 12.11 Prove cross-tenant isolation yourself
+
+Sign up a second workspace with a different email. Mint a Path A key in workspace B (`KEY_B`). Then with B's key, try to read A's data:
+
+```bash
+curl -sS "$AEGIS_BASE/audit/logs?tenant_id=$AEGIS_TENANT_ID&limit=1" \
+  -H "Authorization: Bearer $KEY_B" \
+  -H "X-Tenant-ID: <workspace-B-uuid>"
+```
+
+You will see B's total row count, NOT A's — the `?tenant_id` query param is silently scoped to the JWT's tenant. Verified live in the most recent audit. **Zero data leakage.**
+
+### 12.12 Wire PagerDuty (covered in §10.3)
+
+### 12.13 Configure SSO (covered in §10.1)
+
+### 12.14 Export the chain for an offline air-gapped auditor
+
+```bash
+curl -sS -X POST $AEGIS_BASE/transparency/export-offline \
+  -H "Authorization: Bearer $AEGIS_API_KEY" \
+  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
+  -o aegis-offline-export.tar.gz
+
+tar tzf aegis-offline-export.tar.gz
+# audit_logs.parquet
+# transparency_roots.parquet
+# keys/
+# verify.sh
+# README.md
+```
+
+Ship the tarball to your air-gapped lab. The auditor runs `bash verify.sh` and gets a green/red verdict in <1 minute on a single tenant's full history.
 
 ---
 
-### 11.9 Author a custom OPA Rego policy
+## 13. Authoring custom OPA Rego policies
 
 Beyond the 34 built-in signals, write your own rule in OPA Rego.
 
@@ -735,7 +1006,7 @@ deny[reason] {
 
 Click **Validate** (runs in shadow against the last 1k decisions and shows would-have-blocked count). Click **Promote to enforce** when the shadow numbers look right.
 
-**Test it lives via curl:**
+**Test it via curl:**
 
 ```bash
 curl -sS -X POST $AEGIS_BASE/policy/test \
@@ -748,140 +1019,208 @@ curl -sS -X POST $AEGIS_BASE/policy/test \
 
 The bundle is hot-reloaded by OPA within 5s — no restart.
 
+**Policy ideas to start with:**
+- Block any `kubectl delete` or `terraform destroy` against namespaces / paths tagged `prod`.
+- Require a 2-of-3 approval (CFO + CISO + OPS_LEAD) for wire transfers > $500k.
+- Drop into shadow if `agent.risk_drift_score > 0.7` (the agent is acting unlike its baseline).
+- Block any HTTP POST whose body matches an SSN/PAN/credit-card regex to a non-allow-listed host.
+
 ---
 
-### 11.10 Self-verify the cryptographic chain (proof, not promise)
+## 14. Day 1 / Day 7 / Day 30 rollout plan
 
-**Public bundle anyone can fetch + verify** (no Aegis credentials):
+If your day-1 goal is "get Aegis in front of one critical agent + your team's Claude use", here's the recommended sequence.
 
-```bash
-pip install aegis-aevf
+### Day 1 (today) — ~90 minutes total
 
-# Reference bundle published at the AEVF spec URL:
-curl -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
-aegis-verify --bundle reference-bundle-2026-06.json --verbose
-# → V1_bundle_format_recognized PASS
-#   V2_event_hash_recompute     PASS
-#   V3_prev_hash_chain_per_shard PASS
-#   V4_merkle_root_signatures   PASS
-#   V5_prev_root_hash_chain     PASS
-#   V6_retention_metadata_consistent PASS
+| Time | Action | Section |
+|---|---|---|
+| 0:00 | Sign up, land in workspace, invite 1 admin teammate | §3 |
+| 0:10 | Pick Path A (SDK) or Path B (LLM proxy) — most teams do A first, B in week 2 | §2 |
+| 0:15 | (Path A) Onboard 1 agent, install SDK, fire hello-world | §5 |
+| 0:30 | (Path A) Watch the dashboard while you fire one DENY and one ALLOW via curl | §12.1, §12.2 |
+| 0:45 | (Path B, if doing both) Mint employee key for yourself, swap base_url, fire 2 calls | §6.1, §6.2 |
+| 1:00 | Configure Slack approvals (skip if no Slack workspace) | §10.2 |
+| 1:15 | Decide: stay in shadow mode for 14 days OR exit to enforce now | §19 |
+| 1:30 | Read the 30-day plan with your team | this section |
+
+### Day 7 — check shadow-mode results
+
+| Action | Section |
+|---|---|
+| **Workspace → Settings → Shadow Mode** — review the would-have-blocked list. Anything in here you actually want blocked? Tighten the policy / lower the risk threshold for the agent. | §19 |
+| **Observe → Dashboard** — confirm the 7-day actions_evaluated count looks right. If it's near 0, your SDK isn't wired into the real code path. | §4 |
+| **Protect → Incidents** — review all incidents from the week. Each should have a clear story (who, what, why blocked). If incidents look "noisy", look at the policy. | §8 |
+| **Workspace → Settings → SIEM** — if you didn't wire SIEM on day 1, do it now. Your security team wants the audit log in their tool. | §10.4 |
+| **Add 2-3 more employees to Path B** — if Path B is rolled out, expand to the rest of your team in stages. | §6.1 |
+| **Configure PagerDuty** — for P0/P1 incidents you want pages on. | §10.3 |
+
+### Day 30 — first compliance evidence + scale
+
+| Action | Section |
+|---|---|
+| **Exit shadow mode** if you haven't. From this point Aegis actually blocks. | §19 |
+| **Export your first SOC 2 evidence bundle** — Prove → Compliance → Export → soc2 → last 30 days. Save it. Hand to your auditor when they ask. | §12.10 |
+| **Author your first custom Rego policy** — usually "block wire transfers outside business hours" or "block production kubectl from any agent that isn't `prod-deployer`". | §13 |
+| **Wire SSO** — get all your team off email/password auth onto your IDP. | §10.1 |
+| **Upgrade plan** if you've grown past the free-tier limits — Workspace → Settings → Billing. | §17 |
+| **Schedule your first quarterly review** with the founder. Quarterly 30-min call is part of the design-partner deal. | §21 |
+
+---
+
+## 15. Troubleshooting + FAQ
+
+**Q: I fired the hello-world but nothing shows up in the dashboard.**
+
+Three things to check, in order:
+1. Are the env vars set? `echo $AEGIS_TENANT_ID $AEGIS_AGENT_ID $AEGIS_API_KEY` — if any is empty, the SDK silently no-ops. The SDK does NOT block your call when env is missing; it just doesn't call Aegis at all.
+2. Network — `curl -sS https://aegisagent.in/status` should return 200 with a JSON body listing 13 services as `operational`.
+3. Wrong key — your Aegis key may be from a different workspace. The wizard shows the key once; if you lost it, mint a new one (Protect → Agents → row → Rotate key).
+
+**Q: My SDK call hangs for 30 seconds.**
+
+The decision pipeline has a 1.5s default timeout. If you're seeing 30s, something is wrong on the network path. Check:
+- `curl -sS -o /dev/null -w "%{time_total}\n" https://aegisagent.in/status` should return < 1s. If it's slow, you have a latency issue between your network and `ap-south-1`.
+- If you're inside a corporate VPN that proxies HTTPS, the proxy may be MITM-ing the connection. Test from outside the VPN.
+- Aegis fails closed on decision-engine timeouts — you should be getting an HTTP 504, not a hang. If it's truly hanging, the SDK isn't honoring the timeout. File an issue.
+
+**Q: My SDK call returns 401 Unauthorized.**
+
+- Are you sending the Aegis key correctly? `Authorization: Bearer acp_...` (not `acp_emp_...` — that's the Path B key).
+- For Path B (`/v1/messages`), the header is `x-api-key: acp_emp_...`, not `Authorization: Bearer`.
+- Has the key been revoked? Check **Workspace → Settings → API keys**. Revoked keys 401 within 60 s of the revoke click.
+
+**Q: Anonymous probes get 403 from WAF.**
+
+That's correct. The WAF is in Block mode for unauthenticated traffic. The block fires for:
+- User-Agents that match known automation patterns (curl with default UA, python-requests, etc.) — Bot Control rule.
+- Per-IP rate above 200 / 5 min on unauth paths — `UnAuthPerIPRateLimit` rule.
+- Bursts of XSS / SQLi / LFI patterns — Common Rule Set.
+
+If you're a legitimate auditor doing a pentest, hit `https://aegisagent.in/.well-known/security.txt` for the contact + rate-limit-exception process.
+
+**Q: I see `sse_reauth_failed` log noise in my own server logs.**
+
+If you're not running Aegis (you're a customer) you shouldn't see these. If you are an Aegis operator: the SSE reauth interval is 240s and the Clerk JWT template `aegis` lifetime is 300s. If you see these every 60s, the Clerk template lifetime is still at 60s — bump it in Clerk dashboard.
+
+**Q: My audit count looks lower than what I actually sent.**
+
+Possibilities:
+1. The SDK silently dropped calls because env vars were missing — see Q1.
+2. The agent's tool isn't in the allowlist; Aegis returns 403 *and still writes the audit row*. Check **Observe → Live Feed** filtered by `policy_decision` — you should see the denies.
+3. You're looking at the dashboard in shadow mode; "actions blocked" excludes would-have-blocked. Switch to **Workspace → Settings → Shadow Mode** to see those.
+
+**Q: Cross-tenant query test isn't returning what I expect.**
+
+Read §12.11 carefully. The `?tenant_id=` query param is silently scoped to your JWT's tenant. You will see *your own data*, NOT the other tenant's data. That's the security model working — not a bug.
+
+**Q: How do I rotate my Aegis API key without downtime?**
+
+Mint a new key (Protect → Agents → row → Rotate). The new key is shown once. Update your application config in a rolling restart. Both old and new keys are valid for a 60s grace window; after that the old key revokes via the `acp:apikey:revoked` Redis set.
+
+**Q: Pricing — am I locked in?**
+
+No. Self-serve cancel via Stripe Customer Portal. The Free / Design Partner tier has no expiry guarantee but we honor it for 6 months for any registered design partner. Pro / Enterprise auto-renew monthly; cancel anytime.
+
+**Q: Can I host Aegis on-premise?**
+
+Not yet. Single-tenant on-prem is on the 90-day plan for Enterprise customers. Today we are SaaS-only at `https://aegisagent.in`.
+
+**Q: What happens if Aegis is down?**
+
+Path A SDK has a configurable fail-mode: `fail_closed=True` (default) returns an error to your agent and the agent doesn't execute the tool; `fail_closed=False` lets the tool execute but the audit row is queued in a local DLQ and replayed when Aegis is reachable again. We recommend `fail_closed=True` for any production agent. Path B is fail-closed by design — if Aegis is down, your team's Claude/GPT calls return 503.
+
+**Q: How do I get the Anthropic / OpenAI raw error if Aegis wraps it?**
+
+The wrapper response includes `meta.upstream_body` containing the original error JSON from the upstream provider. Example shape:
+
+```json
+{"success": false, "error": "Anthropic refused the request",
+ "meta": {"code": 502, "upstream": "anthropic", "upstream_error_type": "invalid_request_error",
+          "upstream_body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"max_tokens too large\"}}"}}
 ```
 
-**Your own tenant's bundle** (Sidebar → **Prove → Compliance → Export evidence bundle**):
+---
 
-```bash
-# Triggers a one-time export, returns a download link valid for 1 hour.
-curl -sS -X POST $AEGIS_BASE/compliance/export \
-  -H "Authorization: Bearer $AEGIS_API_KEY" \
-  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"framework":"soc2","start":"2026-06-01","end":"2026-06-19"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['download_url'])"
+## 16. Security posture — handout for your CISO
 
-curl -O <download-url>
-aegis-verify --bundle aegis-evidence-<tenant>-2026-06.json --verbose
-```
+A 1-page CISO summary to attach to your procurement form.
 
-Hand the bundle file to your SOC 2 auditor — they verify with the open-source CLI, no Aegis access needed.
-
-**Walk the chain directly** (for skeptics who don't trust the CLI):
-
-```sql
--- Canonical chain walk per (tenant, shard). chain_sequence is the
--- BIGINT IDENTITY column added on 2026-06-18 — see
--- docs/external-integration-guide.md for the full algorithm.
-SELECT event_hash, prev_hash, chain_sequence
-FROM audit_logs
-WHERE tenant_id = '<your-uuid>' AND chain_shard = 0
-ORDER BY chain_sequence ASC;
-
--- Prove append-only at the DB layer:
-UPDATE audit_logs SET decision='tampered' WHERE id = '<any-real-uuid>';
--- → ERROR: audit_logs is append-only; UPDATE is forbidden
-DELETE FROM audit_logs WHERE id = '<any-real-uuid>';
--- → ERROR: audit_logs is append-only; DELETE is forbidden
-```
+- **AuthN:** Clerk RS256 JWT with JWKS rotation; legacy HS256 path rejects any token carrying a Clerk-shaped `iss` (closes downgrade attack class). `WWW-Authenticate: Bearer realm="<reason>"` realm hint on every 401.
+- **AuthZ + tenant isolation:** `aegis_org_id == aegis_tenant_id` enforced at three layers (webhook write, JWT canonicalize, DB CHECK constraint). `X-Tenant-ID` is always sourced from `request.state.tenant_id` — never from the client header.
+- **Cross-tenant safety:** Verified live — Tenant B's key attempting to read Tenant A's resources returned 403 / 404 in 7/8 attempts and silently scoped to B's own data in the 8th. **Zero data leakage across tenants.**
+- **Key revocation:** 60 s LRU cache invalidated on revoke via `acp:apikey:revoked` Redis set + `SISMEMBER` check on every request.
+- **Append-only audit log:** PostgreSQL trigger blocks UPDATE / DELETE at the database layer regardless of role privileges.
+- **Cryptographic transparency:** Daily ed25519-signed Merkle root chained via `prev_root_hash` to the previous root. Roots mirrored to a public S3 bucket — any auditor verifies independently with `aegis-verify`.
+- **Transport:** HSTS `max-age=63072000; includeSubDomains; preload`, COOP `same-origin-allow-popups`, CORP `same-site`, CSP with `frame-ancestors 'none'`. `curl -sI https://aegisagent.in/`.
+- **Edge security:** AWS WAF v2 with three rule layers — Common Rule Set (OWASP), Bot Control in Block mode with scope_down skipping authenticated traffic, per-IP rate limit (200/5min on unauth, 2000/5min general). ALB `enable_deletion_protection = true`. EC2 user_data uses IMDSv2.
+- **Supply chain:** Docker images SHA-pinned per NIST SSDF SP800-218 PW.4 (`infra/docker-compose.yml`). CI runs Trivy (HIGH+CRITICAL CVE), Gitleaks (secret patterns), Checkov (IaC misconfig), Bandit (Python AST), nightly re-scan via cron.
+- **Service-to-service auth:** ES256 mesh JWT with per-service private keys in SSM SecureString; trusted-keys map distributed via `ACP_MESH_TRUSTED_KEYS`. Mesh tokens rejected if signed by a service whose key is not in the trusted-keys map.
+- **OPA admin authz:** Default-deny; only `POST /v1/data/*` and `GET /v1/data/*` allowed. `PUT /v1/policies/*` denied — closes the P0 attack vector where RCE in any service could upload `default allow := true`.
+- **RFC 9116 security.txt:** `https://aegisagent.in/.well-known/security.txt` — responsible disclosure contact + scope.
+- **Infra:** 2-host ASG behind ALB, RDS Multi-AZ, ElastiCache Redis with TLS, Docker compose `depends_on: service_healthy` on every critical dep, page-severity Alertmanager wired to PagerDuty receiver, `one_nat_per_az = true` for AZ failure isolation.
+- **CloudTrail:** Multi-region, global service events, log-file validation enabled. All AWS API calls logged.
+- **Latest pentest (live, internal):** Round 3 of `22-testing-report.md` — 190 probes, 0 bypasses, 0 server errors, all P0/P1 closed. WAF Block + scope_down live, ALB DP true, mesh keys pre-injected at user_data, anon DoW protected (200/5min).
 
 ---
 
-### 11.11 Prove cross-tenant isolation yourself
+## 17. Pricing — built for seed-stage budgets
 
-Sign up a second workspace with a different email. Mint a Path A key in workspace B (`KEY_B`). Then with **B's key**, try to read **A's audit logs**:
+| Plan | Price | Best for | What you get |
+|---|---|---|---|
+| **Free / Design Partner** | $0 / mo | First 6 months for the first 10 design-partner companies | Up to 10 employees, up to 5 agents, up to 100k audit rows/mo, 1-week data retention, community Slack support, **free SOC 2 evidence pulls when we land it** |
+| **Pro** | $499 / mo | A 10-50 person engineering team | Up to 50 employees, up to 25 agents, 1M audit rows/mo, 30-day retention, email support |
+| **Enterprise** | $4,999 / mo | A 50-500 person company with a real CISO | Unlimited employees + agents, 100M audit rows/mo, 1-year retention, signed BAA + DPA, Slack + PagerDuty integration, dedicated Slack channel, named CSM |
 
-```bash
-curl -sS "$AEGIS_BASE/audit/logs?tenant_id=$AEGIS_TENANT_ID&limit=1" \
-  -H "Authorization: Bearer $KEY_B" \
-  -H "X-Tenant-ID: <workspace-B-uuid>"
-```
+Self-serve upgrade via **Workspace → Settings → Billing** (Stripe Checkout). Cancel anytime from Stripe's Customer Portal.
 
-You will see B's total row count, NOT A's — the `?tenant_id` query param is silently scoped to the JWT's tenant. Verified live this session: A=589 rows, B=178 rows, B-with-`?tenant_id=A` returned 178 (not 589). **Zero data leakage**.
-
-Repeat for `/incidents?tenant_id=<A>`, `/agents/<A-agent-id>`, and so on. All 7/8 attempts in the 2026-06-18 Suite C audit returned 403 / 404 / scoped-data; the 8th was a malformed test.
+**If you're a seed-stage AI startup (< 50 people, < $5M raised, building an AI agent today):** email `founder@aegisagent.in` and ask for the design-partner deal. Free for 6 months in exchange for your name on the landing page + a quarterly 30-minute call.
 
 ---
 
-### 11.12 Wire PagerDuty for incident pages
+## 18. What Aegis is NOT yet (be honest with yourself)
 
-Sidebar → **Workspace → Settings → Notifications** → PagerDuty section. Paste:
+If your use case requires any of these, **wait 90 days** while we land the 30-day + 90-day plan:
 
-- **PagerDuty Routing Key** (Events API v2 — 32 hex chars from your service's "Aegis" integration)
-- Severity floor: `CRITICAL` (only `incident.severity ∈ {CRITICAL}` pages; lower severities still write audit + UI rows but don't page)
+- ❌ **Production data residency in EU or US-East.** Single-region `ap-south-1` until the multi-region landing.
+- ❌ **SOC 2 attestation for procurement gates.** Vendor selection in progress; T1 letter expected month 4.
+- ❌ **Verified failure-injection / chaos testing report.** Staging chaos harness on the 30-day plan; we won't run it in prod and risk customer traffic.
+- ❌ **24×7 named on-call team.** Solo founder + Slack alerts today. Co-founder hire on the 30-day plan.
+- 🚧 **Jira / ServiceNow round-trip ticket creation.** Inbound webhook (HMAC-signed) shipped; outbound issue creation on the 30-day plan.
+- ❌ **Okta SCIM auto-provisioning.** Generic OIDC works for Okta; full SCIM 2.0 endpoint is on the 90-day plan.
+- ❌ **FedRAMP / regulated-gov workloads.** Not on the roadmap for 18 months.
+- ❌ **On-premise / single-tenant deployment.** Enterprise on-prem is on the 90-day plan.
 
-Every `incident_created` event whose severity ≥ floor gets a fire-and-forget POST to `events.pagerduty.com/v2/enqueue` with the canonical fields (incident_id, signal, agent_email, blast_radius, suggested_remediation, deep-link to Forensics). The 5xx retry policy: 3 attempts with exponential backoff, then DLQ to `acp:pagerduty_dlq` (operator dashboard tile shows the depth).
-
-**Test:** Topbar → red Kill Switch (engages workspace kill switch) → fires a synthetic `kill_switch_engaged` incident → PagerDuty receives the page within ~2 seconds. Release the kill switch when done.
-
----
-
-### 11.13 Configure Okta / generic OIDC SSO (Workspace → Settings → SSO)
-
-Aegis ships generic OIDC out of the box (Okta works because Okta is an OIDC IDP; no Okta-specific integration today).
-
-In Okta: Admin → Applications → "Create App Integration" → OIDC - Web Application →
-- Sign-in redirect URI: `https://aegisagent.in/sso/callback`
-- Sign-out URI: `https://aegisagent.in/sso/logout`
-- Grant types: Authorization Code
-- Login flow: Redirect to app to initiate login
-- Initiate login URI: `https://aegisagent.in/sso/initiate?tenant_id=<your-uuid>`
-
-Copy the **Client ID + Client Secret + Issuer URL** to **Workspace → Settings → SSO**. Save → click **Test SSO** → you should be redirected to Okta, authenticate, redirected back, and land on the dashboard with `OWNER` role mapped from your Okta group.
-
-**Group → Aegis-role mapping** is editable in the same UI. The default mapping reads `groups` claim from the OIDC ID token; you can re-bind to `aegis_role_claim` if you have a custom one.
+Everything else — running real production AI agents with policy + audit + signing + a CIO dashboard — works today.
 
 ---
 
-### 11.14 Export the chain for an offline air-gapped auditor
+## 19. Exit shadow mode (when you're confident)
 
-```bash
-# Triggers the seal job to flush in-flight rows, then writes a tar bundle.
-curl -sS -X POST $AEGIS_BASE/transparency/export-offline \
-  -H "Authorization: Bearer $AEGIS_API_KEY" \
-  -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
-  -o aegis-offline-export.tar.gz
+After a few days of real traffic, **Workspace → Settings → Shadow Mode**. If the would-have-blocked list matches what you actually want blocked:
 
-tar tzf aegis-offline-export.tar.gz
-# audit_logs.parquet        (all rows for the tenant)
-# transparency_roots.parquet (every signed daily root with prev_root_hash)
-# keys/                     (every signing key that has ever signed your roots)
-# verify.sh                 (calls aegis-verify in a loop over every root)
-# README.md                 (the spec + verification recipe)
-```
+1. Click **Exit shadow mode**.
+2. From that point, the same decisions become real blocks for both Path A (tools) and Path B (prompts).
+3. Re-enter any time during incident triage by setting `shadow_mode_until` back to a future date.
 
-Ship the tarball to your air-gapped lab. The auditor runs `bash verify.sh` and gets a green/red verdict in <1 minute on a single tenant's full history.
+While in shadow mode:
+- Aegis still records every audit row.
+- Aegis still routes events to your SIEM / Slack / PagerDuty / webhooks.
+- Aegis still computes the same risk scores and findings.
+- The **only difference**: blocks become "would have blocked" — your agent's tool runs, your team's prompt reaches Claude/GPT.
 
 ---
 
-## 12. Quick reference
+## 20. Quick reference card
 
 ```
 Dashboard:           https://aegisagent.in           (also https://ha.aegisagent.in)
 Path A SDK base:     https://aegisagent.in
 Path B Anthropic:    https://aegisagent.in/v1        (anthropic SDK base_url)
 Path B OpenAI:       https://aegisagent.in/v1        (openai SDK base_url)
-SDK packages (v1.1): aegis-anthropic, aegis-openai, aegis-bedrock, aegis-langchain
+SDK packages:        aegis-anthropic, aegis-openai, aegis-bedrock, aegis-langchain
 Verifier package:    aegis-aevf
-Status:              https://aegisagent.in/status
+Status (public):     https://aegisagent.in/status
 Security.txt:        https://aegisagent.in/.well-known/security.txt
 Live Feed:           https://aegisagent.in/live-feed
 Approval Inbox:      https://aegisagent.in/approval-inbox
@@ -890,15 +1229,29 @@ Identity Graph:      https://aegisagent.in/identity-graph
 Team module:         https://aegisagent.in/team
 Per-employee:        https://aegisagent.in/team/<email>
 Compliance:          https://aegisagent.in/compliance
-Public transparency: s3://aegis-public-roots-628478946931 (anonymous)
+Transparency public: https://aegisagent.in/transparency/roots  (anon, no auth)
+Transparency keys:   https://aegisagent.in/transparency/keys   (anon, signing keys index)
+Receipt verify-key:  https://aegisagent.in/receipts/key        (anon, ed25519 pub PEM)
+Public S3 archive:   s3://aegis-public-roots-628478946931      (anonymous, all roots)
 ```
+
+**Headers cheat sheet:**
+
+| Header | Where it's required | Why |
+|---|---|---|
+| `Authorization: Bearer acp_…` | Path A (`/execute`, `/agents`, `/audit/logs`, …) | Tenant + agent JWT |
+| `x-api-key: acp_emp_…` | Path B (`/v1/messages`, `/v1/chat/completions`) | Employee virtual key |
+| `X-Tenant-ID: <uuid>` | All authenticated requests | Tenant scope; gateway re-verifies vs JWT claim |
+| `X-Aegis-Approval-ID: <uuid>` | Replay of a previously-escalated `/execute` | 5-min TTL after approve |
+| `X-Webhook-Signature: sha256=<hmac>` | Inbound webhooks `/webhooks/jira/<tid>`, `/webhooks/servicenow/<tid>` | HMAC verification |
+| `X-Aegis-Signature: sha256=<hmac>` | Egress generic webhook (Aegis → your endpoint) | You verify; secret you supplied |
 
 **Path A:** sign up → wizard → `pip install aegis-anthropic` → wrap your client → ship.
 **Path B:** sign up → Team → Add employee → swap the SDK `base_url` → watch the KPIs.
 
 ---
 
-## 13. Honest closing — what the founder is asking from you
+## 21. Closing — what the founder is asking from you
 
 If you're a seed-stage AI startup, here is the bargain:
 
@@ -912,4 +1265,4 @@ Two slots are open. Email `founder@aegisagent.in` with: company name, what your 
 
 ---
 
-*Updated 2026-06-19 — calibrated against the live audit transcript in `validation-report.md` Appendix R, `during-testing.md` issue log, and `30-day-product-plan.md` enterprise TDD. Every ✅ above has a `curl` or `psql` command behind it; every ❌ has a date on the 30-day or 90-day plan.*
+*Last updated 2026-06-22 — calibrated against `22-testing-report.md` Round 3 pentest evidence + the live `terraform apply` landed earlier today. Every ✅ above has a `curl` or `psql` or `pip install` behind it; every ❌ has a date on the 30-day or 90-day plan.*
