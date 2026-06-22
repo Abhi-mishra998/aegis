@@ -1,7 +1,7 @@
-"""P2-11 — Formalize the scim_tokens table in acp_audit (gateway's DB).
+"""P2-11 — Formalize scim_tokens in acp_audit (gateway's DB).
 
-Revision ID: i4j5k6l7m8n9
-Revises:     h3i4j5k6l7m8
+Revision ID: p2_11_scim_audit_2026_06_22
+Revises:     aa_merge_2026_06_20
 Create Date: 2026-06-22
 
 # Why this migration lives in audit-svc's chain (not gateway-owned)
@@ -12,44 +12,29 @@ the SCIM-bearer validator (``services/gateway/_scim_auth.py``) both run
 which is bound to ``acp_audit`` (the gateway's DATABASE_URL). The table
 therefore physically lives in ``acp_audit``.
 
-``acp_audit`` is alembically owned by the audit-svc (env.py declares
-``version_table="alembic_version_audit"`` with audit-svc's owned_tables).
-There is no gateway-owned alembic chain that targets ``acp_audit``.
+``acp_audit`` is alembically owned by the audit-svc. There is no
+gateway-owned alembic chain that targets ``acp_audit``.
 
-We had two options (P2-11 in 22-testing-report.md):
-
-  A. Refactor SCIM mint+validate to live in identity-svc; identity owns
-     the table in ``acp_identity`` via the existing pre-existing
-     migration ``l8m9n0o1p2q3``. Gateway proxies via /auth/scim/validate.
-     Right long-term shape, ~3-4 hrs of work.
-
-  B. Keep SCIM code in gateway and add the migration to audit-svc's
-     chain since that is what owns ``acp_audit``. This is option B.
-
-We picked B for the same-day client deadline. The trade-off is the
-naming weirdness — a "scim_tokens" table inside the audit-svc alembic
-chain — but the physical DB ownership is correct and the migration is
-idempotent against the existing hotfix-created table.
-
-The identity-targeted migration
+Per P2-11 in 22-testing-report.md we picked option B (gateway-code +
+audit-svc-migration) over option A (refactor mint+validate to identity)
+for the same-day client deadline. The identity-targeted migration
 ``services/identity/alembic/versions/l8m9n0o1p2q3_sprint_ei3_scim_tokens.py``
-must NOT be applied to ``acp_identity`` — see its header note. It is
-superseded by this file.
+is now a no-op placeholder — its header documents the supersession.
 
 # Idempotency
 
 The table was created in-place via asyncpg by an emergency hotfix on
 2026-06-22 (no migration). Applying this migration on top of the
-existing prod state must be a no-op. We use ``IF NOT EXISTS`` semantics:
-inspect the catalog and skip ``create_table`` if the table is already
-present. Same for the two indexes. Downgrade drops everything cleanly.
+existing prod state must be a no-op. We inspect the catalog and skip
+``create_table`` / ``create_index`` if already present.
 
-# Acceptance check
+# Acceptance
 
 After ``alembic upgrade head`` against ``acp_audit``::
 
     SELECT to_regclass('public.scim_tokens');  -- → scim_tokens (not NULL)
-    SELECT version_num FROM alembic_version_audit;  -- → i4j5k6l7m8n9
+    SELECT version_num FROM alembic_version_audit;
+    -- → p2_11_scim_audit_2026_06_22
 """
 from __future__ import annotations
 
@@ -57,8 +42,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "i4j5k6l7m8n9"
-down_revision = "h3i4j5k6l7m8"
+revision = "p2_11_scim_audit_2026_06_22"
+down_revision = "aa_merge_2026_06_20"
 branch_labels = None
 depends_on = None
 
