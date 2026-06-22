@@ -4,6 +4,27 @@ Revision ID: l8m9n0o1p2q3
 Revises: k7l8m9n0o1p2
 Create Date: 2026-06-20
 
+# SUPERSEDED 2026-06-22 — DO NOT APPLY THIS TO acp_identity IN PROD.
+#
+# Pentest finding P2-11 (see 22-testing-report.md): the SCIM mint endpoint
+# and bearer validator both live in the gateway and use the gateway's
+# DB session (→ acp_audit). The table physically lives in acp_audit,
+# not acp_identity. Running this migration on acp_identity would create
+# a parallel empty table that the gateway never reads from, while the
+# real table in acp_audit would remain unmanaged by any migration chain.
+#
+# Replaced by:
+#   services/audit/alembic/versions/i4j5k6l7m8n9_p2_11_scim_tokens_in_acp_audit.py
+#
+# That migration is idempotent and matches the emergency hotfix that
+# created the table in acp_audit on 2026-06-22.
+#
+# If the long-term plan ever moves SCIM mint+validate to identity-svc
+# (option A in 22-testing-report.md), revisit this header — at that
+# point the identity-svc DOES own the table and this file becomes
+# correct again. Until then this migration is a no-op placeholder kept
+# only for the alembic chain so down_revision links don't break.
+
 One row per (tenant, SCIM connector). The Okta admin pastes the plaintext
 into the Okta App → Provisioning → Authentication → API token field. We
 store only the sha256 hash + a printable prefix so the operator can
@@ -26,28 +47,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "scim_tokens",
-        sa.Column("id",            sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id",     sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("org_id",        sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("label",         sa.String(128), nullable=False),
-        sa.Column("token_hash",    sa.String(64),  nullable=False, unique=True),
-        sa.Column("token_prefix",  sa.String(24),  nullable=False),
-        sa.Column("last_used_at",  sa.DateTime(timezone=True), nullable=True),
-        sa.Column("revoked_at",    sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_by_user_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("created_at",    sa.DateTime(timezone=True),
-                  server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at",    sa.DateTime(timezone=True),
-                  server_default=sa.func.now(), nullable=False),
-        sa.CheckConstraint("org_id = tenant_id", name="ck_scim_tokens_org_tenant_match"),
-    )
-    op.create_index("ix_scim_tokens_tenant", "scim_tokens", ["tenant_id"])
-    op.create_index("ix_scim_tokens_token_hash", "scim_tokens", ["token_hash"])
+    # SUPERSEDED — see header. The SCIM table is now created by
+    # services/audit/alembic/versions/i4j5k6l7m8n9_p2_11_scim_tokens_in_acp_audit.py
+    # in the acp_audit database (where the gateway's request-scoped DB
+    # session actually reads/writes). This revision stays in the
+    # acp_identity alembic chain only to preserve the down_revision link
+    # for any descendant migration. It does NOT create the table here.
+    pass
 
 
 def downgrade() -> None:
-    op.drop_index("ix_scim_tokens_token_hash", table_name="scim_tokens")
-    op.drop_index("ix_scim_tokens_tenant", table_name="scim_tokens")
-    op.drop_table("scim_tokens")
+    # Mirror of upgrade — no-op. Downgrading this revision must not drop
+    # a table that this revision did not create. See header.
+    pass
