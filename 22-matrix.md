@@ -180,6 +180,19 @@ Legend: `PASS` = defence held / behaviour correct · `FAIL` = real issue (severi
 
 ---
 
+## Round 3 — 2026-06-22 18:15 UTC (after targeted `terraform apply`)
+
+| Test ID | Round-2 verdict | Round-3 verdict | Live probe |
+|---|---|---|---|
+| P2-1 Bot Control Block + scope_down | plan-only | **PASS** | Bot in Block + scope_down=YES; auth header → 401 (gateway), anon → 403 (WAF) |
+| P2-5 anon DoW rate limit | plan-only | **PASS** | 300 anon/116s → 100% 403 (rate-limit fires; default WAF block = 403) |
+| N1-1 transparency DoW | FAIL | **PASS** | same NOT(Authorization) scope_down covers transparency |
+| P3-3 ALB deletion_protection | plan-only | **PASS** | `deletion_protection.enabled = true` |
+| P2-3 mesh keys in user_data | plan-only | **partial PASS** | new LT applied; effective for new ASG launches |
+| P1-4 userlist on tmpfs (drift) | unknown | **PASS** | source repaired during plan review (was missing from source) |
+| ALB targets | 1 healthy, 1 unhealthy | **2/2 healthy** | both ASG instances post-deploy |
+| Unit tests `tests/test_p_hard_1_fixes.py` | n/a | **4/4 file-only PASS** | 9 integration tests skip without localhost stack |
+
 ## Round 2 — 2026-06-22 17:30 UTC (after P-Hard-1 deploy of bundle `8491838aee9e`)
 
 | Test ID | Category | Round-1 verdict | Round-2 verdict | Notes |
