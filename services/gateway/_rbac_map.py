@@ -142,6 +142,15 @@ RULES: tuple[Rule, ...] = (
     _R("/notifications/*",             ("POST",),        min_role="READ_ONLY"),
     _R("/notifications*",              ("GET",),         min_role="READ_ONLY"),
     _R("/api-keys/*",                  ("DELETE",),      roles=("OWNER", "ADMIN")),
+    # Audit 2026-06-22 §3 — closure of P0-RBAC-EMP-MINT: a stolen acp_emp_*
+    # employee key could POST /api-keys/employees and mint a NEW employee
+    # key with arbitrary budget, because the previous "/api-keys POST" rule
+    # was an EXACT match (no trailing slash) and "/api-keys/employees" had
+    # no covering rule, falling through to the legacy permission_map which
+    # accepted the API-key path. Explicit rule first; matches before the
+    # broader patterns and forces OWNER/ADMIN for the mint surface.
+    _R("/api-keys/employees",          ("POST",),        roles=("OWNER", "ADMIN")),
+    _R("/api-keys/employees/*",        ("*",),           roles=("OWNER", "ADMIN")),
     _R("/api-keys",                    ("POST",),        roles=("OWNER", "ADMIN")),
     _R("/api-keys*",                   ("GET",),         roles=("OWNER", "ADMIN")),
     _R("/team/employees/*",            ("POST",),        roles=("OWNER", "ADMIN")),
@@ -155,7 +164,26 @@ RULES: tuple[Rule, ...] = (
     # Sprint EI-2 — Jira ITSM integration. The api_token is per-tenant; only
     # OWNER + ADMIN can set or delete it. READ_ONLY can see has_api_token: true
     # but never the token itself.
+    # Audit 2026-06-22 §3 — close fall-through bypass: an acp_emp_ "agent"
+    # role could hit /policy/upload + /policy/simulate + /policy/test because
+    # no _rbac_map rule covered them, and the legacy permission_map write-roles
+    # check lives inside the JWT-else branch of _mw_auth.py (so API keys skip
+    # it). Until the systemic fix lands, explicit rules cover the surface.
+    _R("/policy/upload",               ("POST",),        min_role="SECURITY_ANALYST"),
+    _R("/policy/simulate",             ("POST",),        min_role="SECURITY_ANALYST"),
+    _R("/policy/test",                 ("POST",),        min_role="SECURITY_ANALYST"),
+    _R("/policy/*",                    ("POST","PUT","PATCH","DELETE"), min_role="SECURITY_ANALYST"),
+    _R("/policy*",                     ("GET",),         min_role="READ_ONLY"),
+    # Audit 2026-06-22 §3 — close fall-through bypass on sso/billing writes
+    _R("/sso/saml/*",                  ("POST","PUT","PATCH","DELETE"), roles=("OWNER",)),
+    _R("/sso/saml*",                   ("GET",),         min_role="ADMIN"),
+    _R("/billing/subscription",        ("POST","PATCH","PUT","DELETE"), roles=("OWNER",)),
+    _R("/billing/subscription*",       ("GET",),         min_role="ADMIN"),
     _R("/integrations/jira/test",      ("POST",),        roles=("OWNER", "ADMIN")),
+    # Audit 2026-06-22 §3 — close fall-through: /integrations/jira POST (initial
+    # create) was uncovered (only PUT/DELETE were rule-bound). Same for /servicenow.
+    _R("/integrations/jira",           ("POST",),        roles=("OWNER", "ADMIN")),
+    _R("/integrations/servicenow",     ("POST",),        roles=("OWNER", "ADMIN")),
     # Sprint EI-18 — webhook-secret rotate is OWNER-only (a leaked
     # secret lets anyone PATCH any incident to RESOLVED for the tenant;
     # tighter than the Test button which is OWNER+ADMIN).
