@@ -183,15 +183,24 @@ async def jira_webhook(
         }
       }
     """
+    from sqlalchemy.exc import ProgrammingError, OperationalError  # noqa: PLC0415
     from services.identity.models import JiraIntegration  # noqa: PLC0415
 
     raw = await request.body()
-    cfg = (await db.execute(
-        select(JiraIntegration).where(
-            JiraIntegration.tenant_id == tenant_id,
-            JiraIntegration.enabled.is_(True),
-        ),
-    )).scalar_one_or_none()
+    try:
+        cfg = (await db.execute(
+            select(JiraIntegration).where(
+                JiraIntegration.tenant_id == tenant_id,
+                JiraIntegration.enabled.is_(True),
+            ),
+        )).scalar_one_or_none()
+    except (ProgrammingError, OperationalError) as exc:
+        # The gateway's bound DB does not host jira_integrations (it lives
+        # in acp_identity). Surface as no_config so the webhook never 500s
+        # and matches the "no leak whether tenant exists" contract.
+        logger.warning("jira_webhook_db_unavailable",
+                       tenant_id=str(tenant_id), reason=type(exc).__name__)
+        return {"status": "no_config"}
     if cfg is None or not cfg.webhook_secret:
         # Don't leak "tenant exists / does not exist" — bare 200.
         logger.warning("jira_webhook_no_config", tenant_id=str(tenant_id))
@@ -283,15 +292,21 @@ async def servicenow_webhook(
         "number": "INC0010001",
         "state":  "6" }
     """
+    from sqlalchemy.exc import ProgrammingError, OperationalError  # noqa: PLC0415
     from services.identity.models import ServicenowIntegration  # noqa: PLC0415
 
     raw = await request.body()
-    cfg = (await db.execute(
-        select(ServicenowIntegration).where(
-            ServicenowIntegration.tenant_id == tenant_id,
-            ServicenowIntegration.enabled.is_(True),
-        ),
-    )).scalar_one_or_none()
+    try:
+        cfg = (await db.execute(
+            select(ServicenowIntegration).where(
+                ServicenowIntegration.tenant_id == tenant_id,
+                ServicenowIntegration.enabled.is_(True),
+            ),
+        )).scalar_one_or_none()
+    except (ProgrammingError, OperationalError) as exc:
+        logger.warning("snow_webhook_db_unavailable",
+                       tenant_id=str(tenant_id), reason=type(exc).__name__)
+        return {"status": "no_config"}
     if cfg is None or not cfg.webhook_secret:
         logger.warning("snow_webhook_no_config", tenant_id=str(tenant_id))
         return {"status": "no_config"}
