@@ -1,0 +1,14 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "https://aegisagent.in",
+        "https://www.aegisagent.in"
+      ],
+      "AllowedMethods": ["GET", "HEAD"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag", "Last-Modified"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
