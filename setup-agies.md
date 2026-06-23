@@ -97,6 +97,12 @@ Hand this section to one technical employee at your client — they'll be done i
 - [2. Pick your integration path (A, B, or both)](#2-pick-your-integration-path-a-b-or-both)
 - [3. Sign up + workspace bootstrap (90 seconds)](#3-sign-up--workspace-bootstrap-90-seconds)
 - [4. Dashboard layout — what each tile means](#4-dashboard-layout--what-each-tile-means)
+  - [4a. Complete UI surface map — every page, every value it surfaces](#4a-complete-ui-surface-map--every-page-every-value-it-surfaces)
+  - [4b. UI page → backend endpoint live-verification matrix (2026-06-23)](#4b-ui-page--backend-endpoint-live-verification-matrix-2026-06-23)
+  - [4c. Browser experience — what your employee sees on first visit](#4c-browser-experience--what-your-employee-sees-on-first-visit)
+  - [4d. UI testing playbook — for you and your employees to QA every page](#4d-ui-testing-playbook--for-you-and-your-employees-to-qa-every-page)
+  - [4e. UI component reference card — what each surface is for](#4e-ui-component-reference-card--what-each-surface-is-for)
+  - [4f. How to file feedback (template + where it goes)](#4f-how-to-file-feedback-template--where-it-goes)
 - [5. Path A — wrap your custom agent with the SDK](#5-path-a--wrap-your-custom-agent-with-the-sdk)
 - [6. Path B — Aegis for Teams (Anthropic/OpenAI proxy)](#6-path-b--aegis-for-teams-anthropicopenai-proxy)
 - [7. What Aegis catches out of the box (no policies to write)](#7-what-aegis-catches-out-of-the-box-no-policies-to-write)
@@ -347,6 +353,390 @@ A condensed proof that every page's data layer works. Each row reflects the live
 4. Topbar populates: `Kill Switch` button (red), `Pending Approvals` badge, `Open Incidents` badge, user menu
 
 The full SPA bundle uses Vite + React 18 + Tailwind; first paint < 800 ms on a fresh load over 4G, cached return-visit < 200 ms.
+
+### 4d. UI testing playbook — for you and your employees to QA every page
+
+Use this section as a script. The goal: open every page, exercise the empty / loading / live states, capture any rough edge, and file feedback in the template at the end. A single tester should be able to complete the full walk in **45–60 minutes**.
+
+#### 4d.0 Prerequisites (read once)
+
+- **Browser:** Chrome 120+ or Edge 120+ on macOS or Windows. (Safari works but we test less aggressively.)
+- **Viewports to check:** 1366×768 (typical exec laptop) and 1920×1080 (external monitor). Use Chrome DevTools → Toggle device toolbar (⌘+Shift+M / Ctrl+Shift+M) → "Responsive" → enter dimensions.
+- **Screenshot tool:** macOS ⌘+Shift+4 (region) or ⌘+Shift+3 (full). Windows Snipping Tool (Win+Shift+S). Save to a folder named `aegis-feedback-<your-name>`.
+- **DevTools open during walk:** Hit `F12`. Keep the **Console** tab visible — any **red** entry = bug to file. **Yellow** warnings are usually fine (React StrictMode, third-party SDK noise).
+- **Test workspace:** either sign up at `https://aegisagent.in/signup` (Clerk, 30 seconds, no credit card) OR spawn an anonymous 30-min demo via `curl -A 'Mozilla/5.0 ...' -X POST https://aegisagent.in/demo/spawn-workspace -H 'Content-Type: application/json' -d '{}'` and use the returned magic-link URL in your browser.
+
+#### 4d.1 Walk 1 — Public surface (no login, ~5 min)
+
+These pages must work without any credential. They are what a prospect, auditor, or pentester sees first.
+
+| Step | URL | What to check | Expected |
+|---|---|---|---|
+| 1 | `/` | Hero loads, "Spawn demo workspace" button works | Button shows loading spinner → returns magic link or error toast (does NOT silently fail) |
+| 2 | `/login` | Clerk SignIn renders | Email field focusable, "Continue with Google" visible if SSO enabled |
+| 3 | `/signup` | Clerk SignUp renders | Same — no console error |
+| 4 | `/trust` | Trust Center loads | 10 capability cards (Tenant isolation, Encryption, Crypto transparency, RBAC, Supply chain, Ops monitoring, DR, Subprocessors, Data residency, Reference architectures) all render with icons and outbound GitHub links |
+| 5 | `/status` | Public status page | Either "All systems operational" (if nightly verify has run today) OR a friendly "Nightly artefact not published yet — for live state visit /system/health" — **NOT** a red error banner |
+| 6 | `/security` | Responsible disclosure page | Renders 48h ack / 5d triage / 90d fix SLOs, in-scope + out-of-scope lists, PGP key link |
+| 7 | `/.well-known/security.txt` | RFC 9116 file | Plain text with Contact, Encryption, Policy, Expires fields |
+
+**Red flag:** if any page above shows a white screen, a stack trace, or HTTP 500, screenshot the Console tab and file it as **Severity 1**.
+
+#### 4d.2 Walk 2 — Onboarding wizard (5 min, first-time only)
+
+After your first signup, the wizard routes you here automatically. Test it once.
+
+| Step | Action | Expected |
+|---|---|---|
+| 1 | Open `/onboarding` after login | 5-step indicator across the top (Account → Path → SDK → First call → Done). On narrow screens it collapses to dots; on wide screens it shows step labels |
+| 2 | Pick "Path A — SDK wrap" | Code snippets render in monospace with copy-button. **No bare loading spinner** — should show skeleton during snippet generation |
+| 3 | Pick "Path B — Anthropic proxy" | Different snippet for the proxy URL setup |
+| 4 | Click "Skip — I'll explore the UI first" | Routes to `/dashboard` without errors |
+
+#### 4d.3 Walk 3 — Observe module (10 min — the demo crown jewel)
+
+This is what an enterprise client cares about most. **Open a second terminal window so you can fire the demo traffic while watching the UI tick.**
+
+##### Dashboard `/dashboard`
+
+| Check | Expected |
+|---|---|
+| KPI tiles render | 6 mandate KPIs in a row: Protected Agents, Actions Evaluated, Allowed, Denied, Escalated, Active Findings |
+| Loading state | While fetching, each tile shows a **skeleton shimmer** — NOT a bare "0" or "—" that looks broken |
+| Empty state (no activity yet) | Below KPIs, a card appears: "No activity yet — start onboarding wizard" with a CTA button. **NOT** a blank screen |
+| Provider mix card | If no providers connected, shows EmptyState with "Onboard your first agent" CTA |
+| Risk tier card | If no tiers populated, shows "No risk tiers yet…" with onboarding CTA |
+| Recent activity | If empty, shows EmptyState with two CTAs: "Onboard agent" and "Open live feed" |
+| Responsive 1366×768 | KPI row collapses to `grid-cols-2 sm:3 lg:3 xl:6` — never overflows horizontally |
+| SSE tick | When you fire `/execute` in your terminal (see "Demo traffic" below), the "Live · N events" badge in the top-right ticks up within 200ms |
+
+##### Live Feed `/live-feed`
+
+| Check | Expected |
+|---|---|
+| Page-wide layout | `max-w-7xl` centered — fills the screen at 1366 and 1920 |
+| Connection badge | "Live" green / "Connecting" amber / "Disconnected — reason" red — visible top-right |
+| Throughput gauge | 12-bar sparkline, right-most bar represents the last 5s |
+| Empty + connected | Shows EmptyState: "Live stream open — no events yet. Trigger one via /agents or /playground." with both CTAs |
+| Empty + disconnected | Shows "Disconnected — Reconnect" button |
+| Empty + filtered | Shows "No matching events" with a "Reset filters" button |
+| **SSE real-time tick** | When you fire `/execute` traffic, NEW rows appear at the top of the list **without page refresh**. The row carries an icon, event type pill, employee email, model chip (single, not duplicate), risk score, and "X seconds ago" relative timestamp |
+| Pause button | Stops new rows from prepending (lets you read what's there); resume to see backlog catch up |
+| Clear button | Wipes the visible list; new events continue to stream in |
+
+##### Notifications `/notifications`
+
+| Check | Expected |
+|---|---|
+| SSE pill | Same Live / Connecting / Offline indicator as LiveFeed |
+| Empty (no notifications ever) | "No notifications yet — open Live Feed or Register agent" with CTAs |
+| Empty (unread filter on, no unread) | "No unread — Show all" button |
+| Mark read persistence | Click an unread row → it goes read. Refresh the page → it's still read (localStorage cache survives flaky network) |
+| Real-time | Trigger a deny via `/execute` → a new alert row appears within ~1s without refresh |
+
+##### Team `/team` and `/team/<email>`
+
+| Check | Expected |
+|---|---|
+| Empty (no employees) | EmptyState pointing at `/team/invite` and `/settings/sso` |
+| Loaded | One row per employee: 30-day spend, daily/monthly budget bars, harmful actions blocked count |
+| Live activity ping | When an employee fires `/execute`, a small green dot lights next to their row for ~60s |
+| Per-employee profile | Click any row → drill page with 30-day sparkline, last 25 calls, signal that fired on each deny |
+
+##### Demo traffic snippet (paste in your second terminal)
+
+```bash
+# Replace JWT with your demo workspace token (returned by /demo/spawn-workspace)
+JWT="eyJ…"
+
+# ALLOW
+curl -sS -X POST https://aegisagent.in/execute \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -A "Mozilla/5.0 Chrome/120" \
+  -d '{"tool":"http_get","args":{"url":"https://example.com"}}'
+
+# DENY
+curl -sS -X POST https://aegisagent.in/execute \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -A "Mozilla/5.0 Chrome/120" \
+  -d '{"tool":"read_file","args":{"path":"/etc/passwd"}}'
+
+# ESCALATE
+curl -sS -X POST https://aegisagent.in/execute \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -A "Mozilla/5.0 Chrome/120" \
+  -d '{"tool":"wire_transfer","args":{"amount_usd":250000,"recipient":"external"}}'
+```
+
+Each call should produce **a visible new row on Live Feed, Dashboard, and Notifications within 200 ms**.
+
+#### 4d.4 Walk 4 — Protect module (10 min)
+
+##### Agents `/agents`
+
+| Check | Expected |
+|---|---|
+| Empty | EmptyState: "No agents registered — go to /onboarding to register your first agent" with onboard CTA |
+| Loaded | Table: name, provider, risk_score, status, owner email |
+| Click a row | Routes to `/agents/<id>` snapshot — tabs: Overview, Tools, Decisions, Blast Radius |
+| AgentTopology `/agents/topology` | Force-directed canvas sized to container, ResizeObserver — no overflow at either viewport |
+| AgentHealth `/agents/health` | Lights green for ACTIVE, red for QUARANTINED. SSE-driven — when you trigger a quarantine via `/policy/quarantine`, the dot flips within 1s |
+| AgentCost `/agents/cost` | Per-agent USD spend chart. Skeleton during load. Zero values render "—" with hint, not "0" that looks broken |
+
+##### Incidents `/incidents`
+
+| Check | Expected |
+|---|---|
+| Empty | "No incidents — system healthy" with link to /dashboard |
+| Severity colors | sev-0 red, sev-1 orange, sev-2 amber, sev-3 green |
+| SSE real-time | When deny + 50-fails-in-5-min auto-response fires, a new sev-1 row prepends |
+| Filter | Status filter (open / investigating / resolved / false_positive) updates URL query so links are shareable |
+
+##### Approval Inbox `/approval-inbox`
+
+| Check | Expected |
+|---|---|
+| Empty | "No pending approvals — when an agent triggers ESCALATE it appears here" with **Trigger sample ESCALATE** button (uses playgroundService.execute against a deterministic high-risk wire-transfer payload that emits ESCALATE) |
+| After triggering | New row appears within ~2s with matched pattern, prompt excerpt, employee email, Approve / Reject buttons |
+| Approve | Confirm dialog → row moves to "Resolved" — the SDK call that was blocked auto-replays |
+| Reject | Confirm dialog with reason field → row moves to "Resolved (rejected)" with your reason captured in the audit row |
+
+##### Kill Switch `/kill-switch`
+
+| Check | Expected |
+|---|---|
+| Idle | "Kill switch idle — last engaged: never" hint |
+| Engage button | Click → **ConfirmDialog danger variant** opens with reason field. Cancel keeps state. Confirm engages |
+| Engaged | UI flips: "ENGAGED" big red banner, history list shows your engagement row with actor + reason + timestamp |
+| Verify | In another terminal, `curl -X POST /execute …` → 403 "Tenant blocked due to security violation" within 5s |
+| Release | Click "Release" → ConfirmDialog default variant → confirm → returns to idle |
+
+##### Auto-Response `/auto-response` and Playbooks `/playbooks`
+
+| Check | Expected |
+|---|---|
+| Empty rules | EmptyState with link to Playbooks |
+| Add rule | Form for "if N fails in M minutes → quarantine + notify Slack" |
+| Playbook editor | Rego-style editor with templates: quarantine, throttle, page-oncall, page-CISO |
+
+##### Policies `/policies` (Policy Builder, Sim, Playground, Analytics, ShadowMode, ShadowModeReview, AutonomyContracts)
+
+| Check | Expected |
+|---|---|
+| Policies hub | Tab nav: Editor / Simulator / Playground / Analytics / Staging |
+| Builder empty | "Start with a template" buttons: high-risk-deny, destructive-shell, anomaly-monitor, inference-throttle. Plus "Build from scratch" and "Test in Playground" |
+| Builder split-pane | At 1920 it's `lg:grid-cols-3` (rules / preview / output). At 1366 it stacks vertically (split-pane collapse) |
+| Analytics empty | "No policy hits yet — generate sample traffic via /agents/playground" with CTA |
+| Analytics live | When you fire `/execute`, the analytics counters increment + live-pulse dot in header |
+| Shadow Mode toggle | When OFF, page reads "Shadow mode off — toggle ON to see what would have been blocked" with toggle ON CTA |
+| ShadowModeReview | List of "would have blocked" decisions; live counter increments on `would_have_blocked` SSE events |
+
+#### 4d.5 Walk 5 — Prove module (5 min)
+
+##### Compliance `/compliance`
+
+| Check | Expected |
+|---|---|
+| Framework picker | SOC2 / EU-AI-Act / NIST-AI-RMF / DPDP |
+| Per-control rows | Each shows row count of evidence collected today (may be 0 for fresh workspace) |
+| Empty controls | "No evidence loaded — click Refresh after agent activity OR export an empty-period attestation" |
+| Export | Click → calls `POST /compliance/export`; PDF or JSON download. May take 5-10s for large windows |
+
+##### Audit Logs `/audit-logs`
+
+| Check | Expected |
+|---|---|
+| Empty | "No audit rows — run any agent action via /playground" + sample-trigger button |
+| Loaded | Rich table with 8+ columns; horizontal scroll on narrow screens (min-w-900px inside max-w-full overflow-x-auto), table never overflows the page |
+| Tail-follow SSE | When you fire `/execute`, new rows prepend without refresh |
+| Drill into receipt | Click a row → modal with ed25519 signature, prev_hash, chain_sequence, canonical envelope (offline-verifiable) |
+
+##### FlightRecorder `/flight-recorder` and Forensics `/forensics`
+
+| Check | Expected |
+|---|---|
+| Empty timelines | "Timeline empty — start a session to record" with CTA to /playground |
+| Loaded | Per-call execution timeline with step-by-step playback |
+| Replay pane | "Select a timeline to replay" copy when nothing selected; full replay when you click a timeline |
+| Forensics empty | EmptyState with Fingerprint icon, CTAs to /incidents (primary) and /audit-logs (secondary) |
+
+##### Evaluation `/evaluation`
+
+| Check | Expected |
+|---|---|
+| Jobs empty | "Run nightly corpus" / "Seed OWASP corpus first" CTAs depending on datasets state |
+| Click "Run nightly corpus" | Job enters queue, status moves running → done with row count + pass/fail summary |
+
+#### 4d.6 Walk 6 — Workspace module (5 min)
+
+| Page | Check | Expected |
+|---|---|---|
+| `/settings` | Tab router | 7 tabs across top (or left rail on wide screens); on 1366 narrow, switches to `overflow-x-auto` so all tabs stay reachable |
+| `/sso` | SSO not configured | "SSO not configured — use email/Clerk for now or upload SAML metadata" with form anchored to relevant input |
+| `/users` | Empty | "No users — first user is created via /signup or SCIM auto-provisions on next login" |
+| `/rbac` | Loaded | 18×6 matrix (capabilities × roles); legend below |
+| `/quota` | Loaded | RPS + burst + daily + monthly numbers; free-tier CTA to /billing if `plan in ('free','community')` |
+| `/billing` | Empty usage | "No usage yet — current period $0.00 — try sample traffic" + CTA to api-keys |
+| `/siem` | Not connected | Tile picker: Splunk HEC / Datadog Logs / Elastic ECS / Sentinel / Chronicle. Each tile has anchor link into its input row |
+| `/webhook-settings` | Empty | "No webhooks — add one to forward events" with Add button |
+| `/scheduled-reports` | Empty | EmptyState pointing at compliance export flow |
+| `/developer` | No API keys | Full empty-state card (dashed border, icon, "Create API key" primary CTA) — opens inline create form |
+| `/admin` | OWNER only | If not ROOT, returns 403 / EmptyState "No admin permissions". If ROOT, shows cross-tenant ops |
+
+#### 4d.7 Walk 7 — Advanced analyst surfaces (5 min — paid-tier mostly)
+
+| Page | Demo workspace expectation |
+|---|---|
+| `/threat-graph` | "Graph empty — generated from incident clusters. Trigger sample via /agents/playground" with CTAs. ReactFlow canvas sized to container at both viewports |
+| `/threat-intel` | "No IOCs ingested — connect a feed via /settings/integrations" |
+| `/decision-explorer` | EmptyState with CTAs to Playground / Live Demo / Flight Recorder. Live tick badge on policy_decision SSE events |
+| `/session-explorer` | EmptyState with Users icon + CTAs to /onboarding + /playground |
+| `/replay` | Skeleton stage cards during load → empty state "No timelines to replay — open from /flight-recorder" |
+| `/identity-graph` | Empty graph EmptyState with CTAs to /agents and /onboarding. Force-directed graph re-layouts on container resize |
+| `/fleet` | Empty fleet EmptyState + skeleton KPI grid + chart skeleton while loading |
+| `/agents/playground` | When no agents registered, shows amber CTA card (not red error) pointing at /onboarding |
+
+#### 4d.8 Walk 8 — Responsive sweep (3 min, must pass)
+
+Open DevTools → Toggle device toolbar. Set viewport to **1366×768**. Walk every page in the sidebar once. **No page should:**
+
+- Overflow horizontally (no horizontal scrollbar at the body level — table-level horizontal scroll is fine)
+- Show a tab bar that is half-cut off (Settings, Policies, Forensics)
+- Show a force-directed graph that is taller than the viewport
+- Show a modal that is wider than the viewport
+
+Then set viewport to **1920×1080**. Walk again. Same checks. KPI rows should expand from `grid-cols-3` (lg) to `grid-cols-6` (xl) on Dashboard.
+
+#### 4d.9 Walk 9 — Failure-injection (5 min)
+
+Verify the UI tells the truth when things go wrong.
+
+| Inject | Where | Expected |
+|---|---|---|
+| Disconnect Wi-Fi for 5s | LiveFeed | Connection badge flips amber "Connecting" → red "Disconnected — network error". Reconnect on Wi-Fi return |
+| Expire your JWT (wait 30 min) | Any authenticated page | Sees 401 → re-routes to /login with a toast "Session expired — please sign in" |
+| Click Kill Switch then /agents | /agents | All actions show 403; "Workspace halted" banner at top |
+| Run 100 deny `/execute` calls in 30s | Notifications | Should not flood — debounced; shows aggregated count not 100 individual toasts |
+
+### 4e. UI component reference card — what each surface is for
+
+A pocket card you can hand to a new tester or analyst. **48 user-facing pages, grouped by why-you-go-there.**
+
+##### Decide-now surfaces (operational)
+- **Dashboard** — "Is anything on fire right now?" 6 mandate KPIs + live tick.
+- **Live Feed** — "Show me every decision as it happens." SSE stream of all 15 event types.
+- **Approval Inbox** — "What needs my CFO/CISO eyes right now?" Pending ESCALATE actions.
+- **Kill Switch** — "Halt everything in this workspace." OWNER/ADMIN only.
+- **Incidents** — "What's the active SOC queue?" Severity-sorted incidents.
+
+##### Investigate surfaces (after something happens)
+- **Audit Logs** — Filterable chain of every decision.
+- **Forensics** — Decision-replay timelines per request_id.
+- **Flight Recorder** — Step-by-step playback of a multi-tool call.
+- **Decision Explorer** — Tree of one decision's signals + rules.
+- **Session Explorer** — Aggregate of one user's session.
+- **Threat Graph** — Incident kill-chain across multiple events.
+- **Identity Graph** — Runtime agent↔tool↔system relationships + blast radius.
+- **Threat Intel** — Operator IOC feed (paid).
+- **Replay** — Step-by-step replay of a recorded timeline.
+
+##### Configure surfaces (admin)
+- **Policies** — Rego registry: Editor, Simulator, Playground, Staging, Analytics.
+- **Playbooks** — Auto-response rules (50-fails-in-5-min → quarantine).
+- **Auto-Response** — Auto-response rule editor (lighter weight than Playbooks).
+- **Settings** — Hub: SSO, Users, RBAC, Quota, Billing, SIEM, Slack, Webhooks, Scheduled reports.
+- **SSO** — Wire your IdP.
+- **User Management** — Invite + role-assign + revoke.
+- **RBAC** — 18-capability matrix view (read-only; source-of-truth in code).
+- **Quota Management** — RPS / daily / monthly caps per tenant + per agent.
+- **Billing** — Plan tier + invoices.
+- **SIEM** — Forward decisions to your SIEM.
+- **Webhook Settings** — Slack, PagerDuty, generic egress.
+- **Scheduled Reports** — Cron'd evidence exports.
+- **Developer Panel** — API keys, SDK examples, OpenAPI link.
+- **Admin Console** — ROOT-only cross-tenant ops.
+
+##### Prove surfaces (compliance + auditor)
+- **Compliance** — Framework-mapped evidence pack export.
+- **Trust Center** — Public marketing trust page (no auth).
+- **Security** — Public responsible-disclosure page (no auth).
+- **Status** — Public ops status page (no auth).
+
+##### Govern surfaces (policy authoring)
+- **Policy Builder** — Visual editor for common patterns + Rego escape hatch.
+- **Policy Simulator** — Replay last 1k decisions against a draft policy.
+- **Policy Playground** — Fire test prompts at a policy without billing them.
+- **Shadow Mode** — Run policies in observe-only mode.
+- **Shadow Mode Review** — "Would have blocked" list.
+- **Autonomy Contracts** — Agent autonomy boundaries (signed by owner).
+- **Policy Analytics** — Which policies fire how often.
+
+##### Roster + identity surfaces
+- **Team** — Employee roster + budgets + harmful-action counts.
+- **Team Settings** — Tenant-wide defaults (default invite role, default caps).
+- **Employee Profile** — Per-employee drill.
+
+##### Agent management
+- **Agents** — Agent fleet list.
+- **Agent Profile** — Per-agent overview.
+- **Agent Snapshot** — Per-agent tabs (Overview/Tools/Decisions/Blast Radius).
+- **Agent Topology** — Visual canvas of agents and their tools.
+- **Agent Health** — Per-agent up/quarantined indicator.
+- **Agent Cost** — Per-agent USD spend chart.
+- **Agent Playground** — Fire a tool call without billing it.
+- **Fleet** — Aggregate fleet view (50+ agents as a graph).
+
+##### Onboarding + observability
+- **Onboarding Wizard** — 5-step first-time flow.
+- **Notifications** — Inbox of every routed notification.
+- **System Health** — Per-microservice health + per-queue depths.
+- **Evaluation** — Run the 1000-scenario corpus.
+
+### 4f. How to file feedback (template + where it goes)
+
+When you find a bug or a rough edge, capture it in this template and post to the founder. Use **one issue per finding** — easier to triage.
+
+```
+TITLE: <one-line summary, e.g. "Dashboard: 'No risk tiers yet' card overlaps KPI row at 1366×768">
+
+SEVERITY: 1 / 2 / 3
+  1 = white screen, console error, broken auth, data loss risk
+  2 = wrong copy, missing CTA, visible layout bug, SSE not ticking
+  3 = polish nit, wording, icon alignment, color contrast
+
+URL: https://aegisagent.in/<path>
+VIEWPORT: 1366×768  |  1920×1080  |  other (specify)
+BROWSER: Chrome 120 / Edge 120 / Safari 17 / etc.
+SIGNED-IN AS: <your-email>  OR  anonymous demo workspace
+TIMESTAMP: 2026-06-23 14:32 IST (so we can grep the audit log)
+
+REPRO STEPS:
+1. …
+2. …
+3. …
+
+EXPECTED:
+<one sentence>
+
+ACTUAL:
+<one sentence>
+
+CONSOLE OUTPUT (paste any red lines):
+<…>
+
+SCREENSHOT: <link or attachment>
+```
+
+**Where to send:**
+- Best: open a GitHub issue at `https://github.com/Abhi-mishra998/aegis/issues/new` (label: `ui-feedback`, the founder gets a notification within minutes).
+- Fastest: email the founder directly with the template above pasted in.
+- Bulk feedback (10+ findings): paste the lot into a Google Doc and share the link.
+
+**SLA the founder commits to:**
+- Acknowledge within **4 working hours** during business days.
+- Severity 1 fix or workaround within **1 business day**.
+- Severity 2 batched into the next deploy (typically same week).
+- Severity 3 tracked in backlog with public visibility.
 
 ---
 
