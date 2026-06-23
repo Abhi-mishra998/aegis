@@ -41,7 +41,7 @@ const aegisAppearance = {
 
 export default function Signup() {
   return (
-    <div className="min-h-screen bg-[#030303] flex flex-col items-center justify-center px-4 py-10 relative overflow-hidden">
+    <div className="min-h-screen bg-[#030303] flex flex-col items-center justify-center px-4 py-8 sm:py-10 relative overflow-hidden">
       <div
         className="absolute inset-0 grid-baseline opacity-[0.06] pointer-events-none"
         aria-hidden="true"
@@ -50,6 +50,14 @@ export default function Signup() {
         className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
         aria-hidden="true"
       />
+
+      <Link
+        to="/"
+        className="absolute top-4 left-4 sm:top-6 sm:left-6 z-20 inline-flex items-center gap-1.5 text-[11px] text-neutral-500 hover:text-neutral-200 transition-colors"
+      >
+        <span aria-hidden="true">←</span>
+        <span>Home</span>
+      </Link>
 
       <div className="w-full max-w-sm relative z-10 animate-scale-in">
         <div className="flex flex-col items-center gap-4 mb-6">

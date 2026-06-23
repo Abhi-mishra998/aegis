@@ -8,11 +8,13 @@
 // from URL deep-links (the Agent Health table sends operators here).
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import {
   ResponsiveContainer, RadialBarChart, RadialBar, PolarAngleAxis, Tooltip,
 } from 'recharts'
+import { Plus, DollarSign } from 'lucide-react'
 import { fleetService } from '../services/api'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 function unwrap(r) { return r?.data ?? r }
 
@@ -171,14 +173,40 @@ export default function AgentCost() {
         </div>
       )}
 
+      {loading && !data && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 md:p-6">
+          <SkeletonLoader variant="card" count={1} />
+          <SkeletonLoader variant="card" count={1} />
+        </div>
+      )}
+
+      {!loading && !data && !error && (
+        <div className="mx-6 my-6 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center space-y-3">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+            <DollarSign size={22} className="text-neutral-500" aria-hidden="true" />
+          </div>
+          <p className="text-sm font-semibold text-neutral-200">No burn-down data yet</p>
+          <p className="text-xs text-neutral-500 max-w-md mx-auto">
+            Inference cost counters fill in as agents call the gateway. No agents registered?
+            Register your first one via the Onboarding Wizard.
+          </p>
+          <Link
+            to="/onboarding"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-colors"
+          >
+            <Plus size={13} aria-hidden="true" /> Register your first agent
+          </Link>
+        </div>
+      )}
+
       {data && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
-            <ScopePanel title="Workspace" scope={data.tenant} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 md:p-6">
+            <ScopePanel title="Tenant" scope={data.tenant} />
             <ScopePanel title="Agent"  scope={data.agent} />
           </div>
           <div className="px-6 pb-6">
-            <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 text-xs text-neutral-400 flex justify-between">
+            <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 text-xs text-neutral-400 flex flex-col sm:flex-row sm:justify-between gap-1">
               <span>Period: {data.period || '—'}</span>
               <span>Resets at: {data.resets_at || '—'}</span>
             </div>

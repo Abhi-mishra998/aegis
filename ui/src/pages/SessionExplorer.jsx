@@ -9,10 +9,13 @@
 //   GET /flight/sessions             — list (tenant-scoped, last N minutes)
 //   GET /flight/sessions/{id}         — drill-down
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts'
+import { Users } from 'lucide-react'
 import { flightService } from '../services/api'
+import { eventBus } from '../lib/eventBus'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 // Recharts wants an array of { x, y } objects.
 function trajectoryData(risks = []) {
@@ -143,6 +146,7 @@ export default function SessionExplorer() {
   const [minutes, setMinutes] = useState(1440)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [liveTick, setLiveTick] = useState(0)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -150,7 +154,7 @@ export default function SessionExplorer() {
     try {
       const resp = await flightService.listSessions({ minutes, limit: 100 })
       const payload = resp?.data ?? resp
-      setSessions(payload || [])
+      setSessions(Array.isArray(payload) ? payload : (payload?.items || []))
     } catch (e) {
       setError(e?.message || 'Failed to load sessions')
     } finally {
@@ -159,6 +163,25 @@ export default function SessionExplorer() {
   }, [minutes])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // SSE — tick on `agent_changed`. Lightly debounce by collapsing to a single
+  // refresh per 2s window so a chatty multi-agent session doesn't trigger
+  // an avalanche of /flight/sessions calls.
+  useEffect(() => {
+    let pending = null
+    const unsub = eventBus.on('agent_changed', () => {
+      setLiveTick((t) => t + 1)
+      if (pending) return
+      pending = setTimeout(() => {
+        pending = null
+        refresh()
+      }, 2000)
+    })
+    return () => {
+      if (pending) clearTimeout(pending)
+      unsub && unsub()
+    }
+  }, [refresh])
 
   const onSelect = async (sid) => {
     setActiveSessionId(sid)
@@ -173,16 +196,27 @@ export default function SessionExplorer() {
   const empty = !loading && sessions.length === 0
 
   return (
-    <div className="text-neutral-100">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
+    <div className="text-neutral-200">
+      <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-4 lg:px-6 py-4 border-b border-neutral-800">
         <div>
-          <h1 className="text-xl font-semibold">Session Explorer</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold text-white">Session Explorer</h1>
+            {liveTick > 0 && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                title={`${liveTick} agent_changed event${liveTick === 1 ? '' : 's'}`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                live · {liveTick}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-neutral-400 mt-1">
             Conversations grouped by <code>X-Session-ID</code>. Watch the risk
             trajectory rise across multi-turn agent loops.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <select
             value={minutes}
             onChange={(e) => setMinutes(Number(e.target.value))}
@@ -195,42 +229,59 @@ export default function SessionExplorer() {
           </select>
           <button
             onClick={refresh}
-            className="px-3 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-md text-sm"
+            disabled={loading}
+            className="px-3 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-md text-sm disabled:opacity-50"
           >
-            Refresh
+            {loading ? 'Loading…' : 'Refresh'}
           </button>
         </div>
       </header>
 
       {error && (
-        <div className="mx-6 my-3 text-sm bg-rose-950 border border-rose-700 text-rose-100 px-3 py-2 rounded">
+        <div className="mx-4 lg:mx-6 my-3 text-sm bg-rose-950 border border-rose-700 text-rose-100 px-3 py-2 rounded">
           {error}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[70vh]">
-        <div className="border-r border-neutral-800">
+        <div className="border-b lg:border-b-0 lg:border-r border-neutral-800">
           <div className="grid grid-cols-12 px-3 py-2 text-[10px] uppercase text-neutral-500 tracking-wide bg-neutral-950">
             <span className="col-span-3">Session</span>
             <span className="col-span-2">Activity</span>
             <span className="col-span-2">Max risk</span>
             <span className="col-span-5">Trajectory</span>
           </div>
+          {loading && sessions.length === 0 && (
+            <div className="p-3">
+              <SkeletonLoader variant="row" count={4} />
+            </div>
+          )}
           {empty && (
-            <div className="p-6 text-sm text-neutral-400 space-y-3">
-              <div>
-                No sessions in the selected window. Sessions appear once a
-                client emits an <code>X-Session-ID</code> header on{' '}
-                <code>/execute</code>.
+            <div className="p-8 text-center space-y-4">
+              <div className="w-12 h-12 mx-auto rounded-full bg-white/[0.04] flex items-center justify-center">
+                <Users size={20} className="text-neutral-500" aria-hidden="true" />
               </div>
-              <div className="text-xs text-neutral-500">
-                Want to see this populate live?{' '}
-                <a href="/onboarding" className="text-indigo-400 hover:text-indigo-300 underline">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-white">No sessions yet</h3>
+                <p className="text-xs text-neutral-400 max-w-sm mx-auto">
+                  Start a multi-agent session. Sessions appear once a client
+                  emits an <code className="font-mono">X-Session-ID</code> header on{' '}
+                  <code className="font-mono">/execute</code>.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <a
+                  href="/onboarding"
+                  className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
                   Open onboarding
-                </a>{' '}
-                — the guided flow walks you through registering an agent and
-                firing a session-tagged <code>/execute</code> call you'll see
-                land here within seconds.
+                </a>
+                <a
+                  href="/agents/playground"
+                  className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900"
+                >
+                  Playground
+                </a>
               </div>
             </div>
           )}

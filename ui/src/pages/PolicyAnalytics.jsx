@@ -1,14 +1,17 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import {
   GitMerge, BarChart2, TrendingUp, AlertTriangle,
   CheckCircle2, XCircle, RefreshCw, Clock, Zap,
-  ArrowRight, Info, Wrench,
+  ArrowRight, Info, Wrench, Activity, PlayCircle,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ComposedChart, Line, LineChart, AreaChart, Area, ReferenceLine,
 } from 'recharts'
 import { policyService, auditService } from '../services/api'
+import { useSSE } from '../hooks/useSSE'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 const RISK_COLOR = { low: '#22c55e', medium: '#f59e0b', high: '#ef4444', critical: '#7c3aed' }
 
@@ -316,6 +319,8 @@ export default function PolicyAnalytics() {
   const [loading, setLoading]         = useState(true)
   const [refreshing, setRefreshing]   = useState(false)
   const [lastRefresh, setLastRefresh] = useState(null)
+  const [liveTick, setLiveTick]       = useState(0)
+  const liveTimerRef = useRef(null)
 
   const load = useCallback(async () => {
     setRefreshing(true)
@@ -407,10 +412,47 @@ export default function PolicyAnalytics() {
     return () => clearInterval(id)
   }, [load])
 
+  // SSE — tick on every policy_decision so the analytics page reflects
+  // live activity. Coalesce within a 2s window so a flurry of decisions
+  // doesn't hammer the audit endpoints.
+  useSSE({
+    enabled: true,
+    onMessage: (evt) => {
+      const type = evt?.type
+      if (type !== 'policy_decision' && type !== 'tool_executed' && type !== 'tool_execution') {
+        return
+      }
+      setLiveTick((t) => t + 1)
+      if (liveTimerRef.current) return
+      liveTimerRef.current = setTimeout(() => {
+        liveTimerRef.current = null
+        load()
+      }, 2_000)
+    },
+  })
+
+  useEffect(() => () => {
+    if (liveTimerRef.current) clearTimeout(liveTimerRef.current)
+  }, [])
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-neutral-500" size={24} />
+      <div className="max-w-6xl mx-auto space-y-6">
+        <header>
+          <h1 className="text-2xl font-semibold text-white mb-1">Policy Analytics</h1>
+          <p className="text-sm text-neutral-400">Loading policy decisions…</p>
+        </header>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" aria-label="Loading KPIs">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="p-5 bg-white/[0.02] border border-white/[0.04] rounded-xl space-y-3 animate-pulse">
+              <div className="h-2 bg-white/[0.06] rounded w-1/2" />
+              <div className="h-6 bg-white/[0.08] rounded w-1/3" />
+              <div className="h-2 bg-white/[0.04] rounded w-2/3" />
+            </div>
+          ))}
+        </div>
+        <SkeletonLoader variant="card" />
+        <SkeletonLoader variant="row" count={5} />
       </div>
     )
   }
@@ -420,12 +462,21 @@ export default function PolicyAnalytics() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <header className="flex items-center justify-between">
+      <header className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-white mb-1">Policy Analytics</h1>
+          <h1 className="text-2xl font-semibold text-white mb-1 flex items-center gap-3">
+            Policy Analytics
+            <span
+              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-neutral-500"
+              title={`${liveTick} live event${liveTick === 1 ? '' : 's'} since mount`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${liveTick > 0 ? 'bg-green-400 animate-pulse' : 'bg-neutral-700'}`} />
+              live
+            </span>
+          </h1>
           <p className="text-sm text-neutral-400">Hit rates, false positive rates, and coverage gaps across all policies.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {lastRefresh && (
             <span className="text-xs text-neutral-600 flex items-center gap-1">
               <Clock size={11} /> {lastRefresh.toLocaleTimeString()}
@@ -435,11 +486,42 @@ export default function PolicyAnalytics() {
             <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
             Refresh
           </button>
-          <a href="/policy-builder" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200">
+          <Link to="/policies?tab=editor" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200">
             Edit Policies <ArrowRight size={12} />
-          </a>
+          </Link>
         </div>
       </header>
+
+      {/* Empty-state CTA — no policy hits in current window */}
+      {(kpis?.total ?? 0) === 0 && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <Activity size={18} className="text-amber-300 shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-white">No policy hits yet</h2>
+              <p className="text-xs text-neutral-400 mt-1">
+                Generate sample traffic via the Agent Playground to populate hit-rate and FP analytics, or compose a new rule first.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              to="/playground"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-100 text-xs font-medium hover:bg-amber-500/30 transition-colors"
+            >
+              <PlayCircle size={12} aria-hidden="true" />
+              Open Agent Playground
+            </Link>
+            <Link
+              to="/policies?tab=editor"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-neutral-300 text-xs hover:bg-white/[0.04] transition-colors"
+            >
+              <GitMerge size={12} aria-hidden="true" />
+              Build a policy
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -503,8 +585,15 @@ export default function PolicyAnalytics() {
           <span className="text-xs text-neutral-500">{policies.length} policies</span>
         </div>
         {policies.length === 0 ? (
-          <div className="px-5 py-8 text-center text-xs text-neutral-600">
-            No policy data. Run some traffic to see analytics.
+          <div className="px-5 py-8 text-center text-xs text-neutral-500 space-y-2">
+            <p>No policy data in the current window.</p>
+            <Link
+              to="/playground"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-neutral-300 hover:bg-white/[0.04] transition-colors"
+            >
+              <PlayCircle size={11} aria-hidden="true" />
+              Generate sample traffic
+            </Link>
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -71,7 +71,11 @@ export default function Policies() {
         <p className="text-xs text-neutral-400">{activeHint}</p>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto pb-1 border-b border-white/[0.06]" role="tablist">
+      <div
+        className="flex gap-1 overflow-x-auto pb-1 border-b border-white/[0.06] -mx-1 px-1 scrollbar-thin"
+        role="tablist"
+        aria-label="Policy tabs"
+      >
         {TABS.map(({ id, label, icon: Icon }) => {
           const isActive = id === activeTab;
           return (
@@ -82,7 +86,7 @@ export default function Policies() {
               aria-selected={isActive}
               onClick={() => handleTabClick(id)}
               className={
-                'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap ' +
+                'flex items-center gap-1.5 px-3 h-9 rounded-t-md text-xs font-medium transition-all whitespace-nowrap shrink-0 ' +
                 (isActive
                   ? 'bg-white/[0.08] text-white border border-white/[0.1] border-b-transparent -mb-px'
                   : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]')
@@ -98,7 +102,11 @@ export default function Policies() {
       <TabErrorBoundary tabId={activeTab}>
         <Suspense
           fallback={
-            <div className="text-xs text-neutral-500 py-8 text-center">Loading {activeTab}…</div>
+            <div className="space-y-3 py-2" role="status" aria-label={`Loading ${activeTab}`}>
+              <div className="h-3 bg-white/[0.06] rounded w-1/3 animate-pulse" />
+              <div className="h-32 bg-white/[0.03] border border-white/[0.04] rounded-xl animate-pulse" />
+              <div className="h-32 bg-white/[0.03] border border-white/[0.04] rounded-xl animate-pulse" />
+            </div>
           }
         >
           <ActiveComponent />

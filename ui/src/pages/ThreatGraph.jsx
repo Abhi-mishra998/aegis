@@ -13,6 +13,7 @@ import { iagService } from '../services/api';
 import { AgentContext } from '../context/AgentContext';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
+import SkeletonLoader from '../components/Common/SkeletonLoader';
 import MitreCoverageGrid from '../components/security/MitreCoverageGrid';
 
 /**
@@ -137,16 +138,21 @@ function buildFlowGraph(iag) {
 function GraphPanel({ iag, loading, error, onReload }) {
   const { nodes, edges } = useMemo(() => buildFlowGraph(iag), [iag]);
 
+  // h-[60vh] with min/max so the force-directed canvas always sizes to the
+  // container. Avoids the "graph collapses to 0px" trap on narrow viewports
+  // and the "graph overflows below the fold" issue on 4K.
+  const panelClass = 'h-[60vh] min-h-[420px] max-h-[680px] w-full';
+
   if (loading) {
     return (
-      <div className="h-[520px] flex items-center justify-center text-xs text-neutral-500">
-        Loading IAG graph…
+      <div className={`${panelClass} flex items-center justify-center`}>
+        <SkeletonLoader variant="card" />
       </div>
     );
   }
   if (error) {
     return (
-      <div className="h-[520px] flex flex-col items-center justify-center gap-2 text-[11px] text-amber-300/80">
+      <div className={`${panelClass} flex flex-col items-center justify-center gap-2 text-[11px] text-amber-300/80`}>
         <AlertOctagon size={20} aria-hidden="true" />
         <span className="max-w-md text-center">{error}</span>
         <Button size="sm" variant="ghost" onClick={onReload}>
@@ -157,22 +163,61 @@ function GraphPanel({ iag, loading, error, onReload }) {
   }
   if (!iag) {
     return (
-      <div className="h-[520px] flex flex-col items-center justify-center gap-2 text-xs text-neutral-500">
-        <Target size={20} aria-hidden="true" />
-        <span>Select an agent from the topbar to load its IAG graph.</span>
+      <div className={`${panelClass} rounded-xl border border-white/[0.06] bg-neutral-950 flex flex-col items-center justify-center gap-4 p-6 text-center`}>
+        <div className="w-12 h-12 rounded-full bg-white/[0.04] flex items-center justify-center">
+          <Target size={20} className="text-neutral-500" aria-hidden="true" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold text-white">Graph empty</h3>
+          <p className="text-xs text-neutral-400 max-w-sm">
+            Generated from incident clusters. Trigger sample via{' '}
+            <a href="/agents/playground" className="text-emerald-400 hover:underline">
+              /agents/playground
+            </a>{' '}
+            or pick an agent from the topbar to load its IAG.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-center">
+          <a
+            href="/agents/playground"
+            className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-500 text-white"
+          >
+            Open Playground
+          </a>
+          <a
+            href="/incidents"
+            className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900"
+          >
+            Incidents
+          </a>
+        </div>
       </div>
     );
   }
   if (nodes.length <= 1) {
     return (
-      <div className="h-[520px] flex flex-col items-center justify-center gap-2 text-xs text-neutral-500">
-        <Network size={20} aria-hidden="true" />
-        <span>No accessible resources recorded for this agent yet — run some traffic.</span>
+      <div className={`${panelClass} rounded-xl border border-white/[0.06] bg-neutral-950 flex flex-col items-center justify-center gap-3 p-6 text-center`}>
+        <div className="w-12 h-12 rounded-full bg-white/[0.04] flex items-center justify-center">
+          <Network size={20} className="text-neutral-500" aria-hidden="true" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold text-white">No accessible resources yet</h3>
+          <p className="text-xs text-neutral-400 max-w-sm">
+            No traffic recorded for this agent. Trigger a sample tool call via{' '}
+            <a href="/agents/playground" className="text-emerald-400 hover:underline">
+              /agents/playground
+            </a>{' '}
+            and refresh.
+          </p>
+        </div>
+        <Button size="sm" variant="ghost" onClick={onReload}>
+          <RefreshCw size={12} aria-hidden="true" /> Refresh
+        </Button>
       </div>
     );
   }
   return (
-    <div className="h-[520px] border border-white/[0.06] rounded-xl overflow-hidden">
+    <div className={`${panelClass} border border-white/[0.06] rounded-xl overflow-hidden`}>
       <ReactFlow nodes={nodes} edges={edges} fitView panOnScroll>
         <Background gap={20} size={0.7} color="rgba(255,255,255,0.04)" />
         <MiniMap pannable zoomable className="!bg-black/40" maskColor="rgba(0,0,0,0.6)" />
@@ -241,7 +286,7 @@ export default function ThreatGraph() {
               }
               setRefreshTick((t) => t + 1);
             }}
-            title="Re-ingest the workspace's tool surface from the audit log"
+            title="Re-ingest the tenant's tool surface from the audit log"
           >
             <RefreshCw size={12} aria-hidden="true" />
             Re-ingest

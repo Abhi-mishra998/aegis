@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useContext, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
   RefreshCw, Filter, ChevronRight, Zap, User,
@@ -14,6 +14,7 @@ import DataTable from '../components/Common/DataTable';
 import ErrorBoundary from '../components/Common/ErrorBoundary';
 import { incidentService, socService } from '../services/api';
 import { AgentContext } from '../context/AgentContext';
+import { useSSE } from '../hooks/useSSE';
 // Sprint 5 — orphan-endpoint surfacing inside the incident detail modal.
 import BlastRadiusCard from '../components/incidents/BlastRadiusCard';
 import RemediationPanel from '../components/incidents/RemediationPanel';
@@ -28,31 +29,16 @@ async function _exportIncidentPdf(incidentId, incidentNumber) {
   a.click()
   URL.revokeObjectURL(url)
 }
-
-// Sprint EI-19 — per-incident AEVF bundle download. The auditor opens
-// the JSON offline with `aegis-verify` and gets a cryptographically-
-// signed proof of every audit event tied to this incident, no Aegis
-// service needed.
-async function _exportIncidentAevf(incidentId, incidentNumber) {
-  const blob = await incidentService.exportAevfBundle(incidentId)
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `aegis-incident-${incidentNumber || incidentId.slice(0, 8)}.aevf.json`
-  a.click()
-  URL.revokeObjectURL(url)
-}
 import { AuthContext } from '../context/AuthContext';
 import { eventBus } from '../lib/eventBus';
 
 // ── Severity helpers ──────────────────────────────────────────────────────────
 
 const SEV_CONFIG = {
-  CRITICAL: { cls: 'text-red-300 bg-red-500/15 border-red-500/40',         dot: 'bg-red-500',     label: 'Critical' },
-  HIGH:     { cls: 'text-orange-300 bg-orange-500/15 border-orange-500/40', dot: 'bg-orange-500',  label: 'High' },
-  MEDIUM:   { cls: 'text-amber-300 bg-amber-500/15 border-amber-500/40',    dot: 'bg-amber-500',   label: 'Medium' },
-  LOW:      { cls: 'text-green-300 bg-green-500/15 border-green-500/40',    dot: 'bg-green-500',   label: 'Low' },
-  INFO:     { cls: 'text-blue-300 bg-blue-500/15 border-blue-500/40',       dot: 'bg-blue-500',    label: 'Info' },
+  CRITICAL: { cls: 'text-red-400 bg-red-500/10 border-red-500/30',   dot: 'bg-red-500',    label: 'Critical' },
+  HIGH:     { cls: 'text-orange-400 bg-orange-500/10 border-orange-500/30', dot: 'bg-orange-500', label: 'High' },
+  MEDIUM:   { cls: 'text-amber-400 bg-amber-500/10 border-amber-500/30',  dot: 'bg-amber-500',  label: 'Medium' },
+  LOW:      { cls: 'text-green-400 bg-green-500/10 border-green-500/30',   dot: 'bg-green-500',  label: 'Low' },
 };
 
 const STATUS_CONFIG = {
@@ -218,28 +204,6 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
             >
               <Download size={11} aria-hidden="true" />
               {exporting ? 'Generating…' : 'Export PDF'}
-            </button>
-            {/* Sprint EI-19 — per-incident AEVF bundle (cryptographically
-                verifiable evidence trail for THIS incident; auditor
-                opens offline with `aegis-verify`). */}
-            <button
-              onClick={async () => {
-                setExporting(true)
-                try {
-                  await _exportIncidentAevf(incident.id, incident.incident_number)
-                  addToast('AEVF bundle downloaded — attach to your ITSM ticket for the audit trail', 'success')
-                } catch (err) {
-                  addToast(err.message || 'AEVF export failed', 'error')
-                } finally {
-                  setExporting(false)
-                }
-              }}
-              disabled={exporting}
-              title="Cryptographically-signed evidence bundle (AEVF). Auditor verifies offline with `aegis-verify`."
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-neutral-400 bg-white/[0.02] border border-[var(--border-subtle)] rounded-lg hover:text-white hover:border-white/[0.12] disabled:opacity-40 transition-colors"
-            >
-              <Download size={11} aria-hidden="true" />
-              AEVF bundle
             </button>
           </div>
         </div>
@@ -461,7 +425,7 @@ function SocFeed() {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-const SEVERITY_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+const SEVERITY_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const STATUS_OPTIONS   = ['', 'OPEN', 'INVESTIGATING', 'ESCALATED', 'MITIGATED', 'RESOLVED'];
 
 function _relTime(iso) {
@@ -482,11 +446,14 @@ function IncidentsPage() {
   const [activeTab, setActiveTab] = useState('incidents');
 
   const [validTransitions, setValidTransitions] = useState(VALID_TRANSITIONS_FALLBACK);
-  const [summary,  setSummary]  = useState(null);
-  const [items,    setItems]    = useState([]);
-  const [total,    setTotal]    = useState(0);
-  const [loading,  setLoading]  = useState(true);
-  const [selected, setSelected] = useState(null);
+  const [summary,    setSummary]    = useState(null);
+  const [items,      setItems]      = useState([]);
+  const [total,      setTotal]      = useState(0);
+  const [loading,    setLoading]    = useState(true);
+  // Track whether the first load has resolved so we never render
+  // "0 incidents" before the API has actually responded.
+  const [hasLoaded,  setHasLoaded]  = useState(false);
+  const [selected,   setSelected]   = useState(null);
 
   const [filterStatus,   setFilterStatus]   = useState('');
   const [filterSeverity, setFilterSeverity] = useState('');
@@ -528,6 +495,7 @@ function IncidentsPage() {
       addToast('Failed to load incidents', 'error');
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
   }, [filterStatus, filterSeverity, page, selectedAgentId, addToast]);
 
@@ -574,6 +542,26 @@ function IncidentsPage() {
     const u2 = eventBus.on('policy_decision',  fetchAll);
     return () => { clearInterval(interval); u1(); u2(); };
   }, [fetchAll]);
+
+  // Direct SSE channel subscription for incident-relevant events so the
+  // page reacts even if AgentContext isn't translating that event type
+  // into the eventBus. Re-pulls the list on any incident/escalation
+  // touchpoint. Falls back silently if SSE is disconnected — polling
+  // above still covers the gap.
+  const sseChannels = useMemo(() => ({
+    incident_updated: () => fetchAll(),
+    approval_required: () => fetchAll(),
+    approval_resolved: () => fetchAll(),
+  }), [fetchAll]);
+  useSSE({
+    channels: sseChannels,
+    onMessage: (evt) => {
+      const t = String(evt?.type || '').toLowerCase();
+      if (t.includes('incident') || t.includes('escalate') || t.includes('approval')) {
+        fetchAll();
+      }
+    },
+  });
 
   const s = summary || {};
   const secScore  = Number(s.security_score ?? 100);
@@ -890,21 +878,55 @@ function IncidentsPage() {
 
       {/* Incident list — DataTable replaces the custom div list. The
           empty-state hint that used to live inline now sits below the table
-          when there are zero rows. */}
-      <DataTable
-        columns={columns}
-        data={items}
-        isLoading={loading}
-        onRowClick={(row) => setSelected(row)}
-        emptyMessage="No incidents in this window."
-      />
+          when there are zero rows. The full system-healthy CTA only renders
+          once the first load resolves so we never flash "0 incidents"
+          before the API responds. */}
+      {!hasLoaded ? (
+        <Card>
+          <div className="p-4">
+            <SkeletonLoader variant="row" count={5} />
+          </div>
+        </Card>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={items}
+          isLoading={loading}
+          onRowClick={(row) => setSelected(row)}
+          emptyMessage="No incidents in this window."
+        />
+      )}
 
-      {!loading && items.length === 0 && (
-        <p className="text-xs text-neutral-600 text-center max-w-md mx-auto -mt-3">
-          The Incidents grid lights up when the gateway denies, kills, or
-          escalates a tool call. Trigger one from the <a href="/live-demo" className="underline">Live Demo</a> page —
-          try the <code className="font-mono text-neutral-400">cat /etc/passwd</code> prompt — to populate this view.
-        </p>
+      {hasLoaded && !loading && items.length === 0 && (
+        <Card className="px-6 py-10">
+          <div className="flex flex-col items-center text-center max-w-md mx-auto gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+              <CheckCircle2 size={22} className="text-green-400" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-sm text-neutral-200 font-medium">No incidents — system healthy</p>
+              <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
+                The Incidents grid lights up when the gateway denies, kills, or
+                escalates a tool call. Trigger one from the Live Demo page (try
+                the <code className="font-mono text-neutral-400">cat /etc/passwd</code> prompt) to populate this view.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 justify-center mt-1">
+              <Link
+                to="/dashboard"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-200 bg-white/[0.04] border border-white/[0.08] hover:border-white/20 hover:text-white transition-colors"
+              >
+                <Activity size={12} aria-hidden="true" /> Back to Dashboard
+              </Link>
+              <Link
+                to="/live-demo"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-purple-300 bg-purple-500/[0.08] border border-purple-500/20 hover:border-purple-500/40 transition-colors"
+              >
+                <PlayCircle size={12} aria-hidden="true" /> Try Live Demo
+              </Link>
+            </div>
+          </div>
+        </Card>
       )}
 
       {/* Pagination */}

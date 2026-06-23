@@ -1,26 +1,30 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Users, Plus, RefreshCw, Loader2, Check, X,
   Shield, ChevronDown, Mail, UserCheck, UserX, Trash2,
-  AlertCircle,
+  UserPlus,
 } from 'lucide-react'
-import { z } from 'zod'
 import { userService } from '../services/api'
-import { useRole } from '../hooks/useRole'
-import useUnsavedChanges from '../hooks/useUnsavedChanges'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
-const ROLES = ['ADMIN', 'SECURITY', 'ANALYST', 'VIEWER']
-
-const inviteSchema = z.object({
-  email: z.string().trim().min(1, 'Email is required').email('Enter a valid email address'),
-  role: z.enum(ROLES, { message: 'Pick a role' }),
-})
+// Canonical role vocabulary — matches the platform's RBAC enum
+// (OWNER/ADMIN/SECURITY_ANALYST/AUDITOR/OPERATOR/AGENT).
+// VIEWER kept as a no-op fallback for legacy rows the backend hasn't
+// migrated yet.
+const ROLES = ['OWNER', 'ADMIN', 'SECURITY_ANALYST', 'AUDITOR', 'OPERATOR', 'AGENT']
 
 const ROLE_COLORS = {
-  ADMIN:    'text-red-400 bg-red-500/10 border-red-500/20',
-  SECURITY: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
-  ANALYST:  'text-blue-400 bg-blue-500/10 border-blue-500/20',
-  VIEWER:   'text-neutral-400 bg-white/[0.04] border-white/[0.08]',
+  OWNER:            'text-red-400    bg-red-500/10    border-red-500/20',
+  ADMIN:            'text-red-400    bg-red-500/10    border-red-500/20',
+  SECURITY_ANALYST: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+  AUDITOR:          'text-purple-400 bg-purple-500/10 border-purple-500/20',
+  OPERATOR:         'text-blue-400   bg-blue-500/10   border-blue-500/20',
+  AGENT:            'text-cyan-400   bg-cyan-500/10   border-cyan-500/20',
+  // Legacy labels still appearing on older rows.
+  SECURITY:         'text-orange-400 bg-orange-500/10 border-orange-500/20',
+  ANALYST:          'text-blue-400   bg-blue-500/10   border-blue-500/20',
+  VIEWER:           'text-neutral-400 bg-white/[0.04] border-white/[0.08]',
 }
 
 function RoleBadge({ role }) {
@@ -31,30 +35,19 @@ function RoleBadge({ role }) {
   )
 }
 
-const INVITE_INITIAL = { email: '', role: 'VIEWER' }
-
 function InviteModal({ onClose, onInvited }) {
-  const [form, setForm] = useState(INVITE_INITIAL)
-  const [touched, setTouched] = useState({})
+  const [email, setEmail] = useState('')
+  const [role,  setRole]  = useState('OPERATOR')
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
-  const dirty = form.email !== INVITE_INITIAL.email || form.role !== INVITE_INITIAL.role
-  useUnsavedChanges(dirty && !saving)
-
-  const parsed = inviteSchema.safeParse(form)
-  const fieldErrors = parsed.success ? {} : parsed.error.flatten().fieldErrors
-  const isValid = parsed.success
-  const markTouched = (key) => setTouched(t => t[key] ? t : { ...t, [key]: true })
-
   const submit = async (e) => {
     e.preventDefault()
-    setTouched({ email: true, role: true })
-    if (!isValid) return
+    if (!email.trim() || !email.includes('@')) { setError('Valid email required.'); return }
     setSaving(true)
     setError('')
     try {
-      await userService.invite({ email: form.email.trim().toLowerCase(), role: form.role })
+      await userService.invite({ email: email.trim().toLowerCase(), role })
       onInvited()
       onClose()
     } catch (err) {
@@ -75,7 +68,6 @@ function InviteModal({ onClose, onInvited }) {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <form
         onSubmit={submit}
-        noValidate
         className="relative bg-[var(--bg-surface-elevated)] border border-[var(--border-default)] rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4 space-y-4"
         onClick={e => e.stopPropagation()}
       >
@@ -89,59 +81,46 @@ function InviteModal({ onClose, onInvited }) {
         )}
 
         <div>
-          <label htmlFor="invite_email" className="block text-xs text-neutral-400 mb-1">Email address</label>
+          <label className="block text-xs text-neutral-400 mb-1">Email address</label>
           <input
-            id="invite_email"
             type="email"
-            value={form.email}
-            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            onBlur={() => markTouched('email')}
+            value={email}
+            onChange={e => setEmail(e.target.value)}
             placeholder="user@company.com"
             autoFocus
-            aria-invalid={!!fieldErrors.email}
-            aria-describedby={fieldErrors.email ? 'invite_email_err' : undefined}
-            className={`w-full bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none ${touched.email && fieldErrors.email ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
+            className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
           />
-          {touched.email && fieldErrors.email && (
-            <p id="invite_email_err" className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
-              <AlertCircle size={11} /> {fieldErrors.email[0]}
-            </p>
-          )}
         </div>
 
         <div>
-          <label htmlFor="invite_role" className="block text-xs text-neutral-400 mb-1">Role</label>
+          <label className="block text-xs text-neutral-400 mb-1">Role</label>
           <div className="relative">
             <select
-              id="invite_role"
-              value={form.role}
-              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-              onBlur={() => markTouched('role')}
-              aria-invalid={!!fieldErrors.role}
-              aria-describedby={fieldErrors.role ? 'invite_role_err' : undefined}
-              className={`w-full appearance-none bg-white/[0.04] border rounded-lg px-3 py-2 text-sm text-white focus:outline-none ${touched.role && fieldErrors.role ? 'border-red-500/50 focus:border-red-500/70' : 'border-[var(--border-subtle)] focus:border-white/20'}`}
+              value={role}
+              onChange={e => setRole(e.target.value)}
+              className="w-full appearance-none bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
             >
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
             <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
           </div>
-          {touched.role && fieldErrors.role && (
-            <p id="invite_role_err" className="mt-1 flex items-center gap-1 text-[11px] text-red-400">
-              <AlertCircle size={11} /> {fieldErrors.role[0]}
-            </p>
-          )}
           <p className="text-[10px] text-neutral-600 mt-1">
-            {form.role === 'ADMIN' && 'Full platform access including user management and kill switch.'}
-            {form.role === 'SECURITY' && 'Can manage policies, incidents, and agents.'}
-            {form.role === 'ANALYST' && 'Read access to audit logs, forensics, and analytics.'}
-            {form.role === 'VIEWER' && 'Read-only dashboard access.'}
+            {role === 'OWNER' && 'Tenant owner — full platform access, including billing and SSO.'}
+            {role === 'ADMIN' && 'Full platform access including user management and kill switch.'}
+            {role === 'SECURITY_ANALYST' && 'Manage policies, incidents, agents, and forensic timelines.'}
+            {role === 'AUDITOR' && 'Read-only access to audit chain, receipts, and compliance evidence.'}
+            {role === 'OPERATOR' && 'Operate agents, approve escalations, run playbooks.'}
+            {role === 'AGENT' && 'Service-account role for machine principals; not for humans.'}
+            {role === 'SECURITY' && 'Legacy label — equivalent to SECURITY_ANALYST.'}
+            {role === 'ANALYST' && 'Legacy label — read access to audit logs and analytics.'}
+            {role === 'VIEWER' && 'Read-only dashboard access.'}
           </p>
         </div>
 
         <button
           type="submit"
-          disabled={saving || !isValid || !dirty}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={saving}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
         >
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
           {saving ? 'Sending invite…' : 'Send invitation'}
@@ -151,7 +130,7 @@ function InviteModal({ onClose, onInvited }) {
   )
 }
 
-function UserRow({ user, onUpdate, onDeactivate, canMutate }) {
+function UserRow({ user, onUpdate, onDeactivate }) {
   const [editRole, setEditRole] = useState(false)
   const [saving,   setSaving]   = useState(false)
 
@@ -205,7 +184,7 @@ function UserRow({ user, onUpdate, onDeactivate, canMutate }) {
 
       {/* Role */}
       <div className="shrink-0">
-        {canMutate && editRole ? (
+        {editRole ? (
           <div className="flex items-center gap-1">
             <select
               autoFocus
@@ -217,12 +196,10 @@ function UserRow({ user, onUpdate, onDeactivate, canMutate }) {
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
-        ) : canMutate ? (
+        ) : (
           <button onClick={() => setEditRole(true)} title="Click to change role">
             <RoleBadge role={user.role} />
           </button>
-        ) : (
-          <RoleBadge role={user.role} />
         )}
       </div>
 
@@ -230,7 +207,7 @@ function UserRow({ user, onUpdate, onDeactivate, canMutate }) {
       <div className="flex items-center gap-1 shrink-0">
         {saving ? (
           <Loader2 size={14} className="animate-spin text-neutral-500" />
-        ) : canMutate ? (
+        ) : (
           <button
             onClick={toggleActive}
             title={user.is_active ? 'Deactivate user' : 'Reactivate user'}
@@ -238,15 +215,13 @@ function UserRow({ user, onUpdate, onDeactivate, canMutate }) {
           >
             {user.is_active ? <UserX size={13} /> : <UserCheck size={13} />}
           </button>
-        ) : null}
+        )}
       </div>
     </div>
   )
 }
 
 export default function UserManagement() {
-  const { isOwner, isAdmin } = useRole()
-  const canMutate = isOwner || isAdmin
   const [users,    setUsers]    = useState([])
   const [loading,  setLoading]  = useState(true)
   const [inviting, setInviting] = useState(false)
@@ -285,7 +260,7 @@ export default function UserManagement() {
   const counts = {
     total:    users.length,
     active:   users.filter(u => u.is_active).length,
-    admin:    users.filter(u => u.role === 'ADMIN').length,
+    admin:    users.filter(u => u.role === 'ADMIN' || u.role === 'OWNER').length,
   }
 
   return (
@@ -293,20 +268,18 @@ export default function UserManagement() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-white mb-1">User Management</h1>
-          <p className="text-sm text-neutral-400">Manage team members, roles, and access within your workspace.</p>
+          <p className="text-sm text-neutral-400">Manage team members, roles, and access within your tenant.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
-          {canMutate && (
-            <button
-              onClick={() => setInviting(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
-            >
-              <Plus size={13} /> Invite user
-            </button>
-          )}
+          <button
+            onClick={() => setInviting(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+          >
+            <Plus size={13} /> Invite user
+          </button>
         </div>
       </header>
 
@@ -321,9 +294,9 @@ export default function UserManagement() {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Total members', value: counts.total },
-          { label: 'Active',        value: counts.active },
-          { label: 'Admins',        value: counts.admin },
+          { label: 'Total members',  value: counts.total },
+          { label: 'Active',         value: counts.active },
+          { label: 'Owners / admins', value: counts.admin },
         ].map(({ label, value }) => (
           <div key={label} className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4">
             <div className="text-2xl font-semibold text-white">{value}</div>
@@ -361,16 +334,51 @@ export default function UserManagement() {
       {/* User list */}
       <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center h-32">
-            <Loader2 className="animate-spin text-neutral-500" size={24} />
+          <div className="p-2">
+            <SkeletonLoader variant="row" count={4} />
+            <span className="sr-only" role="status">Loading users…</span>
           </div>
         ) : visible.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Users size={28} className="text-neutral-700" />
-            <p className="text-sm text-neutral-500">
-              {users.length === 0 ? 'No users yet — invite your first team member.' : 'No users match the filters.'}
-            </p>
-          </div>
+          users.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 px-6 gap-4 text-center">
+              <Users size={32} className="text-neutral-700" aria-hidden="true" />
+              <div className="space-y-1">
+                <p className="text-sm text-neutral-200 font-medium">No users in this workspace yet</p>
+                <p className="text-xs text-neutral-500 max-w-md leading-relaxed">
+                  The first user is created the moment you complete{' '}
+                  <Link to="/signup" className="text-blue-300 hover:text-blue-200 underline underline-offset-2">
+                    /signup
+                  </Link>{' '}
+                  with your work email — or SCIM auto-provisions everyone on their next login once SSO is wired up.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setInviting(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+                >
+                  <UserPlus size={13} /> Invite a user
+                </button>
+                <Link
+                  to="/sso"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20 hover:text-white"
+                >
+                  <Shield size={12} /> Configure SCIM at /settings/sso
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 gap-3">
+              <Users size={28} className="text-neutral-700" />
+              <p className="text-sm text-neutral-500">No users match the filters.</p>
+              <button
+                onClick={() => { setActiveFilter('all'); setRoleFilter('all') }}
+                className="text-[11px] text-neutral-400 hover:text-white underline underline-offset-2"
+              >
+                Clear filters
+              </button>
+            </div>
+          )
         ) : (
           visible.map(u => (
             <UserRow
@@ -378,7 +386,6 @@ export default function UserManagement() {
               user={u}
               onUpdate={handleUpdate}
               onDeactivate={handleDeactivate}
-              canMutate={canMutate}
             />
           ))
         )}
@@ -389,7 +396,7 @@ export default function UserManagement() {
         Click a role badge to change it; click the user icon to toggle active status.
       </p>
 
-      {inviting && canMutate && <InviteModal onClose={() => setInviting(false)} onInvited={load} />}
+      {inviting && <InviteModal onClose={() => setInviting(false)} onInvited={load} />}
     </div>
   )
 }

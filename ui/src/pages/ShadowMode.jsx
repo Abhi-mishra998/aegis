@@ -15,11 +15,13 @@
 //   GET    /audit/shadow/online-eval, PUT same
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   EyeOff, ShieldOff, Activity, Hash, Beaker, Save, RotateCcw, Trash2,
-  CheckCircle, AlertTriangle, Settings as Cog,
+  CheckCircle, AlertTriangle, Settings as Cog, ArrowRight, PlayCircle,
 } from 'lucide-react'
 import { shadowService } from '../services/api'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 function unwrap(resp) { return resp?.data ?? resp }
 function fmtPct(x) { return x == null || Number.isNaN(x) ? '—' : `${(x * 100).toFixed(2)}%` }
@@ -257,8 +259,47 @@ export default function ShadowMode() {
             <Hash size={12} /> Policies ({policies.length})
           </div>
           <div className="divide-y divide-neutral-900">
-            {policies.length === 0 && (
-              <div className="p-4 text-sm text-neutral-500">No shadow policies yet.</div>
+            {loading && policies.length === 0 && (
+              <div className="p-3 space-y-3" role="status" aria-label="Loading shadow policies">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 animate-pulse">
+                    <div className="flex-1 space-y-1.5">
+                      <div className="h-3 bg-white/[0.06] rounded w-1/2" />
+                      <div className="h-2 bg-white/[0.04] rounded w-2/3" />
+                    </div>
+                    <div className="h-4 w-14 bg-white/[0.04] rounded-md" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {!loading && policies.length === 0 && (
+              <div className="p-4 space-y-3 text-sm">
+                <div className="flex items-start gap-2 text-amber-300">
+                  <EyeOff size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-white text-xs">Shadow mode off — no drafts yet</p>
+                    <p className="text-xs text-neutral-400 mt-1">
+                      Click <strong className="text-sky-300">New draft</strong> above to create one, or publish a candidate from the Playground.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => setCreating(true)}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-sky-700 hover:bg-sky-600 text-white text-xs font-medium"
+                  >
+                    <Beaker size={12} aria-hidden="true" />
+                    Create draft policy
+                  </button>
+                  <Link
+                    to="/policies?tab=staging"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-white/10 text-neutral-200 text-xs hover:bg-white/[0.04]"
+                  >
+                    <ArrowRight size={11} aria-hidden="true" />
+                    Open Playground
+                  </Link>
+                </div>
+              </div>
             )}
             {policies.map((p) => (
               <button
@@ -269,7 +310,7 @@ export default function ShadowMode() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="truncate">
                     <div className="text-sm text-neutral-200 truncate">{p.name}</div>
-                    <div className="text-[10px] text-neutral-500 truncate">{p.id.slice(0, 8)}… · v{p.version} · {p.agent_id ? `agent ${p.agent_id.slice(0,8)}…` : 'workspace-wide'}</div>
+                    <div className="text-[10px] text-neutral-500 truncate">{p.id.slice(0, 8)}… · v{p.version} · {p.agent_id ? `agent ${p.agent_id.slice(0,8)}…` : 'tenant-wide'}</div>
                   </div>
                   {modePill(p.mode)}
                 </div>
@@ -393,8 +434,25 @@ export default function ShadowMode() {
               </div>
             </>
           ) : (
-            <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-8 text-center text-neutral-500">
-              Pick a policy on the left, or create a draft.
+            <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-8 text-center text-neutral-400 space-y-3">
+              <EyeOff size={22} className="text-neutral-500 mx-auto" aria-hidden="true" />
+              <p className="text-sm">Pick a policy on the left, or create a draft to start shadow-evaluating live traffic.</p>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setCreating(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-sky-700 hover:bg-sky-600 text-white text-xs font-medium"
+                >
+                  <Beaker size={12} aria-hidden="true" />
+                  New draft
+                </button>
+                <Link
+                  to="/playground"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/10 text-neutral-200 text-xs hover:bg-white/[0.04]"
+                >
+                  <PlayCircle size={12} aria-hidden="true" />
+                  Generate sample traffic
+                </Link>
+              </div>
             </div>
           )}
 

@@ -3,13 +3,14 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Bot, ShieldAlert, CheckCircle2, Activity,
   TrendingUp, AlertTriangle, RefreshCw, Clock, Zap,
-  BarChart2, GitMerge, ExternalLink,
+  BarChart2, GitMerge, ExternalLink, Plus,
 } from 'lucide-react'
 import {
   LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { registryService, auditService } from '../services/api'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 const DRIFT_LEVEL_STYLE = {
   low:      { color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/20' },
@@ -176,7 +177,7 @@ function PeerBenchmarkPanel({ benchmark }) {
           <BarChart2 size={14} className="text-neutral-500" />
           Peer Benchmark
         </h2>
-        <span className="text-[10px] text-neutral-600">vs. {peer_count} agent{peer_count !== 1 ? 's' : ''} in workspace</span>
+        <span className="text-[10px] text-neutral-600">vs. {peer_count} agent{peer_count !== 1 ? 's' : ''} in tenant</span>
       </div>
       <div className="space-y-4">
         {BENCHMARK_METRICS.map(({ key, label, refKey, fmt }) => (
@@ -195,7 +196,7 @@ function PeerBenchmarkPanel({ benchmark }) {
         ))}
       </div>
       <p className="text-[10px] text-neutral-700">
-        Tick marks: workspace p50 · p75 · p95. Higher percentile = more extreme than peers.
+        Tick marks: tenant p50 · p75 · p95. Higher percentile = more extreme than peers.
       </p>
     </div>
   )
@@ -239,15 +240,21 @@ function RiskTrendChart({ series }) {
   )
 }
 
-function KpiCard({ icon: Icon, label, value, accent, sub }) {
+function KpiCard({ icon: Icon, label, value, accent, sub, helper }) {
+  // When the resolved numeric value is exactly 0 the page reads as broken;
+  // surface "—" + a small helper so analysts understand it's literally
+  // "no data yet" rather than a fetch error.
+  const display = (value === 0 || value === '0' || value == null) ? '—' : value
+  const isEmpty = display === '—'
   return (
     <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4">
       <div className="flex items-center gap-2 mb-2">
         <Icon size={13} className="text-neutral-500" />
         <span className="text-[10px] uppercase tracking-wider text-neutral-500">{label}</span>
       </div>
-      <div className={`text-2xl font-semibold ${accent || 'text-white'}`}>{value ?? '—'}</div>
-      {sub && <div className="text-xs text-neutral-600 mt-1">{sub}</div>}
+      <div className={`text-2xl font-semibold ${isEmpty ? 'text-neutral-500' : (accent || 'text-white')}`}>{display}</div>
+      {sub && !isEmpty && <div className="text-xs text-neutral-600 mt-1">{sub}</div>}
+      {isEmpty && helper && <div className="text-[10px] text-neutral-600 mt-1">{helper}</div>}
     </div>
   )
 }
@@ -341,8 +348,38 @@ export default function AgentProfile() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-neutral-500" size={24} />
+      <div className="max-w-5xl mx-auto space-y-6">
+        <SkeletonLoader variant="text" count={1} />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <SkeletonLoader variant="card" count={1} />
+          <SkeletonLoader variant="card" count={1} />
+          <SkeletonLoader variant="card" count={1} />
+          <SkeletonLoader variant="card" count={1} />
+        </div>
+        <SkeletonLoader variant="card" count={2} />
+      </div>
+    )
+  }
+
+  // Hard empty-state: no agent record at all for this id. Surface a clear
+  // CTA back to the registry so analysts can register or pick another agent.
+  if (!agent && !id) {
+    return (
+      <div className="max-w-3xl mx-auto rounded-2xl border border-white/[0.07] bg-white/[0.02] p-10 text-center space-y-4">
+        <div className="w-12 h-12 mx-auto rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+          <Bot size={22} className="text-neutral-500" aria-hidden="true" />
+        </div>
+        <p className="text-sm font-semibold text-neutral-200">No agent selected</p>
+        <p className="text-xs text-neutral-500 max-w-md mx-auto">
+          No agents registered yet — go to the Onboarding Wizard to register your
+          first agent.
+        </p>
+        <Link
+          to="/onboarding"
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-colors"
+        >
+          <Plus size={13} aria-hidden="true" /> Register your first agent
+        </Link>
       </div>
     )
   }
@@ -403,10 +440,34 @@ export default function AgentProfile() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard icon={Activity}    label="Total Decisions" value={(p.total_decisions ?? 0).toLocaleString()} />
-        <KpiCard icon={CheckCircle2} label="Allowed"        value={(p.allowed ?? 0).toLocaleString()} accent="text-green-400" />
-        <KpiCard icon={ShieldAlert} label="Blocked"        value={(p.blocked ?? 0).toLocaleString()} accent={parseFloat(blockRate) > 20 ? 'text-red-400' : 'text-amber-400'} sub={`${blockRate}% block rate`} />
-        <KpiCard icon={Zap}         label="Avg Risk Score" value={Number(p.avg_risk_score || 0).toFixed(3)} accent={Number(p.avg_risk_score) > 0.5 ? 'text-red-400' : Number(p.avg_risk_score) > 0.3 ? 'text-amber-400' : 'text-green-400'} />
+        <KpiCard
+          icon={Activity}
+          label="Total Decisions"
+          value={p.total_decisions ? Number(p.total_decisions).toLocaleString() : 0}
+          helper="No traffic in window"
+        />
+        <KpiCard
+          icon={CheckCircle2}
+          label="Allowed"
+          value={p.allowed ? Number(p.allowed).toLocaleString() : 0}
+          accent="text-green-400"
+          helper="No allow decisions yet"
+        />
+        <KpiCard
+          icon={ShieldAlert}
+          label="Blocked"
+          value={p.blocked ? Number(p.blocked).toLocaleString() : 0}
+          accent={parseFloat(blockRate) > 20 ? 'text-red-400' : 'text-amber-400'}
+          sub={`${blockRate}% block rate`}
+          helper="Nothing blocked yet"
+        />
+        <KpiCard
+          icon={Zap}
+          label="Avg Risk Score"
+          value={p.avg_risk_score ? Number(p.avg_risk_score).toFixed(3) : 0}
+          accent={Number(p.avg_risk_score) > 0.5 ? 'text-red-400' : Number(p.avg_risk_score) > 0.3 ? 'text-amber-400' : 'text-green-400'}
+          helper="No risk samples yet"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -329,7 +329,11 @@ export default function ScheduledReports() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-neutral-800 border border-white/10 rounded-xl text-sm text-white shadow-xl">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-neutral-800 border border-white/10 rounded-xl text-sm text-white shadow-xl"
+        >
           <CheckCircle2 size={14} className="text-green-400" /> {toast}
         </div>
       )}

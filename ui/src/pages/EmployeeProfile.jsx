@@ -18,6 +18,7 @@ import {
 import { teamService } from '../services/api'
 import Button from '../components/Common/Button'
 import Card from '../components/Common/Card'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 /* ───────── shared helpers (mirror Team.jsx) ─────────────────────────── */
 
@@ -113,10 +114,9 @@ function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon 
 /* ───────── 30-day spend sparkline (no external chart lib) ───────────── */
 
 function SpendSparkline({ trend }) {
-  const series = trend || []
-  const max = Math.max(0.000001, ...series.map((t) => Number(t.spend_usd) || 0))
-  const points = series.map((t, i) => {
-    const x = (i / Math.max(1, series.length - 1)) * 100
+  const max = Math.max(0.000001, ...trend.map((t) => Number(t.spend_usd) || 0))
+  const points = trend.map((t, i) => {
+    const x = (i / Math.max(1, trend.length - 1)) * 100
     const y = 100 - ((Number(t.spend_usd) || 0) / max) * 100
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }).join(' ')
@@ -167,8 +167,24 @@ export default function EmployeeProfile() {
 
   if (loading) {
     return (
-      <div className="p-6 text-xs text-neutral-500 flex items-center justify-center min-h-[60vh]">
-        <Loader2 size={20} className="animate-spin mr-2" /> Loading profile…
+      <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
+        <Link to="/team" className="inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-white">
+          <ArrowLeft size={14} /> Team
+        </Link>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonLoader key={i} variant="card" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonLoader key={i} variant="card" />
+          ))}
+        </div>
+        <SkeletonLoader variant="row" count={5} />
+        <div className="sr-only" role="status" aria-live="polite">
+          <Loader2 size={20} className="animate-spin mr-2" /> Loading employee profile…
+        </div>
       </div>
     )
   }
@@ -192,7 +208,8 @@ export default function EmployeeProfile() {
     )
   }
 
-  const { employee, kpis } = data
+  const employee = data.employee || {}
+  const kpis = data.kpis || {}
 
   return (
     <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">

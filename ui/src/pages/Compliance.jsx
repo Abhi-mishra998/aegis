@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink, BookOpen } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
-import EmptyStateV2 from '../components/Common/EmptyStateV2'
 import { auditService, complianceService } from '../services/api'
 
 const FRAMEWORKS = [
@@ -36,7 +35,6 @@ const COLOR = {
 function iso(date) { return date.toISOString().split('T')[0] }
 
 export default function Compliance() {
-  const navigate = useNavigate()
   const today = new Date()
   const thirtyDaysAgo = new Date(today); thirtyDaysAgo.setDate(today.getDate() - 30)
 
@@ -53,8 +51,6 @@ export default function Compliance() {
   const [packEvidence, setPackEvidence] = useState(null)
   const [packsLoading, setPacksLoading] = useState(true)
   const [boardLoading, setBoardLoading] = useState(false)
-  // Sprint S6 — one-click SOC 2 evidence ZIP loader.
-  const [bundleLoading, setBundleLoading] = useState(false)
 
   const loadEvidence = async (fw) => {
     setLoading(prev => ({ ...prev, [fw]: true }))
@@ -109,40 +105,6 @@ export default function Compliance() {
     }
   }
 
-  // Sprint S6 — Generate + download the SOC 2 evidence ZIP. Fetches via
-  // /compliance/zip/soc2 which streams the bytes; auto-saves as a
-  // dated filename. The ZIP contains per-control CSVs + chain proofs
-  // + verify.sh + README.md so the auditor unpacks it and runs
-  // `bash verify.sh` to PASS the bundle without contacting Aegis.
-  const handleEvidenceBundle = async () => {
-    setBundleLoading(true)
-    setError('')
-    try {
-      const params = new URLSearchParams({
-        period_start: startDate + 'T00:00:00Z',
-        period_end:   endDate   + 'T23:59:59Z',
-      })
-      const resp = await fetch(`/compliance/zip/soc2?${params}`, {
-        credentials: 'include',
-      })
-      if (!resp.ok) {
-        const txt = await resp.text().catch(() => '')
-        throw new Error(txt || `Server returned ${resp.status}`)
-      }
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `aegis-soc2-evidence-${startDate}-to-${endDate}.zip`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      setError(err.message || 'Evidence bundle generation failed.')
-    } finally {
-      setBundleLoading(false)
-    }
-  }
-
   const handleBoardReport = async () => {
     setBoardLoading(true)
     setError('')
@@ -167,37 +129,24 @@ export default function Compliance() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="page-header flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      <div className="page-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Shield size={22} className="text-neutral-400" aria-hidden="true" />
           <div>
             <h1 className="text-2xl font-bold text-white tracking-tight">Compliance Export</h1>
             <p className="text-xs text-neutral-500 mt-0.5">Generate evidence reports for EU AI Act, NIST AI RMF, and SOC 2</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Sprint S6 — One-click SOC 2 evidence ZIP. */}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleEvidenceBundle}
-            loading={bundleLoading}
-            aria-label="Generate SOC 2 evidence bundle ZIP"
-          >
-            <Download size={12} aria-hidden="true" />
-            SOC 2 Evidence Bundle
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleBoardReport}
-            loading={boardLoading}
-            aria-label="Generate board report PDF"
-          >
-            <BookOpen size={12} aria-hidden="true" />
-            Generate Board Report
-          </Button>
-        </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleBoardReport}
+          loading={boardLoading}
+          aria-label="Generate board report PDF"
+        >
+          <BookOpen size={12} aria-hidden="true" />
+          Generate Board Report
+        </Button>
       </div>
 
       {/* Date range */}
@@ -243,13 +192,17 @@ export default function Compliance() {
             Loading evidence…
           </div>
         ) : (!packEvidence || (packEvidence.packs || []).length === 0) ? (
-          <EmptyStateV2
-            icon={FileText}
-            title="No audit records yet"
-            body="Compliance reports will appear here once agents have executed actions. Connect an agent on the Agents page to get started."
-            ctaLabel="Go to Agents"
-            onCta={() => navigate('/agents')}
-          />
+          <div className="text-xs text-neutral-500 py-6 text-center space-y-2">
+            <ShieldCheck size={22} className="mx-auto text-neutral-700" />
+            <div>No pack-tagged escalations in the last 30 days.</div>
+            <div className="text-[10px] text-neutral-600 max-w-md mx-auto">
+              Enable one or more Compliance Policy Packs in{' '}
+              <Link to="/settings?tab=policy-packs" className="underline hover:text-white">
+                Settings → Policy packs
+              </Link>{' '}
+              to start producing per-control evidence here.
+            </div>
+          </div>
         ) : (
           <div className="space-y-4">
             <div className="text-[11px] text-neutral-500 leading-snug max-w-2xl">
@@ -276,7 +229,7 @@ export default function Compliance() {
                       </span>
                     </div>
                     <div className="text-[10px] text-neutral-500 mt-0.5">
-                      {(pack.controls || []).length} control{(pack.controls || []).length === 1 ? '' : 's'} touched
+                      {pack.controls.length} control{pack.controls.length === 1 ? '' : 's'} touched
                     </div>
                   </div>
                   <span className="text-[10px] text-neutral-500 group-open:rotate-90 transition-transform">▶</span>
@@ -292,7 +245,7 @@ export default function Compliance() {
                         </tr>
                       </thead>
                       <tbody>
-                        {(pack.controls || []).map((c) => (
+                        {pack.controls.map((c) => (
                           <tr key={c.id} className="border-b border-white/[0.04] last:border-b-0 align-top">
                             <td className="py-2 pr-3">
                               <span className="inline-flex items-center gap-1 text-[11px] text-neutral-200 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] font-mono">
@@ -371,7 +324,14 @@ export default function Compliance() {
                 </div>
               )}
               {!ev && !isLoading && (
-                <p className="text-[11px] text-neutral-600">No evidence loaded.</p>
+                <div className="text-[11px] text-neutral-500 space-y-1.5">
+                  <p>No evidence in the selected window.</p>
+                  <p className="text-neutral-600 leading-relaxed">
+                    Click <span className="text-neutral-400">Refresh</span> after running agent actions
+                    to populate this framework, or generate the PDF anyway —
+                    it will include the empty-period attestation.
+                  </p>
+                </div>
               )}
 
               {/* Actions */}

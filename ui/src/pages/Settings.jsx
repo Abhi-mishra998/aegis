@@ -2,26 +2,20 @@ import React, { Suspense, lazy, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Calendar,
-  ClipboardList,
   Code2,
   Database,
   DollarSign,
   Gauge,
   Key,
-  KeyRound,
   MessagesSquare,
   Settings as SettingsIcon,
   ShieldCheck,
-  Ticket,
   Users,
   Webhook,
 } from 'lucide-react';
 import SystemValuesTab from '../components/settings/SystemValuesTab';
 import SlackApprovalsTab from '../components/settings/SlackApprovalsTab';
 import PolicyPacksTab from '../components/settings/PolicyPacksTab';
-import JiraIntegrationTab from '../components/settings/JiraIntegrationTab';
-import ServiceNowIntegrationTab from '../components/settings/ServiceNowIntegrationTab';
-import ScimTokensTab from '../components/settings/ScimTokensTab';
 import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 // Existing pages, lazy-imported so each tab only pulls its chunk on
@@ -57,9 +51,6 @@ const TABS = [
   { id: 'siem',          label: 'SIEM',            icon: Database,       Component: SiemSettings,     group: GROUP.INTEGRATIONS },
   { id: 'webhooks',      label: 'Webhooks',        icon: Webhook,        Component: WebhookSettings,  group: GROUP.INTEGRATIONS },
   { id: 'slack',         label: 'Slack approvals', icon: MessagesSquare, Component: SlackApprovalsTab, group: GROUP.INTEGRATIONS },
-  { id: 'jira',          label: 'Jira',            icon: Ticket,         Component: JiraIntegrationTab, group: GROUP.INTEGRATIONS },
-  { id: 'servicenow',    label: 'ServiceNow',      icon: ClipboardList,  Component: ServiceNowIntegrationTab, group: GROUP.INTEGRATIONS },
-  { id: 'scim',          label: 'SCIM (Okta)',     icon: KeyRound,       Component: ScimTokensTab,    group: GROUP.INTEGRATIONS },
   { id: 'system-values', label: 'System Values',   icon: DollarSign,     Component: SystemValuesTab,  group: GROUP.WORKSPACE },
   { id: 'policy-packs',  label: 'Policy packs',    icon: ShieldCheck,    Component: PolicyPacksTab,   group: GROUP.WORKSPACE },
   { id: 'quota',         label: 'Quota',           icon: Gauge,          Component: QuotaManagement,  group: GROUP.WORKSPACE },
@@ -135,13 +126,23 @@ export default function Settings() {
         </p>
       </div>
 
+      {/* Unit 9 (2026-06-23): tab nav must stay usable at 1366×768 — the
+          three groups already exceed the visible width on narrow viewports.
+          flex-wrap behaves nicely at >=lg; below that the group columns
+          collapse into a single horizontally-scrollable row so the user
+          never loses access to a tab. */}
       <div
-        className="flex flex-wrap items-end gap-x-4 gap-y-2 pb-1 border-b border-white/[0.06]"
+        className="
+          flex lg:flex-wrap items-end gap-x-4 gap-y-2 pb-1
+          overflow-x-auto lg:overflow-visible
+          border-b border-white/[0.06]
+          scrollbar-thin scrollbar-track-transparent
+        "
         role="tablist"
         aria-label="Settings sections"
       >
         {sections.map(({ key, label, tabs }) => (
-          <div key={key} className="flex flex-col gap-0.5">
+          <div key={key} className="flex flex-col gap-0.5 shrink-0">
             <div className="text-[10px] uppercase tracking-wider text-neutral-500 px-1">
               {label}
             </div>
@@ -155,7 +156,14 @@ export default function Settings() {
       <TabErrorBoundary tabId={activeTab}>
         <Suspense
           fallback={
-            <div className="text-xs text-neutral-500 py-8 text-center">Loading {activeTab}…</div>
+            <div className="space-y-4 animate-pulse" aria-label={`Loading ${activeTab}…`}>
+              <div className="h-7 w-48 bg-white/[0.05] rounded" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="h-28 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+                <div className="h-28 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+              </div>
+              <div className="h-44 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+            </div>
           }
         >
           <ActiveComponent />

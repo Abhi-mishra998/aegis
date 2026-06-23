@@ -28,20 +28,12 @@ import {
   registryService,
   auditService,
   dashboardService,
-  slackOAuthService,
-  siemService,
-  webhookService,
 } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
 import { useAuth } from '../hooks/useAuth';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
-import DataFreshness from '../components/Common/DataFreshness';
-import { IntegrationCard } from '../components/IntegrationCard';
-// Sprint S7 — vendor icons for the IntegrationsRow tiles.
-import { Slack, Database, Bell, Webhook, KeyRound, Activity as ActivityIcon } from 'lucide-react';
-// Sprint S8 — per-industry Dashboard layouts.
-import { getLayout } from '../data/dashboard_layouts';
+import SkeletonLoader from '../components/Common/SkeletonLoader';
 
 const PROVIDER_META = {
   anthropic:   { label: 'Anthropic',   icon: Brain    },
@@ -89,6 +81,22 @@ function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon,
           </div>
         )}
       </div>
+    </Card>
+  );
+}
+
+// Compact skeleton for a single MetricTile while data is fetching — keeps the
+// hero grid from showing a wall of "—" placeholders that look indistinguishable
+// from a freshly seeded tenant with zero activity.
+function MetricTileSkeleton() {
+  return (
+    <Card>
+      <div className="space-y-2 animate-pulse" aria-hidden="true">
+        <div className="h-2 w-16 bg-white/[0.06] rounded" />
+        <div className="h-7 w-20 bg-white/[0.08] rounded" />
+        <div className="h-2 w-24 bg-white/[0.04] rounded" />
+      </div>
+      <span className="sr-only">Loading metric…</span>
     </Card>
   );
 }
@@ -183,48 +191,6 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [liveEventCount, setLiveEventCount] = useState(0);
-  // Sprint 21 — surface freshness ("Updated 12s ago") in the header so a CISO
-  // can tell at a glance whether the numbers are live or stale. Stamp on every
-  // successful KPI fetch (success defined as the same partial-OK rule the
-  // error banner uses below).
-  const [lastFetchAt, setLastFetchAt] = useState(null);
-
-  // Sprint S7 — IntegrationsRow connect-state. Six tiles render on the
-  // Dashboard above the KPI grid; each tile shows Connected or "Connect"
-  // and click-throughs to the right Settings page. Fetched once on
-  // mount; not refreshed because connection state changes rarely.
-  const [integrationsStatus, setIntegrationsStatus] = useState({
-    slack: false, splunk: false, datadog: false,
-    sentinel: false, pagerduty: false, webhook: false,
-  });
-  useEffect(() => {
-    let cancelled = false;
-    Promise.allSettled([
-      slackOAuthService.status().then((d) => Boolean((d?.data || d || {}).connected)).catch(() => false),
-      siemService.getConfig().then((d) => {
-        const cfg = d?.data || d || {};
-        return {
-          splunk:   Boolean(cfg.splunk_url || cfg.vendors?.splunk),
-          datadog:  Boolean(cfg.datadog_key || cfg.vendors?.datadog),
-          sentinel: Boolean(cfg.vendors?.sentinel),
-        };
-      }).catch(() => ({ splunk: false, datadog: false, sentinel: false })),
-      webhookService.getConfig().then((d) => {
-        const cfg = d?.data || d || {};
-        return {
-          pagerduty: Boolean(cfg.pagerduty_key),
-          webhook:   Boolean(cfg.generic_url),
-        };
-      }).catch(() => ({ pagerduty: false, webhook: false })),
-    ]).then((results) => {
-      if (cancelled) return;
-      const slack = results[0].status === 'fulfilled' ? results[0].value : false;
-      const siem  = results[1].status === 'fulfilled' ? results[1].value : { splunk: false, datadog: false, sentinel: false };
-      const wh    = results[2].status === 'fulfilled' ? results[2].value : { pagerduty: false, webhook: false };
-      setIntegrationsStatus({ slack, ...siem, ...wh });
-    });
-    return () => { cancelled = true; };
-  }, []);
 
   // Refetch when tenant_id changes (e.g., ClerkAuthBridge mirrors session
   // *after* this page mounted — without re-deriving on tenant_id, the user
@@ -267,7 +233,6 @@ export default function Dashboard() {
         setError(invResult.reason?.message || ovResult.reason?.message || 'Failed to load dashboard data');
       } else {
         setError('');
-        setLastFetchAt(new Date().toISOString());
       }
     });
     return () => { cancelled = true; };
@@ -321,36 +286,19 @@ export default function Dashboard() {
   const shadowActive = !!workspace?.shadow_mode_active;
   const shadowDaysLeft = workspace?.shadow_mode_days_left;
 
+  // "No activity yet" signal — every mandate KPI is zero/missing AND inventory
+  // is also empty. Used to surface the seed-demo / onboarding CTA below the
+  // hero KPI row instead of leaving the operator staring at six empty tiles.
+  const heroAllZero = !loading
+    && (overview?.mandate_kpis?.actions_evaluated ?? 0) === 0
+    && (overview?.mandate_kpis?.allowed ?? 0) === 0
+    && (overview?.mandate_kpis?.denied ?? 0) === 0
+    && (overview?.mandate_kpis?.escalated ?? 0) === 0
+    && (overview?.mandate_kpis?.active_findings ?? 0) === 0
+    && (inventory?.total ?? 0) === 0;
+
   return (
     <div className="space-y-6">
-      {/* Shadow-mode banner — explains why high-risk actions show
-          findings=[policy_deny] but action=allow. Clicking "Exit shadow
-          mode" hits the OWNER-gated endpoint and the next /execute
-          actually blocks. */}
-      {shadowActive && (
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 flex items-start gap-3">
-          <span className="mt-0.5 inline-flex h-2 w-2 rounded-full bg-amber-400 animate-pulse" aria-hidden="true" />
-          <div className="flex-1">
-            <div className="text-xs font-semibold text-amber-200">
-              Shadow mode is ON · {shadowDaysLeft != null ? `${shadowDaysLeft} days left` : ''}
-            </div>
-            <p className="text-[11px] text-amber-200/70 leading-relaxed mt-1">
-              Aegis is recording every decision but <strong>not</strong> blocking. Wire
-              transfers, PII dumps and policy-deny actions will show up in the audit log
-              with <code>findings=[policy_deny]</code>, but the agent still gets
-              <code>action=allow</code> so your live traffic isn't interrupted. Exit
-              shadow mode to start hard-blocking.
-            </p>
-          </div>
-          <Link
-            to="/shadow-review"
-            className="text-[11px] font-medium text-amber-300 hover:text-amber-200 underline whitespace-nowrap"
-          >
-            Review &amp; exit →
-          </Link>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1">
@@ -367,7 +315,6 @@ export default function Dashboard() {
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
             Live · {liveEventCount} events
           </div>
-          <DataFreshness updatedAt={lastFetchAt} />
           <Button variant="ghost" size="sm" onClick={() => setRefreshTick((t) => t + 1)}>
             <RefreshCw size={14} aria-hidden="true" />
           </Button>
@@ -389,71 +336,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Sprint S8 (2026-06-19) — Per-industry guidance row.
-          Reads tenant.system_values.dashboard_preset (set by the
-          OnboardingWizard's industry-preset apply, Sprint S1) and
-          renders a "What to watch in <industry>" pill. The KPI grid
-          stays the same shape — re-ordering tiles per industry is a
-          design-partner-gated follow-up. */}
-      {(() => {
-        const presetId = workspace?.system_values?.dashboard_preset
-                         || workspace?.dashboard_preset;
-        const layout = getLayout(presetId);
-        if (!layout) return null;
-        const Icon = layout.icon;
-        return (
-          <div
-            className="rounded-xl border px-4 py-3 flex items-start gap-3"
-            style={{
-              borderColor: layout.accent_color + '44',
-              backgroundColor: layout.accent_color + '0A',
-            }}
-          >
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-              style={{ backgroundColor: layout.accent_color + '22', color: layout.accent_color }}
-            >
-              <Icon size={16} aria-hidden="true" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-white font-medium">
-                Configured for <span style={{ color: layout.accent_color }}>{layout.label}</span>
-              </div>
-              <div className="text-[11px] text-neutral-400 mt-0.5">{layout.headline}</div>
-            </div>
-            <Link
-              to="/settings"
-              className="text-[11px] text-neutral-500 hover:text-white whitespace-nowrap"
-            >
-              Change preset →
-            </Link>
-          </div>
-        );
-      })()}
-
-      {/* Sprint S7 (2026-06-19) — IntegrationsRow.
-          Six tiles for the connect-it-yourself integrations every
-          tenant wants on day-1. Each tile click-throughs to the
-          appropriate Settings page. Status is fetched once on mount
-          and reflects whether anything is persisted server-side.
-          On a fresh workspace (nothing connected) the row is the
-          loudest CTA on the page; once at least one integration
-          is wired it stays as a quiet status strip. */}
-      <div>
-        <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
-          <ShieldCheck size={11} aria-hidden="true" />
-          <span>Integrations</span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <IntegrationCard icon={Slack}        label="Slack"             to="/webhook-settings" connected={integrationsStatus.slack}    accentColor="#4A154B" />
-          <IntegrationCard icon={Database}     label="Splunk"            to="/siem"             connected={integrationsStatus.splunk}   accentColor="#65A637" />
-          <IntegrationCard icon={ActivityIcon} label="Datadog"           to="/siem"             connected={integrationsStatus.datadog}  accentColor="#632CA6" />
-          <IntegrationCard icon={Database}     label="Microsoft Sentinel" to="/siem"            connected={integrationsStatus.sentinel} accentColor="#0078D4" />
-          <IntegrationCard icon={Bell}         label="PagerDuty"         to="/webhook-settings" connected={integrationsStatus.pagerduty} accentColor="#06AC38" />
-          <IntegrationCard icon={Webhook}      label="Webhook (generic)"  to="/webhook-settings" connected={integrationsStatus.webhook}  accentColor="#94A3B8" />
-        </div>
-      </div>
-
       {/* Sprint 12 — Row 1: the six mandate KPIs every CISO buyer
           evaluates Aegis against. Numbers are 30-day totals from the
           audit log (allowed/denied/escalated/active_findings) plus the
@@ -464,64 +346,91 @@ export default function Dashboard() {
           <Shield size={11} aria-hidden="true" />
           <span>Last 30 days · runtime security at a glance</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <MetricTile
-            icon={Bot}
-            label="Protected agents"
-            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.protected_agents)}
-            sublabel="Active in this workspace"
-            tooltip="Active agents (status=ACTIVE) registered in this workspace. Source of truth: /workspace/inventory."
-          />
-          <MetricTile
-            icon={Activity}
-            label="Actions evaluated"
-            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.actions_evaluated)}
-            sublabel="Every tool call + proxy call"
-            tooltip="Total tool-call + LLM-proxy-call decisions Aegis evaluated in the last 30 days."
-          />
-          <MetricTile
-            icon={CheckCircle2}
-            label="Allowed"
-            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.allowed)}
-            sublabel="No risk gate hit"
-            accent="text-green-400"
-            tooltip="Decisions returned allow — no signal, policy, or budget threshold tripped."
-          />
-          <MetricTile
-            icon={Shield}
-            label="Denied"
-            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.denied)}
-            sublabel="Hard block fired"
-            accent={(overview?.mandate_kpis?.denied ?? 0) > 0 ? 'text-red-400' : 'text-white'}
-            tooltip="Decisions returned deny / block / kill — Aegis refused the action before it ran."
-          />
-          <Link to="/approval-inbox" className="contents">
-            <MetricTile
-              icon={AlertTriangle}
-              label="Escalated"
-              value={loading ? '—' : fmtInt(overview?.mandate_kpis?.escalated)}
-              sublabel={
-                loading
-                  ? '…'
-                  : (overview?.mandate_kpis?.escalated ?? 0) === 0
-                    ? 'No human-in-loop yet'
-                    : `${overview?.escalation_breakdown?.pending ?? 0} pending · ${overview?.escalation_breakdown?.approved ?? 0} approved · ${overview?.escalation_breakdown?.rejected ?? 0} rejected`
-              }
-              accent={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-              tooltip="Decisions sent to a human reviewer. Sub-label splits the total into pending (waiting on a human), approved (CFO/CISO/etc said yes), rejected (operator denied). Click to open the Approval Inbox."
-              pulseDot={(overview?.escalation_breakdown?.pending ?? 0) > 0}
-              cta={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'Review →' : undefined}
-            />
-          </Link>
-          <MetricTile
-            icon={Target}
-            label="Active findings"
-            value={loading ? '—' : fmtInt(overview?.mandate_kpis?.active_findings)}
-            sublabel="Decisions with signals"
-            accent={(overview?.mandate_kpis?.active_findings ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-            tooltip="Audit rows carrying one or more security findings (signal_registry hits)."
-          />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+          {loading ? (
+            Array.from({ length: 6 }).map((_, i) => <MetricTileSkeleton key={i} />)
+          ) : (
+            <>
+              <MetricTile
+                icon={Bot}
+                label="Protected agents"
+                value={fmtInt(overview?.mandate_kpis?.protected_agents)}
+                sublabel="Active in this workspace"
+                tooltip="Active agents (status=ACTIVE) registered in this workspace. Source of truth: /workspace/inventory."
+              />
+              <MetricTile
+                icon={Activity}
+                label="Actions evaluated"
+                value={fmtInt(overview?.mandate_kpis?.actions_evaluated)}
+                sublabel="Every tool call + proxy call"
+                tooltip="Total tool-call + LLM-proxy-call decisions Aegis evaluated in the last 30 days."
+              />
+              <MetricTile
+                icon={CheckCircle2}
+                label="Allowed"
+                value={fmtInt(overview?.mandate_kpis?.allowed)}
+                sublabel="No risk gate hit"
+                accent="text-green-400"
+                tooltip="Decisions returned allow — no signal, policy, or budget threshold tripped."
+              />
+              <MetricTile
+                icon={Shield}
+                label="Denied"
+                value={fmtInt(overview?.mandate_kpis?.denied)}
+                sublabel="Hard block fired"
+                accent={(overview?.mandate_kpis?.denied ?? 0) > 0 ? 'text-red-400' : 'text-white'}
+                tooltip="Decisions returned deny / block / kill — Aegis refused the action before it ran."
+              />
+              <Link to="/approval-inbox" className="contents">
+                <MetricTile
+                  icon={AlertTriangle}
+                  label="Escalated"
+                  value={fmtInt(overview?.mandate_kpis?.escalated)}
+                  sublabel={
+                    (overview?.mandate_kpis?.escalated ?? 0) === 0
+                      ? 'No human-in-loop yet'
+                      : `${overview?.escalation_breakdown?.pending ?? 0} pending · ${overview?.escalation_breakdown?.approved ?? 0} approved · ${overview?.escalation_breakdown?.rejected ?? 0} rejected`
+                  }
+                  accent={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+                  tooltip="Decisions sent to a human reviewer. Sub-label splits the total into pending (waiting on a human), approved (CFO/CISO/etc said yes), rejected (operator denied). Click to open the Approval Inbox."
+                  pulseDot={(overview?.escalation_breakdown?.pending ?? 0) > 0}
+                  cta={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'Review →' : undefined}
+                />
+              </Link>
+              <MetricTile
+                icon={Target}
+                label="Active findings"
+                value={fmtInt(overview?.mandate_kpis?.active_findings)}
+                sublabel="Decisions with signals"
+                accent={(overview?.mandate_kpis?.active_findings ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+                tooltip="Audit rows carrying one or more security findings (signal_registry hits)."
+              />
+            </>
+          )}
         </div>
+
+        {/* Zero-activity hint — surfaced once the mandate KPIs come back empty
+            AND inventory is empty. Gives the operator a single clear next step
+            instead of staring at a wall of em-dashes. */}
+        {heroAllZero && (
+          <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="space-y-0.5">
+              <div className="text-sm font-semibold text-white">
+                No activity yet
+              </div>
+              <div className="text-xs text-neutral-500">
+                Register your first agent through the onboarding wizard to start
+                generating decisions, then come back here for the live view.
+              </div>
+            </div>
+            <Link to="/onboarding">
+              <Button size="sm">
+                <Plus size={14} aria-hidden="true" />
+                Start onboarding wizard
+              </Button>
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Sprint 12 — Row 2: business-value rollup. Translates the
@@ -534,36 +443,42 @@ export default function Dashboard() {
           <TrendingUp size={11} aria-hidden="true" />
           <span>Business value · what Aegis saved you</span>
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <MetricTile
-            icon={FileCheck2}
-            label="Records protected"
-            value={loading ? '—' : fmtInt(overview?.business_value?.records_protected_estimate)}
-            sublabel="Bulk-PII / dump blocks"
-            tooltip="Estimated row count Aegis prevented from leaving the workspace via blocked SQL dumps / bulk PII egress."
-          />
-          <MetricTile
-            icon={AlertTriangle}
-            label="Escalations prevented"
-            value={loading ? '—' : fmtInt(overview?.business_value?.escalations_prevented)}
-            sublabel="Sent to approval inbox"
-            tooltip="Actions Aegis kicked to a human reviewer instead of letting the agent self-execute."
-          />
-          <MetricTile
-            icon={ShieldCheck}
-            label="Controls enforced"
-            value={loading ? '—' : fmtInt(overview?.business_value?.compliance_controls_enforced)}
-            sublabel="Distinct signal classes"
-            tooltip="Distinct security-signal classes (Security:*, Compliance:*, etc.) that Aegis fired against in this window."
-          />
-          <MetricTile
-            icon={DollarSign}
-            label="Dollar risk mitigated"
-            value={loading ? '—' : fmtUSD(overview?.business_value?.dollar_risk_mitigated_usd)}
-            sublabel="Wire blocks + LLM blocks"
-            accent={(overview?.business_value?.dollar_risk_mitigated_usd ?? 0) > 0 ? 'text-green-400' : 'text-white'}
-            tooltip="Sum of (wire-transfer amounts on denied money movement) + ($0.05 × blocked LLM-proxy calls). Lower-bound estimate."
-          />
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => <MetricTileSkeleton key={i} />)
+          ) : (
+            <>
+              <MetricTile
+                icon={FileCheck2}
+                label="Records protected"
+                value={fmtInt(overview?.business_value?.records_protected_estimate)}
+                sublabel="Bulk-PII / dump blocks"
+                tooltip="Estimated row count Aegis prevented from leaving the workspace via blocked SQL dumps / bulk PII egress."
+              />
+              <MetricTile
+                icon={AlertTriangle}
+                label="Escalations prevented"
+                value={fmtInt(overview?.business_value?.escalations_prevented)}
+                sublabel="Sent to approval inbox"
+                tooltip="Actions Aegis kicked to a human reviewer instead of letting the agent self-execute."
+              />
+              <MetricTile
+                icon={ShieldCheck}
+                label="Controls enforced"
+                value={fmtInt(overview?.business_value?.compliance_controls_enforced)}
+                sublabel="Distinct signal classes"
+                tooltip="Distinct security-signal classes (Security:*, Compliance:*, etc.) that Aegis fired against in this window."
+              />
+              <MetricTile
+                icon={DollarSign}
+                label="Dollar risk mitigated"
+                value={fmtUSD(overview?.business_value?.dollar_risk_mitigated_usd)}
+                sublabel="Wire blocks + LLM blocks"
+                accent={(overview?.business_value?.dollar_risk_mitigated_usd ?? 0) > 0 ? 'text-green-400' : 'text-white'}
+                tooltip="Sum of (wire-transfer amounts on denied money movement) + ($0.05 × blocked LLM-proxy calls). Lower-bound estimate."
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -571,47 +486,57 @@ export default function Dashboard() {
           context that used to live in the top row. Same numbers,
           lower-priority placement now that the mandate KPIs occupy
           the hero. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {!loading && !(inventory?.total > 0) ? (
-          <AgentsEmptyTile />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => <MetricTileSkeleton key={i} />)
         ) : (
-          <MetricTile
-            icon={Bot}
-            label="Total agents"
-            value={loading ? '—' : fmtInt(inventory?.total)}
-            sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`}
-          />
+          <>
+            {!(inventory?.total > 0) ? (
+              <AgentsEmptyTile />
+            ) : (
+              <MetricTile
+                icon={Bot}
+                label="Total agents"
+                value={fmtInt(inventory?.total)}
+                sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`}
+              />
+            )}
+            <MetricTile
+              icon={AlertTriangle}
+              label="High risk"
+              value={fmtInt(inventory?.high_risk)}
+              sublabel={`${inventory?.by_risk?.critical ?? 0} critical · ${inventory?.by_risk?.high ?? 0} high`}
+              accent={(inventory?.high_risk ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+            />
+            <MetricTile
+              icon={Wand2}
+              label="Wizard provisioned"
+              value={fmtInt(inventory?.wizard_provisioned)}
+              sublabel="Created via /onboarding"
+            />
+            <MetricTile
+              icon={Shield}
+              label="Shadow mode"
+              value={shadowActive ? `${shadowDaysLeft ?? '?'}d` : 'OFF'}
+              sublabel={shadowActive ? 'Observe-only window' : 'Enforce mode'}
+              accent={shadowActive ? 'text-amber-400' : 'text-green-400'}
+            />
+          </>
         )}
-        <MetricTile
-          icon={AlertTriangle}
-          label="High risk"
-          value={loading ? '—' : fmtInt(inventory?.high_risk)}
-          sublabel={`${inventory?.by_risk?.critical ?? 0} critical · ${inventory?.by_risk?.high ?? 0} high`}
-          accent={(inventory?.high_risk ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-        />
-        <MetricTile
-          icon={Wand2}
-          label="Wizard provisioned"
-          value={loading ? '—' : fmtInt(inventory?.wizard_provisioned)}
-          sublabel="Created via /onboarding"
-        />
-        <MetricTile
-          icon={Shield}
-          label="Shadow mode"
-          value={loading ? '—' : shadowActive ? `${shadowDaysLeft ?? '?'}d` : 'OFF'}
-          sublabel={shadowActive ? 'Observe-only window' : 'Enforce mode'}
-          accent={shadowActive ? 'text-amber-400' : 'text-green-400'}
-        />
       </div>
 
       {/* Inventory hero — provider + risk-tier breakdowns */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card title="By provider" icon={Cpu} className="lg:col-span-2">
           {loading ? (
-            <div className="text-xs text-neutral-500 py-6 text-center">Loading…</div>
+            <SkeletonLoader variant="text" count={3} />
           ) : providerEntries.length === 0 ? (
-            <div className="text-xs text-neutral-500 py-6 text-center space-y-3">
-              <div>No agents in this workspace yet.</div>
+            <div className="text-xs text-neutral-500 py-6 text-center space-y-3 flex flex-col items-center">
+              <Bot size={24} className="text-neutral-600" aria-hidden="true" />
+              <div className="text-neutral-300 font-medium">No agents registered yet</div>
+              <div className="text-neutral-500 max-w-xs">
+                Provider breakdown appears once you onboard your first agent.
+              </div>
               <Link to="/onboarding">
                 <Button size="sm">
                   <Plus size={14} aria-hidden="true" />
@@ -635,7 +560,22 @@ export default function Dashboard() {
 
         <Card title="By risk tier" icon={Shield}>
           {loading ? (
-            <div className="text-xs text-neutral-500 py-6 text-center">Loading…</div>
+            <div className="grid grid-cols-2 gap-2" aria-hidden="true">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3 animate-pulse h-20"
+                />
+              ))}
+            </div>
+          ) : (inventory?.total ?? 0) === 0 ? (
+            <div className="text-xs text-neutral-500 py-6 text-center space-y-2 flex flex-col items-center">
+              <Shield size={20} className="text-neutral-600" aria-hidden="true" />
+              <div className="text-neutral-300 font-medium">—</div>
+              <div className="text-neutral-500 max-w-xs">
+                No risk tiers yet. Register an agent to start scoring.
+              </div>
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {riskEntries.map(([tier, count]) => (
@@ -654,11 +594,28 @@ export default function Dashboard() {
       {/* Recent activity */}
       <Card title="Recent activity" icon={Clock}>
         {loading ? (
-          <div className="text-xs text-neutral-500 py-6 text-center">Loading…</div>
+          <SkeletonLoader variant="row" count={5} />
         ) : recentEvents.length === 0 ? (
           <div className="text-xs text-neutral-500 py-6 text-center flex flex-col items-center gap-3">
             <CheckCircle2 size={24} className="text-green-400/60" aria-hidden="true" />
-            <div>No activity yet — run your agent to see decisions land here.</div>
+            <div className="text-neutral-300 font-medium">No activity yet</div>
+            <div className="text-neutral-500 max-w-sm">
+              Decisions show up here in real time. Onboard an agent or open the
+              live event feed to verify the SSE stream is connected.
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Link to="/onboarding">
+                <Button size="xs">
+                  <Plus size={12} aria-hidden="true" />
+                  Onboard agent
+                </Button>
+              </Link>
+              <Link to="/live-feed">
+                <Button size="xs" variant="ghost">
+                  Open live feed
+                </Button>
+              </Link>
+            </div>
           </div>
         ) : (
           <ul className="space-y-2">
@@ -673,10 +630,10 @@ export default function Dashboard() {
                 <span className="font-mono text-[10px] uppercase text-neutral-500 w-24 shrink-0 truncate">
                   {e.action || 'event'}
                 </span>
-                <span className="text-neutral-300 flex-1 truncate">
+                <span className="text-neutral-300 flex-1 truncate min-w-0">
                   {e.tool_name || e.reason || e.message || '—'}
                 </span>
-                <span className="text-[10px] font-mono text-neutral-600 truncate w-16 shrink-0">
+                <span className="text-[10px] font-mono text-neutral-600 truncate w-16 shrink-0 hidden sm:inline">
                   {(e.agent_id || '').slice(0, 8) || '—'}
                 </span>
               </li>

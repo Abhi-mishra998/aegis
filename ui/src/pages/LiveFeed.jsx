@@ -1,14 +1,15 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect, useContext } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import {
   Radio, Wifi, WifiOff, Loader2, Trash2, Pause, Play,
   Activity, Filter, ChevronRight, User, Cpu, Download, Gauge,
+  PlusCircle, ArrowRight, Zap,
 } from 'lucide-react'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { useSSE } from '../hooks/useSSE'
 import { auditService } from '../services/api'
 import { AgentContext } from '../context/AgentContext'
 import { AuthContext } from '../context/AuthContext'
-import DataFreshness from '../components/Common/DataFreshness'
 
 // ─── EVENT TYPE REGISTRY ────────────────────────────────────────────────────
 // Backend publishes 15 event types on the SSE stream; this map controls how
@@ -185,19 +186,17 @@ function EventRow({ ev, onInvestigate }) {
               {isEscalate ? 'escalate' : ev.data.decision}
             </span>
           )}
-          {ev.data?.model && (
-            <span className="text-[10px] px-1.5 py-0 rounded border border-white/10 text-neutral-400 font-mono truncate max-w-[180px]">
-              {ev.data.model}
-            </span>
-          )}
+          {/* Model + employee chips — model previously rendered twice;
+              consolidated into the purple-bordered Cpu badge so the row
+              stays scannable on dense feeds. */}
           {ev.data?.employee_email && (
-            <span className="text-[10px] px-1.5 py-0 rounded border border-cyan-500/30 text-cyan-300 font-mono flex items-center gap-1">
-              <User size={9} /> {ev.data.employee_email}
+            <span className="text-[10px] px-1.5 py-0 rounded border border-cyan-500/30 text-cyan-300 font-mono flex items-center gap-1 truncate max-w-[180px]">
+              <User size={9} aria-hidden="true" /> {ev.data.employee_email}
             </span>
           )}
           {ev.data?.model && (
-            <span className="text-[10px] px-1.5 py-0 rounded border border-purple-500/30 text-purple-300 font-mono flex items-center gap-1">
-              <Cpu size={9} /> {ev.data.model}
+            <span className="text-[10px] px-1.5 py-0 rounded border border-purple-500/30 text-purple-300 font-mono flex items-center gap-1 truncate max-w-[180px]">
+              <Cpu size={9} aria-hidden="true" /> {ev.data.model}
             </span>
           )}
         </div>
@@ -314,10 +313,24 @@ export default function LiveFeed() {
   // Stable signature set used to skip SSE/backfill duplicates without
   // dropping legitimately-distinct rows.
   const seenSigRef    = useRef(new Set())
+  // Pending fresh-flag clear-timers. We need to cancel these on unmount or
+  // Clear so a delayed setEvents doesn't fire against a stale page or
+  // resurrect a row the operator just wiped.
+  const freshTimersRef = useRef(new Set())
 
   pausedRef.current   = paused
   addToastRef.current = addToast
   navigateRef.current = navigate
+
+  // Cancel all pending fresh-flag timers on unmount. Prevents setState
+  // calls against unmounted React 18 components which surface as console
+  // warnings during fast page navigation.
+  useEffect(() => {
+    return () => {
+      for (const tid of freshTimersRef.current) clearTimeout(tid)
+      freshTimersRef.current.clear()
+    }
+  }, [])
 
   // Build a dedup signature: prefer request_id when present; otherwise a
   // tuple of fields that uniquely identify the action. Lower ts resolution
@@ -429,10 +442,16 @@ export default function LiveFeed() {
       decision:   inner?.decision   ?? inner?.action,
       risk_score: inner?.risk_score ?? inner?.risk,
     }
-    if (!ALL_TYPES.includes(type) && !normalised?.risk_score && !normalised?.decision) return
+    // Accept the event if its type is one we recognise OR if the payload
+    // carries enough shape to render meaningfully. Previously we dropped
+    // unknown types that happened to lack risk/decision — that silently
+    // hid agent_changed, insight_generated, behavior_flagged, etc. when
+    // they were routed through the default channel.
+    const knownType = ALL_TYPES.includes(type)
+    if (!knownType && !normalised?.risk_score && !normalised?.decision && !normalised?.agent_id) return
     const entry = {
       id:    crypto.randomUUID(),
-      type:  ALL_TYPES.includes(type) ? type : 'alert',
+      type:  knownType ? type : 'alert',
       data:  normalised,
       ts:    Date.now(),
       fresh: true,
@@ -449,14 +468,14 @@ export default function LiveFeed() {
       fireEscalationToast(entry)
     }
 
-    setEvents((prev) => {
-      const next = [entry, ...prev].slice(0, MAX_EVENTS)
-      // clear fresh flag after 2s without setState loop
-      setTimeout(() => {
-        setEvents((p) => p.map((e) => e.id === entry.id ? { ...e, fresh: false } : e))
-      }, 2000)
-      return next
-    })
+    setEvents((prev) => [entry, ...prev].slice(0, MAX_EVENTS))
+    // Clear the `fresh` flag after 2s. Tracked via a ref so we can cancel
+    // pending timers on unmount + Clear without leaking setTimeouts.
+    const tid = setTimeout(() => {
+      freshTimersRef.current.delete(tid)
+      setEvents((p) => p.map((e) => e.id === entry.id ? { ...e, fresh: false } : e))
+    }, 2000)
+    freshTimersRef.current.add(tid)
   }, [sigFor, fireEscalationToast])
 
   const channels = useMemo(() => {
@@ -494,14 +513,6 @@ export default function LiveFeed() {
 
   const scopeTypes = SCOPES[scope]?.types || ALL_TYPES
   const scopeSet   = useMemo(() => new Set(scopeTypes), [scopeTypes])
-
-  // Sprint 21 — surface "Last event Ns ago" in the header so the operator can
-  // tell whether the SSE stream is actually delivering events or just sitting
-  // idle. Newest first, so events[0] is the freshest sample.
-  const lastFetchAt = useMemo(() => {
-    if (events.length === 0) return null
-    return new Date(events[0].ts).toISOString()
-  }, [events])
 
   const visible = useMemo(() => {
     return events.filter((e) => {
@@ -563,9 +574,18 @@ export default function LiveFeed() {
     URL.revokeObjectURL(url)
   }, [visible, selectedAgentId, filterTypes, filterEmployees, filterModels])
 
+  // Dev-only manual demo trigger. Production builds DROP this branch via
+  // Vite's `import.meta.env.DEV` dead-code elimination, so an enterprise
+  // demo can never see a "seed fake data" button.
+  const isDev = import.meta.env.DEV
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <header className="flex items-start justify-between gap-4">
+    // Container widened from max-w-4xl (896px — wastes >50% of horizontal
+    // space at 1366px and >65% at 1920px) to max-w-7xl with responsive
+    // padding so the feed sidebar + main pane reflow cleanly across
+    // monitor walls and laptop screens.
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+      <header className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold text-white mb-1 flex items-center gap-2">
@@ -574,14 +594,13 @@ export default function LiveFeed() {
             </h1>
             <p className="text-sm text-neutral-400">Real-time security events from the gateway SSE stream.</p>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              <DataFreshness updatedAt={lastFetchAt} prefix="Last event" />
               {selectedAgent ? (
                 <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/10 text-neutral-400">
                   <Filter size={9} /> Scope: {selectedAgent.name || selectedAgentId.slice(0, 8)}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-neutral-500">
-                  <Filter size={9} /> Scope: All agents (workspace-wide)
+                  <Filter size={9} /> Scope: All agents (tenant-wide)
                 </span>
               )}
               {backfillLoading && (
@@ -621,7 +640,12 @@ export default function LiveFeed() {
             <Download size={12} /> Export
           </button>
           <button
-            onClick={() => { setEvents([]); seenSigRef.current = new Set(); }}
+            onClick={() => {
+              setEvents([])
+              seenSigRef.current = new Set()
+              for (const tid of freshTimersRef.current) clearTimeout(tid)
+              freshTimersRef.current.clear()
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-500 hover:text-red-400 hover:border-red-500/30 transition-colors"
             aria-label="Clear all events"
           >
@@ -775,16 +799,101 @@ export default function LiveFeed() {
       {/* Event list */}
       <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
         {visible.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-neutral-700">
-            <Activity size={32} className="opacity-30" aria-hidden="true" />
-            <p className="text-sm">
-              {state === 'open'
-                ? (filterTypes.size + filterEmployees.size + filterModels.size) > 0
-                  ? 'No events match the selected filters.'
-                  : 'Waiting for events…'
-                : 'Connect to start receiving events.'}
-            </p>
-          </div>
+          backfillLoading ? (
+            // Skeleton rows while we hydrate the 50-row backfill. Without
+            // this the operator sees a bare empty list for ~300ms and
+            // assumes the feed is broken.
+            <div role="status" aria-label="Loading recent events">
+              <div className="px-4 py-2 border-b border-[var(--border-subtle)] text-[10px] text-neutral-700 font-mono">
+                Loading recent events…
+              </div>
+              <SkeletonLoader variant="row" count={6} />
+            </div>
+          ) : (filterTypes.size + filterEmployees.size + filterModels.size) > 0 ? (
+            // Filters-applied empty state — actionable: clear filters.
+            <div className="flex flex-col items-center justify-center py-16 px-6 gap-4 text-center">
+              <Filter size={28} className="text-neutral-700" aria-hidden="true" />
+              <div>
+                <p className="text-sm text-neutral-300 font-medium">No events match the selected filters.</p>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Try widening the scope or clearing chips below.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setFilterTypes(new Set())
+                  setFilterEmployees(new Set())
+                  setFilterModels(new Set())
+                  setScope('all')
+                }}
+                className="text-xs px-3 py-1.5 rounded-lg border border-white/15 text-neutral-200 hover:bg-white/[0.05]"
+              >
+                Reset filters
+              </button>
+            </div>
+          ) : state !== 'open' ? (
+            // Disconnected empty state — actionable: reconnect.
+            <div className="flex flex-col items-center justify-center py-16 px-6 gap-4 text-center">
+              <WifiOff size={28} className="text-red-400/70" aria-hidden="true" />
+              <div>
+                <p className="text-sm text-neutral-200 font-medium">
+                  Disconnected{SSE_REASON_LABEL[lastError] ? ` — ${SSE_REASON_LABEL[lastError]}` : ''}.
+                </p>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Events will appear here once the SSE stream reconnects.
+                </p>
+              </div>
+              <button
+                onClick={reconnect}
+                className="text-xs px-3 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/10"
+              >
+                Reconnect now
+              </button>
+            </div>
+          ) : (
+            // Connected-but-quiet empty state — actionable: trigger agent
+            // traffic. Aegis cannot show events that haven't happened, so
+            // we tell the operator how to make them happen.
+            <div className="flex flex-col items-center justify-center py-16 px-6 gap-4 text-center">
+              <Activity size={28} className="text-green-400/70" aria-hidden="true" />
+              <div>
+                <p className="text-sm text-neutral-200 font-medium">
+                  Live stream open — no events yet.
+                </p>
+                <p className="text-xs text-neutral-500 mt-1 max-w-md">
+                  New decisions, LLM calls, and approvals will appear here the moment they happen.
+                  Register an agent or trigger a tool call to see Aegis in action.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                <Link
+                  to="/agents"
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white text-black font-medium hover:bg-neutral-200"
+                >
+                  <PlusCircle size={12} /> Go to Agents <ArrowRight size={11} />
+                </Link>
+                <Link
+                  to="/approval-inbox"
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/15 text-neutral-200 hover:bg-white/[0.05]"
+                >
+                  Approval Inbox
+                </Link>
+                {isDev && (
+                  <button
+                    onClick={() => addToastRef.current?.(
+                      'Demo trigger: run `python demos/run_all_demos.py` against the gateway to publish sample traffic.',
+                      'info',
+                      { ttl: 8_000 },
+                    )}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                    title="Dev only — production builds drop this button via Vite dead-code elimination"
+                  >
+                    <Zap size={12} /> Trigger demo events
+                  </button>
+                )}
+              </div>
+            </div>
+          )
         ) : (
           <div aria-live="polite" aria-relevant="additions" aria-busy={backfillLoading || undefined}>
             <div className="px-4 py-2 border-b border-[var(--border-subtle)] flex items-center justify-between">

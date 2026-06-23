@@ -9,8 +9,10 @@ import {
   Activity,
   Database,
   Layers,
+  HeartPulse,
 } from 'lucide-react'
 import { dashboardService } from '../services/api'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 // Queue depth thresholds — keep in sync with infra/prometheus-rules.yml.
 // audit_stream crit matches: max_over_time(acp_audit_stream_length[1m]) > 45000
@@ -107,20 +109,20 @@ function OverallBanner({ status, healthy, total, lastChecked }) {
       : XCircle
 
   return (
-    <div className={`rounded-2xl border ${cfg.border} ${cfg.bg} p-6 flex items-center justify-between`}>
-      <div className="flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${cfg.bg} border ${cfg.border}`}>
+    <div className={`rounded-2xl border ${cfg.border} ${cfg.bg} p-6 flex items-center justify-between gap-4 flex-wrap`}>
+      <div className="flex items-center gap-4 min-w-0">
+        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${cfg.bg} border ${cfg.border} shrink-0`}>
           <Icon size={22} className={cfg.color} />
         </div>
-        <div>
-          <p className={`text-lg font-bold ${cfg.color}`}>{cfg.label}</p>
+        <div className="min-w-0">
+          <p className={`text-lg font-bold ${cfg.color} truncate`}>{cfg.label}</p>
           <p className="text-sm text-neutral-400 mt-0.5">
             {healthy}/{total} services operational
           </p>
         </div>
       </div>
       {lastChecked && (
-        <p className="text-xs text-neutral-600 font-mono">
+        <p className="text-xs text-neutral-600 font-mono shrink-0">
           Last checked {new Date(lastChecked * 1000).toLocaleTimeString()}
         </p>
       )}
@@ -186,10 +188,31 @@ export default function SystemHealth() {
 
       {/* Overall Banner */}
       {loading && !data ? (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 animate-pulse h-24" />
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 animate-pulse h-24"
+             role="status" aria-label="Loading system health…" />
       ) : error ? (
-        <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6">
-          <p className="text-sm text-red-400">Failed to fetch health: {error}</p>
+        <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 flex items-start justify-between gap-4 flex-wrap"
+             role="alert">
+          <div className="flex items-start gap-3">
+            <XCircle size={20} className="text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-red-300">Failed to fetch health</p>
+              <p className="text-xs text-red-400/80 break-words">{error}</p>
+              <p className="text-xs text-neutral-500">
+                The gateway /system/health endpoint did not respond. Retry below,
+                or check the deployment if this persists.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => fetchHealth(true)}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30
+                       text-xs text-red-200 hover:text-white hover:bg-red-500/20 transition-colors disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+            Retry
+          </button>
         </div>
       ) : (
         <OverallBanner
@@ -203,12 +226,29 @@ export default function SystemHealth() {
       {/* Service Grid */}
       {loading && !data ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className="rounded-xl border border-white/5 bg-white/[0.02] p-4 animate-pulse h-28" />
-          ))}
+          <SkeletonLoader variant="card" count={9} />
+        </div>
+      ) : !error && !gateway && Object.keys(services).length === 0 ? (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center flex flex-col items-center gap-3">
+          <HeartPulse size={28} className="text-neutral-500" aria-hidden="true" />
+          <div className="text-sm font-semibold text-white">No services reported</div>
+          <div className="text-xs text-neutral-500 max-w-md">
+            /system/health returned an empty payload. This usually means the
+            gateway booted without registering any downstream probes. Refresh
+            once the platform has been up for at least 30 seconds.
+          </div>
+          <button
+            onClick={() => fetchHealth(true)}
+            disabled={refreshing}
+            className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10
+                       text-xs text-neutral-200 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+            {refreshing ? 'Checking…' : 'Re-check now'}
+          </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {gateway && <ServiceCard name="gateway" info={gateway} />}
           {Object.entries(services).map(([name, info]) => (
             <ServiceCard key={name} name={name} info={info} />
@@ -222,11 +262,11 @@ export default function SystemHealth() {
           <div className="flex items-center gap-2 mb-4">
             <Layers size={14} className="text-neutral-400" />
             <span className="text-sm font-semibold text-white">Operational Queues</span>
-            <span className="ml-auto text-[10px] font-mono text-neutral-600">
+            <span className="ml-auto text-[10px] font-mono text-neutral-600 hidden sm:inline">
               from /system/health
             </span>
           </div>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <QueueTile
               label="Audit Stream"
               value={queues.audit_stream_length ?? 0}

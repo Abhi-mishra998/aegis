@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { RefreshCw, Shield, AlertTriangle, Activity, Eye, Zap, Users, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { RefreshCw, Shield, AlertTriangle, Activity, Eye, Zap, Users, X, Network } from 'lucide-react'
 import { graphService } from '../services/api'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
+import { eventBus } from '../lib/eventBus'
 
 // ── Lightweight force-directed layout (no new deps) ─────────────────────────
 // Layout produces {x, y} per node id, run once per render of nodes/edges set.
@@ -82,6 +85,17 @@ export default function IdentityGraph() {
   const [simBusy, setSimBusy] = useState(false)
   const [blastError, setBlastError] = useState('')
   const [simError, setSimError] = useState('')
+  // Responsive graph sizing — observe the SVG wrapper and re-layout
+  // when the container reflows (1366×768 sidebar visible vs 1920×1080,
+  // mobile collapse, panel resize, etc.). Defaults match the original
+  // 760×480 viewBox so the first render is identical to pre-resize.
+  const [dims, setDims] = useState({ w: 760, h: 480 })
+  const svgWrapRef = useRef(null)
+  // Real-time pings: node ids that have had a runtime event in the
+  // last ~3s. Drives a transient pulse around the node so the operator
+  // can see traffic landing while watching the live graph.
+  const [pinged, setPinged] = useState({})
+  const pingTimersRef = useRef(new Map())
 
   const fetchAll = useCallback(async () => {
     setLoading(true); setError(null)
@@ -99,7 +113,69 @@ export default function IdentityGraph() {
     return () => clearInterval(t)
   }, [fetchAll])
 
-  const pos = useMemo(() => layoutGraph(nodes, edges), [nodes, edges])
+  // Resize the graph viewport when the container reflows.
+  useEffect(() => {
+    const el = svgWrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const cr = entry.contentRect
+        // Clamp height so the graph stays usable but doesn't dominate
+        // the viewport at 1080p; 1366×768 keeps a 380px minimum.
+        const w = Math.max(320, Math.floor(cr.width))
+        const h = Math.max(380, Math.min(720, Math.floor(cr.width * 0.6)))
+        setDims((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // Real-time ping: when an agent_changed event lands, pulse the
+  // matching node briefly so the operator can see activity on the
+  // graph without manually refreshing. The visual is intentionally
+  // short-lived (~2.5s) so a noisy tenant doesn't end up with every
+  // node glowing all the time.
+  useEffect(() => {
+    const unsub = eventBus.on('agent_changed', (payload) => {
+      const candidates = [
+        payload?.node_id,
+        payload?.agent_id,
+        payload?.id,
+        payload?.actor_id,
+      ].filter(Boolean).map(String)
+      if (candidates.length === 0) return
+      setPinged((prev) => {
+        const next = { ...prev }
+        candidates.forEach((id) => { next[id] = Date.now() })
+        return next
+      })
+      candidates.forEach((id) => {
+        const prevTimer = pingTimersRef.current.get(id)
+        if (prevTimer) clearTimeout(prevTimer)
+        const t = setTimeout(() => {
+          setPinged((prev) => {
+            if (!(id in prev)) return prev
+            const next = { ...prev }
+            delete next[id]
+            return next
+          })
+          pingTimersRef.current.delete(id)
+        }, 2_500)
+        pingTimersRef.current.set(id, t)
+      })
+    })
+    return () => {
+      unsub?.()
+      pingTimersRef.current.forEach((t) => clearTimeout(t))
+      pingTimersRef.current.clear()
+    }
+  }, [])
+
+  const pos = useMemo(
+    () => layoutGraph(nodes, edges, dims.w, dims.h),
+    [nodes, edges, dims.w, dims.h],
+  )
 
   const handleNodeClick = async (n) => {
     setSelected(n)
@@ -161,47 +237,113 @@ export default function IdentityGraph() {
               {nodes.length} nodes · {edges.length} edges
             </span>
           </div>
-          <svg viewBox="0 0 760 480" className="w-full h-[480px]">
-            <defs>
-              <marker id="arrow" viewBox="0 -5 10 10" refX="22" refY="0" markerWidth="6" markerHeight="6" orient="auto">
-                <path d="M0,-4L8,0L0,4" fill="#525252" />
-              </marker>
-            </defs>
-            {edges.map((e) => {
-              const a = pos[e.src_node_id], b = pos[e.dst_node_id]
-              if (!a || !b) return null
-              return (
-                <line
-                  key={e.id}
-                  x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                  stroke={STATUS_COLOR(e.outcome)}
-                  strokeOpacity={0.45}
-                  strokeWidth={1 + Math.min(2, (e.risk_score || 0) * 2)}
-                  markerEnd="url(#arrow)"
-                />
-              )
-            })}
-            {nodes.map((n) => {
-              const p = pos[n.id]
-              if (!p) return null
-              const isSelected = selected?.id === n.id
-              return (
-                <g key={n.id} onClick={() => handleNodeClick(n)} style={{ cursor: 'pointer' }}>
-                  <circle
-                    cx={p.x} cy={p.y}
-                    r={isSelected ? 14 : 9}
-                    fill={TYPE_COLOR[n.node_type] || '#525252'}
-                    stroke={trustColor(n.trust_score)}
-                    strokeWidth={isSelected ? 3 : 2}
-                  />
-                  <text x={p.x} y={p.y + 22} fontSize="9" fill="#a3a3a3" textAnchor="middle" fontFamily="monospace">
-                    {(n.name || n.external_id || '').slice(0, 14)}
-                  </text>
-                </g>
-              )
-            })}
-          </svg>
-          <div className="flex items-center gap-3 mt-2 px-2 text-[10px] font-mono text-neutral-600">
+          <div ref={svgWrapRef} className="w-full" style={{ minHeight: 380 }}>
+            {loading && nodes.length === 0 ? (
+              <div
+                className="w-full rounded-xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-center animate-pulse"
+                style={{ height: dims.h }}
+                role="status"
+                aria-label="Loading agent identity graph"
+              >
+                <div className="flex flex-col items-center gap-3">
+                  <Network size={28} className="text-neutral-700" aria-hidden="true" />
+                  <span className="text-[11px] text-neutral-500 font-mono">computing layout…</span>
+                </div>
+              </div>
+            ) : !loading && nodes.length === 0 ? (
+              <div
+                className="w-full rounded-xl bg-white/[0.02] border border-dashed border-white/10 flex items-center justify-center px-6"
+                style={{ height: dims.h }}
+              >
+                <div className="text-center space-y-3 max-w-md">
+                  <Network size={32} className="text-neutral-700 mx-auto" aria-hidden="true" />
+                  <p className="text-sm text-neutral-200 font-medium">Graph is empty</p>
+                  <p className="text-xs text-neutral-500 leading-relaxed">
+                    The identity graph is generated automatically when registered agents
+                    interact with users and tools. Fire a request through the gateway and
+                    the first nodes will appear here within a few seconds.
+                  </p>
+                  <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+                    <Link
+                      to="/agents"
+                      className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+                    >
+                      <Users size={12} /> View Agents
+                    </Link>
+                    <Link
+                      to="/onboarding"
+                      className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/10 text-xs text-neutral-300 hover:text-white hover:border-white/20"
+                    >
+                      Run onboarding
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <svg
+                viewBox={`0 0 ${dims.w} ${dims.h}`}
+                preserveAspectRatio="xMidYMid meet"
+                className="w-full block"
+                style={{ height: dims.h }}
+                role="img"
+                aria-label={`Agent identity graph: ${nodes.length} nodes, ${edges.length} edges`}
+              >
+                <defs>
+                  <marker id="arrow" viewBox="0 -5 10 10" refX="22" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+                    <path d="M0,-4L8,0L0,4" fill="#525252" />
+                  </marker>
+                </defs>
+                {edges.map((e) => {
+                  const a = pos[e.src_node_id], b = pos[e.dst_node_id]
+                  if (!a || !b) return null
+                  return (
+                    <line
+                      key={e.id}
+                      x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                      stroke={STATUS_COLOR(e.outcome)}
+                      strokeOpacity={0.45}
+                      strokeWidth={1 + Math.min(2, (e.risk_score || 0) * 2)}
+                      markerEnd="url(#arrow)"
+                    />
+                  )
+                })}
+                {nodes.map((n) => {
+                  const p = pos[n.id]
+                  if (!p) return null
+                  const isSelected = selected?.id === n.id
+                  const isPinged = Boolean(pinged[n.id])
+                  return (
+                    <g key={n.id} onClick={() => handleNodeClick(n)} style={{ cursor: 'pointer' }}>
+                      {isPinged && (
+                        <circle
+                          cx={p.x} cy={p.y}
+                          r={isSelected ? 18 : 14}
+                          fill="none"
+                          stroke={trustColor(n.trust_score)}
+                          strokeOpacity={0.6}
+                          strokeWidth={1.5}
+                        >
+                          <animate attributeName="r" from={isSelected ? 14 : 9} to={isSelected ? 28 : 22} dur="1.4s" repeatCount="indefinite" />
+                          <animate attributeName="stroke-opacity" from="0.7" to="0" dur="1.4s" repeatCount="indefinite" />
+                        </circle>
+                      )}
+                      <circle
+                        cx={p.x} cy={p.y}
+                        r={isSelected ? 14 : 9}
+                        fill={TYPE_COLOR[n.node_type] || '#525252'}
+                        stroke={trustColor(n.trust_score)}
+                        strokeWidth={isSelected ? 3 : 2}
+                      />
+                      <text x={p.x} y={p.y + 22} fontSize="9" fill="#a3a3a3" textAnchor="middle" fontFamily="monospace">
+                        {(n.name || n.external_id || '').slice(0, 14)}
+                      </text>
+                    </g>
+                  )
+                })}
+              </svg>
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-2 px-2 text-[10px] font-mono text-neutral-600 flex-wrap">
             <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: TYPE_COLOR.agent }} /> agent</span>
             <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: TYPE_COLOR.tool }} /> tool</span>
             <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: TYPE_COLOR.resource }} /> resource</span>
@@ -342,7 +484,7 @@ export default function IdentityGraph() {
                       : 'text-green-400'}
               />
               <Kpi label="Reachable" value={simResult.reachable_nodes?.length || 0} />
-              <Kpi label="Workspaces" value={simResult.affected_tenants?.length || 0} />
+              <Kpi label="Tenants" value={simResult.affected_tenants?.length || 0} />
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 mb-4">

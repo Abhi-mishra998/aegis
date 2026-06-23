@@ -9,23 +9,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, RefreshCw, User, PlayCircle,
+  Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, RefreshCw, User, PlayCircle, Zap,
 } from 'lucide-react'
-import { auditService, autonomyService } from '../services/api'
+import { auditService, autonomyService, playgroundService } from '../services/api'
 import ErrorBoundary from '../components/Common/ErrorBoundary'
-import Button from '../components/Common/Button'
-
-const PAGE_SIZE = 25
+import SkeletonLoader from '../components/Common/SkeletonLoader'
+import { useSSE } from '../hooks/useSSE'
+import { eventBus } from '../lib/eventBus'
 
 function unwrap(resp) { return resp?.data ?? resp }
 function fmtTs(s) { if (!s) return '—'; try { return new Date(s).toLocaleString() } catch { return s } }
-
-function parsePage(resp, prevCount = 0) {
-  const data = unwrap(resp)
-  const items = Array.isArray(data) ? data : (data?.items || [])
-  const total = Array.isArray(data) ? items.length + prevCount : (data?.total ?? prevCount + items.length)
-  return { items, total: total || 0 }
-}
 
 const WINDOWS = [
   { label: 'Last 1h',  minutes: 60 },
@@ -51,24 +44,28 @@ function ApprovalInboxPage() {
   const [busy, setBusy]           = useState('')
   const [error, setError]         = useState('')
   const [msg, setMsg]             = useState('')
-  const [loading, setLoading]     = useState(false)
-  const [pagesLoaded, setPagesLoaded] = useState(1)
-  const [totalEscalations, setTotalEscalations] = useState(0)
+  const [loading, setLoading]     = useState(true)
+  // Don't reveal the empty-state CTA until at least one fetch resolves —
+  // we never want to flash "no pending approvals" before the API replies.
+  const [hasLoaded, setHasLoaded] = useState(false)
+  const [triggering, setTriggering] = useState(false)
 
-  const fetchAll = useCallback(async (pages = 1) => {
+  const fetchAll = useCallback(async () => {
     setLoading(true); setError('')
     try {
-      // Refetch every page the operator has already paged through so the
-      // 8s poll doesn't silently wipe paginated history.
+      // 1. Pull escalated audit rows (the queue of pending approvals).
       const esc = await auditService.searchLogs({
         decision: 'escalate',
-        limit: PAGE_SIZE * pages,
-        offset: 0,
+        limit: 200,
       })
-      const { items, total } = parsePage(esc)
-      setEscalations(items)
-      setTotalEscalations(total)
+      const data = unwrap(esc)
+      const escItems = Array.isArray(data) ? data : (data?.items || [])
+      setEscalations(escItems)
 
+      // 2. Pull human override events so we know which escalations have
+      // already been actioned. We index by request_id; an event with
+      // event_type=approval OR event_type=override on a given request_id
+      // means the queue should hide it.
       const ovrs = unwrap(await autonomyService.listOverrides({
         minutes: windowMinutes, limit: 500,
       })) || []
@@ -77,17 +74,11 @@ function ApprovalInboxPage() {
       setError(e?.message || 'Failed to load approvals')
     } finally {
       setLoading(false)
+      setHasLoaded(true)
     }
   }, [windowMinutes])
 
-  const hasMore = escalations.length < totalEscalations
-
-  const loadMore = useCallback(() => {
-    if (loading || !hasMore) return
-    setPagesLoaded((n) => n + 1)
-  }, [loading, hasMore])
-
-  useEffect(() => { fetchAll(pagesLoaded) }, [fetchAll, pagesLoaded])
+  useEffect(() => { fetchAll() }, [fetchAll])
 
   // Sprint 20 UX pass — the Approval Inbox is the founder's "Pending
   // CFO approval" surface. If a new escalation lands and the inbox
@@ -95,9 +86,74 @@ function ApprovalInboxPage() {
   // manually hit Refresh. Poll every 8s while the page is mounted —
   // cheap (single GET + one GET on the overrides table).
   useEffect(() => {
-    const id = setInterval(() => { fetchAll(pagesLoaded) }, 8_000)
+    const id = setInterval(() => { fetchAll() }, 8_000)
     return () => clearInterval(id)
-  }, [fetchAll, pagesLoaded])
+  }, [fetchAll])
+
+  // Real-time SSE wiring — react to approval_required / approval_resolved
+  // server events so a new pending approval appears the instant the
+  // gateway emits one (instead of waiting up to 8s for the next poll).
+  // Also listens via the eventBus in case AgentContext re-emits these
+  // as `policy_decision`.
+  const sseChannels = useMemo(() => ({
+    approval_required: () => fetchAll(),
+    approval_resolved: () => fetchAll(),
+    incident_updated:  () => fetchAll(),
+  }), [fetchAll])
+  useSSE({
+    channels: sseChannels,
+    onMessage: (evt) => {
+      const t = String(evt?.type || '').toLowerCase()
+      if (t.includes('approval') || t.includes('escalate') || t.includes('override')) {
+        fetchAll()
+      }
+    },
+  })
+  useEffect(() => {
+    const u1 = eventBus.on('policy_decision', fetchAll)
+    const u2 = eventBus.on('alert',           fetchAll)
+    return () => { u1(); u2() }
+  }, [fetchAll])
+
+  // Operator-facing demo affordance — fires a synthetic high-risk
+  // /execute call that the gateway will return ESCALATE on, which
+  // materialises an audit row with decision="escalate". The inbox
+  // re-polls after a short delay so the new row appears in the
+  // pending list without an explicit refresh.
+  const triggerSampleEscalate = useCallback(async () => {
+    setTriggering(true)
+    setError('')
+    setMsg('')
+    try {
+      await playgroundService.execute(
+        'inbox-demo-agent',
+        'demo.escalate',
+        {
+          // A wire-transfer above the policy soft cap deterministically
+          // triggers ESCALATE in the canonical policy. The agent id
+          // above is a synthetic name so it doesn't pollute the agent
+          // registry view.
+          amount_usd: 250000,
+          recipient_kind: 'external',
+          reason: 'approval-inbox sample trigger',
+        },
+      ).catch((err) => {
+        // ESCALATE comes back as HTTP 403 with body {error:"approval_required"}.
+        // That is the success path here — we want the row, not the data.
+        const msg = err?.message || ''
+        if (!/approval|escalate|403/i.test(msg)) throw err
+      })
+      setMsg('Sample ESCALATE submitted — a new pending approval should land within a few seconds.')
+      // Two staggered refreshes — the first picks up the audit row,
+      // the second handles any out-of-order override write.
+      setTimeout(fetchAll, 600)
+      setTimeout(fetchAll, 2000)
+    } catch (e) {
+      setError(e?.message || 'Sample trigger failed')
+    } finally {
+      setTriggering(false)
+    }
+  }, [fetchAll])
 
   const resolvedRequestIds = useMemo(() => {
     const set = new Set()
@@ -151,7 +207,7 @@ function ApprovalInboxPage() {
       setMsg(`Request ${selected.request_id} recorded as ${decision === 'approval' ? 'APPROVED' : 'REJECTED'}.`)
       setReason('')
       setSelected(null)
-      await fetchAll(pagesLoaded)
+      await fetchAll()
     } catch (e) {
       setError(e?.message || 'Failed to record decision')
     } finally {
@@ -187,7 +243,7 @@ function ApprovalInboxPage() {
             ))}
           </select>
           <button
-            onClick={() => fetchAll(pagesLoaded)}
+            onClick={fetchAll}
             disabled={loading}
             className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 rounded-md text-sm inline-flex items-center gap-2"
           >
@@ -213,13 +269,31 @@ function ApprovalInboxPage() {
             <Clock size={12} /> Pending ({pending.length})
           </div>
           <div className="divide-y divide-neutral-900 max-h-[60vh] overflow-y-auto">
-            {pending.length === 0 && !loading && (
-              <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-8 text-center">
-                <Inbox size={32} className="mx-auto mb-3 text-neutral-600" aria-hidden="true" />
-                <h3 className="text-sm font-semibold text-neutral-300 mb-1">No pending approvals</h3>
-                <p className="text-xs text-neutral-500">All escalations have been resolved. Live escalations will appear here as agents request approval.</p>
+            {!hasLoaded ? (
+              <div className="p-4">
+                <SkeletonLoader variant="row" count={4} />
               </div>
-            )}
+            ) : pending.length === 0 ? (
+              <div className="p-6 text-center space-y-3">
+                <CheckCircle2 size={22} className="text-green-400 mx-auto" aria-hidden="true" />
+                <div>
+                  <p className="text-sm text-neutral-200 font-medium">No pending approvals</p>
+                  <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
+                    When an agent triggers ESCALATE it appears here. Decisions
+                    land in <code>human_override_events</code> with the same
+                    ed25519 chain as the rest of the audit log.
+                  </p>
+                </div>
+                <button
+                  onClick={triggerSampleEscalate}
+                  disabled={triggering}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-purple-300 bg-purple-500/[0.08] border border-purple-500/20 hover:border-purple-500/40 disabled:opacity-50 transition-colors"
+                >
+                  <Zap size={11} aria-hidden="true" />
+                  {triggering ? 'Triggering sample…' : 'Trigger sample ESCALATE'}
+                </button>
+              </div>
+            ) : null}
             {pending.map((row) => {
               const sev = severityBadge(row.metadata_json?.risk_score)
               const isSel = selected?.id === row.id
@@ -241,19 +315,6 @@ function ApprovalInboxPage() {
                 </button>
               )
             })}
-            {hasMore && (
-              <div className="p-3 text-center">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={loadMore}
-                  disabled={loading}
-                  loading={loading}
-                >
-                  Load more ({escalations.length} of {totalEscalations})
-                </Button>
-              </div>
-            )}
           </div>
 
           {resolved.length > 0 && (
@@ -339,22 +400,20 @@ function ApprovalInboxPage() {
                 </div>
 
                 <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    variant="danger"
-                    size="sm"
+                  <button
                     onClick={() => decide('override')}
                     disabled={!!busy}
+                    className="px-3 py-1.5 bg-rose-700 hover:bg-rose-600 disabled:bg-neutral-700 rounded-md text-sm inline-flex items-center gap-2"
                   >
-                    <XCircle size={14} aria-hidden="true" /> {busy === 'override' ? 'Rejecting…' : 'Reject'}
-                  </Button>
-                  <Button
-                    variant="success"
-                    size="sm"
+                    <XCircle size={14} /> {busy === 'override' ? 'Rejecting…' : 'Reject'}
+                  </button>
+                  <button
                     onClick={() => decide('approval')}
                     disabled={!!busy}
+                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-neutral-700 rounded-md text-sm inline-flex items-center gap-2"
                   >
-                    <CheckCircle2 size={14} aria-hidden="true" /> {busy === 'approval' ? 'Approving…' : 'Approve'}
-                  </Button>
+                    <CheckCircle2 size={14} /> {busy === 'approval' ? 'Approving…' : 'Approve'}
+                  </button>
                 </div>
               </div>
 

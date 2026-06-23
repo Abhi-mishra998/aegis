@@ -150,7 +150,7 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
       isOpen={isOpen}
       onClose={onClose}
       title="Add IOC"
-      description="Workspace-scoped indicator of compromise. Substring match for most kinds; destructive_shell takes a Python regex."
+      description="Tenant-scoped indicator of compromise. Substring match for most kinds; destructive_shell takes a Python regex."
       size="md"
       footer={
         <>
@@ -314,15 +314,63 @@ export default function ThreatIntel() {
 
   const highRisk = history.filter(h => h.score >= 75).length
   const isDemoMode = result?.demo_mode || summary?.demo_mode
+  // True empty state — no IOCs in tenant scope, no feeds configured, and the
+  // summary is empty. Surface the connect-a-feed CTA prominently before the
+  // user has to scroll through three empty panels to figure out what to do.
+  const trulyEmpty =
+    !iocsLoading && !feedsLoading &&
+    iocs.length === 0 &&
+    feeds.length === 0 &&
+    (!summary || Object.keys(summary || {}).length === 0)
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 px-4 lg:px-0">
       <header>
         <h1 className="text-2xl font-semibold text-white mb-1">Threat Intelligence</h1>
         <p className="text-sm text-neutral-400">
           Enrich IPs and domains against external threat feeds. Enter an IP address or domain name.
         </p>
       </header>
+
+      {trulyEmpty && (
+        <div className="rounded-xl border border-white/[0.06] bg-neutral-950 p-6 text-center space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-full bg-white/[0.04] flex items-center justify-center">
+            <Rss size={20} className="text-neutral-500" aria-hidden="true" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-white">No IOCs ingested</h3>
+            <p className="text-xs text-neutral-400 max-w-md mx-auto">
+              Connect a feed via{' '}
+              <a href="/settings/integrations" className="text-emerald-400 hover:underline">
+                /settings/integrations
+              </a>{' '}
+              or add an IOC manually below to start enriching.
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <a
+              href="/settings/integrations"
+              className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              Connect a feed
+            </a>
+            <button
+              onClick={() => setShowIocModal(true)}
+              className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900"
+            >
+              <Plus size={11} className="inline mr-1" /> Add IOC manually
+            </button>
+            <button
+              onClick={handleRefreshFeeds}
+              disabled={refreshing}
+              className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900 disabled:opacity-50"
+            >
+              {refreshing ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : <RefreshCw size={11} className="inline mr-1" />}
+              Refresh feeds
+            </button>
+          </div>
+        </div>
+      )}
 
       {isDemoMode && (
         <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-400">
@@ -499,7 +547,7 @@ export default function ThreatIntel() {
           ]}
           data={iocs}
           isLoading={iocsLoading}
-          emptyMessage="No IOCs configured — add one or refresh feeds to seed defaults."
+          emptyMessage="No IOCs ingested — connect a feed via /settings/integrations or add one manually."
         />
       </div>
 

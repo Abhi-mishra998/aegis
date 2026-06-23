@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Shield, AlertTriangle, UserCheck, Plus, Trash2, Lock } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { RefreshCw, Shield, AlertTriangle, UserCheck, Plus, Trash2, Lock, ArrowRight, PlayCircle } from 'lucide-react'
 import { autonomyService } from '../services/api'
 import Modal from '../components/Common/Modal'
 import ConfirmDialog from '../components/Common/ConfirmDialog'
@@ -133,8 +134,41 @@ export default function AutonomyContracts() {
             <span className="text-sm font-semibold text-white">Active Contracts</span>
             <span className="ml-auto text-[10px] font-mono text-neutral-600">{contracts.length}</span>
           </div>
-          {!contracts.length ? (
-            <p className="text-xs text-neutral-600 text-center py-6">No autonomy contracts yet. Click <span className="text-blue-300">New Contract</span> above to start enforcing bounded autonomy.</p>
+          {loading && !contracts.length ? (
+            <div className="space-y-2 py-2" role="status" aria-label="Loading contracts">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-3 py-2 animate-pulse">
+                  <div className="h-3 bg-white/[0.06] rounded w-24" />
+                  <div className="h-3 bg-white/[0.04] rounded w-32" />
+                  <div className="h-3 bg-white/[0.04] rounded flex-1" />
+                  <div className="h-4 w-16 bg-white/[0.04] rounded-full" />
+                </div>
+              ))}
+            </div>
+          ) : !contracts.length ? (
+            <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.015] p-6 text-center space-y-3">
+              <Lock size={22} className="text-neutral-500 mx-auto" aria-hidden="true" />
+              <div className="text-xs text-neutral-300 font-semibold">No autonomy contracts yet</div>
+              <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                Autonomy contracts define hard ceilings on what an agent may attempt — allowed/denied actions, runtime caps, cost caps, approval triggers.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+                <button
+                  onClick={() => setEditing({ ...defaultContract })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-500/20 border border-blue-500/40 text-blue-100 text-xs font-medium hover:bg-blue-500/30"
+                >
+                  <Plus size={11} aria-hidden="true" />
+                  New Contract
+                </button>
+                <Link
+                  to="/policies?tab=editor"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/10 text-neutral-200 text-xs hover:bg-white/[0.04]"
+                >
+                  <ArrowRight size={11} aria-hidden="true" />
+                  Policy Editor
+                </Link>
+              </div>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">

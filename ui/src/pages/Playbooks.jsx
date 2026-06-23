@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Shield, Play, RefreshCw, Plus, Trash2, History,
   Zap, CheckCircle2, AlertTriangle, Loader2, X,
@@ -6,6 +7,9 @@ import {
 } from 'lucide-react'
 import { playbookService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { useSSE } from '../hooks/useSSE'
+import { eventBus } from '../lib/eventBus'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 const STEP_COLORS = {
   KILL_AGENT:    'text-red-400',
@@ -317,6 +321,7 @@ export default function Playbooks() {
   const [templates,   setTemplates]   = useState([])
   const [stats,       setStats]       = useState(null)
   const [loading,     setLoading]     = useState(true)
+  const [hasLoaded,   setHasLoaded]   = useState(false)
   const [tab,         setTab]         = useState('installed')
   const [triggerFor,   setTriggerFor]   = useState(null)
   const [runsFor,      setRunsFor]      = useState(null)
@@ -345,9 +350,31 @@ export default function Playbooks() {
       }
     } catch {}
     setLoading(false)
+    setHasLoaded(true)
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Real-time refresh: react to playbook + ARE + incident events so the
+  // run-count + auto-trigger stats update without a manual refresh.
+  const sseChannels = useMemo(() => ({
+    auto_response_executed: () => load(),
+    playbook_run:           () => load(),
+    incident_updated:       () => load(),
+  }), [load])
+  useSSE({
+    channels: sseChannels,
+    onMessage: (evt) => {
+      const t = String(evt?.type || '').toLowerCase()
+      if (t.includes('playbook') || t.includes('auto_response') || t.includes('incident')) {
+        load()
+      }
+    },
+  })
+  useEffect(() => {
+    const u = eventBus.on('auto_response_executed', load)
+    return u
+  }, [load])
 
   const handleInstall = async (tmpl) => {
     setInstalling(tmpl.name)
@@ -443,9 +470,9 @@ export default function Playbooks() {
       </div>
 
       {/* Content */}
-      {loading ? (
-        <div className="flex items-center justify-center h-40">
-          <Loader2 className="animate-spin text-neutral-500" size={24} />
+      {!hasLoaded ? (
+        <div className="space-y-3">
+          <SkeletonLoader variant="card" count={3} />
         </div>
       ) : tab === 'installed' ? (
         playbooks.length === 0 ? (
@@ -453,16 +480,28 @@ export default function Playbooks() {
             <div className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center">
               <Shield size={24} className="text-neutral-600" />
             </div>
-            <div className="text-center">
-              <p className="text-sm text-neutral-400 mb-1">No playbooks installed</p>
-              <p className="text-xs text-neutral-600">Install from the template library to automate incident response.</p>
+            <div className="text-center max-w-sm">
+              <p className="text-sm text-neutral-200 mb-1 font-medium">No playbooks installed</p>
+              <p className="text-xs text-neutral-500 leading-relaxed">
+                Playbooks chain response steps (kill, isolate, revoke key, alert)
+                triggered by ARE rules or manually. Install from the template
+                library to automate incident response.
+              </p>
             </div>
-            <button
-              onClick={() => setTab('templates')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
-            >
-              <Plus size={13} /> Browse Templates
-            </button>
+            <div className="flex flex-wrap items-center gap-2 justify-center">
+              <button
+                onClick={() => setTab('templates')}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+              >
+                <Plus size={13} /> Browse Templates
+              </button>
+              <Link
+                to="/auto-response"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-neutral-200 bg-white/[0.04] border border-white/[0.08] hover:border-white/20 transition-colors"
+              >
+                <Zap size={12} aria-hidden="true" /> Configure ARE rules
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="space-y-3">

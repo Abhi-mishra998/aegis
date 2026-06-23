@@ -13,7 +13,7 @@
 // The page accepts ?request_id=... in the URL so it deep-links from
 // other pages (Flight Recorder, Forensics, Live Feed).
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import ReactFlow, {
   Background,
@@ -21,7 +21,10 @@ import ReactFlow, {
   MarkerType,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { Search, Compass } from 'lucide-react'
 import { flightService } from '../services/api'
+import { eventBus } from '../lib/eventBus'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 const VIEWS = ['Graph', 'Timeline', 'JSON']
 
@@ -103,7 +106,7 @@ function TimelineView({ graph }) {
   if (!graph) return null
   return (
     <ol className="space-y-2">
-      {(graph.nodes || []).map((n, idx) => {
+      {graph.nodes.map((n, idx) => {
         const style = outcomeStyle(n.outcome)
         return (
           <li
@@ -148,7 +151,7 @@ function TraceOverview({ graph }) {
     { label: 'Decision',     value: graph.timeline?.final_decision || '—' },
     { label: 'Final risk',   value: graph.timeline?.final_risk?.toFixed(2) ?? '—' },
     { label: 'Total latency', value: graph.total_latency_ms != null ? `${graph.total_latency_ms} ms` : '—' },
-    { label: 'Stages',       value: (graph.nodes || []).length },
+    { label: 'Stages',       value: graph.nodes.length },
     { label: 'Tokens in',    value: graph.tokens_in ?? '—' },
     { label: 'Tokens out',   value: graph.tokens_out ?? '—' },
     { label: 'Est. USD',     value: graph.estimated_usd != null ? `$${graph.estimated_usd.toFixed(4)}` : '—' },
@@ -229,6 +232,22 @@ export default function DecisionExplorer() {
   const [view, setView] = useState('Graph')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Live tick — when a fresh policy_decision SSE event arrives, surface a
+  // dismissable badge so the operator knows there's a newer decision to inspect.
+  const [liveTick, setLiveTick] = useState(0)
+  const [liveBanner, setLiveBanner] = useState(null) // { request_id, at }
+  // Collapse the filters panel on narrow viewports — saves screen real estate
+  // on 1366×768 laptops which are the most common SOC analyst setup.
+  const [filtersOpen, setFiltersOpen] = useState(true)
+  const filtersInitRef = useRef(false)
+
+  useEffect(() => {
+    if (filtersInitRef.current) return
+    filtersInitRef.current = true
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setFiltersOpen(false)
+    }
+  }, [])
 
   const fetchGraph = useCallback(async (rid) => {
     if (!rid) return
@@ -250,6 +269,18 @@ export default function DecisionExplorer() {
 
   useEffect(() => { if (initialRid) fetchGraph(initialRid) }, [initialRid, fetchGraph])
 
+  // SSE tick on `policy_decision` — informs the operator that a fresh
+  // decision just landed in the system without disturbing the one being
+  // inspected. They can click the banner to load the latest.
+  useEffect(() => {
+    const unsub = eventBus.on('policy_decision', (data) => {
+      setLiveTick((t) => t + 1)
+      const rid = data?.request_id || data?.event?.request_id
+      if (rid) setLiveBanner({ request_id: rid, at: Date.now() })
+    })
+    return () => { unsub && unsub() }
+  }, [])
+
   const onSubmit = (ev) => {
     ev.preventDefault()
     if (!requestId) return
@@ -261,35 +292,98 @@ export default function DecisionExplorer() {
   const flowEdges = useMemo(() => graph ? layoutEdges(graph.edges) : [], [graph])
 
   return (
-    <div className="p-6 text-neutral-100">
+    <div className="p-4 lg:p-6 text-neutral-200">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div>
-          <h1 className="text-xl font-semibold">Decision Explorer</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold text-white">Decision Explorer</h1>
+            {liveTick > 0 && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                title={`${liveTick} policy_decision event${liveTick === 1 ? '' : 's'} since open`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                live · {liveTick}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-neutral-400 mt-1">
             Render any <code>/execute</code> decision as a span graph — stages, signals, signed receipt.
           </p>
         </div>
-        <form onSubmit={onSubmit} className="flex gap-2">
-          <input
-            type="text"
-            placeholder="request_id"
-            value={requestId}
-            onChange={(e) => setRequestId(e.target.value)}
-            className="px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md text-sm w-64"
-          />
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            type="submit"
-            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm"
-            disabled={loading}
+            type="button"
+            onClick={() => setFiltersOpen((v) => !v)}
+            className="lg:hidden px-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md text-xs text-neutral-300"
+            aria-expanded={filtersOpen}
           >
-            {loading ? 'Loading…' : 'Open'}
+            {filtersOpen ? 'Hide filters' : 'Filters'}
           </button>
-        </form>
+          <form
+            onSubmit={onSubmit}
+            className={`${filtersOpen ? 'flex' : 'hidden'} lg:flex gap-2 w-full sm:w-auto`}
+          >
+            <div className="relative flex-1 sm:flex-initial">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500" aria-hidden="true" />
+              <input
+                type="text"
+                placeholder="request_id"
+                value={requestId}
+                onChange={(e) => setRequestId(e.target.value)}
+                className="pl-8 pr-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md text-sm w-full sm:w-64 focus:outline-none focus:border-neutral-500"
+              />
+            </div>
+            <button
+              type="submit"
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm disabled:opacity-50"
+              disabled={loading}
+            >
+              {loading ? 'Loading…' : 'Open'}
+            </button>
+          </form>
+        </div>
       </header>
+
+      {liveBanner && (!graph || graph?.request_id !== liveBanner.request_id) && (
+        <div className="mb-3 flex items-center justify-between gap-3 text-xs bg-emerald-950/40 border border-emerald-700/40 text-emerald-100 px-3 py-2 rounded">
+          <span>
+            New decision landed:{' '}
+            <code className="font-mono text-emerald-200">{liveBanner.request_id.slice(0, 28)}…</code>
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setRequestId(liveBanner.request_id)
+                setSearchParams({ request_id: liveBanner.request_id })
+                fetchGraph(liveBanner.request_id)
+                setLiveBanner(null)
+              }}
+              className="px-2 py-0.5 rounded bg-emerald-700/40 hover:bg-emerald-600/60 text-emerald-100"
+            >
+              Open
+            </button>
+            <button
+              onClick={() => setLiveBanner(null)}
+              className="text-emerald-300/60 hover:text-emerald-100"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mb-3 text-sm bg-rose-950 border border-rose-700 text-rose-100 px-3 py-2 rounded">
           {error}
+        </div>
+      )}
+
+      {loading && !graph && (
+        <div className="space-y-3">
+          <SkeletonLoader variant="text" />
+          <SkeletonLoader variant="card" />
         </div>
       )}
 
@@ -298,7 +392,7 @@ export default function DecisionExplorer() {
           <EnforcementAuditPanel graph={graph} />
           <TraceOverview graph={graph} />
 
-          <div className="mb-3 inline-flex border border-neutral-700 rounded-md overflow-hidden">
+          <div className="mb-3 inline-flex border border-neutral-700 rounded-md overflow-hidden flex-wrap">
             {VIEWS.map((v) => (
               <button
                 key={v}
@@ -320,7 +414,7 @@ export default function DecisionExplorer() {
           </div>
 
           {view === 'Graph' && (
-            <div className="h-[60vh] rounded-md border border-neutral-800 bg-neutral-950">
+            <div className="h-[60vh] min-h-[420px] w-full rounded-md border border-neutral-800 bg-neutral-950">
               <ReactFlow
                 nodes={flowNodes}
                 edges={flowEdges}
@@ -341,18 +435,37 @@ export default function DecisionExplorer() {
       )}
 
       {!graph && !loading && !error && (
-        <div className="text-sm text-neutral-400 space-y-3">
-          <p>
-            Enter a <code>request_id</code> to load the decision graph. Tip: the
-            Flight Recorder, Live Feed, and Forensics pages now deep-link here.
-          </p>
-          <p className="text-xs text-neutral-500">
-            Need a fresh decision to inspect?{' '}
-            <a href="/live-demo" className="text-indigo-400 hover:text-indigo-300 underline">
-              Run the live demo
-            </a>{' '}
-            — each step there carries its own <code>request_id</code> you can paste above.
-          </p>
+        <div className="rounded-xl border border-white/[0.06] bg-neutral-950 p-8 text-center space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-full bg-white/[0.04] flex items-center justify-center">
+            <Compass size={20} className="text-neutral-500" aria-hidden="true" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-white">No decisions to explore</h3>
+            <p className="text-xs text-neutral-400 max-w-md mx-auto">
+              Pick from filters above or trigger via Playground. Each <code className="font-mono">/execute</code>{' '}
+              call gets its own <code className="font-mono">request_id</code> you can paste here.
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <a
+              href="/agents/playground"
+              className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              Open Playground
+            </a>
+            <a
+              href="/live-demo"
+              className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900"
+            >
+              Run live demo
+            </a>
+            <a
+              href="/flight-recorder"
+              className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900"
+            >
+              Flight Recorder
+            </a>
+          </div>
         </div>
       )}
     </div>

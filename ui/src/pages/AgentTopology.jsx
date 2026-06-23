@@ -10,13 +10,17 @@
 //   GET /graph/blast-radius/{id}  — set of nodes reachable from {id}
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import ReactFlow, {
   Background,
   Controls,
   MarkerType,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { Plus, Network } from 'lucide-react'
 import { graphService } from '../services/api'
+import { eventBus } from '../lib/eventBus'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 // Node-type → palette. Identity graph stores node_type as string ("agent",
 // "tool", "resource", "tenant", …). We keep the mapping permissive so new
@@ -120,6 +124,14 @@ export default function AgentTopology() {
 
   useEffect(() => { fetchTopology() }, [fetchTopology])
 
+  // SSE — refetch the identity graph whenever the registry mutates.
+  // AgentContext owns the underlying EventSource; we just subscribe to
+  // the in-process eventBus republished events.
+  useEffect(() => {
+    const off = eventBus.on('agent_changed', () => { fetchTopology() })
+    return () => { off?.() }
+  }, [fetchTopology])
+
   const onSelectNode = useCallback(async (_evt, node) => {
     setSelected(node.id)
     try {
@@ -178,15 +190,33 @@ export default function AgentTopology() {
         </div>
       )}
 
-      {apiNodes.length === 0 && !loading && (
-        <p className="px-6 py-4 text-sm text-neutral-400">
-          No identity-graph nodes for this workspace yet. Nodes are created
-          from real <code>/execute</code> traffic — the topology fills in
-          as agents call tools.
-        </p>
+      {loading && apiNodes.length === 0 && (
+        <div className="px-6 py-4">
+          <SkeletonLoader variant="card" count={1} />
+        </div>
       )}
 
-      <div className="h-[calc(100vh-200px)] bg-neutral-950 border-t border-neutral-800">
+      {apiNodes.length === 0 && !loading && (
+        <div className="mx-6 my-4 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center space-y-3">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+            <Network size={22} className="text-neutral-500" aria-hidden="true" />
+          </div>
+          <p className="text-sm font-semibold text-neutral-200">No topology to render yet</p>
+          <p className="text-xs text-neutral-500 max-w-md mx-auto">
+            Nodes are created from real <code className="text-neutral-400">/execute</code> traffic — the
+            topology fills in as agents call tools. No agents registered? Register your first one
+            via the Onboarding Wizard.
+          </p>
+          <Link
+            to="/onboarding"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-colors"
+          >
+            <Plus size={13} aria-hidden="true" /> Register your first agent
+          </Link>
+        </div>
+      )}
+
+      <div className="h-[calc(100vh-200px)] min-h-[420px] bg-neutral-950 border-t border-neutral-800">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -205,7 +235,7 @@ export default function AgentTopology() {
           Legend: <span className="text-sky-300">●</span> agent &nbsp;
                   <span className="text-emerald-300">●</span> tool &nbsp;
                   <span className="text-amber-300">●</span> resource &nbsp;
-                  <span className="text-violet-300">●</span> workspace
+                  <span className="text-violet-300">●</span> tenant
         </span>
       </div>
     </div>

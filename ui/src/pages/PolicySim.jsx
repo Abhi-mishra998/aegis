@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Play, Plus, Trash2, ChevronDown, ChevronUp,
   Shield, AlertTriangle, CheckCircle2, Loader2,
-  ArrowRight, BarChart2,
+  ArrowRight, BarChart2, FlaskConical, GitMerge,
 } from 'lucide-react'
 import { policyService, registryService } from '../services/api'
 import { useAgents } from '../hooks/useAgents'
@@ -191,12 +192,30 @@ export default function PolicySim() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold text-white mb-1">Policy Simulation</h1>
-        <p className="text-sm text-neutral-400">
-          Replay historical audit events through a proposed policy without affecting live traffic.
-          No OPA calls, no writes — read-only dry run.
-        </p>
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-white mb-1">Policy Simulation</h1>
+          <p className="text-sm text-neutral-400">
+            Replay historical audit events through a proposed policy without affecting live traffic.
+            No OPA calls, no writes — read-only dry run.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            to="/policies?tab=editor"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-neutral-300 text-xs hover:bg-white/[0.04] transition-colors"
+          >
+            <GitMerge size={11} aria-hidden="true" />
+            Editor
+          </Link>
+          <Link
+            to="/policies?tab=staging"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-neutral-300 text-xs hover:bg-white/[0.04] transition-colors"
+          >
+            <FlaskConical size={11} aria-hidden="true" />
+            Playground
+          </Link>
+        </div>
       </header>
 
       {/* Config */}
@@ -273,6 +292,25 @@ export default function PolicySim() {
         {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
         {running ? 'Simulating…' : 'Run Simulation'}
       </button>
+
+      {/* Loading skeleton while simulating */}
+      {running && !result && (
+        <div className="space-y-4" aria-label="Simulating">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 animate-pulse">
+                <div className="h-2 bg-white/[0.06] rounded w-2/3 mb-3" />
+                <div className="h-7 bg-white/[0.08] rounded w-1/2" />
+              </div>
+            ))}
+          </div>
+          <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 space-y-2 animate-pulse">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-3 bg-white/[0.05] rounded" style={{ width: `${70 + i * 5}%` }} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Results */}
       {result && (

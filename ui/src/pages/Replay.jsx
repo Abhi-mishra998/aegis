@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import Button from '../components/Common/Button'
 import Card from '../components/Common/Card'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { replayService } from '../services/api'
 
 // Sprint 15 — Unified replay.
@@ -226,29 +227,79 @@ export default function Replay() {
 
   if (loading) {
     return (
-      <div className="p-6 text-xs text-neutral-500 flex items-center justify-center min-h-[60vh]">
-        <Loader2 size={20} className="animate-spin mr-2" /> Loading replay…
+      <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
+        <Link to="/incidents" className="inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-white">
+          <ArrowLeft size={14} /> Incidents
+        </Link>
+        <div className="flex items-center gap-3 text-xs text-neutral-500">
+          <Loader2 size={14} className="animate-spin" aria-hidden="true" /> Loading replay…
+        </div>
+        <div className="flex flex-col lg:flex-row gap-3 lg:gap-6">
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+          <SkeletonLoader variant="card" />
+        </div>
       </div>
     )
   }
   if (error || !data) {
+    // Differentiate not-found (legit empty state with CTAs) from a transient
+    // load error (show retry). A missing data payload with no error string
+    // means: there was nothing here to load.
+    const notFound = !error && !data
     return (
-      <div className="p-6 space-y-3">
+      <div className="p-4 lg:p-6 space-y-3 max-w-7xl mx-auto">
         <Link to="/incidents" className="inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-white">
           <ArrowLeft size={14} /> Back to Incidents
         </Link>
         <Card>
-          <div className="text-xs text-neutral-300 py-6 text-center space-y-2">
-            <AlertTriangle size={20} className="text-amber-400 mx-auto" />
-            <div>{error || 'No replay data'}</div>
-            <Button size="sm" onClick={load}><RefreshCw size={12} /> Retry</Button>
+          <div className="text-xs text-neutral-300 py-8 px-4 text-center space-y-4">
+            {notFound ? (
+              <>
+                <div className="w-12 h-12 mx-auto rounded-full bg-white/[0.04] flex items-center justify-center">
+                  <Flag size={20} className="text-neutral-500" aria-hidden="true" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-white">No timelines to replay</h3>
+                  <p className="text-xs text-neutral-400 max-w-md mx-auto">
+                    Open from <Link to="/flight-recorder" className="text-emerald-400 hover:underline">/flight-recorder</Link>{' '}
+                    to pick a recent request — every decision is replayable from there.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <Link
+                    to="/flight-recorder"
+                    className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-500 text-white"
+                  >
+                    Open Flight Recorder
+                  </Link>
+                  <Link
+                    to="/incidents"
+                    className="px-3 py-1.5 text-xs rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-900"
+                  >
+                    Incidents
+                  </Link>
+                  <Button size="sm" variant="ghost" onClick={load}><RefreshCw size={12} /> Retry</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <AlertTriangle size={20} className="text-amber-400 mx-auto" aria-hidden="true" />
+                <div>{error || 'No replay data'}</div>
+                <Button size="sm" onClick={load}><RefreshCw size={12} /> Retry</Button>
+              </>
+            )}
           </div>
         </Card>
       </div>
     )
   }
 
-  const stages = data.stages || []
+  // Defensive: backend may return a record with stages missing or null. Bail
+  // gracefully rather than letting `.find` crash the page.
+  const stages = Array.isArray(data.stages) ? data.stages : []
   const aegis = stages.find((s) => s.kind === 'aegis_evaluation') || {}
   const outcome = stages.find((s) => s.kind === 'outcome') || {}
 

@@ -14,9 +14,10 @@
 //   POST /audit/playground/publish
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   ShieldCheck, AlertTriangle, Eye, Beaker, History, Save,
-  CheckCircle2, XCircle, Sigma, GitCompare,
+  CheckCircle2, XCircle, Sigma, GitCompare, ArrowRight, EyeOff, GitMerge,
 } from 'lucide-react'
 import { policyPlaygroundService } from '../services/api'
 
@@ -141,8 +142,8 @@ export default function PolicyPlayground() {
 
   return (
     <div className="text-neutral-100">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 border-b border-neutral-800">
-        <div>
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 px-6 py-4 border-b border-neutral-800">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold inline-flex items-center gap-2">
             <Beaker size={18} /> Policy Playground
           </h1>
@@ -152,6 +153,29 @@ export default function PolicyPlayground() {
             change, then publish as a shadow policy. No live enforcement
             is touched until you promote on the Shadow Mode page.
           </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
+          <Link
+            to="/policies?tab=editor"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-neutral-700 text-neutral-200 text-xs hover:bg-neutral-800"
+          >
+            <GitMerge size={11} aria-hidden="true" />
+            Editor
+          </Link>
+          <Link
+            to="/policies?tab=simulator"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-neutral-700 text-neutral-200 text-xs hover:bg-neutral-800"
+          >
+            <GitCompare size={11} aria-hidden="true" />
+            Simulator
+          </Link>
+          <Link
+            to="/shadow-mode"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-700 text-emerald-200 text-xs hover:bg-emerald-900/40"
+          >
+            <EyeOff size={11} aria-hidden="true" />
+            Shadow Mode
+          </Link>
         </div>
       </header>
 
@@ -280,9 +304,34 @@ export default function PolicyPlayground() {
               <GitCompare size={14} /> Replay diff
               <span className="text-[10px] text-neutral-500">— compare candidate against the last {windowHours} hours of real traffic</span>
             </h2>
-            {!replay ? (
-              <div className="py-8 text-center text-sm text-neutral-500">
-                Click <strong>Replay last {windowHours}h</strong> to score this candidate against historical audit_logs.
+            {busy === 'replay' ? (
+              <div className="space-y-3 py-2" role="status" aria-label="Running replay">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-3 py-2 animate-pulse">
+                      <div className="h-2 bg-white/[0.06] rounded w-2/3 mb-2" />
+                      <div className="h-5 bg-white/[0.08] rounded w-1/2" />
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded border border-neutral-800 p-3 space-y-2 animate-pulse">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-2.5 bg-white/[0.05] rounded" style={{ width: `${60 + i * 7}%` }} />
+                  ))}
+                </div>
+              </div>
+            ) : !replay ? (
+              <div className="py-8 text-center text-sm text-neutral-500 space-y-3">
+                <p>
+                  Click <strong>Replay last {windowHours}h</strong> to score this candidate against historical audit_logs.
+                </p>
+                <p className="text-xs text-neutral-600">
+                  No historical traffic yet?{' '}
+                  <Link to="/playground" className="text-emerald-300 underline hover:text-emerald-200">
+                    Generate sample traffic
+                  </Link>{' '}
+                  via the Agent Playground first.
+                </p>
               </div>
             ) : (
               <>
