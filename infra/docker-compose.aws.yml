@@ -62,6 +62,13 @@ services:
       # DATABASE_URL is audit-scoped, so we pass a dedicated identity-user
       # DSN here. These are pgbouncer routing creds, not the RDS master.
       - SEED_DEMO_DB_URL=postgresql+asyncpg://identity_user:identity_prod_pwd@pgbouncer:6432/acp_identity
+    volumes:
+      # Bind-mount the seed script from the host bundle so it's reachable
+      # at /app/scripts/ops/... without needing a Dockerfile rebuild on
+      # every safe_deploy. The Dockerfile also COPYs it (so a fresh ASG
+      # launch that uses the baked image still works) — this mount is
+      # belt-and-suspenders for the existing-host tar-update path.
+      - /opt/aegis/scripts:/app/scripts:ro
     restart: always
     deploy:
       resources:
