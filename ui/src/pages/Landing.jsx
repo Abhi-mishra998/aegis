@@ -91,7 +91,10 @@ function Hero() {
     setSpawning(true)
     setSpawnError('')
     try {
-      const apiBase = import.meta.env?.VITE_API_BASE_URL || '/api'
+      // Match the rest of the SPA (services/api.js, ClerkAuthBridge, useSSE):
+      // empty base in prod → nginx proxies /demo/* to the gateway. The old
+      // `/api` default fell through to the SPA `try_files` block → 405.
+      const apiBase = import.meta.env?.VITE_GATEWAY_URL || ''
       const res = await fetch(`${apiBase}/demo/spawn-workspace`, {
         method: 'POST',
         headers: {
