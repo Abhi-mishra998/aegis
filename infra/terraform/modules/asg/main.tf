@@ -187,6 +187,19 @@ chown root:root /opt/aegis/infra/.env
 # pgbouncer.aws.ini + userlist.txt are credential-bearing — kept out of the
 # release tar by build_release_bundle.sh. Render from SSM SecureString so
 # every fresh ASG launch has a real file (not a docker-auto-created dir).
+#
+# audit-final-22 (2026-06-23) — fresh ASG hosts come up with pgbouncer
+# crash-looping on "mount /run/aegis/pgbouncer/userlist.txt: not a
+# directory". Root cause: compose.aws.yml bind-mounts userlist from
+# /run/aegis/pgbouncer/ (tmpfs, EBS-snapshot-resistant per P1-4), but
+# this script was rendering to /opt/aegis/infra/userlist.txt — so the
+# bind-mount source path didn't exist at compose-up time, Docker
+# auto-created it as a directory, and pgbouncer OCI-errored thereafter.
+# Fix: render directly to /run/aegis/pgbouncer/ (creating the dir first)
+# AND also keep a copy at the legacy /opt/aegis/infra/ path for any code
+# that still reads from there.
+mkdir -p /run/aegis/pgbouncer
+chmod 755 /run/aegis/pgbouncer
 PGB_B64=$(ssm "/$${PARAM_PREFIX}/pgbouncer/aws-ini-b64")
 ULIST_B64=$(ssm "/$${PARAM_PREFIX}/pgbouncer/userlist-b64")
 if [ -n "$${PGB_B64}" ]; then
@@ -194,6 +207,13 @@ if [ -n "$${PGB_B64}" ]; then
   chmod 644 /opt/aegis/infra/pgbouncer.aws.ini
 fi
 if [ -n "$${ULIST_B64}" ]; then
+  # Render to BOTH locations: the live tmpfs path (what compose.aws.yml
+  # actually bind-mounts) AND the legacy on-disk path (defensive — any
+  # operator script or older compose override that still reads from
+  # /opt/aegis/infra continues to work).
+  echo "$${ULIST_B64}" | base64 -d > /run/aegis/pgbouncer/userlist.txt
+  chmod 640 /run/aegis/pgbouncer/userlist.txt
+  chown 70:70 /run/aegis/pgbouncer/userlist.txt 2>/dev/null || true
   echo "$${ULIST_B64}" | base64 -d > /opt/aegis/infra/userlist.txt
   chmod 644 /opt/aegis/infra/userlist.txt
 fi
