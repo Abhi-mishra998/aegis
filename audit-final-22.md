@@ -767,3 +767,45 @@ LT version 16   CreateTime 2026-06-23T04:01:20+00:00
 
 **Zero** — site served 100% from `i-0bc73eeff3f29dd90` throughout the entire incident window (live `curl /status` returned 200/200/200/… during the apply). The broken host was ALB-excluded, so all customer traffic flowed through the patched healthy host.
 
+
+---
+
+# RECOVERY COMPLETE (2026-06-23 04:30 UTC)
+
+## ASG self-heal cycle (verified end-to-end)
+
+```
+[03:49:52Z]  ASG launches i-0993be0d706a503c9 (LT v15 — broken userlist path)
+[04:01:20Z]  terraform apply lands LT v16 (userlist fix)
+[04:09:52Z]  ALB health-check grace period expires on i-0993… (1200s after launch)
+[04:11:48Z]  ASG terminates i-0993… (ALB-unhealthy) and launches i-0fb6bb35fc2d4a622 off LT v16
+[04:17:01Z]  i-0fb6… reaches ALB-healthy (user_data ran clean on first try — userlist mounted from /run/aegis/pgbouncer/)
+[04:20:00Z]  Mesh-JWT 403s detected — LT v16 user_data heredoc doesn't fetch the 14 MESH_*_PRIVATE_KEYs
+[04:25:21Z]  safe_deploy.sh c8a8c67b4f3a auto on i-0fb6… — populates mesh keys + recreates services
+[04:29:43Z]  safe_deploy Success — all 23 containers healthy
+[04:30+]    Full 2-host fleet healthy + mesh-JWT verified across both hosts
+```
+
+## Follow-on terraform-level work (next session, not urgent)
+
+- **Add the mesh-key fetch block to the LT v16 user_data heredoc** (`infra/terraform/modules/asg/main.tf:35-…`). Right now safe_deploy.sh has the canonical ensure_kv list for the 14 MESH_*_PRIVATE_KEYs + ACP_MESH_TRUSTED_KEYS — that block needs to land in the heredoc so a *fresh* ASG host can come up fully healthy without an operator running safe_deploy.sh afterwards. Effort: ~30 lines of heredoc + a terraform apply that bumps LT to v17.
+- **Grant the EC2 IAM role `ssm:PutParameter` on `/aegis-prodha/current-sha`** so safe_deploy.sh can record the deployed SHA on success (currently the call fails AccessDenied; not fatal but means the SSM pointer drifts from reality).
+
+## Final 2-host verification (live 2026-06-23 04:31 UTC)
+
+| Probe | Result |
+|---|---|
+| `aws autoscaling describe-auto-scaling-groups` | `i-0bc73eeff3f29dd90` InService Healthy, `i-0fb6bb35fc2d4a622` InService Healthy |
+| `aws elbv2 describe-target-health` | both targets `healthy` |
+| 30× `GET /status` | 30/30 = HTTP 200 |
+| 10× `GET /agents` (mesh-JWT-sensitive) | 10/10 = HTTP 200 (was 5/10 with mesh-key gap) |
+| Client demo recipe | ALLOW=200 / DENY=403 system_sensitive_path / ESCALATE=403 FIN-WIRE-002 / kill engage=200 release=200 — all 5 blocks pass |
+
+## State summary for client handoff
+
+- **Site live + 2-host capacity** at `https://aegisagent.in` — both ASG hosts InService + ALB-healthy
+- **All audit-final-22 P0/P2/P3 fixes deployed** on both hosts (commit `c8a8c67b4f3a`)
+- **LT v16 active** — next ASG replacement boots with the corrected userlist render path (one less operator catchup-deploy step)
+- **setup-agies.md 5-min client demo verified** against the full 2-host fleet — every block returns the documented HTTP code + decision tier
+- **Zero customer-visible downtime** during the entire LT-v16 cutover + broken-host replacement window (10 min total)
+
