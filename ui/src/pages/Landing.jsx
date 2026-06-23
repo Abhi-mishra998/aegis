@@ -145,11 +145,16 @@ function Hero() {
       const payload = data?.data ?? data
       const target =
         payload?.redirect_url || payload?.dashboard_url || '/dashboard'
-      if (target.startsWith('http')) {
-        window.location.assign(target)
-      } else {
-        navigate(target)
-      }
+      // Always use a full-page navigation here, never React Router's client-side
+      // navigate(). The demo redirect carries ?demo_token=<JWT> and the only
+      // code that consumes it BEFORE ProtectedRoute's synchronous
+      // redirect-to-login is the IIFE at main.jsx:17 — which only runs on
+      // module load. A client-side navigate() reuses the loaded module, the
+      // IIFE never re-fires, sessionStorage stays empty, ProtectedRoute
+      // bounces the user to /login. window.location.assign forces the full
+      // reload that lets the IIFE install the cookie + session metadata
+      // before React first renders.
+      window.location.assign(target)
     } catch (err) {
       setSpawnError(
         'Could not reach the demo service right now. Use Start free below to continue.',
