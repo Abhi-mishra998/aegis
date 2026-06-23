@@ -298,24 +298,24 @@ _MANAGEMENT_PATH_PREFIXES = (
 )
 
 # N3 (2026-06-21) — paths that an is_demo=True JWT must never reach.
-# Demo workspaces are minted by /demo/spawn-workspace with role=OWNER so
-# RBAC alone lets them touch every SECURITY_ANALYST+ read surface. These
-# prefixes are org-wide investigation views (forensic timelines, incident
-# storylines, identity-access graph, threat-intel IOCs) and the staff-only
-# /admin/* namespace — none of them are appropriate for a self-served
-# sandbox tenant. All four prefixes verified to exist as live routes:
-#   /forensics/*    -> services/gateway/routers/forensics.py
-#   /storylines/*   -> services/gateway/routers/storylines.py
-#   /iag/*          -> services/gateway/routers/iag.py
-#   /threat-intel/* -> services/gateway/routers/threatintel.py
+# Originally this list included /forensics, /storylines, /iag, and
+# /threat-intel under the assumption they were "org-wide investigation
+# views" not suitable for an anonymous sandbox. That assumption was
+# wrong: a demo workspace IS its own isolated tenant — every backend
+# query filters by JWT-derived tenant_id at the data layer, so a demo
+# session calling /forensics/investigation/<my_agent_id> only ever
+# sees its OWN single-tenant data. Hard-blocking those four prefixes
+# made the doc-promised demo walkthrough impossible (clicking the
+# Forensics or Threat Graph sidebar item logged the user's session
+# into a wall of 403s the UI surfaced as "Failed to load resource").
+#
+# /admin/* stays blocked — that's the platform-staff namespace, never
+# appropriate for any customer (paid or demo), and the prefix is the
+# only one whose handlers are NOT tenant-scoped.
 _DEMO_BLOCKED_PREFIXES = (
     "/admin/",
-    "/forensics/",
-    "/storylines/",
-    "/iag/",
-    "/threat-intel/",
 )
-_DEMO_BLOCKED_EXACT = ("/admin", "/forensics", "/storylines", "/iag", "/threat-intel")
+_DEMO_BLOCKED_EXACT = ("/admin",)
 
 # Configuration from global settings
 _GLOBAL_RATE_LIMIT = settings.GLOBAL_RATE_LIMIT
