@@ -54,6 +54,14 @@ services:
       - ACP_MESH_SERVICE_NAME=gateway
       - ACP_MESH_PRIVATE_KEY_PEM=${MESH_GATEWAY_PRIVATE_KEY:-}
       - ACP_MESH_TRUSTED_KEYS=${ACP_MESH_TRUSTED_KEYS:-}
+      # /demo/spawn-workspace fans out to scripts/ops/seed_demo_workspace.py
+      # which inserts the OWNER lookup row in acp_identity then writes 5
+      # agents + 60 audit rows across acp_registry/audit/api. Its _swap()
+      # helper rewrites `identity_user` → `<service>_user` and
+      # `identity_prod_pwd` → `<service>_prod_pwd`. The gateway's normal
+      # DATABASE_URL is audit-scoped, so we pass a dedicated identity-user
+      # DSN here. These are pgbouncer routing creds, not the RDS master.
+      - SEED_DEMO_DB_URL=postgresql+asyncpg://identity_user:identity_prod_pwd@pgbouncer:6432/acp_identity
     restart: always
     deploy:
       resources:

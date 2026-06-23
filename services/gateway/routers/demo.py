@@ -596,22 +596,60 @@ async def _spawn_demo_tenant(db) -> tuple[str, str]:
 
 async def _seed_demo_data(tenant_id: str, owner_email: str) -> None:
     """Subprocess the seed script. Runs in a thread so we don't block
-    the asyncio loop on the asyncpg fork."""
+    the asyncio loop on the asyncpg fork. Best-effort: any failure is
+    logged + swallowed so the spawn response the caller already got
+    stays correct."""
     repo_root = _Path(__file__).resolve().parents[3]
     seed_script = repo_root / "scripts" / "ops" / "seed_demo_workspace.py"
     if not seed_script.exists():
-        return  # graceful no-op in test environments
-
-    def _run() -> int:
-        return subprocess.call(
-            [
-                "python3", str(seed_script),
-                "--tenant", tenant_id,
-                "--owner-email", owner_email,
-            ],
-            timeout=120,
+        logger.warning(
+            "demo_seed_skipped_missing_script",
+            seed_path=str(seed_script),
+            tenant_id=tenant_id,
         )
-    await asyncio.get_event_loop().run_in_executor(None, _run)
+        return
+
+    # The gateway container's DATABASE_URL points at audit_user — the seed
+    # script needs identity_user to read the OWNER row first, then it does
+    # per-service substitution. SEED_DEMO_DB_URL is the identity DSN with
+    # the conventional `identity_user` / `identity_prod_pwd` shape; the
+    # script's _swap() helper rewrites to registry/audit/api as needed.
+    # If unset, fall back to DATABASE_URL (works in dev where the test
+    # postgres has a single user).
+    import os as _os  # noqa: PLC0415
+    seed_db_url = _os.environ.get("SEED_DEMO_DB_URL") or _os.environ.get("DATABASE_URL", "")
+    if not seed_db_url:
+        logger.warning("demo_seed_skipped_no_db_url", tenant_id=tenant_id)
+        return
+
+    def _run() -> tuple[int, str, str]:
+        env = {**_os.environ, "DATABASE_URL": seed_db_url}
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [
+                    "python3", str(seed_script),
+                    "--tenant", tenant_id,
+                    "--owner-email", owner_email,
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            return proc.returncode, proc.stdout[-400:], proc.stderr[-400:]
+        except subprocess.TimeoutExpired:
+            return 124, "", "timeout"
+        except Exception as exc:  # noqa: BLE001
+            return 99, "", repr(exc)
+
+    rc, out, err = await asyncio.get_event_loop().run_in_executor(None, _run)
+    if rc == 0:
+        logger.info("demo_seed_ok", tenant_id=tenant_id, tail=out.splitlines()[-1] if out else "")
+    else:
+        logger.warning(
+            "demo_seed_failed",
+            tenant_id=tenant_id, returncode=rc, stderr=err,
+        )
 
 
 @router.post("/spawn-workspace")
@@ -981,6 +1019,11 @@ async def spawn_demo_workspace(
         mesh_operator=is_mesh_operator,
         mesh_issuer=mesh_issuer,
     )
+    # Fire-and-forget the seed so the response goes out immediately —
+    # the seed populates 5 agents + 60 audit rows so the dashboard the
+    # visitor lands on isn't empty. Defined at line 597, was previously
+    # dead code (no call site). Errors are swallowed inside the helper.
+    asyncio.create_task(_seed_demo_data(tenant_id, owner_email))
     return {
         "success": True,
         "data": {
