@@ -38,6 +38,15 @@ const ProtectedRoute = ({ children }) => {
     // Only re-validate via /auth/me for legacy sessions — Clerk sessions are
     // self-verifying via the SDK + gateway JWKS path.
     if (!legacyValid || clerkSignedIn || verifiedRef.current) return;
+    // Demo sessions also self-verify: the demo JWT carries no `typ` claim
+    // so identity-svc's /auth/me handler (which requires typ=ACP_ACCESS)
+    // returns 401 even though every other endpoint accepts the token.
+    // Hitting /auth/me here would trigger api.js's 401 handler →
+    // clearSessionMetadata → forced redirect to /login, breaking the
+    // entire anonymous-demo flow. The IIFE in main.jsx already installed
+    // tenant_id + role + expiry from the signed claims, so we have what
+    // a successful /auth/me would have given us anyway.
+    if (getSessionItem('session_kind') === 'demo') return;
     verifiedRef.current = true;
 
     authService.getMe()
