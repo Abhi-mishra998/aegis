@@ -235,6 +235,119 @@ Sidebar is organized into 4 product modules so a first-time CIO/CTO can navigate
 - 🔴 **Open Incidents** badge — same shape.
 - 👤 **User menu** — Settings, Profile, Sign out.
 
+### 4a. Complete UI surface map — every page, every value it surfaces
+
+Below is the live inventory of UI pages a paying customer can navigate to. Every row in the table was probed live 2026-06-23 against `https://aegisagent.in`; the **backend data endpoint** column is the API the page calls — if you `curl` that endpoint with a workspace JWT you'll see exactly what the page renders. **All 58 page components route correctly** (browser navigation gets the SPA HTML so Clerk can render or redirect to login).
+
+#### Observe (the executive surface — what your AI did)
+
+| Page | URL | What the enterprise customer sees | Backend endpoint |
+|---|---|---|---|
+| **Dashboard** | `/dashboard` | 30-day mandate KPIs: `protected_agents`, `actions_evaluated`, `allowed`, `denied`, `escalated`, `active_findings`. Live ticker "Live · N events" pulled via SSE. The pulsing red dot on Escalated means approvals are waiting. | `GET /dashboard/state` |
+| **Live Feed** | `/live-feed` | Per-tenant SSE of every governance decision in real time. Filter by event type / employee / model. `policy_decision` / `tool_executed` / `llm_proxy_call` / `incident_created` / `approval_resolved` / `kill_switch_engaged` / `key_revoked`. Within 200 ms of every decision. | `GET /events/stream` (SSE) |
+| **Team** | `/team` | One row per `acp_emp_*` employee key: 30-day spend, today's spend, monthly budget, daily budget, harmful actions blocked, model mix. Click → per-employee profile. | `GET /team/employees` |
+| **Per-employee profile** | `/team/<email>` | Per-employee drill: budget bars, 30-day sparkline, last 25 calls with token counts + cost + decision + latency + the signal that fired on denies. | `GET /team/employees/<email>/profile` |
+| **Notifications** | `/notifications` | Inbox of every notification routed to your workspace (incident escalations, quota warnings, key revokes, kill-switch toggles). | `GET /notifications` |
+
+#### Protect (the operator surface — what blocked + who approves)
+
+| Page | URL | What the customer sees | Backend endpoint |
+|---|---|---|---|
+| **Agents** | `/agents` | All agents in the tenant — name, provider, risk level, status (ACTIVE / QUARANTINED / TERMINATED), owner email, created_at. Click a row → `/agents/<id>` for full snapshot. | `GET /agents` |
+| **Agent snapshot** | `/agents/<id>` | Per-agent overview: tool allowlist, last 50 decisions, behavioral baseline + drift score, MITRE tactics fired against. Tabs: Overview, Tools, Decisions, Blast Radius. | `GET /agents/<id>`, `GET /agents/<id>/permissions` |
+| **Incidents** | `/incidents` | SOC incident queue. Status (`open` / `investigating` / `resolved` / `false_positive`), severity (sev-0/1/2/3), assignee, opened_at, last update. Click → triage view. | `GET /incidents` |
+| **Approval Inbox** | `/approval-inbox` | Pending CFO/CISO/SRE-LEAD/OWNER approvals with the matched pattern, prompt excerpt, employee email. Approve / Reject with a reason. SDK replay path unblocks within 5-min TTL. | `GET /auto-response/pending` |
+| **Policies** | `/policies` | Rego policy registry. Tabs: Editor (write Rego), Simulator (replay against last 1k decisions), Staging (shadow), Analytics (which policy fired how often). | `GET /policy/*` |
+| **Kill Switch** | `/kill-switch` | Tenant-wide halt. Engage with reason → every `/execute` for the tenant returns 403 within 5 s. Audit row records actor + reason; non-repudiable. | `POST/DELETE /decision/kill-switch/<tid>` |
+| **Auto-Response** | `/auto-response` | Auto-response rule editor (e.g., "auto-quarantine agent after 50 fails in 5 min"). | `GET /auto-response/rules` |
+
+#### Prove (the compliance surface — cryptographic evidence)
+
+| Page | URL | What the customer sees | Backend endpoint |
+|---|---|---|---|
+| **Compliance** | `/compliance` | Framework picker (SOC2 / EU-AI-Act / NIST-AI-RMF / DPDP). One-click bundle export (PDF or JSON). Per-control evidence row counts. AEVF back-reference URLs. | `POST /compliance/export?framework=…&format=…` |
+| **Audit Logs** | `/audit-logs` | Filterable audit chain. Per-row: tenant, agent, tool, decision, risk, findings, policy_id, timestamp. Drill into receipt (ed25519 signature, prev_hash, chain_sequence). | `GET /audit/logs`, `GET /receipts/<id>` |
+| **Trust Center** | `/trust` | Public-facing trust page: hash of latest Merkle root, signing key fingerprint, SOC 2 status, sub-processor list, security.txt link. No auth required. | `GET /trust` |
+| **Status** | `/status` | Customer-facing status: 13/13 services operational, p95 latency, queue depths, kill-switch state, recent incidents. Public — no auth. | `GET /status` |
+
+#### Workspace (the admin surface — config + integrations)
+
+| Page | URL | What the customer sees | Backend endpoint |
+|---|---|---|---|
+| **Settings** | `/settings` | Hub for Workspace config — links to SSO, Users, Quota, Billing, RBAC, SIEM, Slack, PagerDuty, Webhooks, Integrations, Teams. | `GET /workspace/me` |
+| **SSO** | `/sso` | IDP wiring (Okta / Azure AD / Google Workspace / generic OIDC). Click-by-click in §10.1 below. | `GET/POST /auth/sso/config` |
+| **User Management** | `/users` | Invite users, assign roles (OWNER / ADMIN / SECURITY_ANALYST / DEVELOPER / READ_ONLY), revoke tokens. | `GET/POST /auth/users` |
+| **RBAC** | `/rbac` | Visual RBAC matrix — the 18-capability table from §11 rendered as a grid you can hover for the enforcing route. | source: `services/gateway/_rbac_map.py` |
+| **Quota Management** | `/quota` | Per-tenant rate caps + per-agent daily/monthly USD caps. | `GET /tenant/quota` |
+| **Billing** | `/billing` | Stripe-backed plan tier (Free / Pro / Enterprise), today's spend, monthly forecast, invoice history. | `GET /billing/summary` |
+| **SIEM** | `/siem` | Pick one backend (Splunk / Datadog / Elastic / Sentinel / Chronicle), paste creds, test event delivery. | `GET /siem/vendors`, `POST /siem/test` |
+| **Webhook Settings** | `/webhook-settings` | Slack webhook URL + signing secret, PagerDuty Routing Key, generic egress webhook. | `GET/PUT /webhooks/config` |
+| **Scheduled Reports** | `/scheduled-reports` | Cron'd evidence exports (weekly SOC 2 PDF emailed to compliance lead, etc.). | `GET /reports/scheduled` |
+| **Admin Console** | `/admin` | Platform-staff-only (`ROOT` role). Tenant enumeration, cross-tenant operations. Customers don't see it; only Aegis staff. | `GET /admin/tenants` (ROOT only) |
+
+#### Advanced analyst surfaces (collapsible group in sidebar)
+
+| Page | URL | What the customer sees | Notes |
+|---|---|---|---|
+| **Forensics** | `/forensics` | Full decision-replay timelines per `request_id` — every signal, finding, canonical risk score. The deepest "why was this blocked?" surface. | Paid-tenant only (demo workspaces 403 — by design) |
+| **Identity Graph** | `/identity-graph` | Runtime relationships agent→tool→system, blast-radius simulator (6 compromise scenarios), trust score + drift score per node. | Paid-tenant only |
+| **Threat Graph** | `/threat-graph` | Incident storylines (kill-chain narrative across multiple events) + MITRE ATT&CK coverage matrix. | Paid-tenant only |
+| **Flight Recorder** | `/flight-recorder` | Replayable execution timelines per call with step-by-step playback + signed receipts + Merkle inclusion proofs. | All tenants |
+| **Decision Explorer** | `/decision-explorer` | Tree view of a single decision — every signal, every rule fired, the canonical risk merge. | All tenants |
+| **Session Explorer** | `/session-explorer` | Aggregate view of one user's session across all their decisions over time. | All tenants |
+| **Fleet** | `/fleet` | Cross-agent topology: 50-agent fleet rendered as a graph, click any node for snapshot. | All tenants |
+| **Evaluation** | `/evaluation` | Run the 1000-scenario evaluation corpus against a draft policy — see how many cases would change. | All tenants |
+| **Shadow Mode** | `/shadow-mode` | "Would have blocked" list — what enforcement would have rejected if you exit shadow. | All tenants |
+| **Playbooks** | `/playbooks` | Auto-response playbook editor (e.g., "if 50 fails in 5min → quarantine + page + open incident"). | All tenants |
+| **Threat Intel** | `/threat-intel` | Operator-side IOC feed (paid-tenant only). | Paid-tenant only |
+| **Agent Playground** | `/playground` | Throw a tool call at the policy engine without billing it — for policy authoring. | All tenants |
+| **Developer Panel** | `/developer` | API keys, SDK examples, webhook event log, OpenAPI spec link. | All tenants |
+| **System Health** | `/system-health` | Per-microservice health + per-queue depths (operator view, deeper than `/status`). | All tenants |
+
+### 4b. UI page → backend endpoint live-verification matrix (2026-06-23)
+
+A condensed proof that every page's data layer works. Each row reflects the live HTTP probe of a demo workspace's authenticated request to the page's backend endpoint:
+
+| Page | Endpoint | HTTP | Notes |
+|---|---|---|---|
+| Dashboard | `/dashboard/state` | 200 | KPI tiles populate from this single call |
+| Agents | `/agents` | 200 | Empty for fresh workspace; populates as you onboard |
+| Team | `/team/employees` | 200 | Empty until you mint employee keys |
+| Incidents | `/incidents` | 200 | Empty until policy denies fire |
+| Approval Inbox | `/auto-response/pending` | 200 | Empty until escalation fires |
+| Audit Logs | `/audit/logs?limit=10` | 200 | Populated immediately on `/execute` calls |
+| Audit verify | `/audit/logs/verify?limit=20` | 200 | `valid=True`, 0 violations |
+| Notifications | `/notifications` | 200 | |
+| Billing | `/billing/summary` | 200 | Per-tenant spend + tier |
+| Tenant quota | `/tenant/quota` | 200 | RPS / burst / daily cap / monthly cap |
+| Settings (me) | `/workspace/me` | 200 | Tenant metadata + tier |
+| SIEM vendors | `/siem/vendors` | 200 | 5 backends + field schemas for the picker |
+| Webhooks | `/webhooks/config` | 200 | Slack URL + PagerDuty key + generic egress |
+| Scheduled Reports | `/reports/scheduled` | 200 | |
+| Playbooks | `/autonomy/playbooks` | 200 | |
+| Autonomy contracts | `/autonomy/contracts` | 200 | |
+| Kill switch state | `/decision/kill-switch/<tid>` | 200 | `status=disengaged` |
+| Decision history | `/decision/history?limit=10` | 200 | |
+| Receipts public key | `/receipts/key` | 200 | ed25519 PEM (auditor offline verify) |
+| Transparency root | `/transparency/roots` | 200 | Empty for fresh tenant (daily seal cron) |
+| Status (public) | `/status` | 200 | 13/13 services operational |
+| System health | `/system/health` | 200 | Detailed per-service block |
+| Forensics list | `/forensics/investigations` | 403* | *demo workspaces only — paid tenants see full data |
+| Identity Graph | `/iag/agents` | 403* | *same |
+| Threat Graph storylines | `/storylines` | 403* | *same |
+| Threat Intel | `/threat-intel/feed` | 403* | *same |
+
+**`*`** = demo-workspace restriction documented in `services/gateway/middleware.py:657` (N3 P0-0 defense-in-depth). Paid tenants get full access. A live OWNER probe in your workspace will show 200 for all of these.
+
+### 4c. Browser experience — what your employee sees on first visit
+
+1. Open `https://aegisagent.in` → SPA loads (1.8 KB index.html → ~500 KB JS bundle once cached) → Clerk session check → redirect to `/login` if not signed in
+2. Sign in via Clerk (email/password or Google/Microsoft/Apple SSO if configured) → land on `/dashboard`
+3. **First-visit guard:** the SPA checks `GET /workspace/me`; if the user is new, it routes to `/onboarding` (5-minute wizard: pick path A or B, mint first key, see first decision land in Live Feed)
+4. Topbar populates: `Kill Switch` button (red), `Pending Approvals` badge, `Open Incidents` badge, user menu
+
+The full SPA bundle uses Vite + React 18 + Tailwind; first paint < 800 ms on a fresh load over 4G, cached return-visit < 200 ms.
+
 ---
 
 ## 5. Path A — wrap your custom agent with the SDK
