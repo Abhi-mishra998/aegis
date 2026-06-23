@@ -122,6 +122,30 @@ STRIPE_KEY=$(ssm "/$${PARAM_PREFIX}/stripe/secret-key")
 STRIPE_PRO=$(ssm "/$${PARAM_PREFIX}/stripe/pro-price-id")
 STRIPE_ENT=$(ssm "/$${PARAM_PREFIX}/stripe/enterprise-price-id")
 
+# audit-final-22 follow-on (2026-06-23) — fetch the 14 per-service mesh
+# private keys + the shared trusted-keys map. Without these, the gateway
+# can sign mesh JWTs but downstream services (registry, audit, etc.)
+# can't verify them — every cross-service call lands as
+# `403 Access forbidden: missing or invalid mesh JWT`. Symptom on a
+# fresh ASG host: /agents 200 sometimes (load balancer hit older host)
+# and 403 the rest (newer host with no mesh keys). Verified live during
+# the 2026-06-23 fleet recovery — adding to LT v17.
+MESH_TRUSTED=$(ssm "/$${PARAM_PREFIX}/mesh/trusted-keys")
+MESH_API_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/api/private")
+MESH_AUDIT_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/audit/private")
+MESH_AUTONOMY_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/autonomy/private")
+MESH_BEHAVIOR_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/behavior/private")
+MESH_DECISION_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/decision/private")
+MESH_FLIGHT_RECORDER_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/flight_recorder/private")
+MESH_FORENSICS_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/forensics/private")
+MESH_GATEWAY_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/gateway/private")
+MESH_IDENTITY_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/identity/private")
+MESH_IDENTITY_GRAPH_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/identity_graph/private")
+MESH_INSIGHT_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/insight/private")
+MESH_POLICY_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/policy/private")
+MESH_REGISTRY_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/registry/private")
+MESH_USAGE_PRIV=$(ssm "/$${PARAM_PREFIX}/mesh/usage/private")
+
 RDS_HOST="${var.rds_endpoint}"
 REDIS_HOST="${var.redis_primary_endpoint}"
 DOMAIN="${var.domain}"
@@ -179,6 +203,21 @@ SLACK_OAUTH_CLIENT_ID=
 SLACK_OAUTH_CLIENT_SECRET=
 SLACK_WEBHOOK_URL=
 PAGERDUTY_ROUTING_KEY=
+ACP_MESH_TRUSTED_KEYS=$${MESH_TRUSTED}
+MESH_API_PRIVATE_KEY=$${MESH_API_PRIV}
+MESH_AUDIT_PRIVATE_KEY=$${MESH_AUDIT_PRIV}
+MESH_AUTONOMY_PRIVATE_KEY=$${MESH_AUTONOMY_PRIV}
+MESH_BEHAVIOR_PRIVATE_KEY=$${MESH_BEHAVIOR_PRIV}
+MESH_DECISION_PRIVATE_KEY=$${MESH_DECISION_PRIV}
+MESH_FLIGHT_RECORDER_PRIVATE_KEY=$${MESH_FLIGHT_RECORDER_PRIV}
+MESH_FORENSICS_PRIVATE_KEY=$${MESH_FORENSICS_PRIV}
+MESH_GATEWAY_PRIVATE_KEY=$${MESH_GATEWAY_PRIV}
+MESH_IDENTITY_PRIVATE_KEY=$${MESH_IDENTITY_PRIV}
+MESH_IDENTITY_GRAPH_PRIVATE_KEY=$${MESH_IDENTITY_GRAPH_PRIV}
+MESH_INSIGHT_PRIVATE_KEY=$${MESH_INSIGHT_PRIV}
+MESH_POLICY_PRIVATE_KEY=$${MESH_POLICY_PRIV}
+MESH_REGISTRY_PRIVATE_KEY=$${MESH_REGISTRY_PRIV}
+MESH_USAGE_PRIVATE_KEY=$${MESH_USAGE_PRIV}
 ENV
 
 chmod 600 /opt/aegis/infra/.env
