@@ -268,12 +268,14 @@ async def main() -> None:
     ]
     for idx, (sev, title, trig, age, risk, tool, ag_idx) in enumerate(incident_specs, start=1):
         try:
-            # incident_number must be globally unique across all tenants
-            # (the table has a UNIQUE index on it). Tenant-scoped prefix
-            # plus a short random suffix avoids collisions both with
-            # other tenants' demo seeds and with re-seeds of the same
-            # tenant after a partial-failure recovery.
-            inc_no = f"INC-{str(tenant_id)[:8]}-{datetime.now(tz=timezone.utc).strftime('%Y%m%d')}-{idx:04d}"
+            # incident_number is varchar(20) AND has a global UNIQUE
+            # index. Format: 'INC-' (4) + first 8 chars of tenant uuid
+            # (8) + '-' (1) + 4-digit seq = 17 chars. Different tenants
+            # never collide because the prefix carries the tenant id;
+            # same-tenant re-seed will collide but that path isn't on
+            # the demo critical flow (each /demo/spawn-workspace mints
+            # a brand new uuid4 tenant).
+            inc_no = f"INC-{str(tenant_id)[:8]}-{idx:04d}"
             agent_id = inserted_agents[ag_idx] if ag_idx < len(inserted_agents) else inserted_agents[0]
             # NOTE: `trigger` is a Postgres reserved word — must be quoted.
             # Removed ON CONFLICT DO NOTHING so an actual unique-key
