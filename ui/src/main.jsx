@@ -51,6 +51,11 @@ import './index.css';
     sessionStorage.setItem('user_email', email);
     sessionStorage.setItem('user_role', role);
     sessionStorage.setItem('acp_token_expiry', String(Date.now() + ttlSeconds * 1000));
+    // Tag the session so ClerkAuthBridge's not-signed-in branch knows
+    // to leave it alone (its default behavior is to clearSessionMetadata
+    // whenever Clerk reports no user — which would erase the demo state
+    // milliseconds after this IIFE installed it).
+    sessionStorage.setItem('session_kind', 'demo');
 
     params.delete('demo_token');
     const cleanUrl =
