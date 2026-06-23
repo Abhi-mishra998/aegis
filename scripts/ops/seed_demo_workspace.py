@@ -268,21 +268,32 @@ async def main() -> None:
     ]
     for idx, (sev, title, trig, age, risk, tool, ag_idx) in enumerate(incident_specs, start=1):
         try:
-            inc_no = f"INC-{datetime.now(tz=timezone.utc).strftime('%Y%m%d')}-{idx:04d}"
+            # incident_number must be globally unique across all tenants
+            # (the table has a UNIQUE index on it). Tenant-scoped prefix
+            # plus a short random suffix avoids collisions both with
+            # other tenants' demo seeds and with re-seeds of the same
+            # tenant after a partial-failure recovery.
+            inc_no = f"INC-{str(tenant_id)[:8]}-{datetime.now(tz=timezone.utc).strftime('%Y%m%d')}-{idx:04d}"
             agent_id = inserted_agents[ag_idx] if ag_idx < len(inserted_agents) else inserted_agents[0]
             # NOTE: `trigger` is a Postgres reserved word — must be quoted.
-            await api_conn.execute(
+            # Removed ON CONFLICT DO NOTHING so an actual unique-key
+            # collision raises instead of silently no-op'ing — that bug
+            # masked the incident_number collision in the previous seed.
+            result = await api_conn.execute(
                 'INSERT INTO incidents (id, tenant_id, incident_number, agent_id, severity, status, '
                 '"trigger", title, risk_score, tool, actions_taken, timeline, '
                 'violation_count, related_audit_ids, created_at, updated_at) '
                 "VALUES ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, $9, '[]'::json, '[]'::json, 1, '[]'::json, "
-                "now() - $10::interval, now() - $10::interval) "
-                "ON CONFLICT DO NOTHING",
+                "now() - $10::interval, now() - $10::interval)",
                 uuid.uuid4(), tenant_id, inc_no, str(agent_id), sev, trig, title, risk, tool, age,
             )
-            incidents_inserted += 1
+            # asyncpg execute returns 'INSERT 0 N' — only count if N > 0
+            if result and result.startswith("INSERT") and not result.endswith(" 0"):
+                incidents_inserted += 1
+            else:
+                print(f"  WARN incident insert {title}: no row affected ({result})")
         except Exception as exc:
-            print(f"  WARN incident insert {title}: {str(exc)[:140]}")
+            print(f"  WARN incident insert {title}: {str(exc)[:160]}")
     print(f"  incidents inserted: {incidents_inserted}/{len(incident_specs)}")
 
     # ── 4. Shadow Mode policies — populate the Shadow Mode tab with 2 candidate
