@@ -257,30 +257,155 @@ async def main() -> None:
             print(f"  WARN audit insert {i}: {str(exc)[:120]}")
     print(f"  audit_logs inserted: {written}/{args.rows}")
 
-    # ── 3. Incidents (2 rows)
+    # ── 3. Incidents (real schema: agent_id + incident_number + trigger + risk_score)
     incidents_inserted = 0
     incident_specs = [
-        ("HIGH",     "Path-traversal cluster on db-copilot",        timedelta(days=5)),
-        ("CRITICAL", "Wire-transfer escalation: $5M to Foreign LLC", timedelta(hours=6)),
+        # (severity, title, trigger, age, risk_score, tool, agent_index)
+        ("HIGH",     "Path-traversal cluster on db-copilot",
+         "policy_violation", timedelta(days=5), 78.0, "read_file", 0),
+        ("CRITICAL", "Wire-transfer escalation: $5M to Foreign LLC",
+         "money_movement_above_cap", timedelta(hours=6), 95.0, "send_wire", 3),
     ]
-    for sev, title, age in incident_specs:
+    for idx, (sev, title, trig, age, risk, tool, ag_idx) in enumerate(incident_specs, start=1):
         try:
+            inc_no = f"INC-{datetime.now(tz=timezone.utc).strftime('%Y%m%d')}-{idx:04d}"
+            agent_id = inserted_agents[ag_idx] if ag_idx < len(inserted_agents) else inserted_agents[0]
             await api_conn.execute(
-                "INSERT INTO incidents (id, tenant_id, org_id, title, severity, status, "
-                "created_at, updated_at) "
-                "VALUES ($1, $2, $2, $3, $4, 'OPEN', now() - $5::interval, now() - $5::interval) "
+                "INSERT INTO incidents (id, tenant_id, incident_number, agent_id, severity, status, "
+                "trigger, title, risk_score, tool, actions_taken, timeline, "
+                "violation_count, related_audit_ids, created_at, updated_at) "
+                "VALUES ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, $9, '[]'::json, '[]'::json, 1, '[]'::json, "
+                "now() - $10::interval, now() - $10::interval) "
                 "ON CONFLICT DO NOTHING",
-                uuid.uuid4(), tenant_id, title, sev, age,
+                uuid.uuid4(), tenant_id, inc_no, str(agent_id), sev, trig, title, risk, tool, age,
             )
             incidents_inserted += 1
         except Exception as exc:
-            print(f"  WARN incident insert {title}: {str(exc)[:120]}")
+            print(f"  WARN incident insert {title}: {str(exc)[:140]}")
     print(f"  incidents inserted: {incidents_inserted}/{len(incident_specs)}")
+
+    # ── 4. Shadow Mode policies — populate the Shadow Mode tab with 2 candidate
+    #     policies in "shadow" mode. Operator can promote / rollback from UI.
+    shadow_url = (
+        user_pass.replace("identity_user", "audit_user").replace("identity_prod_pwd", "audit_prod_pwd")
+        + f"@{host_port}/acp_audit"
+    )
+    shadow_inserted = 0
+    shadow_specs = [
+        ("Block path-traversal v2", "Tightens read_file rules: deny any /etc/* + /proc/*", 1.0,
+         [{"if": {"tool": "read_file", "path_prefix": "/etc"}, "then": "deny"},
+          {"if": {"tool": "read_file", "path_prefix": "/proc"}, "then": "deny"}]),
+        ("PII row-count cap candidate", "Escalate SELECT * on users when row_limit > 100", 1.0,
+         [{"if": {"tool": "query_database", "table_contains": "users", "row_limit_gt": 100}, "then": "escalate"}]),
+    ]
+    import json as _json
+    for name, desc, rate, rules in shadow_specs:
+        try:
+            await aud_conn.execute(
+                "INSERT INTO shadow_policies (id, tenant_id, name, version, mode, rules_json, "
+                "description, sample_rate, created_by, created_at) "
+                "VALUES ($1, $2, $3, 1, 'shadow', $4::jsonb, $5, $6, $7, now() - INTERVAL '2 days') "
+                "ON CONFLICT DO NOTHING",
+                uuid.uuid4(), tenant_id, name, _json.dumps(rules), desc, rate, args.owner_email,
+            )
+            shadow_inserted += 1
+        except Exception as exc:
+            print(f"  WARN shadow_policy insert {name}: {str(exc)[:140]}")
+    print(f"  shadow_policies inserted: {shadow_inserted}/{len(shadow_specs)}")
+
+    # ── 5. Identity Graph — nodes for each agent + a couple of resources
+    #     they touch, plus edges so the IAG + Threat Graph visualisations
+    #     have something to render. Resource node IDs are stable per-tenant
+    #     so re-running this script doesn't duplicate.
+    iag_url = (
+        user_pass.replace("identity_user", "identity_graph_user").replace("identity_prod_pwd", "identity_graph_prod_pwd")
+        + f"@{host_port}/acp_identity_graph"
+    )
+    iag_inserted_nodes = 0
+    iag_inserted_edges = 0
+    try:
+        iag_conn = await asyncpg.connect(iag_url, statement_cache_size=0, timeout=10)
+        # Resources the seeded agents touch
+        resources = [
+            ("dataset",  "customers.db",         "high"),
+            ("dataset",  "transactions.db",      "high"),
+            ("endpoint", "stripe.api",           "medium"),
+            ("endpoint", "slack.webhook",        "low"),
+            ("dataset",  "logs.s3",              "low"),
+        ]
+        # Insert agent nodes
+        agent_node_ids: list[uuid.UUID] = []
+        for ag_id, spec in zip(inserted_agents, DEMO_AGENTS):
+            node_id = uuid.uuid4()
+            try:
+                await iag_conn.execute(
+                    "INSERT INTO graph_nodes (id, org_id, tenant_id, node_type, external_id, name, "
+                    "attributes, trust_score, drift_score, last_scored_at, created_at, updated_at) "
+                    "VALUES ($1, $2, $2, 'agent', $3, $4, $5::jsonb, $6, $7, now(), now(), now()) "
+                    "ON CONFLICT DO NOTHING",
+                    node_id, tenant_id, str(ag_id), spec["name"],
+                    _json.dumps({"risk_level": spec["risk_level"], "tools": spec["tools"]}),
+                    0.85, 0.08,
+                )
+                agent_node_ids.append(node_id)
+                iag_inserted_nodes += 1
+            except Exception as exc:
+                print(f"  WARN iag agent node {spec['name']}: {str(exc)[:140]}")
+        # Insert resource nodes
+        resource_node_ids: list[uuid.UUID] = []
+        for rtype, rname, sensitivity in resources:
+            node_id = uuid.uuid4()
+            try:
+                await iag_conn.execute(
+                    "INSERT INTO graph_nodes (id, org_id, tenant_id, node_type, external_id, name, "
+                    "attributes, trust_score, drift_score, last_scored_at, created_at, updated_at) "
+                    "VALUES ($1, $2, $2, $3, $4, $4, $5::jsonb, 1.0, 0.0, now(), now(), now()) "
+                    "ON CONFLICT DO NOTHING",
+                    node_id, tenant_id, rtype, rname,
+                    _json.dumps({"sensitivity": sensitivity}),
+                )
+                resource_node_ids.append(node_id)
+                iag_inserted_nodes += 1
+            except Exception as exc:
+                print(f"  WARN iag resource node {rname}: {str(exc)[:140]}")
+        # Insert edges: each agent touches 2-3 resources with a mix of allow/deny outcomes
+        edge_specs = [
+            (0, 0, "read",  "allow",  0.20),  # db-copilot reads customers.db
+            (0, 1, "read",  "allow",  0.25),  # db-copilot reads transactions.db
+            (0, 4, "write", "allow",  0.10),  # db-copilot writes logs
+            (3, 2, "post",  "deny",   0.92),  # finance-bot blocked posting to stripe
+            (3, 1, "read",  "escalate", 0.78),
+            (1, 3, "post",  "allow",  0.15),  # support-bot posts to slack
+            (2, 4, "write", "allow",  0.05),  # devops-agent writes logs
+            (4, 0, "read",  "allow",  0.30),  # sales-research-agent reads customers
+        ]
+        for src_i, dst_i, action, outcome, risk in edge_specs:
+            if src_i >= len(agent_node_ids) or dst_i >= len(resource_node_ids):
+                continue
+            try:
+                await iag_conn.execute(
+                    "INSERT INTO graph_edges (id, org_id, tenant_id, src_node_id, dst_node_id, "
+                    "edge_type, action, outcome, risk_score, attributes, occurred_at, created_at, updated_at) "
+                    "VALUES ($1, $2, $2, $3, $4, 'accesses', $5, $6, $7, '{}'::jsonb, "
+                    "now() - INTERVAL '2 hours', now(), now()) "
+                    "ON CONFLICT DO NOTHING",
+                    uuid.uuid4(), tenant_id, agent_node_ids[src_i], resource_node_ids[dst_i],
+                    action, outcome, risk,
+                )
+                iag_inserted_edges += 1
+            except Exception as exc:
+                print(f"  WARN iag edge: {str(exc)[:140]}")
+        await iag_conn.close()
+    except Exception as exc:
+        print(f"  WARN iag connect: {str(exc)[:140]}")
+    print(f"  identity_graph nodes/edges inserted: {iag_inserted_nodes}/{iag_inserted_edges}")
 
     await id_conn.close(); await reg_conn.close(); await aud_conn.close(); await api_conn.close()
 
     print(f"\n=== DONE ===")
-    print(f"  Workspace now has {len(inserted_agents)} agents, {written} demo audit rows, {incidents_inserted} open incidents.")
+    print(f"  Workspace now has {len(inserted_agents)} agents, {written} demo audit rows, "
+          f"{incidents_inserted} open incidents, {shadow_inserted} shadow policies, "
+          f"{iag_inserted_nodes} graph nodes, {iag_inserted_edges} graph edges.")
     print(f"  Sign in as {args.owner_email}, open https://aegisagent.in/dashboard")
 
 
