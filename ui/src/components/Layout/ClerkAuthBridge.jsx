@@ -110,15 +110,31 @@ export default function ClerkAuthBridge() {
 
     if (!isSignedIn) {
       setClerkTokenGetter(null);
-      clearSessionMetadata();
-      lastMirroredRef.current = { clerkUserId: null, clerkOrgId: null };
-      updateAuth({
-        isAuthenticated: false,
-        user: null,
-        tenant_id: null,
-        role: null,
-        token: null,
-      });
+
+      // Don't trample a still-valid demo session. The anonymous
+      // /demo/spawn-workspace flow installs session metadata + the
+      // acp_token cookie in main.jsx's bootstrap IIFE; ClerkAuthBridge
+      // then runs after Clerk reports "not signed in" (it doesn't know
+      // about demo tokens) and the original clearSessionMetadata() call
+      // here wiped the demo state, sending every protected route to
+      // /login despite a valid 30-minute JWT in the cookie.
+      // Demo sessions are tagged with `session_kind=demo` in
+      // sessionStorage so this branch can recognize + preserve them.
+      const kind = getSessionItem('session_kind');
+      const demoExpiry = parseInt(getSessionItem('acp_token_expiry') || '0', 10);
+      const hasLiveDemo = kind === 'demo' && demoExpiry > Date.now();
+
+      if (!hasLiveDemo) {
+        clearSessionMetadata();
+        lastMirroredRef.current = { clerkUserId: null, clerkOrgId: null };
+        updateAuth({
+          isAuthenticated: false,
+          user: null,
+          tenant_id: null,
+          role: null,
+          token: null,
+        });
+      }
       return;
     }
 
