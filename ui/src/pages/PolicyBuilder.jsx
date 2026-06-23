@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import {
   GitMerge, Plus, Trash2, ChevronRight, Eye, Save,
   AlertTriangle, CheckCircle2, Info, FlaskConical, X,
-  Code2, Upload, PlayCircle,
+  Code2, Upload, PlayCircle, Sparkles, Shield, BookOpen, ArrowRight,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
 import Modal from '../components/Common/Modal'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { registryService, policyService } from '../services/api'
 import { useAgents } from '../hooks/useAgents'
 import { eventBus } from '../lib/eventBus'
@@ -90,6 +91,64 @@ function makeRule() {
     description: '',
   }
 }
+
+const RULE_TEMPLATES = [
+  {
+    id: 'high-risk-deny',
+    label: 'Block high-risk requests',
+    description: 'Deny anything with risk_score > 0.85',
+    icon: Shield,
+    accent: 'text-red-300 bg-red-500/10 border-red-500/30 hover:border-red-500/50',
+    build: () => ({
+      id: crypto.randomUUID(),
+      conditions: [{ id: crypto.randomUUID(), field: 'risk_score', operator: 'gt', value: '0.85' }],
+      action: 'DENY',
+      description: 'Block high-risk requests',
+    }),
+  },
+  {
+    id: 'destructive-shell',
+    label: 'Quarantine destructive shells',
+    description: 'Escalate any tool=run_code with risk > 0.6',
+    icon: AlertTriangle,
+    accent: 'text-amber-300 bg-amber-500/10 border-amber-500/30 hover:border-amber-500/50',
+    build: () => ({
+      id: crypto.randomUUID(),
+      conditions: [
+        { id: crypto.randomUUID(), field: 'tool',       operator: 'eq', value: 'run_code' },
+        { id: crypto.randomUUID(), field: 'risk_score', operator: 'gt', value: '0.6' },
+      ],
+      action: 'ESCALATE',
+      description: 'Escalate risky shell exec',
+    }),
+  },
+  {
+    id: 'anomaly-monitor',
+    label: 'Monitor anomalous behavior',
+    description: 'Log when anomaly_score ≥ 0.5',
+    icon: Eye,
+    accent: 'text-blue-300 bg-blue-500/10 border-blue-500/30 hover:border-blue-500/50',
+    build: () => ({
+      id: crypto.randomUUID(),
+      conditions: [{ id: crypto.randomUUID(), field: 'anomaly_score', operator: 'gte', value: '0.5' }],
+      action: 'MONITOR',
+      description: 'Monitor anomalous behavior',
+    }),
+  },
+  {
+    id: 'inference-throttle',
+    label: 'Throttle inference-risk spikes',
+    description: 'Rate-limit when inference_risk > 0.7',
+    icon: Sparkles,
+    accent: 'text-purple-300 bg-purple-500/10 border-purple-500/30 hover:border-purple-500/50',
+    build: () => ({
+      id: crypto.randomUUID(),
+      conditions: [{ id: crypto.randomUUID(), field: 'inference_risk', operator: 'gt', value: '0.7' }],
+      action: 'THROTTLE',
+      description: 'Throttle on inference risk',
+    }),
+  },
+]
 
 function buildPermissionPayload(rule) {
   return {
@@ -261,7 +320,7 @@ function RuleBlock({ rule, idx, onChange, onDelete, onMoveUp, onMoveDown, isFirs
 export default function PolicyBuilder() {
   const navigate = useNavigate()
   const { agents } = useAgents()
-  const [rules,        setRules]        = useState([makeRule()])
+  const [rules,        setRules]        = useState([])
   const [selectedAgent,setSelectedAgent]= useState('')
   const [saving,       setSaving]       = useState(false)
   const [saved,        setSaved]        = useState(false)
@@ -291,6 +350,8 @@ export default function PolicyBuilder() {
   }, [selectedAgent])
 
   const addRule = () => setRules(prev => [...prev, makeRule()])
+
+  const addFromTemplate = (tpl) => setRules(prev => [...prev, tpl.build()])
 
   const updateRule = useCallback((id, updated) => {
     setRules(prev => prev.map(r => r.id === id ? updated : r))
@@ -431,6 +492,12 @@ export default function PolicyBuilder() {
           <Button size="sm" onClick={addRule}>
             <Plus size={13} aria-hidden="true" /> Add Rule
           </Button>
+          <button
+            onClick={() => navigate('/policies?tab=simulator')}
+            className="hidden md:flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white transition-colors"
+          >
+            Simulator <ArrowRight size={11} aria-hidden="true" />
+          </button>
         </div>
       </div>
 
@@ -443,9 +510,59 @@ export default function PolicyBuilder() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Rule editor */}
-        <div className="xl:col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-4 min-w-0">
+          {rules.length === 0 && (
+            <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.015] p-6 space-y-5">
+              <div className="flex items-start gap-3">
+                <BookOpen size={18} className="text-neutral-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-white">Start with a template</h2>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    No rules yet. Pick a common pattern below or build from scratch.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {RULE_TEMPLATES.map(tpl => {
+                  const TplIcon = tpl.icon
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => addFromTemplate(tpl)}
+                      className={`flex items-start gap-3 p-3 rounded-lg border bg-white/[0.02] transition-colors text-left ${tpl.accent}`}
+                    >
+                      <TplIcon size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-white">{tpl.label}</p>
+                        <p className="text-[11px] text-neutral-400 mt-0.5">{tpl.description}</p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex items-center gap-2 pt-2 border-t border-white/[0.06]">
+                <button
+                  onClick={addRule}
+                  className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white transition-colors"
+                >
+                  <Plus size={12} aria-hidden="true" />
+                  Build from scratch
+                </button>
+                <span className="text-[10px] text-neutral-700">·</span>
+                <button
+                  onClick={() => navigate('/policies?tab=staging')}
+                  className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white transition-colors"
+                >
+                  <FlaskConical size={12} aria-hidden="true" />
+                  Test in Playground
+                </button>
+              </div>
+            </div>
+          )}
+
           {rules.map((rule, idx) => (
             <RuleBlock
               key={rule.id}
@@ -461,23 +578,25 @@ export default function PolicyBuilder() {
             />
           ))}
 
-          <button
-            onClick={addRule}
-            className="
-              w-full p-4 border-2 border-dashed border-[var(--border-default)]
-              rounded-xl text-neutral-600 hover:text-neutral-400
-              hover:border-[var(--border-strong)] transition-colors
-              flex items-center justify-center gap-2 text-sm
-            "
-            aria-label="Add new rule"
-          >
-            <Plus size={16} aria-hidden="true" />
-            Add Rule Block
-          </button>
+          {rules.length > 0 && (
+            <button
+              onClick={addRule}
+              className="
+                w-full p-4 border-2 border-dashed border-[var(--border-default)]
+                rounded-xl text-neutral-600 hover:text-neutral-400
+                hover:border-[var(--border-strong)] transition-colors
+                flex items-center justify-center gap-2 text-sm
+              "
+              aria-label="Add new rule"
+            >
+              <Plus size={16} aria-hidden="true" />
+              Add Rule Block
+            </button>
+          )}
         </div>
 
         {/* Right panel: agent selector + preview + save */}
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           <Card title="Apply to Agent" icon={ChevronRight}>
             <div className="space-y-3">
               <select

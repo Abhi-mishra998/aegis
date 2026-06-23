@@ -385,6 +385,13 @@ export default function Billing() {
   const costPerCall = s.cost_per_call ?? 0;
   const currentCost = s.current_cost_usd ?? totalCalls * costPerCall;
 
+  // Unit 9 (2026-06-23): "no usage yet" state — when summary loaded but the
+  // tenant hasn't sent any traffic. We surface a one-liner with a deep link
+  // into the Developer Panel cURL ladder so the user can fire sample traffic.
+  const noUsageYet = !sumLoad && !sumError &&
+    totalCalls === 0 && totalEvents === 0 && threatsBlocked === 0 &&
+    invoices.length === 0;
+
   /* Chart data — always explicit `calls` against `day` so the chart renders
      even with a single datapoint (single-bar trend is still a useful demo). */
   const trendRaw = s.daily_trend || s.trend || [];
@@ -457,6 +464,32 @@ export default function Billing() {
             <RefreshCw size={12} aria-hidden="true" />
             Retry
           </Button>
+        </div>
+      )}
+
+      {/* Unit 9 — no-usage empty state. Visible before any traffic has been
+          recorded for this tenant. Points at the cURL ladder in the
+          Developer Panel so the user can fire sample traffic in one click. */}
+      {noUsageYet && (
+        <div className="flex items-start gap-3 p-4 bg-white/[0.02] border border-white/[0.06] rounded-2xl">
+          <DollarSign size={18} className="text-neutral-500 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-neutral-200">
+              No usage yet — current period <span className="text-white">$0.00</span>
+            </div>
+            <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">
+              Once your first agent or SDK call hits <code className="text-neutral-300">/execute</code>, ROI tiles
+              and the invoice ledger fill in automatically. Try sample traffic to see it light up.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/settings?tab=api-keys')}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+          >
+            Try sample traffic
+            <ChevronRight size={12} />
+          </button>
         </div>
       )}
 

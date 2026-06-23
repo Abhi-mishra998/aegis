@@ -3,7 +3,7 @@ import { registryService } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
 import { useAuth } from '../hooks/useAuth';
-import { useRole } from '../hooks/useRole';
+import { eventBus } from '../lib/eventBus';
 import {
   Bot,
   Plus,
@@ -51,24 +51,12 @@ function StatusBadge({ status }) {
   return <span className={`status-badge ${style}`}>{s}</span>;
 }
 
-/* ── Last seen freshness ──────────────────────────────────────────────────── */
-// TODO U7 — replace inline with shared/DataFreshness.jsx when it lands
-function LastSeenCell({ ts }) {
-  if (!ts) return <span className="text-neutral-500 text-xs">—</span>;
-  const ago = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-  const label = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.floor(ago/60)}m ago` : ago < 86400 ? `${Math.floor(ago/3600)}h ago` : `${Math.floor(ago/86400)}d ago`;
-  return <span className="text-xs text-neutral-400" title={new Date(ts).toISOString()}>{label}</span>;
-}
-
 /* ── Main component ────────────────────────────────────────────────────────── */
 export default function Agents() {
   const navigate = useNavigate();
   const formId = useId();
   const { refreshAgents, setSelectedAgentId } = useAgents();
   const { addToast } = useAuth();
-  const { role } = useRole();
-  const canMutate = role !== 'VIEWER' && role !== 'READ_ONLY';
-  const canDelete = role === 'ADMIN' || role === 'OWNER';
 
   const [agents,  setAgents]  = useState([]);
   const [summary, setSummary] = useState(null);
@@ -118,7 +106,15 @@ export default function Agents() {
   useEffect(() => {
     fetchAgents();
     const interval = setInterval(fetchAgents, 30_000);
-    return () => clearInterval(interval);
+    // React to SSE-driven agent changes — AgentContext drives the source SSE
+    // connection and republishes 'agent_changed' on the in-process eventBus.
+    const unsubscribe = eventBus.on('agent_changed', () => {
+      fetchAgents();
+    });
+    return () => {
+      clearInterval(interval);
+      unsubscribe?.();
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async (e) => {
@@ -235,13 +231,8 @@ export default function Agents() {
       render: (val) => <RiskBadge score={val} />,
     },
     {
-      key: 'last_seen_at',
-      label: 'Last seen',
-      render: (val, row) => <LastSeenCell ts={val || row.updated_at} />,
-    },
-    {
       key: 'actions',
-      label: 'Actions',
+      label: '',
       width: '80px',
       render: (_, row) => (
         <div className="flex items-center gap-1 justify-end">
@@ -263,7 +254,7 @@ export default function Agents() {
           >
             <ExternalLink size={13} aria-hidden="true" />
           </Button>
-          {canMutate && (row.status ?? '').toLowerCase() !== 'quarantined' && (row.status ?? '').toLowerCase() !== 'terminated' && (
+          {(row.status ?? '').toLowerCase() !== 'quarantined' && (row.status ?? '').toLowerCase() !== 'terminated' && (
             <Button
               variant="ghost"
               size="icon"
@@ -275,7 +266,7 @@ export default function Agents() {
               <ShieldAlert size={13} aria-hidden="true" />
             </Button>
           )}
-          {canMutate && ['quarantined', 'inactive', 'suspended'].includes((row.status ?? '').toLowerCase()) && (
+          {['quarantined', 'inactive', 'suspended'].includes((row.status ?? '').toLowerCase()) && (
             <Button
               variant="ghost"
               size="icon"
@@ -287,17 +278,15 @@ export default function Agents() {
               <RotateCcw size={13} aria-hidden="true" />
             </Button>
           )}
-          {canDelete && (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Delete agent ${row.name}`}
-              className="hover:text-red-400 hover:bg-red-500/10"
-              onClick={(e) => { e.stopPropagation(); confirmDelete(row); }}
-            >
-              <Trash2 size={13} aria-hidden="true" />
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Delete agent ${row.name}`}
+            className="hover:text-red-400 hover:bg-red-500/10"
+            onClick={(e) => { e.stopPropagation(); confirmDelete(row); }}
+          >
+            <Trash2 size={13} aria-hidden="true" />
+          </Button>
         </div>
       ),
     },
@@ -423,17 +412,15 @@ export default function Agents() {
                 />
               </div>
               <div className="sm:col-span-2 flex justify-end">
-                {canMutate && (
-                  <Button
-                    type="submit"
-                    loading={creating}
-                    disabled={creating || !newName.trim()}
-                    size="sm"
-                  >
-                    <Plus size={14} aria-hidden="true" />
-                    Deploy Agent
-                  </Button>
-                )}
+                <Button
+                  type="submit"
+                  loading={creating}
+                  disabled={creating || !newName.trim()}
+                  size="sm"
+                >
+                  <Plus size={14} aria-hidden="true" />
+                  Deploy Agent
+                </Button>
               </div>
             </form>
           </Card>
@@ -441,34 +428,48 @@ export default function Agents() {
 
         {/* Fleet summary */}
         <Card title="Fleet Status">
-          <div className="space-y-4">
-            <div className="metric-row">
-              <span className="text-xs text-neutral-500">Total Agents</span>
-              <span className="text-sm font-bold text-white">{summary?.total ?? agents.length}</span>
+          {loading ? (
+            <SkeletonLoader variant="text" count={1} />
+          ) : (
+            <div className="space-y-4">
+              {(() => {
+                const total = summary?.total ?? agents.length;
+                const active = summary?.active ?? agents.filter((a) => (a.status ?? '').toLowerCase() === 'active').length;
+                const quarantined = summary?.quarantined ?? agents.filter((a) => (a.status ?? '').toLowerCase() === 'quarantined').length;
+                const highRisk = summary?.high_risk ?? agents.filter((a) => ['high', 'critical'].includes((a.risk_level ?? '').toLowerCase())).length;
+                return (
+                  <>
+                    <div className="metric-row">
+                      <span className="text-xs text-neutral-500">Total Agents</span>
+                      <span className="text-sm font-bold text-white">{total > 0 ? total : '—'}</span>
+                    </div>
+                    <div className="metric-row">
+                      <span className="text-xs text-neutral-500">Active</span>
+                      <span className={`text-sm font-semibold ${active > 0 ? 'text-green-400' : 'text-neutral-500'}`}>
+                        {active > 0 ? active : '—'}
+                      </span>
+                    </div>
+                    <div className="metric-row">
+                      <span className="text-xs text-neutral-500">Quarantined</span>
+                      <span className={`text-sm font-semibold ${quarantined > 0 ? 'text-amber-400' : 'text-neutral-500'}`}>
+                        {quarantined > 0 ? quarantined : '—'}
+                      </span>
+                    </div>
+                    <div className="metric-row">
+                      <span className="text-xs text-neutral-500">High Risk</span>
+                      <span className={`text-sm font-semibold ${highRisk > 0 ? 'text-red-400' : 'text-neutral-500'}`}>
+                        {highRisk > 0 ? highRisk : '—'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 pt-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden="true" />
+                      <span className="text-xs text-neutral-500">Drift detection active</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
-            <div className="metric-row">
-              <span className="text-xs text-neutral-500">Active</span>
-              <span className="text-sm font-semibold text-green-400">
-                {summary?.active ?? agents.filter((a) => (a.status ?? '').toLowerCase() === 'active').length}
-              </span>
-            </div>
-            <div className="metric-row">
-              <span className="text-xs text-neutral-500">Quarantined</span>
-              <span className="text-sm font-semibold text-amber-400">
-                {summary?.quarantined ?? agents.filter((a) => (a.status ?? '').toLowerCase() === 'quarantined').length}
-              </span>
-            </div>
-            <div className="metric-row">
-              <span className="text-xs text-neutral-500">High Risk</span>
-              <span className="text-sm font-semibold text-red-400">
-                {summary?.high_risk ?? agents.filter((a) => ['high', 'critical'].includes((a.risk_level ?? '').toLowerCase())).length}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 pt-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden="true" />
-              <span className="text-xs text-neutral-500">Drift detection active</span>
-            </div>
-          </div>
+          )}
         </Card>
       </div>
 
@@ -487,6 +488,28 @@ export default function Agents() {
 
         {loading ? (
           <SkeletonLoader variant="row" count={5} />
+        ) : filtered.length === 0 && !search ? (
+          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-10 text-center space-y-4">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+              <Bot size={22} className="text-neutral-500" aria-hidden="true" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-neutral-200">No agents registered</p>
+              <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                Go to the Onboarding Wizard to register your first agent. Pick your SDK,
+                copy the install snippet, and Aegis will start governing in under a minute.
+              </p>
+            </div>
+            <div>
+              <Link
+                to="/onboarding"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-colors"
+              >
+                <Plus size={13} aria-hidden="true" />
+                Register your first agent
+              </Link>
+            </div>
+          </div>
         ) : (
           <DataTable
             columns={columns}

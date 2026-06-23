@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertOctagon,
   AlertTriangle,
@@ -8,6 +9,8 @@ import {
   RefreshCw,
   Shield,
   ShieldOff,
+  PlayCircle,
+  ArrowRight,
 } from 'lucide-react';
 import { auditService, workspaceService } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
@@ -15,6 +18,7 @@ import { useRole } from '../hooks/useRole';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
 import ConfirmDialog from '../components/Common/ConfirmDialog';
+import SkeletonLoader from '../components/Common/SkeletonLoader';
 
 function StatusPill({ active, daysLeft }) {
   if (!active) {
@@ -77,6 +81,7 @@ export default function ShadowModeReview() {
   const [exiting, setExiting] = useState(false);
   const [showExitDialog, setShowExitDialog] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [liveCount, setLiveCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +111,7 @@ export default function ShadowModeReview() {
     onMessage: (evt) => {
       if (evt?.type !== 'would_have_blocked') return;
       const data = evt?.data || {};
+      setLiveCount((c) => c + 1);
       setEvents((prev) => [
         {
           id: data.request_id || `sse-${Date.now()}`,
@@ -148,12 +154,19 @@ export default function ShadowModeReview() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3 flex-wrap">
             Shadow Mode Review
             <StatusPill
               active={!!workspace?.shadow_mode_active}
               daysLeft={workspace?.shadow_mode_days_left}
             />
+            <span
+              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-neutral-500"
+              title={`${liveCount} would_have_blocked event${liveCount === 1 ? '' : 's'} streamed since mount`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${liveCount > 0 ? 'bg-amber-400 animate-pulse' : 'bg-neutral-700'}`} />
+              live
+            </span>
           </h1>
           <p className="text-xs text-neutral-400 max-w-xl">
             While shadow mode is active, every deny/escalate decision is logged as a{' '}
@@ -244,22 +257,55 @@ export default function ShadowModeReview() {
             </thead>
             <tbody>
               {loading && (
-                <tr>
-                  <td className="px-3 py-6 text-center text-neutral-500" colSpan={7}>
-                    Loading…
-                  </td>
-                </tr>
+                <>
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <tr key={`sk-${i}`} className="border-b border-white/[0.04]">
+                      {[0, 1, 2, 3, 4, 5, 6].map((c) => (
+                        <td key={c} className="px-3 py-2.5">
+                          <div className="h-2.5 bg-white/[0.06] rounded animate-pulse" style={{ width: `${50 + (c * 7) % 40}%` }} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </>
               )}
               {!loading && events.length === 0 && (
                 <tr>
                   <td className="px-3 py-10 text-center" colSpan={7}>
                     <div className="flex flex-col items-center gap-3 text-neutral-500">
-                      <CheckCircle2 size={28} className="text-green-400/50" aria-hidden="true" />
-                      <div className="text-sm">No would-have-blocked events yet.</div>
-                      <div className="text-xs max-w-md">
-                        Run some agent traffic. If any deny/escalate fires while you're in
-                        shadow mode, it'll show up here for review.
-                      </div>
+                      {workspace?.shadow_mode_active ? (
+                        <>
+                          <CheckCircle2 size={28} className="text-green-400/50" aria-hidden="true" />
+                          <div className="text-sm">No would-have-blocked events yet.</div>
+                          <div className="text-xs max-w-md">
+                            Run some agent traffic. If any deny/escalate fires while you're in
+                            shadow mode, it'll show up here for review.
+                          </div>
+                          <Link
+                            to="/playground"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/10 text-neutral-200 text-xs hover:bg-white/[0.04] mt-1"
+                          >
+                            <PlayCircle size={11} aria-hidden="true" />
+                            Generate sample traffic
+                          </Link>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldOff size={28} className="text-red-400/60" aria-hidden="true" />
+                          <div className="text-sm text-amber-300">Shadow mode is off.</div>
+                          <div className="text-xs max-w-md">
+                            Toggle shadow mode ON to see what your policies would have blocked
+                            without enforcing it. Reach out to your workspace owner to enable.
+                          </div>
+                          <Link
+                            to="/policies?tab=staging"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/10 text-neutral-200 text-xs hover:bg-white/[0.04] mt-1"
+                          >
+                            <ArrowRight size={11} aria-hidden="true" />
+                            Configure shadow policies
+                          </Link>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

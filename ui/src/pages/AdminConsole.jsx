@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Users, Activity, ShieldAlert, TrendingUp,
   RefreshCw, AlertTriangle, CheckCircle2, Clock,
   Database, Cpu, Zap, Globe,
 } from 'lucide-react'
 import { auditService, dashboardService, adminService } from '../services/api'
+import { eventBus } from '../lib/eventBus'
 
 const REFRESH_MS = 30_000
 
@@ -124,6 +125,13 @@ export default function AdminConsole() {
   const [services, setServices] = useState([])
   const [lastRefresh, setLastRefresh] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  // Unit 9 (2026-06-23): track first-load so we can show a skeleton instead
+  // of a single "Loading…" line below the heatmap + service-health cards.
+  const [initialLoad, setInitialLoad] = useState(true)
+  // Live tick pulse — flashes when an SSE-driven refresh lands so the
+  // operator sees the page is wired into real events, not a 30s poll.
+  const [pulseAt, setPulseAt] = useState(null)
+  const loadRef = useRef(null)
   // 2026-05-28: per-endpoint error tracking replaces silent Promise.allSettled
   // swallowing. Each key maps to either null (ok) or a short error string
   // surfaced in the banner near the top of the page.
@@ -188,7 +196,10 @@ export default function AdminConsole() {
     setErrors(nextErrors)
     setLastRefresh(new Date())
     setRefreshing(false)
+    setInitialLoad(false)
   }, [])
+
+  useEffect(() => { loadRef.current = load }, [load])
 
   useEffect(() => {
     load()
@@ -196,18 +207,73 @@ export default function AdminConsole() {
     return () => clearInterval(id)
   }, [load])
 
+  // Unit 9 (2026-06-23): system events should pulse the status tiles in
+  // real time — not wait the 30s poll. The gateway eventBus already emits
+  // `tool_executed` + `policy_decision` on every /execute decision. Use
+  // those to fan out a debounced refresh + visual tick on the KPI strip.
+  useEffect(() => {
+    let pending = null
+    const tick = () => {
+      setPulseAt(Date.now())
+      if (pending) clearTimeout(pending)
+      // Debounce the actual data refetch so a burst of events does one fetch.
+      pending = setTimeout(() => loadRef.current?.(), 750)
+    }
+    const u1 = eventBus.on('tool_executed', tick)
+    const u2 = eventBus.on('policy_decision', tick)
+    const u3 = eventBus.on('system_health', tick)
+    return () => { u1(); u2(); u3(); if (pending) clearTimeout(pending) }
+  }, [])
+
   const blockRate = parseFloat(kpis?.block_rate ?? 0)
+  // Unit 9: when every probed endpoint healed and nothing tripped an error,
+  // show a positive "cluster healthy" hint so the page doesn't read as empty.
+  const allHealthy = !Object.values(errors).some(Boolean)
+    && services.length > 0
+    && services.every(s => s.status === 'ok' || s.status === 'healthy')
+  const pulseFresh = pulseAt && (Date.now() - pulseAt) < 2000
+
+  if (initialLoad) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-6 animate-pulse">
+        <div className="space-y-2">
+          <div className="h-7 w-48 bg-white/[0.05] rounded" />
+          <div className="h-3 w-72 bg-white/[0.03] rounded" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[0,1,2,3].map(i => (
+            <div key={i} className="h-24 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-64 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+          <div className="h-64 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+        </div>
+        <div className="h-44 bg-white/[0.03] border border-white/[0.04] rounded-xl" />
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-white mb-1">Admin Console</h1>
           <p className="text-sm text-neutral-400">
-            Platform-wide health, workspace activity, and governance metrics.
+            Platform-wide health, tenant activity, and governance metrics.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Unit 9 — SSE live-tick dot: pulses for ~2s after the eventBus
+              fires a tool_executed / policy_decision / system_health event. */}
+          <span
+            className="text-xs text-neutral-600 flex items-center gap-1.5"
+            aria-live="polite"
+            title="Live SSE tick — pulses on each governance event"
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${pulseFresh ? 'bg-green-400 animate-pulse' : 'bg-neutral-700'}`} />
+            {pulseFresh ? 'Live' : 'Idle'}
+          </span>
           {lastRefresh && (
             <span className="text-xs text-neutral-600 flex items-center gap-1">
               <Clock size={11} /> {lastRefresh.toLocaleTimeString()}
@@ -223,6 +289,18 @@ export default function AdminConsole() {
           </button>
         </div>
       </header>
+
+      {/* Unit 9: positive empty-state hint when nothing is wrong. Tells the
+          operator "all green — drill into a quick-link for detail." */}
+      {allHealthy && tenants.length === 0 && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-green-500/5 border border-green-500/15 rounded-xl text-xs text-green-300" role="status">
+          <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <strong className="text-green-200">Cluster healthy.</strong>{' '}
+            <span className="text-neutral-400">All services responding. Drill into the quick-links below for detail, or wait for tenant activity to appear.</span>
+          </div>
+        </div>
+      )}
 
       {/* Per-endpoint error banner — surfaces partial failures instead of
           silently zeroing out tiles. Retry button calls the same loader. */}
@@ -304,7 +382,21 @@ export default function AdminConsole() {
             Service Health
           </h2>
           {services.length === 0 ? (
-            <div className="text-xs text-neutral-600 py-4 text-center">Loading…</div>
+            errors.health ? (
+              <div className="text-xs text-amber-400/80 py-4 text-center">
+                Service health unavailable ({errors.health}).
+              </div>
+            ) : (
+              <div className="space-y-2 animate-pulse" aria-label="Loading services">
+                {[0,1,2,3,4].map(i => (
+                  <div key={i} className="flex items-center gap-3 py-2">
+                    <div className="w-2 h-2 rounded-full bg-white/10 shrink-0" />
+                    <div className="h-2 bg-white/[0.05] rounded flex-1" />
+                    <div className="h-2 bg-white/[0.04] rounded w-12" />
+                  </div>
+                ))}
+              </div>
+            )
           ) : (
             <div>
               {services.map(s => <ServiceRow key={s.name} {...s} />)}
@@ -318,12 +410,12 @@ export default function AdminConsole() {
         <div className="px-5 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
           <h2 className="text-sm font-medium text-white flex items-center gap-2">
             <Globe size={14} className="text-neutral-500" />
-            Workspace Activity
+            Tenant Activity
           </h2>
-          <span className="text-xs text-neutral-500">{tenants.length} workspace{tenants.length !== 1 ? 's' : ''}</span>
+          <span className="text-xs text-neutral-500">{tenants.length} tenant{tenants.length !== 1 ? 's' : ''}</span>
         </div>
         {tenants.length === 0 ? (
-          <div className="px-5 py-8 text-center text-xs text-neutral-600">No workspace data available.</div>
+          <div className="px-5 py-8 text-center text-xs text-neutral-600">No tenant data available.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">

@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Gauge, RefreshCw, AlertTriangle, CheckCircle2,
-  TrendingUp, Clock, Zap, Database,
+  TrendingUp, Clock, Zap, Database, Sparkles,
 } from 'lucide-react'
 import { tenantService } from '../services/api'
 
@@ -83,8 +84,15 @@ export default function QuotaManagement() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-neutral-500" size={24} />
+      <div className="max-w-4xl mx-auto space-y-6 animate-pulse" aria-label="Loading quota">
+        <div className="h-7 w-48 bg-white/[0.05] rounded" />
+        <div className="h-3 w-72 bg-white/[0.03] rounded" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[0,1,2,3].map(i => <div key={i} className="h-24 bg-white/[0.03] border border-white/[0.04] rounded-xl" />)}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[0,1,2,3].map(i => <div key={i} className="h-32 bg-white/[0.03] border border-white/[0.04] rounded-xl" />)}
+        </div>
       </div>
     )
   }
@@ -104,13 +112,20 @@ export default function QuotaManagement() {
   const monthlyPct = monthlyCap > 0 ? Math.round((monthlyUsed / monthlyCap) * 100) : 0
   const resetAt    = quota?.reset_at || quota?.daily_reset_at
 
+  // Unit 9 (2026-06-23): "free tier" = explicit plan label OR zero usage with
+  // the conservative default caps. Surface a single banner with a CTA into
+  // /billing so the upgrade path is one click.
+  const planLabel  = (quota?.plan || limits.plan || '').toLowerCase()
+  const onFreeTier = planLabel === 'free' || planLabel === 'community' ||
+    (dailyUsed === 0 && monthlyUsed === 0 && monthlyCap > 0 && monthlyCap <= 10000)
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-white mb-1">Quota Management</h1>
           <p className="text-sm text-neutral-400">
-            Real-time request limits and inference cost caps for this workspace.
+            Real-time request limits and inference cost caps for this tenant.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -137,9 +152,28 @@ export default function QuotaManagement() {
           <div>
             <div className="text-sm font-medium">Live quota unavailable. Showing default limits — may not match enforcement.</div>
             <div className="text-xs mt-0.5 opacity-80">
-              Could not reach the workspace quota service. Values shown below are fallback defaults; actual rate limiting may differ.
+              Could not reach the tenant quota service. Values shown below are fallback defaults; actual rate limiting may differ.
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Unit 9 — free-tier hint with upgrade CTA. Hidden when usage is hot. */}
+      {!fetchError && onFreeTier && monthlyPct < 80 && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border bg-white/[0.02] border-white/[0.06]">
+          <Sparkles size={16} className="text-indigo-300 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-neutral-200">Using free tier — upgrade at /billing</div>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              You're on the community plan. Higher limits and per-agent cost caps unlock on a paid plan.
+            </p>
+          </div>
+          <Link
+            to="/billing"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+          >
+            View plans
+          </Link>
         </div>
       )}
 

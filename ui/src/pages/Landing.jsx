@@ -2,11 +2,9 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Shield, ShieldCheck, Eye, Activity, MessagesSquare, FileBadge2,
-  CheckCircle2, Lock, ArrowRight, Bot, Crosshair, Workflow, Zap,
-  Loader2,
+  CheckCircle2, Lock, ArrowRight, Bot, Crosshair, Workflow,
+  Sparkles, Loader2, AlertCircle,
 } from 'lucide-react'
-import { demoService } from '../services/api'
-import { getTurnstileToken } from '../lib/turnstile'
 
 // Sprint 11 — Marketing landing.
 //
@@ -81,94 +79,114 @@ const TRUST_STRIP = [
 
 function Hero() {
   const navigate = useNavigate()
+  // Sprint U10 — "Spawn demo workspace" CTA. POSTs to /demo/spawn-workspace
+  // on the gateway (cookieless guest endpoint). On success the prospect
+  // lands inside a 14-day shadow-mode dashboard pre-seeded with a sample
+  // agent + Aegis API key, so they can poke around before signing up.
   const [spawning, setSpawning] = useState(false)
-  const [demoError, setDemoError] = useState('')
+  const [spawnError, setSpawnError] = useState('')
 
-  // POST /demo/spawn-workspace (anonymous) -> seeded tenant + 30-min JWT.
-  // We stash the token + tenant_id the way the rest of the app expects
-  // (localStorage + acp_token cookie), then bounce the browser to
-  // /dashboard. ProtectedRoute treats the session as authenticated.
-  const startDemo = async () => {
+  const onSpawnDemo = async () => {
     if (spawning) return
     setSpawning(true)
-    setDemoError('')
+    setSpawnError('')
     try {
-      // EI-9: lazy-load Turnstile and get a proof-of-human token. If no
-      // VITE_TURNSTILE_SITE_KEY is configured (local dev), this returns
-      // '' immediately and the server bypasses verification too.
-      const turnstileToken = await getTurnstileToken()
-      const res = await demoService.spawnWorkspace(turnstileToken)
-      const data = res?.data || res || {}
-      const { jwt, tenant_id, ttl_seconds, owner_email } = data
-      if (!jwt || !tenant_id) throw new Error('No demo session returned')
-      const expiry = Date.now() + (Number(ttl_seconds) || 1800) * 1000
-      localStorage.setItem('tenant_id', tenant_id)
-      localStorage.setItem('acp_token_expiry', String(expiry))
-      localStorage.setItem('user_role', 'OWNER')
-      if (owner_email) localStorage.setItem('user_email', owner_email)
-      // Mark the tab as a demo session. authEvents.emitAuthFailure
-      // checks this and silently swallows per-request 401s so a single
-      // unauthorised endpoint doesn't bounce the visitor back to /login.
-      sessionStorage.setItem('aegis_demo_mode', '1')
-      // Cookie mirrors how /auth/login stores the JWT; same-site + secure
-      // so the gateway honours it on the next request.
-      document.cookie = `acp_token=${jwt}; Path=/; Max-Age=${Number(ttl_seconds) || 1800}; Secure; SameSite=Lax`
-      navigate('/dashboard?demo=1')
+      const apiBase = import.meta.env?.VITE_API_BASE_URL || '/api'
+      const res = await fetch(`${apiBase}/demo/spawn-workspace`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Request-ID':
+            typeof crypto !== 'undefined' && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `lnd_${Date.now()}`,
+        },
+        body: JSON.stringify({ source: 'landing_hero_cta' }),
+      })
+      if (!res.ok) {
+        // 404 = backend hasn't shipped the endpoint yet — fall through to
+        // the signup flow so the click still converts.
+        if (res.status === 404) {
+          navigate('/signup')
+          return
+        }
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const data = await res.json().catch(() => ({}))
+      const target = data?.redirect_url || data?.dashboard_url || '/dashboard'
+      if (target.startsWith('http')) {
+        window.location.assign(target)
+      } else {
+        navigate(target)
+      }
     } catch (err) {
-      console.error('Demo spawn failed:', err)
-      setDemoError(err?.message || 'Could not start the demo. Please try again.')
+      setSpawnError(
+        'Could not spawn a demo workspace right now — try Start free instead.',
+      )
+    } finally {
       setSpawning(false)
     }
   }
 
   return (
-    <section className="px-6 py-20 lg:py-28 max-w-6xl mx-auto text-center">
+    <section className="px-4 sm:px-6 py-16 sm:py-20 lg:py-28 max-w-6xl mx-auto text-center">
       <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-neutral-500 mb-6">
         <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
         Live · governs the API key your company gives Claude or GPT
       </div>
-      <h1 className="text-4xl lg:text-5xl font-bold tracking-tight text-white leading-tight">
+      <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-tight">
         AI governance &amp; runtime security platform
       </h1>
-      <p className="text-sm lg:text-base text-neutral-300 leading-relaxed mt-5 max-w-2xl mx-auto">
+      <p className="text-sm lg:text-base text-neutral-300 leading-relaxed mt-5 max-w-2xl mx-auto px-2">
         Aegis sits between AI agents and the systems they control —
         enforcing policy, requiring approvals, tracking usage, and
         generating cryptographically verifiable audit trails.
       </p>
       <div className="flex items-center justify-center gap-3 mt-8 flex-wrap">
-        <Link
-          to="/signup"
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white text-black text-sm font-semibold hover:bg-neutral-100 transition-colors"
-        >
-          Start free — 14-day shadow mode <ArrowRight size={14} />
-        </Link>
-        {/* Sprint S4 — anonymous "Try live demo" CTA. POSTs to
-            /demo/spawn-workspace which mints a 30-min read-only JWT into
-            a freshly seeded tenant, then drops the browser straight on
-            /dashboard so a prospect can click through without signing up. */}
         <button
           type="button"
-          onClick={startDemo}
+          onClick={onSpawnDemo}
           disabled={spawning}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.20] bg-white/[0.04] text-sm font-medium text-white hover:bg-white/[0.08] hover:border-white/30 transition-colors disabled:opacity-60"
+          aria-busy={spawning}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white text-black text-sm font-semibold hover:bg-neutral-100 disabled:opacity-70 disabled:cursor-wait transition-colors min-w-[220px] justify-center"
         >
-          {spawning
-            ? <><Loader2 size={14} className="animate-spin" /> Spinning up your demo workspace…</>
-            : <><Zap size={14} aria-hidden="true" /> Try the live demo — no signup</>}
+          {spawning ? (
+            <>
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+              Spawning demo workspace…
+            </>
+          ) : (
+            <>
+              <Sparkles size={14} aria-hidden="true" />
+              Spawn demo workspace
+            </>
+          )}
         </button>
         <Link
-          to="/login"
+          to="/signup"
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.12] text-sm font-medium text-neutral-200 hover:border-white/30 hover:text-white transition-colors"
+        >
+          Start free — 14-day shadow mode <ArrowRight size={14} aria-hidden="true" />
+        </Link>
+        <Link
+          to="/login"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-neutral-400 hover:text-white transition-colors"
         >
           Sign in
         </Link>
       </div>
+      {spawnError && (
+        <div
+          role="alert"
+          className="mt-4 mx-auto max-w-md inline-flex items-start gap-2 text-[11px] text-red-300 bg-red-500/[0.06] border border-red-500/20 rounded-lg px-3 py-2"
+        >
+          <AlertCircle size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span className="text-left">{spawnError}</span>
+        </div>
+      )}
       <div className="text-[11px] text-neutral-600 mt-4">
         No credit card. Your Anthropic / OpenAI key never reaches us.
       </div>
-      {demoError && (
-        <div className="text-[11px] text-red-400 mt-3">{demoError}</div>
-      )}
     </section>
   )
 }
@@ -176,8 +194,8 @@ function Hero() {
 
 function ValueProps() {
   return (
-    <section className="px-6 py-12 max-w-6xl mx-auto">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <section className="px-4 sm:px-6 py-12 max-w-6xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {VALUE_PROPS.map((v) => {
           const Icon = v.icon
           return (
@@ -198,12 +216,12 @@ function ValueProps() {
 
 function MandateQuestions() {
   return (
-    <section className="px-6 py-12 max-w-6xl mx-auto">
+    <section className="px-4 sm:px-6 py-12 max-w-6xl mx-auto">
       <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3 flex items-center gap-2">
-        <Activity size={11} />
+        <Activity size={11} aria-hidden="true" />
         <span>Four questions a CIO opens Aegis with</span>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {MANDATE_QUESTIONS.map((m) => (
           <div key={m.q} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 space-y-1">
             <div className="text-sm font-semibold text-white">{m.q}</div>
@@ -218,13 +236,13 @@ function MandateQuestions() {
 
 function CodeBlock() {
   return (
-    <section className="px-6 py-12 max-w-6xl mx-auto">
-      <div className="rounded-2xl border border-white/[0.07] bg-[#050505] p-6 lg:p-8 space-y-4">
+    <section className="px-4 sm:px-6 py-12 max-w-6xl mx-auto">
+      <div className="rounded-2xl border border-white/[0.07] bg-[#050505] p-5 sm:p-6 lg:p-8 space-y-4">
         <div className="text-[10px] uppercase tracking-widest text-neutral-500 flex items-center gap-2">
-          <Bot size={11} />
+          <Bot size={11} aria-hidden="true" />
           <span>Drop-in. Two lines of Python change.</span>
         </div>
-        <pre className="text-xs lg:text-[13px] font-mono text-neutral-200 leading-relaxed whitespace-pre overflow-x-auto">
+        <pre className="text-[11px] sm:text-xs lg:text-[13px] font-mono text-neutral-200 leading-relaxed whitespace-pre overflow-x-auto">
 {CODE_SNIPPET}
         </pre>
         <div className="text-[11px] text-neutral-500 leading-snug">
@@ -241,8 +259,8 @@ function CodeBlock() {
 
 function TrustStrip() {
   return (
-    <section className="px-6 py-12 max-w-6xl mx-auto">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+    <section className="px-4 sm:px-6 py-12 max-w-6xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {TRUST_STRIP.map((t) => {
           const Icon = t.icon
           return (
@@ -265,16 +283,15 @@ function TrustStrip() {
 
 function Footer() {
   return (
-    <footer className="px-6 py-10 mt-12 border-t border-white/[0.06] max-w-6xl mx-auto">
+    <footer className="px-4 sm:px-6 py-10 mt-12 border-t border-white/[0.06] max-w-6xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3 text-[11px] text-neutral-500">
         <div className="flex items-center gap-2">
-          <Shield size={12} />
+          <Shield size={12} aria-hidden="true" />
           <span className="text-neutral-300 font-semibold">Aegis</span>
-          <span>·</span>
+          <span aria-hidden="true">·</span>
           <span>AI governance &amp; runtime security platform</span>
         </div>
         <div className="flex items-center gap-4">
-          <a href="/status" className="hover:text-white">Status</a>
           <Link to="/login" className="hover:text-white">Sign in</Link>
           <Link to="/signup" className="hover:text-white">Start free</Link>
         </div>
@@ -288,8 +305,8 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-[#040404] text-neutral-100">
       {/* Top nav — minimal, just brand + sign in */}
-      <header className="border-b border-white/[0.06] px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+      <header className="border-b border-white/[0.06] px-4 sm:px-6 py-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-md bg-white text-black flex items-center justify-center">
               <Shield size={14} aria-hidden="true" />

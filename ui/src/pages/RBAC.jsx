@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Lock, Plus, Trash2, RefreshCw, Users,
-  ShieldCheck, AlertTriangle, ChevronDown, ChevronUp,
+  ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Bot,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -24,8 +25,16 @@ const ACTION_STYLES = {
   deny:  'text-red-400   bg-red-500/10   border-red-500/20',
 }
 
+// Canonical role labels (matches platform RBAC enum). Legacy labels
+// kept as accepted fallbacks so older agent metadata still renders.
 const ROLE_BADGE = {
+  OWNER:            'text-red-400    bg-red-500/10    border-red-500/20',
   ADMIN:            'text-red-400    bg-red-500/10    border-red-500/20',
+  SECURITY_ANALYST: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+  AUDITOR:          'text-purple-400 bg-purple-500/10 border-purple-500/20',
+  OPERATOR:         'text-blue-400   bg-blue-500/10   border-blue-500/20',
+  AGENT:            'text-cyan-400   bg-cyan-500/10   border-cyan-500/20',
+  // Legacy aliases still present on older agent rows.
   SECURITY_OFFICER: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
   ANALYST:          'text-blue-400   bg-blue-500/10   border-blue-500/20',
   VIEWER:           'text-neutral-400 bg-white/[0.04] border-white/[0.08]',
@@ -346,13 +355,47 @@ export default function RBAC() {
       )}
 
       {loading ? (
-        <div className="space-y-3">
+        <div className="space-y-3" role="status" aria-label="Loading agents">
           {[...Array(4)].map((_, i) => <SkeletonLoader key={i} variant="card" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="py-16 text-center text-xs text-neutral-600">
-          {search ? 'No agents match your search.' : 'No agents registered.'}
-        </div>
+        search ? (
+          <div className="py-16 text-center space-y-3">
+            <Users size={26} className="text-neutral-700 mx-auto" aria-hidden="true" />
+            <p className="text-sm text-neutral-400">No agents match "{search}".</p>
+            <button
+              onClick={() => setSearch('')}
+              className="text-[11px] text-neutral-400 hover:text-white underline underline-offset-2"
+            >
+              Clear search
+            </button>
+          </div>
+        ) : (
+          <div className="py-16 text-center space-y-4 px-6">
+            <Bot size={32} className="text-neutral-700 mx-auto" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="text-sm text-neutral-200 font-medium">No agents registered yet</p>
+              <p className="text-xs text-neutral-500 max-w-md mx-auto leading-relaxed">
+                RBAC governs tool permissions per agent. Register your first agent — the SDK
+                onboarding wizard walks through it — and tool grants land here.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 flex-wrap">
+              <Link
+                to="/onboarding"
+                className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+              >
+                <Plus size={12} /> Run onboarding
+              </Link>
+              <Link
+                to="/agents"
+                className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:text-white hover:border-white/20"
+              >
+                <Users size={12} /> View Agents
+              </Link>
+            </div>
+          </div>
+        )
       ) : (
         <div className="space-y-3">
           {filtered.map(agent => (

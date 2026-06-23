@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Terminal, Play, AlertTriangle, Clock, ChevronDown, ChevronRight,
-  Copy, Check, Shield, Zap, Wand2,
+  Copy, Check, Shield, Zap, Wand2, Plus, Bot,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
@@ -369,7 +370,17 @@ export default function AgentPlayground() {
                   </p>
                 )}
                 {agents.length === 0 && !agentsLoading && (
-                  <p className="text-xs text-red-400">No agents registered. Create an agent first.</p>
+                  <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.05] p-3 space-y-2">
+                    <p className="text-xs text-amber-300">
+                      No agents registered — register one to use the playground.
+                    </p>
+                    <Link
+                      to="/onboarding"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white text-black text-[11px] font-semibold hover:bg-neutral-200 transition-colors"
+                    >
+                      <Plus size={11} aria-hidden="true" /> Register your first agent
+                    </Link>
+                  </div>
                 )}
               </div>
 
@@ -573,13 +584,32 @@ export default function AgentPlayground() {
           ) : (
             <Card title="No execution yet" icon={Terminal}>
               <div className="flex flex-col items-center justify-center py-16 text-center">
-                <Terminal size={28} className="text-neutral-700 mb-3" aria-hidden="true" />
-                <p className="text-sm text-neutral-500">
-                  Select an agent → pick a tool from its allow-list → Execute.
-                </p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Use the <span className="text-red-400">Test scenarios</span> card to verify hard-deny pipelines.
-                </p>
+                {agents.length === 0 && !agentsLoading ? (
+                  <>
+                    <Bot size={28} className="text-neutral-700 mb-3" aria-hidden="true" />
+                    <p className="text-sm text-neutral-400">No agents registered yet</p>
+                    <p className="text-xs text-neutral-600 mt-1 max-w-sm">
+                      Register your first agent via the Onboarding Wizard, then return here to
+                      test live tool calls against the production policy engine.
+                    </p>
+                    <Link
+                      to="/onboarding"
+                      className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-colors"
+                    >
+                      <Plus size={13} aria-hidden="true" /> Register your first agent
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <Terminal size={28} className="text-neutral-700 mb-3" aria-hidden="true" />
+                    <p className="text-sm text-neutral-500">
+                      Select an agent → pick a tool from its allow-list → Execute.
+                    </p>
+                    <p className="text-xs text-neutral-600 mt-1">
+                      Use the <span className="text-red-400">Test scenarios</span> card to verify hard-deny pipelines.
+                    </p>
+                  </>
+                )}
               </div>
             </Card>
           )}

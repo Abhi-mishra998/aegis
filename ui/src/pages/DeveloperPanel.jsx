@@ -104,11 +104,11 @@ export default function DeveloperPanel() {
   const [testResult,  setTestResult]  = useState({})  // { [keyId]: { ok: bool, label: str } }
 
   const tid              = tenant_id || '00000000-0000-0000-0000-000000000001'
-  // Replace with your actual agent UUID from the Agents page.
-  const DEMO_AGENT       = '<YOUR_AGENT_ID>'
-  const DB_AGENT         = '<YOUR_AGENT_ID>'
-  const SUPPORT_AGENT    = '<YOUR_AGENT_ID>'
-  const DEVOPS_AGENT     = '<YOUR_AGENT_ID>'
+  // Demo agent IDs from the production seed — keep in sync with seed_demo_data.py.
+  const DEMO_AGENT       = 'a245cc68-19aa-48a7-8862-f3d7f0332ff6'   // demo-agent
+  const DB_AGENT         = 'a0c1849b-3b60-40aa-a7ef-35557a7ceef6'   // db-copilot-demo
+  const SUPPORT_AGENT    = 'd4f0fbfc-d629-4acd-ac82-30787f0c0f2a'   // support-agent-demo
+  const DEVOPS_AGENT     = '37533cba-54a2-475c-94e2-319c3dfdf69e'   // devops-agent-demo
   // For copy-paste safety we use a placeholder in headers — the user pipes it
   // in from Step 1 (the login response) via the $TOKEN env var.
   const tokenPlaceholder = '$TOKEN'
@@ -198,7 +198,7 @@ export default function DeveloperPanel() {
       code: `TOKEN=$(curl -s -X POST ${GW}/auth/token \\
   -H "Content-Type: application/json" \\
   -H "X-Tenant-ID: ${tid}" \\
-  -d '{"email":"<YOUR_EMAIL>","password":"<YOUR_PASSWORD>"}' \\
+  -d '{"email":"demo@aegisagent.in","password":"demo1234"}' \\
   | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
 
 echo "Token: \${TOKEN:0:40}..."`,
@@ -314,9 +314,9 @@ import asyncio, httpx, os
 
 GATEWAY  = "${GW}"
 TENANT   = "${tid}"
-EMAIL    = "<YOUR_EMAIL>"
-PASSWORD = "<YOUR_PASSWORD>"
-AGENT_ID = "${DEMO_AGENT}"
+EMAIL    = "demo@aegisagent.in"
+PASSWORD = "demo1234"
+AGENT_ID = "${DEMO_AGENT}"  # demo-agent
 
 async def main():
     async with httpx.AsyncClient(base_url=GATEWAY, timeout=10.0) as c:
@@ -356,9 +356,9 @@ asyncio.run(main())`
 // Node 18+ has fetch built in.
 const GATEWAY  = '${GW}';
 const TENANT   = '${tid}';
-const EMAIL    = '<YOUR_EMAIL>';
-const PASSWORD = '<YOUR_PASSWORD>';
-const AGENT_ID = '${DEMO_AGENT}';
+const EMAIL    = 'demo@aegisagent.in';
+const PASSWORD = 'demo1234';
+const AGENT_ID = '${DEMO_AGENT}'; // demo-agent
 
 (async () => {
   // 1) Login
@@ -476,7 +476,20 @@ const AGENT_ID = '${DEMO_AGENT}';
             {keysLoading ? (
               <SkeletonLoader variant="row" count={3} />
             ) : apiKeys.length === 0 ? (
-              <div className="flex items-center justify-center h-20 text-neutral-600 text-xs">No API keys yet</div>
+              /* Unit 9 (2026-06-23): strengthen the empty state — it used to
+                 be a single neutral line that didn't tell the user what to do
+                 next. Now: icon + headline + CTA button that pops the inline
+                 create form. */
+              <div className="flex flex-col items-center justify-center py-10 px-4 text-center rounded-xl border border-dashed border-white/10 bg-white/[0.015]">
+                <Key size={28} className="text-neutral-700 mb-3" aria-hidden="true" />
+                <p className="text-sm font-medium text-neutral-200">No API keys — create one to integrate</p>
+                <p className="text-xs text-neutral-500 mt-1 max-w-sm">
+                  API keys authenticate SDK calls (LangChain / OpenAI / Anthropic) and direct REST against the gateway.
+                </p>
+                <Button size="sm" className="mt-4" onClick={() => setShowCreate(true)}>
+                  <Plus size={13} aria-hidden="true" /> Create API key
+                </Button>
+              </div>
             ) : (
               <div className="space-y-2">
                 {apiKeys.map(k => (

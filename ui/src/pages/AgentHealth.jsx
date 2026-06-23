@@ -8,7 +8,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Plus, HeartPulse } from 'lucide-react'
 import { fleetService } from '../services/api'
+import { eventBus } from '../lib/eventBus'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 const RANK_OPTIONS = [
   { id: 'deny_rate',  label: 'Deny rate' },
@@ -196,6 +199,14 @@ export default function AgentHealth() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
+  // SSE — refetch agent-health rankings on registry change so quarantine,
+  // reactivation, or new agents land in the table in real time without a
+  // manual refresh. AgentContext owns the source EventSource.
+  useEffect(() => {
+    const off = eventBus.on('agent_changed', () => { fetchAll() })
+    return () => { off?.() }
+  }, [fetchAll])
+
   return (
     <div className="text-neutral-100">
       <header className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
@@ -233,10 +244,34 @@ export default function AgentHealth() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 p-6">
-        <AgentHealthTable rows={agents} rankBy={rankBy} onRankBy={setRankBy} />
-        <RecentEventsTable events={events} kind={kind} onKind={setKind} />
-      </div>
+      {loading && agents.length === 0 && events.length === 0 ? (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 p-6">
+          <SkeletonLoader variant="card" count={1} />
+          <SkeletonLoader variant="card" count={1} />
+        </div>
+      ) : !loading && agents.length === 0 && events.length === 0 ? (
+        <div className="mx-6 my-6 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center space-y-3">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+            <HeartPulse size={22} className="text-neutral-500" aria-hidden="true" />
+          </div>
+          <p className="text-sm font-semibold text-neutral-200">No agent traffic in window</p>
+          <p className="text-xs text-neutral-500 max-w-md mx-auto">
+            No agents have produced governance signals in the selected window. Try a longer
+            time range, or register an agent in the Onboarding Wizard if your fleet is empty.
+          </p>
+          <Link
+            to="/onboarding"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-colors"
+          >
+            <Plus size={13} aria-hidden="true" /> Register your first agent
+          </Link>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 p-4 lg:p-6">
+          <AgentHealthTable rows={agents} rankBy={rankBy} onRankBy={setRankBy} />
+          <RecentEventsTable events={events} kind={kind} onKind={setKind} />
+        </div>
+      )}
     </div>
   )
 }

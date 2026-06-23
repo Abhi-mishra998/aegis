@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useContext } from 'react'
+import React, { useState, useEffect, useCallback, useContext, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Zap, Plus, Trash2, ToggleLeft, ToggleRight, FlaskConical,
   ChevronRight, RefreshCw, AlertTriangle, CheckCircle2, Clock,
@@ -11,6 +12,7 @@ import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { autoResponseService, playbookService } from '../services/api'
 import { AuthContext } from '../context/AuthContext'
 import { eventBus } from '../lib/eventBus'
+import { useSSE } from '../hooks/useSSE'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -734,9 +736,13 @@ function PendingPanel() {
     <div className="space-y-3">
       {items.length === 0 ? (
         <Card>
-          <div className="flex flex-col items-center justify-center py-12">
-            <CheckCircle2 size={28} className="text-green-600 mb-2" />
-            <p className="text-sm text-neutral-500">No pending approvals</p>
+          <div className="flex flex-col items-center justify-center py-12 text-center px-6">
+            <CheckCircle2 size={28} className="text-green-400 mb-3" />
+            <p className="text-sm text-neutral-200 font-medium">No pending approvals</p>
+            <p className="text-xs text-neutral-500 mt-1 max-w-sm">
+              When a rule fires in manual mode it queues here for sign-off. Rules
+              running in auto mode execute immediately and skip this queue.
+            </p>
           </div>
         </Card>
       ) : items.map((item, i) => (
@@ -1025,6 +1031,25 @@ export default function AutoResponse() {
     return unsub
   }, [addToast])
 
+  // Direct SSE subscription so rule fires + incident touchpoints
+  // refresh rule + metric counters without waiting on the 30s poll.
+  const sseChannels = useMemo(() => ({
+    auto_response_executed: (payload) => {
+      setLiveEvents(prev => [payload, ...prev].slice(0, 20))
+      fetchAll()
+    },
+    incident_updated: () => fetchAll(),
+  }), [fetchAll])
+  useSSE({
+    channels: sseChannels,
+    onMessage: (evt) => {
+      const t = String(evt?.type || '').toLowerCase()
+      if (t.includes('auto_response') || t.includes('incident')) {
+        fetchAll()
+      }
+    },
+  })
+
   const handleToggleAre = async () => {
     try {
       const res = await autoResponseService.toggle(!areEnabled)
@@ -1128,7 +1153,7 @@ export default function AutoResponse() {
         <div className="flex items-center gap-3 p-4 rounded-xl bg-amber-500/[0.04] border border-amber-500/15">
           <AlertTriangle size={14} className="text-amber-400 shrink-0" />
           <p className="text-xs text-amber-300/70">
-            ARE is globally disabled for this workspace. Rules will not fire until re-enabled.
+            ARE is globally disabled for this tenant. Rules will not fire until re-enabled.
           </p>
         </div>
       )}
@@ -1141,13 +1166,25 @@ export default function AutoResponse() {
             <Card><div className="p-4"><SkeletonLoader count={4} /></div></Card>
           ) : rules.length === 0 ? (
             <Card>
-              <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                 <Shield size={32} className="text-neutral-700 mb-3" />
-                <p className="text-sm text-neutral-400">No ARE rules yet</p>
-                <p className="text-xs text-neutral-600 mt-1">Create a rule to start auto-mitigating threats</p>
-                <Button size="sm" className="mt-4" onClick={() => setEditRule(true)}>
-                  <Plus size={13} /> Create first rule
-                </Button>
+                <p className="text-sm text-neutral-200 font-medium">No ARE rules yet</p>
+                <p className="text-xs text-neutral-500 mt-1 max-w-sm leading-relaxed">
+                  ARE rules turn incident patterns into automatic response actions
+                  (kill agent, isolate, block tool, trigger playbook). Create a
+                  rule below or browse pre-built templates in Playbooks.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 justify-center mt-4">
+                  <Button size="sm" onClick={() => setEditRule(true)}>
+                    <Plus size={13} /> Create first rule
+                  </Button>
+                  <Link
+                    to="/playbooks"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-200 bg-white/[0.04] border border-white/[0.08] hover:border-white/20 transition-colors"
+                  >
+                    <Shield size={12} aria-hidden="true" /> Browse playbook templates
+                  </Link>
+                </div>
               </div>
             </Card>
           ) : (

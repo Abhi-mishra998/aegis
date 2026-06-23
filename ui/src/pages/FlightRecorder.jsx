@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo, useContext } from 'react'
-import { RefreshCw, Play, Pause, SkipForward, SkipBack, Search, Film, ShieldCheck, Download, Anchor, Filter } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useMemo, useContext, useRef } from 'react'
+import { Link } from 'react-router-dom'
+import { RefreshCw, Play, Pause, SkipForward, SkipBack, Search, Film, ShieldCheck, Download, Anchor, Filter, Activity } from 'lucide-react'
 import { flightService, receiptService, transparencyService } from '../services/api'
 import { AgentContext } from '../context/AgentContext'
+import { eventBus } from '../lib/eventBus'
 
 const STEP_COLOR = {
   prompt:    '#a78bfa',
@@ -68,6 +70,27 @@ export default function FlightRecorder() {
     return () => clearInterval(t)
   }, [fetchTimelines])
 
+  // Real-time tail-follow: refresh the timeline list whenever a new
+  // tool_executed or policy_decision event ticks across the SSE bus.
+  // Debounced via a ref-timer so a flurry of step events doesn't trigger
+  // N back-to-back fetches.
+  const tickRef = useRef(null)
+  useEffect(() => {
+    const tick = () => {
+      if (tickRef.current) return
+      tickRef.current = setTimeout(() => {
+        tickRef.current = null
+        fetchTimelines()
+      }, 750)
+    }
+    const u1 = eventBus.on('tool_executed',   tick)
+    const u2 = eventBus.on('policy_decision', tick)
+    return () => {
+      u1(); u2()
+      if (tickRef.current) { clearTimeout(tickRef.current); tickRef.current = null }
+    }
+  }, [fetchTimelines])
+
   const loadReplay = async (t) => {
     setSelected(t); setStepIdx(0); setPlaying(false)
     setReceipt(null); setReceiptError('')
@@ -130,8 +153,8 @@ export default function FlightRecorder() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="page-header">
-        <div>
+      <div className="page-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-bold text-white flex items-center gap-2"><Film size={20} /> Flight Recorder</h1>
             {selectedAgent && (
@@ -208,14 +231,36 @@ export default function FlightRecorder() {
               </button>
             ))}
             {!timelines.length && !loading && (
-              <p className="text-xs text-neutral-600 text-center p-6">No timelines in the window.</p>
+              <div className="text-center p-6 flex flex-col items-center gap-2">
+                <Film size={20} className="text-neutral-700 opacity-50" aria-hidden="true" />
+                <p className="text-xs text-neutral-400 font-medium">Timeline empty</p>
+                <p className="text-[10px] text-neutral-600 leading-relaxed max-w-[180px]">
+                  Start a session to record. Try widening the time window
+                  above, or kick off a run.
+                </p>
+                <Link
+                  to="/playground"
+                  className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-md border border-indigo-500/30 text-indigo-300 hover:border-indigo-500/60 hover:bg-indigo-500/[0.08] transition-colors"
+                >
+                  <Activity size={10} aria-hidden="true" />
+                  Open playground
+                </Link>
+              </div>
             )}
           </div>
         </div>
 
         <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-[#0a0a0a] p-4">
           {!replay ? (
-            <p className="text-xs text-neutral-600 text-center p-12">Select a timeline to replay.</p>
+            <div className="text-center p-12 flex flex-col items-center gap-3">
+              <Play size={28} className="text-neutral-700 opacity-40" aria-hidden="true" />
+              <p className="text-sm text-neutral-300 font-medium">Select a timeline to replay</p>
+              <p className="text-xs text-neutral-500 max-w-sm leading-relaxed">
+                Click any row in the timeline list to step through the
+                recorded execution — prompts, tool calls, policy decisions,
+                and cryptographic receipts.
+              </p>
+            </div>
           ) : (
             <>
               <div className="flex items-center gap-2 mb-3">

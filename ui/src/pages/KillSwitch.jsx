@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { killSwitchService, auditService, parseApiError } from '../services/api'
 import {
   AlertTriangle, Power, ShieldCheck, AlertOctagon,
@@ -6,9 +6,12 @@ import {
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
-import Modal from '../components/Common/Modal'
+import ConfirmDialog from '../components/Common/ConfirmDialog'
+import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { useAuth } from '../hooks/useAuth'
 import { useRole } from '../hooks/useRole'
+import { useSSE } from '../hooks/useSSE'
+import { eventBus } from '../lib/eventBus'
 
 /* ── Status row ─────────────────────────────────────────────────────────────── */
 function StatusRow({ label, isActive, activeLabel, idleLabel }) {
@@ -34,6 +37,7 @@ export default function KillSwitch() {
   const { tenant_id, addToast } = useAuth()
   const { canViewKillSwitch } = useRole()
   const [loading,       setLoading]       = useState(true)
+  const [hasLoaded,     setHasLoaded]     = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [isActive,      setIsActive]      = useState(false)
   const [redisSynced,   setRedisSynced]   = useState(null)
@@ -41,7 +45,7 @@ export default function KillSwitch() {
   const [confirmOpen,   setConfirmOpen]   = useState(false)
   const [history,       setHistory]       = useState([])
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
     if (!tenant_id) return
     try {
       const res = await killSwitchService.getStatus(tenant_id)
@@ -53,26 +57,62 @@ export default function KillSwitch() {
       setError(err.message || 'Could not reach kill switch service.')
     } finally {
       setLoading(false)
+      setHasLoaded(true)
     }
-  }
+  }, [tenant_id])
 
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     try {
       const res = await auditService.getKillSwitchHistory(20)
       const data = res?.data || res || {}
       setHistory(data.items || [])
     } catch {}
-  }
+  }, [])
 
   useEffect(() => {
     fetchStatus()
     fetchHistory()
     const interval = setInterval(fetchStatus, 30_000)
     return () => clearInterval(interval)
-  }, [tenant_id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tenant_id, fetchStatus, fetchHistory])
+
+  // Real-time SSE — react to the gateway's `kill_switch` channel so the
+  // page flips state the instant an operator on another tab engages or
+  // disengages isolation. Falls back to the 30s poll above if SSE is
+  // momentarily disconnected.
+  const sseChannels = useMemo(() => ({
+    kill_switch: () => { fetchStatus(); fetchHistory() },
+  }), [fetchStatus, fetchHistory])
+  useSSE({
+    channels: sseChannels,
+    onMessage: (evt) => {
+      const t = String(evt?.type || '').toLowerCase()
+      if (t.includes('kill') || t.includes('isolation')) {
+        fetchStatus()
+        fetchHistory()
+      }
+    },
+  })
+  useEffect(() => {
+    const u = eventBus.on('alert', (evt) => {
+      const t = String(evt?.type || evt?.action || '').toLowerCase()
+      if (t.includes('kill')) { fetchStatus(); fetchHistory() }
+    })
+    return u
+  }, [fetchStatus, fetchHistory])
+
+  // "Last engaged" derived from the activation history. Mirrors the
+  // hint we surface in the empty-state CTA when isolation is idle.
+  const lastEngaged = useMemo(() => {
+    if (!Array.isArray(history) || history.length === 0) return null
+    const engage = history.find(r => {
+      const a = String(r.action || '').toLowerCase()
+      return a === 'kill' || a === 'engage' || a.includes('engage')
+    })
+    return engage?.timestamp || null
+  }, [history])
 
   const handleToggle = async () => {
-    setConfirmOpen(false)
     if (!tenant_id) return
     const action = isActive ? 'disengage' : 'engage'
     setActionLoading(true)
@@ -84,8 +124,10 @@ export default function KillSwitch() {
         action === 'engage' ? 'error' : 'success',
       )
       await fetchStatus()
+      await fetchHistory()
     } catch (err) {
       addToast?.(parseApiError(err, 'Kill switch operation failed.'), 'error')
+      throw err
     } finally {
       setActionLoading(false)
     }
@@ -101,7 +143,7 @@ export default function KillSwitch() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white tracking-tight">Emergency Kill Switch</h1>
-              <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this workspace</p>
+              <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this tenant</p>
             </div>
           </div>
         </div>
@@ -113,7 +155,7 @@ export default function KillSwitch() {
             <h2 className="text-lg font-bold text-white">Access Restricted</h2>
             <p className="text-sm text-neutral-500 max-w-sm">
               Kill Switch controls are restricted to administrators only.
-              Contact your workspace admin if you need emergency access.
+              Contact your tenant admin if you need emergency access.
             </p>
           </div>
         </div>
@@ -136,7 +178,7 @@ export default function KillSwitch() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white tracking-tight">Emergency Kill Switch</h1>
-            <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this workspace</p>
+            <p className="text-xs text-neutral-500 mt-0.5">Instantly isolate all AI agents in this tenant</p>
           </div>
         </div>
         <button
@@ -168,16 +210,13 @@ export default function KillSwitch() {
             )}
 
             <div className="relative flex flex-col items-center text-center space-y-8 py-6">
-              {/* Status indicator — icon + text so colorblind users do not depend on the ring colour. */}
-              <div className={`w-32 h-32 rounded-full border-2 flex flex-col items-center justify-center gap-1 transition-all duration-700 ${
+              {/* Status indicator */}
+              <div className={`w-32 h-32 rounded-full border-2 flex items-center justify-center transition-all duration-700 ${
                 isActive
                   ? 'border-red-500 bg-red-500/15 text-red-400'
-                  : 'border-green-500/60 bg-green-500/[0.06] text-green-400'
+                  : 'border-white/[0.08] bg-white/[0.02] text-neutral-600'
               }`}>
-                <Power size={40} className={isActive ? 'animate-pulse' : ''} aria-hidden="true" />
-                <span className="text-sm font-semibold uppercase tracking-wider">
-                  {isActive ? 'Isolated' : 'Safe'}
-                </span>
+                <Power size={52} className={isActive ? 'animate-pulse' : ''} aria-hidden="true" />
               </div>
 
               {/* Status text */}
@@ -188,7 +227,7 @@ export default function KillSwitch() {
                 </h2>
                 <div className="flex items-center justify-center gap-3 flex-wrap">
                   <span className="px-3 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-neutral-400">
-                    Workspace: {tenant_id || 'SYS_GLOBAL'}
+                    Tenant: {tenant_id || 'SYS_GLOBAL'}
                   </span>
                   <span className="px-3 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-neutral-400 flex items-center gap-1.5">
                     <Lock size={10} aria-hidden="true" /> AES-256
@@ -199,9 +238,20 @@ export default function KillSwitch() {
               {/* Description */}
               <p className="text-xs text-neutral-500 max-w-md leading-relaxed">
                 {isActive
-                  ? 'Isolation is active across all microservices. The gateway is returning 403 for all workspace ingress.'
+                  ? 'Isolation is active across all microservices. The gateway is returning 403 for all tenant ingress.'
                   : 'Activating the kill switch sends a high-priority interrupt to the OPA cluster, instantly suspending all agent behaviors.'}
               </p>
+
+              {/* Idle CTA — surface the last-engaged timestamp so the
+                  operator can see the switch state at a glance. */}
+              {!isActive && hasLoaded && (
+                <p className="text-[11px] text-neutral-600 font-mono">
+                  Kill switch idle — last engaged:{' '}
+                  <span className="text-neutral-400">
+                    {lastEngaged ? new Date(lastEngaged).toLocaleString() : 'never'}
+                  </span>
+                </p>
+              )}
 
               {/* Action button */}
               <div className="w-full max-w-xs">
@@ -263,8 +313,10 @@ export default function KillSwitch() {
 
       {/* ── Activation History ── */}
       <Card title="Activation History">
-        {history.length === 0 ? (
-          <p className="text-xs text-neutral-600 py-2">No kill-switch activations recorded.</p>
+        {!hasLoaded ? (
+          <SkeletonLoader variant="row" count={3} />
+        ) : history.length === 0 ? (
+          <p className="text-xs text-neutral-600 py-2">No kill-switch activations recorded — last engaged: never.</p>
         ) : (
           <div className="divide-y divide-white/[0.04]">
             {history.map((row, i) => (
@@ -281,50 +333,22 @@ export default function KillSwitch() {
         )}
       </Card>
 
-      {/* ── Confirmation modal ── */}
-      <Modal
+      {/* ── Confirmation dialog ── Engage is destructive (variant="danger");
+          restore uses the default style. ConfirmDialog handles the busy
+          spinner + close-on-success, so handleToggle just needs to throw
+          on failure for the dialog to stay open. */}
+      <ConfirmDialog
         isOpen={confirmOpen}
         title={isActive ? 'Restore Systems?' : 'Trigger Global Isolation?'}
-        onClose={() => setConfirmOpen(false)}
-        footer={
-          <>
-            <Button variant="ghost" size="sm" onClick={() => setConfirmOpen(false)}>Cancel</Button>
-            <Button
-              variant={isActive ? 'secondary' : 'danger'}
-              size="sm"
-              onClick={handleToggle}
-            >
-              {isActive ? 'Restore Systems' : 'Confirm Isolation'}
-            </Button>
-          </>
+        description={isActive
+          ? `This will lift the isolation barrier and restore connectivity for all agents in tenant ${tenant_id || 'SYS_GLOBAL'}. Verify the threat has been resolved before proceeding.`
+          : `Confirm global isolation for tenant ${tenant_id || 'SYS_GLOBAL'}. This will immediately block all AI agent traffic across all services and requires admin intervention to reverse. It will be logged in the audit chain.`
         }
-      >
-        {isActive ? (
-          <>
-            <p className="text-sm text-neutral-300">
-              This will lift the isolation barrier and restore connectivity for all agents in this workspace.
-            </p>
-            <p className="text-xs text-neutral-500 mt-2">
-              Agents will resume normal operation. Verify that the threat has been resolved before proceeding.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/15 mb-4">
-              <AlertTriangle size={15} className="text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
-              <p className="text-xs text-red-400">
-                This will immediately block all AI agent traffic for this workspace across all services.
-              </p>
-            </div>
-            <p className="text-sm text-neutral-300">
-              Confirm global isolation for workspace <span className="font-bold text-white">{tenant_id || 'SYS_GLOBAL'}</span>?
-            </p>
-            <p className="text-xs text-neutral-500 mt-2">
-              This action requires admin intervention to reverse. It will be logged in the audit chain.
-            </p>
-          </>
-        )}
-      </Modal>
+        confirmLabel={isActive ? 'Restore Systems' : 'Confirm Isolation'}
+        variant={isActive ? 'default' : 'danger'}
+        onConfirm={handleToggle}
+        onClose={() => setConfirmOpen(false)}
+      />
     </div>
   )
 }

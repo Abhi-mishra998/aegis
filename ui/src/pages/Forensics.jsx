@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useContext } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { forensicsService } from '../services/api'
 import { AgentContext } from '../context/AgentContext'
 import {
@@ -317,9 +317,29 @@ export default function Forensics() {
           <p className="text-xs text-neutral-500 italic">{recentError}</p>
         )}
         {!recentLoading && recentList.length === 0 && !recentError && (
-          <div className="py-8 text-center text-xs text-neutral-600">
-            <Fingerprint size={24} className="mx-auto mb-2 opacity-20" />
-            No high-risk events found.
+          <div className="py-10 text-center flex flex-col items-center gap-3 max-w-md mx-auto">
+            <Fingerprint size={28} className="text-neutral-600 opacity-40" aria-hidden="true" />
+            <p className="text-sm text-neutral-300 font-medium">No investigations yet</p>
+            <p className="text-xs text-neutral-500 leading-relaxed">
+              Investigations open automatically from an incident — or paste
+              an agent UUID below to drill into recent decisions.
+            </p>
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              <Link
+                to="/incidents"
+                className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 hover:border-indigo-500/60 hover:bg-indigo-500/[0.08] transition-colors"
+              >
+                <ShieldAlert size={11} aria-hidden="true" />
+                Open incidents
+              </Link>
+              <Link
+                to="/audit-logs"
+                className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-white/10 text-neutral-400 hover:border-white/20 hover:text-white transition-colors"
+              >
+                <FileText size={11} aria-hidden="true" />
+                Browse audit logs
+              </Link>
+            </div>
           </div>
         )}
         {!recentLoading && recentList.length > 0 && (

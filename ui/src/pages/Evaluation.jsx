@@ -319,7 +319,27 @@ export default function Evaluation() {
             </thead>
             <tbody>
               {jobs.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-neutral-500">No jobs yet.</td></tr>
+                <tr>
+                  <td colSpan={7} className="px-3 py-10 text-center">
+                    <div className="flex flex-col items-center gap-3 max-w-md mx-auto">
+                      <PlayCircle size={26} className="text-neutral-600 opacity-40" aria-hidden="true" />
+                      <p className="text-sm text-neutral-300 font-medium">No evaluations queued</p>
+                      <p className="text-xs text-neutral-500 leading-relaxed">
+                        Run <code className="text-neutral-300 bg-white/[0.05] px-1 py-0.5 rounded">/evaluation/start</code>{' '}
+                        — or click the button below to enqueue the OWASP attack corpus
+                        against the live decision pipeline.
+                      </p>
+                      <button
+                        onClick={enqueueDefault}
+                        disabled={enqueueing || !datasets.length}
+                        className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-emerald-500/30 text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-500/[0.08] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <PlayCircle size={11} aria-hidden="true" />
+                        {enqueueing ? 'Enqueueing…' : datasets.length ? 'Run nightly corpus' : 'Seed OWASP corpus first'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               )}
               {jobs.map((j) => (
                 <tr key={j.id} className="border-t border-neutral-800">
