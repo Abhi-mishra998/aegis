@@ -134,11 +134,27 @@ async def main() -> None:
     user_pass, host_port_db = base.split("@", 1)
     host_port = host_port_db.split("/", 1)[0]
 
+    # Each service DB has its own user with its own password — the
+    # convention in /run/aegis/pgbouncer/userlist.txt is
+    # `<service>_user` / `<service>_prod_pwd`. The previous logic only
+    # substituted the username and left the (identity) password
+    # untouched, so every connect attempt to acp_registry/acp_audit/
+    # acp_api hit "password authentication failed" at pgbouncer.
+    def _swap(target_service: str) -> str:
+        target_user = f"{target_service}_user"
+        target_pwd  = f"{target_service}_prod_pwd"
+        swapped = (
+            user_pass
+            .replace("identity_user", target_user)
+            .replace("identity_prod_pwd", target_pwd)
+        )
+        return f"{swapped}@{host_port}/acp_{target_service}"
+
     # Identity (read OWNER user_id), Registry (agents + permissions), Audit
     id_url  = f"{user_pass}@{host_port}/acp_identity"
-    reg_url = f"{user_pass.replace('identity_user', 'registry_user')}@{host_port}/acp_registry"
-    aud_url = f"{user_pass.replace('identity_user', 'audit_user')}@{host_port}/acp_audit"
-    api_url = f"{user_pass.replace('identity_user', 'api_user')}@{host_port}/acp_api"
+    reg_url = _swap("registry")
+    aud_url = _swap("audit")
+    api_url = _swap("api")
 
     print(f"\n=== Seeding demo data into tenant {tenant_id} ===")
     print(f"  owner_email = {args.owner_email}")
@@ -179,7 +195,7 @@ async def main() -> None:
         agent_id = uuid.uuid4()
         await reg_conn.execute(
             "INSERT INTO agents (id, tenant_id, org_id, name, description, owner_id, status, metadata, risk_level, created_at, updated_at) "
-            "VALUES ($1, $2, $2, $3, $4, $5, 'ACTIVE'::agent_status, '{}', $6, now(), now())",
+            "VALUES ($1, $2, $2, $3, $4, $5, 'ACTIVE'::agent_status_enum, '{}', $6, now(), now())",
             agent_id, tenant_id, a["name"], a["description"], str(owner_id), a["risk_level"],
         )
         # Permissions

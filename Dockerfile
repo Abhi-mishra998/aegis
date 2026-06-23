@@ -67,6 +67,10 @@ COPY --from=builder /install /usr/local
 COPY --chown=appuser:appuser services/ ./services/
 COPY --chown=appuser:appuser sdk/ ./sdk/
 COPY --chown=appuser:appuser scripts/utils/seed_admin.py .
+# Seed script for /demo/spawn-workspace — copied at the same path the
+# gateway's _seed_demo_data() resolves at runtime (parents[3] /
+# scripts/ops/seed_demo_workspace.py = /app/scripts/ops/...).
+COPY --chown=appuser:appuser scripts/ops/seed_demo_workspace.py ./scripts/ops/seed_demo_workspace.py
 
 USER appuser
 
