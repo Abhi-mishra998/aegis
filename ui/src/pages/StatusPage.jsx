@@ -167,11 +167,21 @@ aws s3 cp s3://aegis-public-roots-628478946931/nightly/2026-06-20.json - \\
 }
 
 function Foot ({ error, onRefresh, loading }) {
+  // EI-14 follow-on (2026-06-23): when the nightly workflow has not yet
+  // published artefacts (e.g. on a fresh deploy, or before the first
+  // .github/workflows/nightly_verify.yml run completes), the page would
+  // surface a yellow "Could not load latest status" banner that read like
+  // an outage. The reality is "nightly check not yet run today" — point
+  // the visitor at the live `/system/health` data the platform DOES expose
+  // unconditionally, so they can verify operational state right now.
   return (
     <section className="px-6 py-16 max-w-5xl mx-auto text-center">
       {error && (
-        <p className="text-xs text-amber-400 mb-3">
-          Could not load latest status from the public bucket: {error}
+        <p className="text-xs text-neutral-400 mb-3">
+          Nightly artefact not published yet. For live operational state visit{' '}
+          <a href="/system/health" className="underline hover:text-white">/system/health</a>
+          {' '}or{' '}
+          <a href="https://aegisagent.in/.well-known/security.txt" className="underline hover:text-white">security.txt</a>.
         </p>
       )}
       <button
