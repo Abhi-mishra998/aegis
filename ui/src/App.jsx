@@ -18,6 +18,7 @@ import { clearSessionMetadata } from './services/api';
 // AuthContext before any ProtectedRoute decides to redirect to /login.
 import Dashboard from './pages/Dashboard';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
+import DemoTokenBridge from './components/Layout/DemoTokenBridge';
 import Toast from './components/Common/Toast';
 
 // safeLazy: when a chunk fails to load (typically because the browser cached
@@ -318,6 +319,11 @@ function App() {
                 existing ProtectedRoute / API client keep working without a
                 Clerk-specific rewrite of every consumer. */}
             <ClerkAuthBridge />
+
+            {/* Consumes ?demo_token=… from /demo/spawn-workspace's redirect_url
+                so the anonymous demo flow actually authenticates the visitor
+                instead of silently bouncing them to /login. */}
+            <DemoTokenBridge />
 
             <Suspense fallback={<RouteFallback />}>
             <Routes>
