@@ -270,10 +270,11 @@ async def main() -> None:
         try:
             inc_no = f"INC-{datetime.now(tz=timezone.utc).strftime('%Y%m%d')}-{idx:04d}"
             agent_id = inserted_agents[ag_idx] if ag_idx < len(inserted_agents) else inserted_agents[0]
+            # NOTE: `trigger` is a Postgres reserved word — must be quoted.
             await api_conn.execute(
-                "INSERT INTO incidents (id, tenant_id, incident_number, agent_id, severity, status, "
-                "trigger, title, risk_score, tool, actions_taken, timeline, "
-                "violation_count, related_audit_ids, created_at, updated_at) "
+                'INSERT INTO incidents (id, tenant_id, incident_number, agent_id, severity, status, '
+                '"trigger", title, risk_score, tool, actions_taken, timeline, '
+                'violation_count, related_audit_ids, created_at, updated_at) '
                 "VALUES ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, $9, '[]'::json, '[]'::json, 1, '[]'::json, "
                 "now() - $10::interval, now() - $10::interval) "
                 "ON CONFLICT DO NOTHING",
