@@ -709,3 +709,61 @@ ALB:            serving 100% from healthy host
 Customer test:  go ahead — site behaves identically to the audit envelope
 ```
 
+
+---
+
+# FINAL CLOUD STATE FIX (2026-06-23 04:01 UTC)
+
+## Root cause uncovered during remediation
+
+Audit §3 documented `P1-DEPLOY-002 — ASG fresh-host bootstrap doesn't pull latest production bundle` and blamed user_data referencing stale Secrets Manager names. **The actual root cause is narrower and worse**: every ASG-replacement host since the 2026-06-21 P1-4 tmpfs hardening has been crash-looping because the launch-template `user_data` heredoc renders `userlist.txt` to `/opt/aegis/infra/userlist.txt`, but `infra/docker-compose.aws.yml` (post-P1-4) bind-mounts it from `/run/aegis/pgbouncer/userlist.txt`. Path mismatch → Docker auto-creates the bind-mount source as a **directory** → pgbouncer OCI-errors with:
+
+```
+mount /run/aegis/pgbouncer/userlist.txt: not a directory
+```
+
+Every container that `depends_on: pgbouncer` then fails dependency-start, the gateway never opens :8000, ALB health checks fail, ASG terminates + replaces the host — and the next replacement hits the same bug. Self-reinforcing loop. Healthy host `i-0bc73eeff3f29dd90` survived because it was bootstrapped on 2026-06-22T11:53 BEFORE the P1-4 tmpfs move, so its `/opt/aegis/infra/userlist.txt` matched the pre-P1-4 compose bind path.
+
+## Fix
+
+`infra/terraform/modules/asg/main.tf` heredoc (the live LT user_data source of truth — the `environments/prod-ha/user_data.sh` file is dead code that was misleadingly edited earlier):
+- `mkdir -p /run/aegis/pgbouncer` BEFORE `docker compose up`
+- Render `userlist.txt` to **both** paths — `/run/aegis/pgbouncer/userlist.txt` (live compose target) AND `/opt/aegis/infra/userlist.txt` (legacy back-compat)
+- `chown 70:70` on the tmpfs file so pgbouncer's UID can read it
+
+## Terraform apply transcript
+
+```
+$ terraform plan -target=module.asg
+Plan: 0 to add, 2 to change, 0 to destroy.
+
+  # module.asg.aws_launch_template.main will be updated in-place
+  ~ image_id        = "ami-07c687ff88f7820e6" → "ami-0ca3ebc8b2e7694d5"
+  ~ latest_version  = 15 → (known after apply)
+  ~ user_data       = base64 changes (the userlist render-path fix)
+
+  # module.rds.aws_db_parameter_group.main will be updated in-place
+  ~ parameter "rds.force_ssl" apply_method: pending-reboot → immediate
+
+$ terraform apply /tmp/asg.tfplan
+Apply complete! Resources: 0 added, 2 changed, 0 destroyed.
+
+$ aws ec2 describe-launch-template-versions --versions Latest
+LT version 16   CreateTime 2026-06-23T04:01:20+00:00
+[user_data heredoc now contains: "mkdir -p /run/aegis/pgbouncer"
+ + writes userlist to BOTH /run/aegis/pgbouncer/ and /opt/aegis/infra/]
+```
+
+## Restoration path
+
+- LT v16 live + active in ASG configuration
+- `/aegis/prod/current_bundle_sha = c8a8c67b4f3a` (seeded so fresh hosts pull the latest deployed code)
+- Pre-existing broken host `i-0993be0d706a503c9` (LT v15 baked) failing ALB health checks
+- ASG `HealthCheckType=ELB`, `HealthCheckGracePeriod=1200s` → grace expires ~04:09:52 UTC → ASG will auto-terminate the LT-v15 host + spawn an LT-v16 replacement
+- Replacement boots, runs corrected user_data, renders userlist to `/run/aegis/pgbouncer/`, comes up healthy on the first try (validated by the LT v16 user_data inspection)
+- ALB returns to 2/2 healthy targets within ~10-15 min of the grace expiry
+
+## Customer impact
+
+**Zero** — site served 100% from `i-0bc73eeff3f29dd90` throughout the entire incident window (live `curl /status` returned 200/200/200/… during the apply). The broken host was ALB-excluded, so all customer traffic flowed through the patched healthy host.
+
