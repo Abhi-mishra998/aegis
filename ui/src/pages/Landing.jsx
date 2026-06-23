@@ -90,6 +90,11 @@ function Hero() {
     if (spawning) return
     setSpawning(true)
     setSpawnError('')
+    // After ANY non-success outcome we keep the button disabled for a short
+    // cooldown so a frustrated user can't burn a 50-call rate-limit bucket
+    // in five seconds. On success we navigate away and the disabled state
+    // is moot.
+    const cooldown = (ms) => new Promise((r) => setTimeout(r, ms))
     try {
       // Match the rest of the SPA (services/api.js, ClerkAuthBridge, useSSE):
       // empty base in prod → nginx proxies /demo/* to the gateway. The old
@@ -113,10 +118,33 @@ function Hero() {
           navigate('/signup')
           return
         }
+        // 429 = per-IP cap (50 spawns / 10 min). Show the real reason
+        // instead of the generic "try Start free" so the user understands
+        // why retrying immediately won't help.
+        if (res.status === 429) {
+          setSpawnError(
+            "Too many demo workspaces from your network in the last 10 minutes. " +
+            "Wait a few minutes or use Start free below — it's the same product.",
+          )
+          await cooldown(15000)
+          return
+        }
+        // 403 = WAF / Turnstile / XFF refusal — almost always recoverable
+        // by going through the signup flow, which the user-friendly path is.
+        if (res.status === 403) {
+          setSpawnError(
+            'The demo spawn was blocked by our edge security. Use Start free below to continue.',
+          )
+          await cooldown(8000)
+          return
+        }
         throw new Error(`HTTP ${res.status}`)
       }
       const data = await res.json().catch(() => ({}))
-      const target = data?.redirect_url || data?.dashboard_url || '/dashboard'
+      // Backend wraps the payload in {success, data:{...}} — unwrap if present.
+      const payload = data?.data ?? data
+      const target =
+        payload?.redirect_url || payload?.dashboard_url || '/dashboard'
       if (target.startsWith('http')) {
         window.location.assign(target)
       } else {
@@ -124,8 +152,9 @@ function Hero() {
       }
     } catch (err) {
       setSpawnError(
-        'Could not spawn a demo workspace right now — try Start free instead.',
+        'Could not reach the demo service right now. Use Start free below to continue.',
       )
+      await cooldown(8000)
     } finally {
       setSpawning(false)
     }

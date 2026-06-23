@@ -651,9 +651,12 @@ async def spawn_demo_workspace(
     # per source IP for the whole site; this carves out a tighter cap on
     # the spawn endpoint specifically so a corporate-NAT-shared bot can't
     # burn through the WAF budget on tenant churn.
-    # Limit: 5 spawns / 10 minutes / source IP. A real prospect needs 1,
-    # an evaluator running through repeated demos might need 3, anything
-    # past that is automation.
+    # Limit: 50 spawns / 10 minutes / source IP. The earlier 5/10min was
+    # too tight for legitimate use — a corporate NAT (single public IP
+    # behind which sit dozens of evaluators) hit 429 after one motivated
+    # prospect clicked the CTA a handful of times. 50 still kicks in on
+    # any plausible automation spike; legitimate humans on a shared NAT
+    # don't approach it.
     source_ip = (x_forwarded_for or "").split(",")[0].strip() or (
         request.client.host if request.client else "unknown"
     )
@@ -891,7 +894,7 @@ async def spawn_demo_workspace(
             current = await redis_client.incr(rl_key)
             if int(current) == 1:
                 await redis_client.expire(rl_key, 600)  # 10 min
-            if int(current) > 5:
+            if int(current) > 50:
                 logger.warning(
                     "demo_spawn_rate_limited",
                     bucket=rl_log_key, count=int(current),
