@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "postbuild": "bash ./scripts/check-no-sourcemaps.sh && bash ./scripts/check-react-imports.sh",
+    "postbuild": "bash ./scripts/check-no-sourcemaps.sh && bash ./scripts/check-react-imports.sh && bash ./scripts/check-hook-dep-tdz.sh",
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",

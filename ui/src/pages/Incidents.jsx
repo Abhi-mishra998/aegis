@@ -547,6 +547,27 @@ function IncidentsPage() {
     });
   }, [fetchAll, addToast]);
 
+  // SSE refresh is debounced to one fetchAll per 6 s. Without this gate the
+  // live-traffic worker's ~3 events/s storm of escalate events triggered a
+  // fetchAll storm against the 50-rps tenant bucket → 429s → page flapped on
+  // skeletons. Same bug Dashboard had on 2026-06-24 — same fix.
+  //
+  // DECLARATION ORDER MATTERS: the useEffect + useMemo below put
+  // debouncedRefresh in their dep arrays, which are evaluated immediately
+  // when the component body runs top-to-bottom. `const` is in TDZ until
+  // its declaration line is reached, so declaring debouncedRefresh AFTER
+  // those consumers threw `ReferenceError: Cannot access 'O' before
+  // initialization` in production (incident 664fb8d5, 2026-06-24 21:47).
+  const lastSseRefreshRef = useRef(0);
+  const SSE_REFRESH_DEBOUNCE_MS = 6_000;
+  const debouncedRefresh = useCallback(() => {
+    const now = Date.now();
+    if (now - lastSseRefreshRef.current >= SSE_REFRESH_DEBOUNCE_MS) {
+      lastSseRefreshRef.current = now;
+      fetchAll();
+    }
+  }, [fetchAll]);
+
   // Real-time updates: SSE events + 30-second polling fallback.
   // eventBus paths use the SAME 6 s debounce as the useSSE paths so
   // policy_decision events (which fire ~3/s under the live-traffic
@@ -565,19 +586,6 @@ function IncidentsPage() {
   // into the eventBus. Re-pulls the list on any incident/escalation
   // touchpoint. Falls back silently if SSE is disconnected — polling
   // above still covers the gap.
-  // SSE refresh is debounced to one fetchAll per 6 s. Without this gate the
-  // live-traffic worker's ~3 events/s storm of escalate events triggered a
-  // fetchAll storm against the 50-rps tenant bucket → 429s → page flapped on
-  // skeletons. Same bug Dashboard had on 2026-06-24 — same fix.
-  const lastSseRefreshRef = useRef(0);
-  const SSE_REFRESH_DEBOUNCE_MS = 6_000;
-  const debouncedRefresh = useCallback(() => {
-    const now = Date.now();
-    if (now - lastSseRefreshRef.current >= SSE_REFRESH_DEBOUNCE_MS) {
-      lastSseRefreshRef.current = now;
-      fetchAll();
-    }
-  }, [fetchAll]);
   const sseChannels = useMemo(() => ({
     incident_updated: debouncedRefresh,
     approval_required: debouncedRefresh,
