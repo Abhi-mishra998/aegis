@@ -5,7 +5,7 @@
 // GET /siem/vendors so adding a new vendor server-side automatically
 // surfaces it in the UI without an additional commit here.
 
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { Loader2, Play, AlertCircle, ChevronRight, Check } from 'lucide-react';
 import { IntegrationCard, SecretInput, StatusBadge } from './Common/ConnectorPrimitives';
 import { siemService } from '../services/api';
@@ -16,6 +16,7 @@ export function SiemVendorCard({ vendor, savedConfig, onSave }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const panelId = useId();
 
   const handleTest = async () => {
     setTesting(true);
@@ -54,7 +55,7 @@ export function SiemVendorCard({ vendor, savedConfig, onSave }) {
         <div className="flex items-center gap-3">
           {isConnected ? (
             <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-              <Check size={12} className="bg-emerald-500/20 rounded-full p-0.5" />
+              <Check size={12} aria-hidden="true" className="bg-emerald-500/20 rounded-full p-0.5" />
               Saved
             </span>
           ) : (
@@ -62,14 +63,17 @@ export function SiemVendorCard({ vendor, savedConfig, onSave }) {
           )}
           <button
             onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-controls={panelId}
+            aria-label={`${open ? 'Hide' : 'Configure'} ${vendor.label} credentials`}
             className="ml-auto text-xs text-neutral-400 hover:text-neutral-200 flex items-center gap-1"
           >
-            {open ? 'Hide' : 'Configure'} <ChevronRight size={11} className={open ? 'rotate-90 transition-transform' : 'transition-transform'} />
+            {open ? 'Hide' : 'Configure'} <ChevronRight size={11} aria-hidden="true" className={open ? 'rotate-90 transition-transform' : 'transition-transform'} />
           </button>
         </div>
 
         {open && (
-          <div className="space-y-3 pt-2 border-t border-[var(--border-subtle)]">
+          <div id={panelId} className="space-y-3 pt-2 border-t border-[var(--border-subtle)]">
             {vendor.fields.map((field) => (
               <FieldRow
                 key={field.name}
@@ -83,9 +87,10 @@ export function SiemVendorCard({ vendor, savedConfig, onSave }) {
               <button
                 onClick={handleTest}
                 disabled={testing}
+                aria-label={testing ? `Testing ${vendor.label} connection` : `Test ${vendor.label} connection`}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20 disabled:opacity-40"
               >
-                {testing ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                {testing ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <Play size={12} aria-hidden="true" />}
                 Test Connection
               </button>
               {result && <StatusBadge result={result} />}
@@ -95,6 +100,7 @@ export function SiemVendorCard({ vendor, savedConfig, onSave }) {
               <button
                 onClick={handleSave}
                 disabled={saving || (result?.status !== 'ok' && !isConnected)}
+                aria-label={saving ? `Saving ${vendor.label} credentials` : `Save and activate ${vendor.label}`}
                 title={
                   result?.status === 'ok' || isConnected
                     ? 'Persist credentials'
@@ -108,7 +114,7 @@ export function SiemVendorCard({ vendor, savedConfig, onSave }) {
 
             {result?.status === 'error' && (
               <p className="flex items-start gap-1 text-[11px] text-red-400">
-                <AlertCircle size={11} className="mt-0.5 shrink-0" /> {result.detail}
+                <AlertCircle size={11} aria-hidden="true" className="mt-0.5 shrink-0" /> {result.detail}
               </p>
             )}
             {vendor.doc_hint && (
