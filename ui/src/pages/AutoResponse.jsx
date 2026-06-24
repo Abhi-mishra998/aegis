@@ -1003,8 +1003,12 @@ export default function AutoResponse() {
   const [feedRule,    setFeedRule]    = useState(null)
   const [liveEvents,  setLiveEvents]  = useState([])
 
+  // First load = full skeleton; subsequent refreshes update silently in
+  // place so SSE-driven refetches don't blank the rule table on every
+  // tick. Same pattern as Dashboard / Incidents / Playbooks.
+  const hasLoadedRef = useRef(false)
   const fetchAll = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     try {
       const [rulesRes, statusRes] = await Promise.all([
         autoResponseService.listRules(),
@@ -1016,6 +1020,7 @@ export default function AutoResponse() {
       addToast('Failed to load ARE rules', 'error')
     } finally {
       setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [addToast])
 

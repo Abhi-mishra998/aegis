@@ -474,8 +474,15 @@ function IncidentsPage() {
     });
   }, []);
 
+  // Background refresh: refetch silently after the first load so the
+  // table doesn't unmount its rows into skeleton tiles every time SSE
+  // says "something changed." Only the FIRST fetch on mount sets
+  // loading=true (which gates the skeleton). Subsequent refetches
+  // swap data in place — the operator only sees row counts update,
+  // never a full re-blank.
+  const hasLoadedRef = useRef(false);
   const fetchAll = useCallback(async () => {
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [sumRes, listRes] = await Promise.all([
         incidentService.getSummary(selectedAgentId),
@@ -496,6 +503,7 @@ function IncidentsPage() {
     } finally {
       setLoading(false);
       setHasLoaded(true);
+      hasLoadedRef.current = true;
     }
   }, [filterStatus, filterSeverity, page, selectedAgentId, addToast]);
 
@@ -539,13 +547,18 @@ function IncidentsPage() {
     });
   }, [fetchAll, addToast]);
 
-  // Real-time updates: SSE events + 30-second polling fallback
+  // Real-time updates: SSE events + 30-second polling fallback.
+  // eventBus paths use the SAME 6 s debounce as the useSSE paths so
+  // policy_decision events (which fire ~3/s under the live-traffic
+  // demo) don't bypass the throttle and storm the gateway with
+  // fetchAll calls. The 30 s background poll uses fetchAll directly
+  // (it has its own gap-based throttling).
   useEffect(() => {
     const interval = setInterval(fetchAll, 30_000);
-    const u1 = eventBus.on('incident_updated', fetchAll);
-    const u2 = eventBus.on('policy_decision',  fetchAll);
+    const u1 = eventBus.on('incident_updated', debouncedRefresh);
+    const u2 = eventBus.on('policy_decision',  debouncedRefresh);
     return () => { clearInterval(interval); u1(); u2(); };
-  }, [fetchAll]);
+  }, [fetchAll, debouncedRefresh]);
 
   // Direct SSE channel subscription for incident-relevant events so the
   // page reacts even if AgentContext isn't translating that event type
