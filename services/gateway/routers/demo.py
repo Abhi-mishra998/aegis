@@ -1258,23 +1258,55 @@ async def spawn_demo_workspace(
     tenant_id = data["tenant_id"]
     owner_email = data["owner_email"]
     expires_at = data["expires_at"]
+    # QA-DEMO-FIX (2026-06-24) — identity spawn_demo_tenant already
+    # returns the new OWNER user's UUID; fold it into the demo JWT so
+    # ``/auth/me`` can look up the user row by the canonical user_id
+    # claim. Falling back to ``None`` keeps backward compat with any
+    # identity build that hasn't shipped this field yet.
+    owner_user_id = data.get("user_id")
 
     # Required claims for LocalTokenValidator (services/gateway/auth.py):
     # sub, tenant_id, role, exp, jti. `org_id == tenant_id` keeps the SaaS
     # invariant check happy.
+    #
+    # QA-DEMO-FIX (2026-06-24) — previous payload carried
+    # ``agent_id: "00000000-…"`` as a placeholder. /execute then rejected
+    # any copy-paste of that value with "Invalid agent_id format" because
+    # the body-validator requires a non-zero UUID. The OWNER JWT
+    # represents a human, not an agent, so the claim doesn't belong here
+    # at all. Customers pick one of the 5 seeded agent_ids returned by
+    # GET /agents for the /execute body — the same flow a real customer
+    # would use after onboarding. Downstream consumers
+    # (services/gateway/client.py:424,657 + main.py:285) all read this
+    # via ``.get("agent_id")`` so the absent key is safe.
     now = datetime.now(UTC)
     session_id = uuid.uuid4()
     payload = {
         "sub":        owner_email,
         "tenant_id":  tenant_id,
         "org_id":     tenant_id,
-        "agent_id":   "00000000-0000-0000-0000-000000000000",
         "role":       "OWNER",
         "is_demo":    True,
         "iat":        int(now.timestamp()),
         "exp":        expires_at,
         "jti":        f"demo-{session_id.hex}",
+        # QA-DEMO-FIX (2026-06-24) — TokenService.verify (legacy HS256 path
+        # in services/identity/token_service.py:119) requires
+        # ``typ == "ACP_ACCESS"``. The demo JWT previously omitted it,
+        # so ``/auth/me`` returned 401 "Invalid token" while
+        # ``/workspace/me`` (which uses a different validator path) returned
+        # 200. Two endpoints disagreeing on the same token is a real bug.
+        # Including the claim aligns demo tokens with the canonical
+        # access-token shape the rest of the platform expects.
+        "typ":        "ACP_ACCESS",
     }
+    # QA-DEMO-FIX (2026-06-24) — fold the OWNER user_id from the
+    # identity spawn response into the JWT so ``/auth/me``'s legacy
+    # path (services/identity/router.py:403) can look up the user row
+    # without falling back to the email-based lookup. Omitted only if
+    # the identity build doesn't ship the field (graceful no-op).
+    if owner_user_id:
+        payload["user_id"] = owner_user_id
     token = _jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
 
     # C-5 (2026-05-13) compatibility: the legacy validator at

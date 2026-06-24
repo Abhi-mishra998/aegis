@@ -262,12 +262,17 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/admin",
     "/dashboard",
     "/policy",
-    # 2026-06-22 — same fix as /integrations above. Slack OAuth status
-    # (/sso/slack/status), Slack OAuth disconnect (/sso/slack/disconnect),
-    # SCIM token CRUD (/scim/v2/tokens), team CRUD (/teams) are management
-    # surfaces, NOT agent tool executions. Without them in the skip list
-    # the tool-extractor middleware returned 400 "Tool name is required"
-    # before the handler ran.
+    # QA-MW-FIX (2026-06-24) — same skip-the-tool-extractor reason as
+    # /integrations + /sso/scim/teams below. P2-2 (2026-06-21) put
+    # /openapi.json behind RBAC so any authed token can fetch it, but
+    # the tool-extractor middleware then asked for `X-ACP-Tool` and
+    # returned 400 "Tool name is required (provide via X-ACP-Tool …)".
+    # /openapi.json is the machine-readable contract — partners + the
+    # aegis-aevf CLI + the in-cluster SDK code-gen all hit it. Add it
+    # to the management list so the auth runs but the tool-extractor
+    # doesn't. /docs + /redoc are in the no-auth list (line ~79) and
+    # only mounted off-prod, so they hit FastAPI's built-in handlers.
+    "/openapi.json",
     "/sso",
     "/scim",
     "/teams",
@@ -333,6 +338,38 @@ _IDEMPOTENCY_TTL_MAP = {
 }
 _IDEMPOTENCY_PREFIX = "acp:idempotency:"
 _GLOBAL_SLA_BUDGET = 2.0  # seconds — caps P99 at ~2s; fail-fast beats retrying into a dead downstream
+
+# QA-DEADLINE-FIX (2026-06-24) — long-running, intentionally-batched
+# endpoints that do NOT belong on the /execute decision-pipeline budget.
+# Each tuple is ``(path_prefix, budget_seconds)``. The first matching
+# prefix wins; if nothing matches the request uses _GLOBAL_SLA_BUDGET.
+#
+# Why this list exists: the pre-launch audit (2026-06-24) measured
+# /compliance/verifiable-bundle/{framework}?7-day → 504 decision_timeout
+# because the bundle aggregator legitimately needs 5-30 s to walk a
+# week of audit rows + Merkle roots and emit a signed JSON envelope.
+# Synchronous bundle export is intentional for a SOC 2 evaluator who
+# wants to download + run aegis-verify in one shell session, so the
+# right fix is to give those endpoints a real deadline — not to push
+# them onto a background-job poll cycle the auditor doesn't want.
+#
+# /audit/export is similarly batched (NDJSON stream for SIEM ingest);
+# /compliance/board-report is the executive-PDF builder.
+_LONG_RUNNING_BUDGET_PREFIXES: tuple[tuple[str, float], ...] = (
+    ("/compliance/verifiable-bundle/", 30.0),
+    ("/compliance/export",             30.0),
+    ("/compliance/board-report",       30.0),
+    ("/compliance/zip/",               30.0),
+    ("/audit/export",                  30.0),
+)
+
+
+def _deadline_budget_for(path: str) -> float:
+    """Return the SLA budget (seconds) that applies to ``path``."""
+    for prefix, budget in _LONG_RUNNING_BUDGET_PREFIXES:
+        if path.startswith(prefix):
+            return budget
+    return _GLOBAL_SLA_BUDGET
 
 
 # Sprint 3 — Shadow mode helpers.
@@ -519,7 +556,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         structlog.contextvars.clear_contextvars()
 
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-        deadline = start_time + _GLOBAL_SLA_BUDGET
+        # QA-DEADLINE-FIX (2026-06-24) — per-path deadline lookup so
+        # legitimately long-running compliance/audit-export endpoints
+        # don't share the 2 s /execute budget. See
+        # ``_LONG_RUNNING_BUDGET_PREFIXES`` above for the catalogue.
+        deadline = start_time + _deadline_budget_for(request.url.path)
         self._init_context(request, request_id, deadline)
 
         # /auth/sso/* is mostly public (OAuth redirect dance with no
@@ -538,6 +579,18 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         )
         if _path in _SKIP_PATHS or _prefix_skip:
             return await call_next(request)
+
+        # QA-MW-FIX (2026-06-24) — burst-on-401 limiter (closes P2-5).
+        # Anonymous credential-stuffing on /workspace/me + similar auth-gated
+        # routes used to be unlimited; this gate 429s an IP that's already
+        # burned through `_AUTH_FAIL_BURST_LIMIT` failed auths in the last
+        # `_AUTH_FAIL_BURST_WINDOW` seconds. Successful auth clears the
+        # counter so a legitimate user mistyping once isn't penalised.
+        # Fail-open on Redis errors so a cache blip can't lock out customers.
+        _early_client_ip = request.client.host if request.client else "unknown"
+        _af_resp = await self._check_auth_failure_burst(_early_client_ip)
+        if _af_resp is not None:
+            return _af_resp
 
         # N11 fix (2026-06-21) — /metrics is no longer gated by raw
         # INTERNAL_SECRET. Two valid auth paths now exist:
@@ -2329,6 +2382,19 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
 
         Returns the final 4xx/5xx response built from the exception.
         """
+        # QA-MW-FIX (2026-06-24) — burst-on-401 counter increment.
+        # Every 401 from this IP bumps the rolling counter that
+        # `_check_auth_failure_burst` reads at the top of dispatch.
+        # Cheap (1 INCR + 1 EXPIRE on first miss); fail-open if Redis is
+        # down. We catch 401 here because every auth-failure raise in
+        # `_mw_auth.py` propagates as HTTPException through this handler.
+        if e.status_code == 401:
+            try:
+                _af_ip = request.client.host if request.client else "unknown"
+                await self._record_auth_failure(_af_ip)
+            except Exception:
+                pass  # fail-open — never let a counter blip 500 the request
+
         # 1. Flight terminal step + snapshot
         try:
             if t_id_str != "unknown":
@@ -2749,6 +2815,16 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         )
         request.state.tenant_id = tenant_id
         request.state.agent_id = agent_id
+
+        # QA-MW-FIX (2026-06-24) — clear the per-IP auth-failure counter on
+        # success so a legitimate user who mistyped once during sign-in is
+        # not locked out for the rest of the 60-second window. Fail-open.
+        try:
+            _ok_ip = request.client.host if request.client else "unknown"
+            await self._clear_auth_failure_counter(_ok_ip)
+        except Exception:
+            pass  # fail-open
+
         return tenant_id, agent_id, t_id_str, tier
 
     async def _handle_idempotency_phase(

@@ -15,7 +15,7 @@ This document is intentionally written for the *person who has to make the buy-o
 
 ## What Aegis actually does (in one paragraph)
 
-Your business is starting to use AI agents — Claude, GPT, Bedrock, in-house tools — to take real actions on real production systems. The question your board is going to ask you, sooner than you think, is "what happens when one of them does something it shouldn't?" Aegis is the layer that catches that. Every tool call your AI agent attempts — every SQL query, every email, every wire transfer, every file delete — passes through a policy engine in **under 21 ms p95**. We decide allow / monitor / escalate / deny / quarantine, we sign the decision with ed25519, and we publish the daily Merkle root to a bucket you can verify offline without trusting us. You get the receipts. Your auditor gets the chain. Your CFO gets the kill switch.
+Your business is starting to use AI agents — Claude, GPT, Bedrock, in-house tools — to take real actions on real production systems. The question your board is going to ask you, sooner than you think, is "what happens when one of them does something it shouldn't?" Aegis is the layer that catches that. Every tool call your AI agent attempts — every SQL query, every email, every wire transfer, every file delete — passes through a 10-stage policy engine whose **inter-service round-trip is p95 ≈ 28 ms** (`/system/health.latency`); the user-facing `/execute` round-trip from your agent — which is what your audit dashboard quotes — depends on your network distance to ap-south-1 and on concurrent traffic in the gateway. We publish both numbers on `/status` so you can verify them yourself. We decide allow / monitor / escalate / deny / quarantine, we sign the decision with ed25519, and we publish the daily Merkle root to a bucket you can verify offline without trusting us. You get the receipts. Your auditor gets the chain. Your CFO gets the kill switch.
 
 We are not another LLM. We are not a chat product. We are the governance plane that sits between your AI and the systems your AI can touch.
 
@@ -163,7 +163,9 @@ This is the right path when:
 The SDK is one `pip install` and four lines of code:
 
 ```python
-pip install 'aegis-anthropic==1.1.2'   # or aegis-openai==1.1.2 / aegis-bedrock==1.1.3 / aegis-langchain==1.1.3
+pip install 'aegis-anthropic==1.1.3'   # or aegis-openai==1.1.3 (also: pip install openai)
+                                       # or aegis-langchain==1.1.4
+                                       # or aegis-bedrock==1.1.4 (also: pip install 'aegis-bedrock[bedrock]')
 ```
 
 Then in your agent:
@@ -174,7 +176,7 @@ client = AegisAnthropic(api_key="acp_...")  # the Aegis key, not your Anthropic 
 response = client.messages.create(...)       # behaves like Anthropic, just governed
 ```
 
-The wizard mints you an `acp_...` key during onboarding. The 2026-06-24 PyPI release ships four SDKs — `aegis-anthropic==1.1.2`, `aegis-openai==1.1.2`, `aegis-langchain==1.1.3`, `aegis-bedrock==1.1.3` — all defaulting to the consolidated `https://aegisagent.in` gateway. A separate `aegis-aevf==1.1.0` package ships our offline verifier as an audit-only install.
+The wizard mints you an `acp_...` key during onboarding. The latest PyPI release ships four SDKs — `aegis-anthropic==1.1.3`, `aegis-openai==1.1.3`, `aegis-langchain==1.1.4`, `aegis-bedrock==1.1.4` — all defaulting to the consolidated `https://aegisagent.in` gateway via the `gateway_url=` constructor kwarg (deprecated alias `aegis_url=` still accepted for backwards compatibility on `aegis-anthropic` and `aegis-bedrock`). `aegis-openai` requires `pip install openai` separately, and `aegis-bedrock`'s `AegisBedrockAgentRuntime` requires `pip install 'aegis-bedrock[bedrock]'` for the boto3 dependency. A separate `aegis-aevf==1.1.1` package ships our offline verifier as an audit-only install (`pip install aegis-aevf` → `aegis-verify --bundle <file>`).
 
 ### Path B — Aegis-as-a-proxy (zero code changes)
 

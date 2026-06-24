@@ -175,13 +175,55 @@ def reject_mismatched_tenant_query(request: Request) -> None:
 def clamp_int(value: str | None, default: int, lo: int, hi: int) -> int:
     """Parse a query-string integer, clamp it into ``[lo, hi]``, fall back to
     ``default`` on parse failure. Used everywhere a sub-router needs to read
-    a paginated ``?limit=`` / ``?offset=`` from request.query_params."""
+    a paginated ``?limit=`` / ``?offset=`` from request.query_params.
+
+    Intentionally permissive — absent OR malformed input both yield the
+    default. Routes that need to surface "invalid input" instead of
+    silently coercing should use :func:`strict_int` instead.
+    """
     if value is None:
         return default
     try:
         n = int(value)
     except (TypeError, ValueError):
         return default
+    if n < lo:
+        return lo
+    if n > hi:
+        return hi
+    return n
+
+
+def strict_int(
+    value: str | None,
+    default: int,
+    lo: int,
+    hi: int,
+    *,
+    field: str = "value",
+) -> int:
+    """Like :func:`clamp_int`, but raises ``HTTPException(422)`` when the input
+    is present-and-malformed instead of silently substituting the default.
+
+    QA-VALIDATION-FIX (2026-06-24) — the audit pentest report flagged that
+    ``GET /audit/logs?limit=10' OR '1'='1`` returned 200 with 50 rows
+    (default) instead of 422. Not exploitable (parameterized SQL), but a
+    real auditor expectation: malformed input gets a typed error, not a
+    coerced result. Public read endpoints (``/audit/logs``, ``/audit/export``)
+    use this helper so the silent fallback only lives where it actually
+    helps a robust client (e.g. internal pagination cursors).
+    """
+    if value is None:
+        return default
+    try:
+        n = int(value)
+    except (TypeError, ValueError) as exc:
+        # Local import to avoid circulars on the helpers module boot.
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {field}: expected an integer, got {value!r}",
+        ) from exc
     if n < lo:
         return lo
     if n > hi:

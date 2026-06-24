@@ -136,8 +136,34 @@ async def get_summary(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     agent_id: uuid.UUID | None = Query(None),
 ) -> APIResponse[AuditSummaryResponse]:
-    """Fast dashboard summary from Redis counters + Deep DB insights."""
+    """Fast dashboard summary from Redis counters + Deep DB insights.
+
+    QA-PERF-FIX (2026-06-24) — the audit pentest measured this tile at
+    6.36 s end-to-end. It runs 5 sequential aggregation queries (count,
+    risk distribution, top risky agents, anomaly trends, avg risk) each
+    in the 1-1.5 s range over the same ``audit_logs WHERE tenant_id`` scan.
+    Dashboard polls hit this on every refresh, so we wrap the whole
+    response in a 30-second Redis cache. The first request still pays
+    the full DB cost; every refresh inside the TTL is a single Redis GET
+    (typical 1-2 ms). Cache key is per (tenant_id, agent_id) so the
+    per-agent filter still produces correct results. Fail-open on Redis
+    errors — the cache is an optimisation, not a correctness boundary.
+    """
     tid = str(tenant_id)
+    _cache_key = f"acp:audit_summary:{tid}:{agent_id or '_'}"
+    try:
+        cached_raw = await redis.get(_cache_key)
+    except Exception:
+        cached_raw = None
+    if cached_raw:
+        try:
+            import json as _json
+            return APIResponse(
+                data=AuditSummaryResponse.model_validate(_json.loads(cached_raw))
+            )
+        except Exception:
+            pass  # corrupted cache entry → fall through and recompute
+
     # Sprint 1 BE — optional per-agent scope filter
     _agent_filter = (AuditLog.agent_id == agent_id) if agent_id is not None else sa.true()
 
@@ -199,33 +225,60 @@ async def get_summary(
     )
     avg_risk = float(avg_risk_result.scalar_one_or_none() or 0.0)
 
-    return APIResponse(
-        data=AuditSummaryResponse(
-            total_calls=total_reqs,
-            total_denials=blocked_reqs,
-            active_agents_count=agent_count,
-            total_requests=total_reqs,
-            blocked_requests=blocked_reqs,
-            allowed_requests=allowed_reqs,
-            threats_blocked=blocked_reqs,
-            high_risk_agents=risk_dist.get("critical", 0) + risk_dist.get("high", 0),
-            avg_risk_score=round(avg_risk, 4),
-            requests_by_hour=[],
-            risk_distribution=risk_dist,
-            metadata={
-                "top_risky_agents": top_risky,
-                "anomaly_trends": trends,
-            }
-        )
+    summary = AuditSummaryResponse(
+        total_calls=total_reqs,
+        total_denials=blocked_reqs,
+        active_agents_count=agent_count,
+        total_requests=total_reqs,
+        blocked_requests=blocked_reqs,
+        allowed_requests=allowed_reqs,
+        threats_blocked=blocked_reqs,
+        high_risk_agents=risk_dist.get("critical", 0) + risk_dist.get("high", 0),
+        avg_risk_score=round(avg_risk, 4),
+        requests_by_hour=[],
+        risk_distribution=risk_dist,
+        metadata={
+            "top_risky_agents": top_risky,
+            "anomaly_trends": trends,
+        }
     )
+    # QA-PERF-FIX (2026-06-24) — populate the 30 s cache. Fail-open on
+    # Redis errors; the response is already computed correctly.
+    try:
+        import json as _json
+        await redis.setex(_cache_key, 30, summary.model_dump_json())
+    except Exception:
+        pass
+    return APIResponse(data=summary)
 
 @router.get("/heatmap", response_model=APIResponse[dict])
 async def get_heatmap(
     db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     agent_id: uuid.UUID | None = Query(None),
 ) -> APIResponse[dict]:
-    """Return request-volume heatmap: {day_name: [count_h0..count_h23]} for last 7 days."""
+    """Return request-volume heatmap: {day_name: [count_h0..count_h23]} for last 7 days.
+
+    QA-PERF-FIX (2026-06-24) — the pentest probe found this returning 502
+    ``Upstream unreachable: ReadTimeout`` because the underlying 7-day
+    aggregation on ``audit_logs`` exceeded the gateway's 2 s
+    ``_GLOBAL_SLA_BUDGET`` on big tenants. Wrap with the same 30 s Redis
+    cache as ``/summary`` so a hot dashboard polls the cache instead of
+    re-scanning the same 7-day window every refresh. The first call after
+    a TTL miss still pays the full cost; if that exceeds the deadline the
+    second one almost certainly populates the cache and the dashboard
+    self-heals within 30 s.
+    """
+    import json as _json
+    _cache_key = f"acp:audit_heatmap:{tenant_id}:{agent_id or '_'}"
+    try:
+        cached = await redis.get(_cache_key)
+        if cached:
+            return APIResponse(data=_json.loads(cached))
+    except Exception:
+        pass  # fail-open
+
     import datetime as _dt
     cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=7)
     _agent_filter = (AuditLog.agent_id == agent_id) if agent_id is not None else sa.true()
@@ -246,6 +299,10 @@ async def get_heatmap(
     for row in rows:
         day_name = _dow_map.get(int(row.dow), "Mon")
         heatmap[day_name][int(row.hour)] = int(row.cnt)
+    try:
+        await redis.setex(_cache_key, 30, _json.dumps(heatmap))
+    except Exception:
+        pass
     return APIResponse(data=heatmap)
 
 
@@ -288,6 +345,7 @@ async def risk_top_threats(
 @router.get("/pack-enforcement", response_model=APIResponse[dict])
 async def pack_enforcement(
     db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     days: int = Query(30, ge=1, le=90),
 ) -> APIResponse[dict]:
@@ -322,6 +380,20 @@ async def pack_enforcement(
           ]
         }
     """
+    # QA-PERF-FIX (2026-06-24) — pentest measured 502 ReadTimeout on this
+    # endpoint for big tenants. The 2 000-row JSONB scan on every refresh
+    # is the cost. Cache the rolled-up payload for 30 s so the
+    # /compliance page tile doesn't re-aggregate on every poll. Same
+    # pattern as /summary + /heatmap.
+    import json as _json
+    _cache_key = f"acp:pack_enforcement:{tenant_id}:{days}"
+    try:
+        cached = await redis.get(_cache_key)
+        if cached:
+            return APIResponse(data=_json.loads(cached))
+    except Exception:
+        pass
+
     import datetime as _dt
     start = _dt.datetime.utcnow() - _dt.timedelta(days=days)
 
@@ -394,7 +466,13 @@ async def pack_enforcement(
         })
     out_packs.sort(key=lambda p: (-p["total"], p["pack_id"]))
 
-    return APIResponse(data={"window_days": days, "packs": out_packs})
+    response_payload = {"window_days": days, "packs": out_packs}
+    # QA-PERF-FIX (2026-06-24) — populate the 30 s pack-enforcement cache.
+    try:
+        await redis.setex(_cache_key, 30, _json.dumps(response_payload))
+    except Exception:
+        pass
+    return APIResponse(data=response_payload)
 
 
 @router.get("/aggregate", response_model=APIResponse[dict])

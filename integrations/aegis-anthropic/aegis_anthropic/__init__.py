@@ -167,7 +167,29 @@ class _AegisGuard:
                         "risk":     1.0,
                         "findings": ["aegis_unparseable_response"],
                     }
-            # 4xx other than 403, or 5xx — fail CLOSED. Letting unchecked
+            # QA-SDK-FIX (2026-06-24) — 429 is rate-limit / capacity
+            # back-pressure, NOT a security decision. The previous behaviour
+            # routed it through the same fail-closed branch as 4xx/5xx and
+            # returned ``action=deny, risk=1.0, findings=[aegis_http_429]``
+            # — the agent then saw a high-risk policy denial in its
+            # tool-result text, polluting telemetry that branches on
+            # "deny rate". Surface 429 as its own action so callers can
+            # distinguish "infrastructure throttle, retry shortly" from
+            # "policy denied this tool call". ``is_blocked`` still returns
+            # True (we don't let the unaudited tool through), but
+            # ``blocked_text`` emits a retry-friendly message instead of
+            # the "[BLOCKED by Aegis]" string.
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After") or ""
+                findings = ["aegis_rate_limited"]
+                if retry_after:
+                    findings.append(f"retry_after={retry_after}")
+                return {
+                    "action":   "rate_limited",
+                    "risk":     0.0,
+                    "findings": findings,
+                }
+            # 4xx other than 403/429, or 5xx — fail CLOSED. Letting unchecked
             # tool calls through because the security plane was unreachable
             # defeats the whole point of the integration.
             return {
@@ -244,13 +266,34 @@ class AegisClient(_AegisGuard):
         })
 
     def is_blocked(self, decision: dict[str, Any]) -> bool:
+        # QA-SDK-FIX (2026-06-24) — "rate_limited" is also blocking-from-
+        # the-agent's-perspective (we don't let the tool through), but
+        # downstream telemetry must be able to tell it apart from a real
+        # policy deny. ``blocked_text`` emits a different message; this
+        # method only answers the boolean "should I skip the tool call?".
         return decision.get("action", "deny") in (
-            "deny", "block", "policy_deny", "reject", "escalate",
+            "deny", "block", "policy_deny", "reject", "escalate", "rate_limited",
         )
 
     def blocked_text(self, tool_name: str, decision: dict[str, Any]) -> str:
         findings = decision.get("findings", ["policy_violation"])
         risk = decision.get("risk", 1.0)
+        # QA-SDK-FIX (2026-06-24) — distinguish infra throttle from policy
+        # denial in the agent-visible message. Conflating the two led the
+        # LLM to reason as if its tool call was a security violation when
+        # it was just a 429 from a busy gateway.
+        if decision.get("action") == "rate_limited":
+            retry_hint = ""
+            for f in findings:
+                if isinstance(f, str) and f.startswith("retry_after="):
+                    retry_hint = f" Retry-After: {f.split('=', 1)[1]}s."
+                    break
+            return (
+                f"[Aegis rate-limited] The Aegis gateway responded HTTP 429 for "
+                f"tool '{tool_name}'. This is a transient capacity signal, NOT a "
+                f"policy denial.{retry_hint} Retry shortly; do not adjust the "
+                f"request shape."
+            )
         return (
             f"[BLOCKED by Aegis] Tool '{tool_name}' was denied before execution "
             f"(risk={risk:.3f}, findings={findings}). "
@@ -327,8 +370,24 @@ class AegisAnthropic:
         tenant_id: str | None = None,
         agent_id: str | None = None,
         timeout: float = 10.0,
+        aegis_url: str | None = None,  # deprecated alias
         **anthropic_kwargs: Any,
     ) -> None:
+        # QA-SDK-FIX (2026-06-24) — accept the deprecated ``aegis_url`` as
+        # an alias for ``gateway_url``. Earlier docs (setup-agies.md prior
+        # to the 2026-06-24 update) and the tester-prompt both used the old
+        # name; customers copy-pasting from those got a TypeError on
+        # construct. Emit a DeprecationWarning so authors update their
+        # call-sites without immediately breaking them.
+        if gateway_url is None and aegis_url is not None:
+            import warnings as _warnings
+            _warnings.warn(
+                "AegisAnthropic: `aegis_url=` is deprecated; use `gateway_url=` "
+                "to match the canonical Aegis SDK kwarg.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            gateway_url = aegis_url
         try:
             import anthropic as _anthropic
             self._claude = _anthropic.Anthropic(
