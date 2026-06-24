@@ -20,7 +20,6 @@ autonomy-check cache so new contracts are enforced immediately.
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -34,10 +33,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sdk.common.auth import verify_internal_secret
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.db import get_db, get_tenant_id
+from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
 from services.autonomy.enforcement import ContractView, evaluate
 
-_REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 _redis_client: _Redis | None = None
 _logger = structlog.get_logger(__name__)
 
@@ -47,7 +46,7 @@ async def _invalidate_autonomy_cache(tenant_id, agent_id) -> None:
     global _redis_client
     try:
         if _redis_client is None:
-            _redis_client = _Redis.from_url(_REDIS_URL, decode_responses=False)
+            _redis_client = get_redis_client(decode_responses=False)
         pattern = f"acp:autonomy_check:{tenant_id}:{agent_id}:*"
         async for k in _redis_client.scan_iter(match=pattern, count=200):
             await _redis_client.delete(k)
@@ -67,7 +66,7 @@ async def _rl_redis() -> _Redis:
     """
     global _rl_redis_client
     if _rl_redis_client is None:
-        _rl_redis_client = _Redis.from_url(_REDIS_URL, decode_responses=False)
+        _rl_redis_client = get_redis_client(decode_responses=False)
     return _rl_redis_client
 
 
@@ -449,7 +448,7 @@ async def _publish_approval_resolved(
     import time as _time
     global _redis_client
     if _redis_client is None:
-        _redis_client = _Redis.from_url(_REDIS_URL, decode_responses=False)
+        _redis_client = get_redis_client(decode_responses=False)
     payload = _json.dumps({
         "tenant_id": tenant_id,
         "type": "approval_resolved",
@@ -824,7 +823,7 @@ async def _get_redis() -> _Redis:
     """Return (or lazily create) a module-level Redis client."""
     global _redis_client
     if _redis_client is None:
-        _redis_client = _Redis.from_url(_REDIS_URL, decode_responses=True)
+        _redis_client = get_redis_client(decode_responses=True)
     return _redis_client
 
 

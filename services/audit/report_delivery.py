@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 
 import structlog
 
+from sdk.common.redis import get_redis_client
 from services.audit.scheduled_reports import (
     ScheduledReport,
     record_delivery,
@@ -282,9 +283,7 @@ async def run_report_delivery_worker(session_factory) -> None:
     Scans Redis for ``acp:report_trigger:*`` every ``_POLL_INTERVAL`` seconds
     and delivers each triggered report via SMTP.
     """
-    import redis.asyncio as aioredis
-    redis_url = os.environ.get("REDIS_URL", "redis://redis:6379")
-    r = aioredis.from_url(redis_url, decode_responses=True)
+    r = get_redis_client(decode_responses=True)
 
     logger.info("report_delivery_worker_started", poll_interval=_POLL_INTERVAL)
 
