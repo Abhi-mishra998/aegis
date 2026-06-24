@@ -366,6 +366,8 @@ export default function AuditLogs() {
 
   const autoRefreshRef = useRef(null)
   const mountedRef     = useRef(true)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef   = useRef(false)
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -377,7 +379,7 @@ export default function AuditLogs() {
   }, [effectiveAgentId])
 
   const fetchLogs = useCallback(async (currentPage = 0) => {
-    setLogsLoading(true)
+    if (!hasLoadedRef.current) setLogsLoading(true)
     setLogsError('')
     try {
       const res = await auditService.getLogs(PAGE_SIZE, currentPage * PAGE_SIZE, effectiveAgentId || undefined)
@@ -390,11 +392,12 @@ export default function AuditLogs() {
       if (mountedRef.current) setLogsError(err.message || 'Failed to load audit logs.')
     } finally {
       if (mountedRef.current) setLogsLoading(false)
+      hasLoadedRef.current = true
     }
   }, [effectiveAgentId])
 
   const handleSearch = useCallback(async (currentPage = 0) => {
-    setIsSearching(true)
+    if (!hasLoadedRef.current) setIsSearching(true)
     setLogsError('')
     setHasSearched(true)
     try {
@@ -415,6 +418,7 @@ export default function AuditLogs() {
       if (mountedRef.current) setLogsError(err.message || 'Search failed.')
     } finally {
       if (mountedRef.current) setIsSearching(false)
+      hasLoadedRef.current = true
     }
   }, [effectiveAgentId, filterDecision, filterTool, filterFrom, filterTo])
 

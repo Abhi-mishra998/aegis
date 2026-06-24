@@ -9,7 +9,7 @@
 //   GET /flight/sessions             — list (tenant-scoped, last N minutes)
 //   GET /flight/sessions/{id}         — drill-down
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts'
 import { Users } from 'lucide-react'
@@ -147,9 +147,11 @@ export default function SessionExplorer() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [liveTick, setLiveTick] = useState(0)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const refresh = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const resp = await flightService.listSessions({ minutes, limit: 100 })
@@ -159,6 +161,7 @@ export default function SessionExplorer() {
       setError(e?.message || 'Failed to load sessions')
     } finally {
       setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [minutes])
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertOctagon,
@@ -82,10 +82,12 @@ export default function ShadowModeReview() {
   const [showExitDialog, setShowExitDialog] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     Promise.all([
       workspaceService.me().catch(() => null),
       auditService.getShadowEvents(100, 0).catch(() => null),
@@ -96,10 +98,12 @@ export default function ShadowModeReview() {
       setEvents(Array.isArray(items) ? items : []);
       setLoading(false);
       setError('');
+      hasLoadedRef.current = true;
     }).catch((err) => {
       if (cancelled) return;
       setError(err?.message || 'Failed to load shadow events');
       setLoading(false);
+      hasLoadedRef.current = true;
     });
     return () => { cancelled = true; };
   }, [refreshTick]);
