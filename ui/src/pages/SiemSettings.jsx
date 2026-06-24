@@ -47,7 +47,12 @@ export default function SiemSettings() {
     setSaving(true)
     setError('')
     try {
-      await siemService.saveConfig(cfg)
+      // Strip masked values (***...) so the round-trip from GET → POST
+      // never overwrites the real stored secret with the placeholder.
+      const payload = Object.fromEntries(
+        Object.entries(cfg).filter(([, v]) => !String(v).startsWith('***'))
+      )
+      await siemService.saveConfig(payload)
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch {

@@ -1674,6 +1674,17 @@ async def provision_from_clerk(
 
 _SSO_STATE_SECRET = os.environ.get("SSO_STATE_SECRET", settings.JWT_SECRET_KEY)
 
+# Per-tenant SSO config schema. Used by GET (read+mask), POST (save), and
+# POST /test (merge-and-probe). Single source of truth so a new field only
+# needs to be added once.
+_SSO_CONFIG_FIELDS = (
+    "provider_type", "entity_id", "sso_url", "certificate",
+    "client_id", "client_secret", "issuer",
+)
+# Subset that GET masks; same set is stripped from POST bodies so the masked
+# placeholder never round-trips back into Redis as the stored value.
+_SSO_MASKED_SECRET_FIELDS = frozenset({"certificate", "client_secret"})
+
 
 def _sso_config_key(tenant_id: str) -> str:
     return f"acp:sso:config:{tenant_id}"
@@ -1726,11 +1737,13 @@ async def save_sso_config(
     if not x_tenant_id:
         raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
 
-    allowed_fields = ("provider_type", "entity_id", "sso_url", "certificate", "client_id", "client_secret", "issuer")
     mapping: dict[str, str] = {}
-    for field in allowed_fields:
+    for field in _SSO_CONFIG_FIELDS:
         if field in body:
-            mapping[field] = str(body[field])
+            value = str(body[field])
+            if field in _SSO_MASKED_SECRET_FIELDS and value.startswith("***"):
+                continue
+            mapping[field] = value
 
     if not mapping:
         raise HTTPException(status_code=400, detail="No recognised SSO config fields provided")
@@ -1744,18 +1757,34 @@ async def save_sso_config(
 async def test_sso_config(
     redis: Annotated[Redis, Depends(get_redis)],
     x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+    body: dict | None = None,
 ) -> dict:
     """
     Validate SSO config by attempting a metadata fetch.
     - SAML: GET entity_id URL
     - OIDC: GET issuer/.well-known/openid-configuration
     Returns {reachable: bool, issuer: str, status: str}
+
+    Body (optional) lets the UI test unsaved form values before persisting.
+    Non-masked fields in the body override the stored Redis values so the
+    "Test" button reflects what the operator is currently typing, not the
+    previously-saved snapshot. Masked secrets (prefixed with ``***``) are
+    ignored so the round-trip from GET → POST never overwrites real values.
     """
     if not x_tenant_id:
         raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
 
     raw: dict[bytes, bytes] = await redis.hgetall(_sso_config_key(x_tenant_id))
     cfg = _decode_redis_hash(raw)
+
+    # Merge unsaved form values from the request body. Masked secrets are
+    # filtered in the field loop so re-submitting GET output never overwrites
+    # the stored secret with the placeholder.
+    if body:
+        for key in _SSO_CONFIG_FIELDS:
+            val = body.get(key)
+            if val and not str(val).startswith("***"):
+                cfg[key] = str(val)
 
     provider_type = cfg.get("provider_type", "oidc").lower()
     issuer = cfg.get("issuer", "")
