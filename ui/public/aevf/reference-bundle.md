@@ -10,7 +10,7 @@ A self-contained example AEVF bundle conforming to `aegis-evidence-bundle/2026-0
 
 | Attribute | Value |
 |---|---|
-| Download | [`reference-bundle-2026-06.json`](https://ha.aegisagent.in/aevf/reference-bundle-2026-06.json) |
+| Download | [`reference-bundle-2026-06.json`](https://aegisagent.in/aevf/reference-bundle-2026-06.json) |
 | Size | 9 165 bytes |
 | SHA-256 | `8a6f09f65c374edf44c811dba8f146c8d79dab9ed74e3c49920be759951f20fc` |
 | Format | `aegis-evidence-bundle/2026-06` |
@@ -37,7 +37,7 @@ Every record carries explicit mappings to **EU AI Act articles**, **SOC 2 contro
 
 ```bash
 # Download
-curl -O https://ha.aegisagent.in/aevf/reference-bundle-2026-06.json
+curl -O https://aegisagent.in/aevf/reference-bundle-2026-06.json
 
 # Confirm bytes match
 sha256sum reference-bundle-2026-06.json

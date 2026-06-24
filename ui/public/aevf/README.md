@@ -127,4 +127,4 @@ If you find an ambiguity in the spec that two independent implementations could 
 - **[spec.md](./spec.md)** — the byte-precise specification
 - **[`tools/aegis_verify/`](../../tools/aegis_verify/)** — Python reference implementation
 - **[`tools/aegis_verify/tests/test_verifier.py`](../../tools/aegis_verify/tests/test_verifier.py)** — executable test vectors
-- **[Aegis live demo](https://ha.aegisagent.in/live-demo)** — produces AEVF bundles end-to-end
+- **[Aegis live demo](https://aegisagent.in/live-demo)** — produces AEVF bundles end-to-end

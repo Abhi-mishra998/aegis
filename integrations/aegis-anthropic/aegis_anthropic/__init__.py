@@ -257,7 +257,7 @@ class AegisAnthropic:
 #
 # The Path A wrapper above sits in the agent process and gates tool calls
 # locally. Path B sits in front of Anthropic itself: the developer just
-# replaces base_url with https://ha.aegisagent.in/v1 and Aegis becomes
+# replaces base_url with https://aegisagent.in/v1 and Aegis becomes
 # the gateway. Today Aegis returns HTTP 202 with a pending_approval body
 # when a prompt matches an escalation pattern (wire transfer, k8s prod
 # destruction, etc.). The official Anthropic SDK doesn't know about 202
@@ -408,7 +408,7 @@ class AegisAnthropicProxy:
     Constructor:
         client = AegisAnthropicProxy(
             employee_key="acp_emp_…",                       # or set AEGIS_EMPLOYEE_KEY
-            gateway_url="https://ha.aegisagent.in",         # or AEGIS_URL
+            gateway_url="https://aegisagent.in",         # or AEGIS_URL
             anthropic_version="2023-06-01",
             timeout_s=60.0,
             approval_timeout_s=300.0,
@@ -445,7 +445,7 @@ class AegisAnthropicProxy:
         base = (
             gateway_url
             or os.environ.get("AEGIS_URL")
-            or "https://ha.aegisagent.in"
+            or "https://aegisagent.in"
         ).rstrip("/")
         self._messages_url = f"{base}/v1/messages"
         # /v1/approvals is in the gateway middleware skip-list so the

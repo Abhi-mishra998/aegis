@@ -19,7 +19,7 @@ from aegis_bedrock import AegisBedrockAgentRuntime
 
 client = AegisBedrockAgentRuntime(
     aegis_key="acp_…",
-    aegis_url="https://ha.aegisagent.in",
+    aegis_url="https://aegisagent.in",
     tenant_id="00000000-0000-0000-0000-000000000001",
     agent_id="<your-aegis-agent-id>",
     region_name="us-east-1",          # standard boto3 kwarg
