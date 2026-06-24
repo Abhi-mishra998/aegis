@@ -46,6 +46,8 @@ const MANDATE_QUESTIONS = [
   { q: 'Can we prove compliance?',                  a: 'Policy Pack enforcement page maps every escalation to the SOC2 / PCI / HIPAA control it covers.' },
 ]
 
+// kept — shown as code example in UI (literal must match the customer's
+// documented prod gateway URL so copy-paste works without edits).
 const CODE_SNIPPET = `# Anthropic SDK — drop-in. The only change is base_url.
 import anthropic
 client = anthropic.Anthropic(
