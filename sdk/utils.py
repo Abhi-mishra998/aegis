@@ -353,6 +353,22 @@ TOTAL_COST_USD_TOTAL = Counter(
     "Running total cost in USD across all tenants since service start.",
 )
 
+# 2026-06-24 — DLQ replay worker outcome counter. Labelled by `outcome`:
+#   replayed             — event xadded back onto the live stream for retry
+#   skipped              — error class indicates a non-recoverable failure
+#                          (FK violation, tenant deleted); moved to
+#                          permanently_failed to keep the DLQ short
+#   permanently_failed   — retry_count >= MAX_RETRIES OR skipped error class
+# The dashboard reads a windowed Redis ZSET for the 24h success-rate tile;
+# this Prometheus counter is the lifetime cumulative for Grafana / alerting.
+AUDIT_DLQ_REPLAY_TOTAL = Counter(
+    "acp_audit_dlq_replay_total",
+    "Audit DLQ replay attempts by outcome (lifetime, cumulative).",
+    ["outcome"],
+)
+for _replay_outcome in ("replayed", "skipped", "permanently_failed"):
+    AUDIT_DLQ_REPLAY_TOTAL.labels(outcome=_replay_outcome).inc(0)
+
 
 _LOGGING_INITIALIZED = False
 

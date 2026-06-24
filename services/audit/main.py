@@ -33,8 +33,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sdk.common.db import engine, get_db, get_session_factory, get_tenant_id
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
-from sdk.utils import setup_app
+from sdk.utils import SLO_AUDIT_DURABILITY_TOTAL, setup_app
 from services.audit.database import SessionLocal, settings
+from services.audit.dlq_replay import run_dlq_replay_loop
 from services.audit.outbox_worker import run_outbox_worker
 from services.audit.router import pending_router, router
 from services.audit.schemas import AuditLogCreate
@@ -254,7 +255,10 @@ async def _stream_consumer_loop(redis: Redis) -> None:
 
                         except Exception as exc:
                             logger.error("audit_worker_event_failed", event_id=event_id, error=str(exc))
-                            # Dead-letter queue for terminal failures; still ACK to advance
+                            # Dead-letter queue for terminal failures; still ACK to advance.
+                            # 2026-06-24 — count DLQ landings via the durability SLO counter
+                            # so /system/health can derive an audit_success_rate from the
+                            # `persisted` vs `dlq` stages without scraping the consumer logs.
                             await redis.xadd(_DLQ_KEY, {
                                 "identity": str(event_id),
                                 "payload": json.dumps({
@@ -265,6 +269,7 @@ async def _stream_consumer_loop(redis: Redis) -> None:
                                 "error": str(exc),
                                 "ts": str(time.time()),
                             })
+                            SLO_AUDIT_DURABILITY_TOTAL.labels(stage="dlq").inc()
                             to_ack.append(event_id)
 
                     # Batch-acknowledge all processed messages in a single XACK call
@@ -379,6 +384,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # 2. Start consumer background task
     consumer_task = asyncio.create_task(_stream_consumer_loop(redis))
 
+    # 2026-06-24 — Phase 3 replay worker. Drains acp:audit_stream:dlq every 60s,
+    # replays transient failures onto the live stream, and promotes
+    # non-recoverable entries to acp:audit_stream:permanently_failed so
+    # operators see them on /system/health instead of an ever-growing DLQ.
+    dlq_replay_task = asyncio.create_task(run_dlq_replay_loop(redis))
+
     # H-10 (2026-05-13): periodic backpressure check (was previously dead code)
     async def _bp_loop() -> None:
         while True:
@@ -473,6 +484,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     bp_task.cancel()
     event_trigger_task.cancel()
     outbox_task.cancel()
+    dlq_replay_task.cancel()
     transparency_task.cancel()
     delivery_task.cancel()
     if eval_task is not None:
@@ -494,6 +506,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.warning("audit_outbox_shutdown_timeout")
     except asyncio.CancelledError:
         pass
+
+    # DLQ replay worker is a sleep loop — exit immediately.
+    with suppress(TimeoutError, asyncio.CancelledError):
+        await asyncio.wait_for(dlq_replay_task, timeout=5.0)
 
     # Transparency scheduler is just a sleep loop — should exit immediately.
     with suppress(TimeoutError, asyncio.CancelledError):

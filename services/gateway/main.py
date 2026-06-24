@@ -1120,6 +1120,9 @@ async def system_health(request: Request) -> dict[str, Any]:
     # SystemHealth/Billing pages can warn on DLQ growth or audit-stream pressure.
     # 2026-05-14: also expose outbox depths so the Transactional Outbox backlog
     # is visible to operators (alertable signal — see production_hardening_spec).
+    # 2026-06-24 (Phase 3): also expose audit DLQ replay success-rate +
+    # permanently_failed depth so the new "Audit Pipeline Health" UI tile has
+    # the numbers it needs without scraping Prometheus separately.
     queues: dict[str, Any] = {
         "audit_stream_length":  0,
         "audit_dlq_length":     0,
@@ -1127,6 +1130,10 @@ async def system_health(request: Request) -> dict[str, Any]:
         "billing_dlq_length":   0,
         "outbox_pending":       0,
         "outbox_failed":        0,
+        # Phase 3 — audit pipeline health (lifetime totals from Prometheus).
+        "audit_permanently_failed_length":      0,
+        "audit_success_rate_pct":               100.0,
+        "audit_dlq_replay_success_rate_pct":    100.0,
     }
     try:
         queues["audit_stream_length"] = int(await redis.xlen("acp:audit_stream"))
@@ -1137,6 +1144,12 @@ async def system_health(request: Request) -> dict[str, Any]:
     except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
         logger.warning("health_redis_audit_dlq_failed", error=str(exc))
     try:
+        queues["audit_permanently_failed_length"] = int(
+            await redis.xlen("acp:audit_stream:permanently_failed"),
+        )
+    except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
+        logger.warning("health_redis_audit_perm_failed_failed", error=str(exc))
+    try:
         queues["billing_retry_queue"] = int(await redis.llen("acp:billing_retry_queue"))  # type: ignore[not-async]
     except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
         logger.warning("health_redis_billing_retry_failed", error=str(exc))
@@ -1144,6 +1157,47 @@ async def system_health(request: Request) -> dict[str, Any]:
         queues["billing_dlq_length"] = int(await redis.llen("acp:billing_dlq"))  # type: ignore[not-async]
     except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
         logger.warning("health_redis_billing_dlq_failed", error=str(exc))
+    # Compute the two success-rate percentages from the Prometheus counters
+    # the audit consumer + DLQ replay worker maintain. Lifetime totals are
+    # the cleanest signal — the UI labels the tile so operators see it's
+    # "since-deploy" rather than implying a rolling window the metric
+    # doesn't actually represent.
+    try:
+        from prometheus_client import REGISTRY as _PROM_REG  # type: ignore[import-not-found]
+        samples = {}
+        for metric in _PROM_REG.collect():
+            if metric.name in ("acp_slo_audit_durability", "acp_audit_dlq_replay"):
+                for s in metric.samples:
+                    if s.name in (
+                        "acp_slo_audit_durability_total",
+                        "acp_audit_dlq_replay_total",
+                    ):
+                        key = (s.name, tuple(sorted(s.labels.items())))
+                        samples[key] = s.value
+        persisted = samples.get(
+            ("acp_slo_audit_durability_total", (("stage", "persisted"),)), 0.0,
+        )
+        dlq_landings = samples.get(
+            ("acp_slo_audit_durability_total", (("stage", "dlq"),)), 0.0,
+        )
+        replayed = samples.get(
+            ("acp_audit_dlq_replay_total", (("outcome", "replayed"),)), 0.0,
+        )
+        permanently_failed = samples.get(
+            ("acp_audit_dlq_replay_total", (("outcome", "permanently_failed"),)), 0.0,
+        )
+        write_total = persisted + dlq_landings
+        if write_total > 0:
+            queues["audit_success_rate_pct"] = round(
+                (persisted / write_total) * 100, 2,
+            )
+        replay_total = replayed + permanently_failed
+        if replay_total > 0:
+            queues["audit_dlq_replay_success_rate_pct"] = round(
+                (replayed / replay_total) * 100, 2,
+            )
+    except Exception as exc:
+        logger.warning("health_audit_success_rate_failed", error=str(exc))
 
     # Outbox depths via the audit service (Postgres-backed counters).
     try:
