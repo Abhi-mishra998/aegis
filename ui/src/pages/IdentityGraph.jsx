@@ -96,15 +96,21 @@ export default function IdentityGraph() {
   // can see traffic landing while watching the live graph.
   const [pinged, setPinged] = useState({})
   const pingTimersRef = useRef(new Map())
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchAll = useCallback(async () => {
-    setLoading(true); setError(null)
+    if (!hasLoadedRef.current) setLoading(true)
+    setError(null)
     try {
       const res = await graphService.listAgents(500)
       setNodes(res?.data?.nodes || [])
       setEdges(res?.data?.edges || [])
     } catch (e) { setError(e.message) }
-    finally { setLoading(false) }
+    finally {
+      setLoading(false)
+      hasLoadedRef.current = true
+    }
   }, [])
 
   useEffect(() => {

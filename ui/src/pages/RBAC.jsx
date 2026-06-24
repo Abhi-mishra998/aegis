@@ -263,9 +263,11 @@ export default function RBAC() {
   const [error,   setError]   = useState('')
   const [search,  setSearch]  = useState('')
   const mountedRef = useRef(true)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const load = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const res  = await registryService.listAgents()
@@ -275,6 +277,7 @@ export default function RBAC() {
       if (mountedRef.current) setError(err.message || 'Failed to load agents.')
     } finally {
       if (mountedRef.current) setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [])
 

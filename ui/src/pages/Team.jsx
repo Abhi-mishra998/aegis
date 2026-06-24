@@ -557,9 +557,12 @@ export default function Team() {
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
   const [showAdd,   setShowAdd]   = useState(false)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const load = useCallback(async () => {
-    setLoading(true); setError('')
+    if (!hasLoadedRef.current) setLoading(true)
+    setError('')
     try {
       const [empResp, ovResp] = await Promise.allSettled([
         teamService.listEmployees(),
@@ -576,6 +579,7 @@ export default function Team() {
       }
     } finally {
       setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [])
 

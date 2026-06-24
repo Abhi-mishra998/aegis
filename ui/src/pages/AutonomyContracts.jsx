@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Shield, AlertTriangle, UserCheck, Plus, Trash2, Lock, ArrowRight, PlayCircle } from 'lucide-react'
 import { autonomyService } from '../services/api'
@@ -45,9 +45,11 @@ export default function AutonomyContracts() {
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState('')
   const [disableTarget, setDisableTarget] = useState(null)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchAll = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const [c, v, o] = await Promise.all([
@@ -63,7 +65,10 @@ export default function AutonomyContracts() {
       // security-critical surface; operators must know if it's unreachable.
       setError(e?.message || 'Autonomy service unreachable')
     }
-    finally { setLoading(false) }
+    finally {
+      setLoading(false)
+      hasLoadedRef.current = true
+    }
   }, [])
 
   useEffect(() => {
