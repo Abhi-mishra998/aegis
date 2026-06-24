@@ -532,8 +532,12 @@ function IncidentsPage() {
     incidentService.getTransitions().then((res) => {
       const t = res?.data?.transitions ?? res?.transitions;
       if (t && typeof t === 'object') setValidTransitions(t);
-    }).catch(() => {});
-  }, [fetchAll]);
+    }).catch((err) => {
+      // Non-fatal: falls back to VALID_TRANSITIONS_FALLBACK.
+      console.warn('[Incidents] transitions fetch failed', err);
+      addToast('Could not load status workflow — using bundled transitions list', 'info');
+    });
+  }, [fetchAll, addToast]);
 
   // Real-time updates: SSE events + 30-second polling fallback
   useEffect(() => {

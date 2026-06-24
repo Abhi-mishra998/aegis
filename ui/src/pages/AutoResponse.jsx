@@ -842,14 +842,18 @@ function PlaybookCard({ pb, onTrigger, onViewRuns }) {
 }
 
 function RunsModal({ playbookId, onClose }) {
+  const { addToast } = useContext(AuthContext)
   const [runs, setRuns] = useState([])
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     playbookService.getRuns(playbookId)
       .then(r => setRuns(r?.data || r || []))
-      .catch(() => {})
+      .catch(err => {
+        console.warn('[AutoResponse] playbook run history fetch failed', err)
+        addToast('Could not load playbook run history', 'error')
+      })
       .finally(() => setLoading(false))
-  }, [playbookId])
+  }, [playbookId, addToast])
 
   return (
     <Modal title="Playbook Runs" onClose={onClose}>
