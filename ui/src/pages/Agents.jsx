@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { registryService } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
@@ -80,8 +80,11 @@ export default function Agents() {
   /* Reactivation confirmation */
   const [reactivateTarget, setReactivateTarget] = useState(null); // { id, name }
 
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false);
+
   const fetchAgents = async () => {
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [res, sumRes] = await Promise.allSettled([
         registryService.listAgents(),
@@ -100,6 +103,7 @@ export default function Agents() {
       }
     } finally {
       setLoading(false);
+      hasLoadedRef.current = true;
     }
   };
 

@@ -6,7 +6,7 @@
 //
 // Data: GET /audit/fleet/agent-health, GET /audit/fleet/recent-events.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, HeartPulse } from 'lucide-react'
 import { fleetService } from '../services/api'
@@ -179,9 +179,11 @@ export default function AgentHealth() {
   const [events, setEvents] = useState([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchAll = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const [a, e] = await Promise.all([
@@ -194,6 +196,7 @@ export default function AgentHealth() {
       setError(err?.message || 'Failed to load')
     } finally {
       setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [rankBy, windowMinutes, kind])
 

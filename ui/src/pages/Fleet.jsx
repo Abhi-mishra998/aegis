@@ -8,7 +8,7 @@
 //   GET /audit/fleet/kpis              — KPI card payload
 //   GET /audit/fleet/timeseries        — per-metric time-series
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, ShieldOff, AlertTriangle, Users, Wrench, Clock, Plus, Bot } from 'lucide-react'
 import {
@@ -66,9 +66,11 @@ export default function Fleet() {
   const [series, setSeries] = useState([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchAll = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const [k, s] = await Promise.all([
@@ -81,6 +83,7 @@ export default function Fleet() {
       setError(e?.message || 'Failed to load fleet data')
     } finally {
       setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [minutes, metric])
 

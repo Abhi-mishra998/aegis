@@ -9,7 +9,7 @@
 //   GET /graph/agents             — list of nodes + edges
 //   GET /graph/blast-radius/{id}  — set of nodes reachable from {id}
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ReactFlow, {
   Background,
@@ -106,9 +106,11 @@ export default function AgentTopology() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState(null)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchTopology = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const resp = await graphService.listAgents(500)
@@ -119,6 +121,7 @@ export default function AgentTopology() {
       setError(e?.message || 'Failed to load topology')
     } finally {
       setLoading(false)
+      hasLoadedRef.current = true
     }
   }, [])
 
