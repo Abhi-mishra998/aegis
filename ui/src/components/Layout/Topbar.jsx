@@ -144,6 +144,7 @@ export default function Topbar({ onMenuClick, onCommandPalette }) {
             onClick={() => setDropdownOpen((v) => !v)}
             aria-haspopup="menu"
             aria-expanded={dropdownOpen}
+            aria-label={`User menu for ${user ?? 'current user'}`}
             className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.05] transition-colors"
           >
             <div

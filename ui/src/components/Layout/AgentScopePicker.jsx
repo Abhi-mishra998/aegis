@@ -18,6 +18,14 @@ import { useAgents } from '../../hooks/useAgents'
  * placeholder.
  */
 
+// Shared dark-theme select+option styling moved from inline `style={}` to
+// Tailwind arbitrary-value utilities so axe/Lighthouse no longer flags the
+// inline color literals. WebkitTextFillColor and colorScheme are expressed
+// as Tailwind arbitrary-property classes ([-webkit-text-fill-color:…],
+// [color-scheme:dark]) which compile to the same CSS at build time.
+const SELECT_THEME_CLASS = 'text-[#d4d4d4] [-webkit-text-fill-color:#d4d4d4] [color-scheme:dark]'
+const OPTION_THEME_CLASS = 'bg-[#111] text-white'
+
 const VARIANT = {
   compact: {
     placeholderClass: 'text-[10px] text-neutral-600 font-mono truncate',
@@ -27,7 +35,8 @@ const VARIANT = {
       + 'border border-[var(--border-subtle)] '
       + 'rounded-md px-1.5 py-1 '
       + 'focus:outline-none focus:border-white/30 '
-      + 'cursor-pointer truncate'
+      + 'cursor-pointer truncate '
+      + SELECT_THEME_CLASS
     ),
     formatOption: (a) => a.name,
     loadingText: 'Loading…',
@@ -41,17 +50,13 @@ const VARIANT = {
       + 'rounded-lg px-2 py-1 '
       + 'focus:outline-none focus:border-white/30 '
       + 'transition-colors cursor-pointer '
-      + 'max-w-[200px] truncate'
+      + 'max-w-[200px] truncate '
+      + SELECT_THEME_CLASS
     ),
     formatOption: (a) => `${a.name} · ${(a.status || 'unknown').toLowerCase()}`,
     loadingText: 'Loading agents…',
   },
 }
-
-// Shared inline styles. Both call sites set the same dark-theme color +
-// colorScheme so native <select> + <option> render legibly.
-const SELECT_STYLE = { color: '#d4d4d4', WebkitTextFillColor: '#d4d4d4', colorScheme: 'dark' }
-const OPTION_STYLE = { backgroundColor: '#111', color: '#fff' }
 
 export default function AgentScopePicker({
   variant = 'compact',
@@ -75,10 +80,9 @@ export default function AgentScopePicker({
       onChange={(e) => setSelectedAgentId(e.target.value)}
       aria-label="Select active agent"
       className={v.selectClass}
-      style={SELECT_STYLE}
     >
       {agents.map((a) => (
-        <option key={a.id} value={a.id} style={OPTION_STYLE}>
+        <option key={a.id} value={a.id} className={OPTION_THEME_CLASS}>
           {label(a)}
         </option>
       ))}
