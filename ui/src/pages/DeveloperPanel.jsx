@@ -352,6 +352,10 @@ async def main():
 
 asyncio.run(main())`
 
+  // kept — rendered in code example block (the two `console.log` lines
+  // inside SDK_JS below are the JS-equivalent of the `print()` calls in
+  // SDK_PYTHON above; they are part of the customer-facing copy-paste
+  // sample, not runtime UI logging).
   const SDK_JS = `// Real working sample against ${GW}
 // Node 18+ has fetch built in.
 const GATEWAY  = '${GW}';
