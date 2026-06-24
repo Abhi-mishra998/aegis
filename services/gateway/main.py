@@ -961,7 +961,14 @@ async def public_status(request: Request) -> dict[str, Any]:
             "unreachable": sum(1 for s in services_map.values() if s.get("status") == "unreachable"),
         },
         "queues": full.get("queues") or {},
-        "version": app.version,
+        # Deployment provenance — populated from env vars set by safe_deploy.sh
+        # at container start. An evaluator hitting /status during a demo can
+        # now answer "what version is this?" without needing internal access.
+        # Fields are present even if env is unset (value="unknown") so callers
+        # never have to handle missing keys.
+        "version": app.version,                                     # release tag (pyproject)
+        "git_sha": os.environ.get("DEPLOY_SHA") or "unknown",       # short sha of the build
+        "build_time": os.environ.get("BUILD_TIME") or "unknown",    # ISO-8601 UTC of bundle build
         "as_of": datetime.now(UTC).isoformat(),
         "incidents": [],          # populated by an incident-feed integration; empty by default
         "maintenance": [],        # populated from a scheduled-maintenance source
@@ -969,6 +976,7 @@ async def public_status(request: Request) -> dict[str, Any]:
             "sla": "/docs/sla.md",
             "security": "/docs/security.md",
             "runbook": "/docs/dr_runbook.md",
+            "architecture": "/docs/architecture-failure-modes.md",
         },
     }
 

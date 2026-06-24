@@ -62,6 +62,11 @@ services:
       # DATABASE_URL is audit-scoped, so we pass a dedicated identity-user
       # DSN here. These are pgbouncer routing creds, not the RDS master.
       - SEED_DEMO_DB_URL=postgresql+asyncpg://identity_user:identity_prod_pwd@pgbouncer:6432/acp_identity
+      # Deployment provenance — surfaced via GET /status so an evaluator
+      # can answer "what version is this?" during a demo. Both default
+      # to "unknown" if unset (safe_deploy.sh sets them per release).
+      - DEPLOY_SHA=${DEPLOY_SHA:-unknown}
+      - BUILD_TIME=${BUILD_TIME:-unknown}
     volumes:
       # Bind-mount the seed script from the host bundle so it's reachable
       # at /app/scripts/ops/... without needing a Dockerfile rebuild on
