@@ -372,7 +372,7 @@ export default function Forensics() {
         <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-600" aria-hidden="true" />
-            <input
+            <input name="input"
               type="text"
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}

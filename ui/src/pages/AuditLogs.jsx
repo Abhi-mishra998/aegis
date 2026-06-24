@@ -242,21 +242,21 @@ function NotesPanel({ auditId }) {
 
           <form onSubmit={handleAdd} className="space-y-2 border-t border-white/[0.06] pt-3">
             <div className="flex gap-2">
-              <select
+              <select name="select"
                 value={noteType}
                 onChange={e => setNoteType(e.target.value)}
                 className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-neutral-300 focus:outline-none focus:border-violet-500/50"
               >
                 {NOTE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
               </select>
-              <input
+              <input name="input"
                 value={createdBy}
                 onChange={e => setCreatedBy(e.target.value)}
                 placeholder="Your name (optional)"
                 className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-neutral-300 placeholder-neutral-600 focus:outline-none focus:border-violet-500/50"
               />
             </div>
-            <textarea
+            <textarea name="text"
               value={body}
               onChange={e => setBody(e.target.value)}
               placeholder="Write your analysis note…"

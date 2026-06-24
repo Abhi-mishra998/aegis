@@ -308,7 +308,7 @@ export default function Agents() {
               className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-600 group-focus-within:text-neutral-400 transition-colors"
               aria-hidden="true"
             />
-            <input
+            <input name="search_agents"
               type="search"
               placeholder="Search agents…"
               value={search}

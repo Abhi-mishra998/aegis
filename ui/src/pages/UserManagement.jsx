@@ -82,7 +82,7 @@ function InviteModal({ onClose, onInvited }) {
 
         <div>
           <label className="block text-xs text-neutral-400 mb-1">Email address</label>
-          <input
+          <input name="input"
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
@@ -95,7 +95,7 @@ function InviteModal({ onClose, onInvited }) {
         <div>
           <label className="block text-xs text-neutral-400 mb-1">Role</label>
           <div className="relative">
-            <select
+            <select name="select"
               value={role}
               onChange={e => setRole(e.target.value)}
               className="w-full appearance-none bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
@@ -186,7 +186,7 @@ function UserRow({ user, onUpdate, onDeactivate }) {
       <div className="shrink-0">
         {editRole ? (
           <div className="flex items-center gap-1">
-            <select
+            <select name="select"
               autoFocus
               className="bg-white/[0.04] border border-white/20 rounded-lg px-2 py-1 text-xs text-white focus:outline-none"
               defaultValue={user.role}

@@ -203,7 +203,7 @@ function CreateModal({ open, onClose, onCreate }) {
         )}
         <div>
           <label className="block text-xs text-neutral-400 mb-1">Report name</label>
-          <input
+          <input name="name"
             type="text"
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -243,7 +243,7 @@ function CreateModal({ open, onClose, onCreate }) {
         </div>
         <div>
           <label className="block text-xs text-neutral-400 mb-1">Recipients (comma-separated)</label>
-          <input
+          <input name="recipients"
             type="text"
             value={form.recipients}
             onChange={e => setForm(f => ({ ...f, recipients: e.target.value }))}

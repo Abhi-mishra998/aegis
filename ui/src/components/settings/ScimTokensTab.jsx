@@ -179,7 +179,7 @@ export default function ScimTokensTab() {
           <label className="block text-[11px] uppercase tracking-wide text-neutral-500 mb-1">
             Label (helps identify which Okta app this belongs to)
           </label>
-          <input
+          <input name="input"
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}

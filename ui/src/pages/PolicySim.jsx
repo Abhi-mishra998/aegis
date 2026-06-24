@@ -29,21 +29,21 @@ function newRule() { return { conditions: [newCondition()], action: 'DENY', desc
 function ConditionRow({ cond, onChange, onRemove }) {
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <select
+      <select name="field"
         value={cond.field}
         onChange={e => onChange({ ...cond, field: e.target.value })}
         className="bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-xs text-white focus:outline-none"
       >
         {FIELDS.map(f => <option key={f} value={f}>{f}</option>)}
       </select>
-      <select
+      <select name="operator"
         value={cond.operator}
         onChange={e => onChange({ ...cond, operator: e.target.value })}
         className="bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-xs text-white focus:outline-none w-16"
       >
         {OPERATORS.map(op => <option key={op} value={op}>{OP_LABEL[op]}</option>)}
       </select>
-      <input
+      <input name="value"
         value={cond.value}
         onChange={e => onChange({ ...cond, value: e.target.value })}
         placeholder="value"
@@ -68,14 +68,14 @@ function RuleCard({ rule, idx, onChange, onRemove }) {
     <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border-subtle)]">
         <span className="text-[10px] font-bold text-neutral-600 uppercase">Rule {idx + 1}</span>
-        <select
+        <select name="action"
           value={rule.action}
           onChange={e => onChange({ ...rule, action: e.target.value })}
           className={`text-xs font-bold px-2 py-0.5 rounded-full border bg-transparent focus:outline-none ${ACTION_COLORS[rule.action] || ''}`}
         >
           {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
         </select>
-        <input
+        <input name="description"
           value={rule.description}
           onChange={e => onChange({ ...rule, description: e.target.value })}
           placeholder="Rule description (optional)"
@@ -225,7 +225,7 @@ export default function PolicySim() {
           <div>
             <label className="block text-xs text-neutral-400 mb-1">Agent</label>
             {agents && agents.length > 0 ? (
-              <select
+              <select name="select"
                 value={agentId}
                 onChange={e => setAgentId(e.target.value)}
                 className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
@@ -236,7 +236,7 @@ export default function PolicySim() {
                 ))}
               </select>
             ) : (
-              <input
+              <input name="input"
                 value={agentId}
                 onChange={e => setAgentId(e.target.value)}
                 placeholder="UUID of agent to simulate against"

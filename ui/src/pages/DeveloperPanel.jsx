@@ -446,7 +446,7 @@ const AGENT_ID = '${DEMO_AGENT}'; // demo-agent
 
             {showCreate && (
               <div className="flex items-center gap-3 p-4 rounded-xl bg-white/[0.02] border border-white/5">
-                <input
+                <input name="input"
                   type="text"
                   value={newKeyName}
                   onChange={e => setNewKeyName(e.target.value)}

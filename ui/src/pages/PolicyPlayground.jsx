@@ -196,14 +196,14 @@ export default function PolicyPlayground() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
               <label className="flex flex-col">
                 <span className="text-xs text-neutral-400">Policy name</span>
-                <input
+                <input name="input"
                   value={policyName} onChange={(e) => setPolicyName(e.target.value)}
                   className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-sm"
                 />
               </label>
               <label className="flex flex-col">
                 <span className="text-xs text-neutral-400">Replay window (h)</span>
-                <input
+                <input name="input"
                   type="number" min="1" max="720" value={windowHours}
                   onChange={(e) => setWindowHours(Number(e.target.value) || 24)}
                   className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-sm tabular-nums"
@@ -211,7 +211,7 @@ export default function PolicyPlayground() {
               </label>
               <label className="flex flex-col">
                 <span className="text-xs text-neutral-400">Scope to agent (optional)</span>
-                <input
+                <input name="input"
                   value={agentId} onChange={(e) => setAgentId(e.target.value)}
                   placeholder="agent_id (uuid)"
                   className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-sm font-mono"
@@ -223,7 +223,7 @@ export default function PolicyPlayground() {
               <span className="text-xs text-neutral-400 inline-flex items-center gap-1">
                 <Sigma size={12} /> rules_json (PolicyRule[] — shared with shadow eval)
               </span>
-              <textarea
+              <textarea name="text"
                 value={rulesText}
                 onChange={(e) => setRulesText(e.target.value)}
                 className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-xs font-mono"

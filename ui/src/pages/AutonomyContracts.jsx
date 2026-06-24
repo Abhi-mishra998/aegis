@@ -23,7 +23,7 @@ const defaultContract = {
 
 function CSV({ value, onChange, placeholder }) {
   return (
-    <input
+    <input name="input"
       type="text"
       value={(value || []).join(', ')}
       onChange={(e) => onChange(
@@ -319,7 +319,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Agent ID (uuid)
               </label>
-              <input
+              <input name="agent_id"
                 value={editing.agent_id}
                 onChange={(e) => setEditing({ ...editing, agent_id: e.target.value })}
                 placeholder="00000000-0000-0000-0000-000000000000"
@@ -330,7 +330,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Name
               </label>
-              <input
+              <input name="name"
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 placeholder="prod_safety_contract"
@@ -371,7 +371,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max runtime (s)
               </label>
-              <input
+              <input name="max_runtime_seconds"
                 type="number"
                 inputMode="numeric"
                 value={editing.max_runtime_seconds || ''}
@@ -383,7 +383,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max tool calls
               </label>
-              <input
+              <input name="max_tool_calls"
                 type="number"
                 inputMode="numeric"
                 value={editing.max_tool_calls || ''}
@@ -395,7 +395,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max cost (USD)
               </label>
-              <input
+              <input name="max_cost_usd"
                 type="number"
                 inputMode="decimal"
                 step="0.01"
@@ -408,7 +408,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max autonomy level <span className="text-neutral-600 normal-case font-medium tracking-normal">(1–5)</span>
               </label>
-              <input
+              <input name="max_autonomy_level"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -422,7 +422,7 @@ export default function AutonomyContracts() {
               <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Notes
               </label>
-              <textarea
+              <textarea name="notes"
                 rows={3}
                 value={editing.notes || ''}
                 onChange={(e) => setEditing({ ...editing, notes: e.target.value })}

@@ -150,7 +150,7 @@ export default function AgentCost() {
           </p>
         </div>
         <form onSubmit={onSubmit} className="flex gap-2">
-          <input
+          <input name="agent_id"
             type="text"
             placeholder="agent_id (optional)"
             value={agentId}

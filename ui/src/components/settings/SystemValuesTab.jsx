@@ -173,7 +173,7 @@ export default function SystemValuesTab() {
             key={`${row.kind}-${idx}`}
             className="flex items-center gap-3 bg-white/[0.02] border border-white/[0.05] rounded-md px-3 py-2"
           >
-            <input
+            <input name="kind"
               type="text"
               value={row.kind}
               onChange={(e) => setRowField(idx, 'kind', e.target.value)}
@@ -184,7 +184,7 @@ export default function SystemValuesTab() {
             <span className="text-[10px] text-neutral-500 flex-1 truncate">{row.blurb}</span>
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] text-neutral-500">$</span>
-              <input
+              <input name="value"
                 type="number"
                 value={row.value}
                 onChange={(e) => setRowField(idx, 'value', e.target.value)}

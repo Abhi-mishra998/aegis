@@ -195,12 +195,12 @@ export default function ServiceNowIntegrationTab() {
         </div>
 
         <label className="flex items-center gap-2 text-xs text-neutral-300">
-          <input type="checkbox" checked={enabled}
+          <input name="input" type="checkbox" checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)} />
           Integration enabled
         </label>
         <label className="flex items-center gap-2 text-xs text-neutral-300">
-          <input type="checkbox" checked={autoCreate}
+          <input name="input" type="checkbox" checked={autoCreate}
             onChange={(e) => setAutoCreate(e.target.checked)} />
           Auto-create a ServiceNow incident for every new Aegis incident
         </label>
@@ -245,7 +245,7 @@ function Field({ label, hint, value, onChange, placeholder, mono, password }) {
       <label className="block text-[11px] uppercase tracking-wide text-neutral-500 mb-1">
         {label}
       </label>
-      <input
+      <input name="input"
         type={password ? 'password' : 'text'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -266,7 +266,7 @@ function Selectish({ label, value, onChange, children }) {
       <label className="block text-[11px] uppercase tracking-wide text-neutral-500 mb-1">
         {label}
       </label>
-      <select
+      <select name="select"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-3 py-2 text-sm rounded-lg bg-white/[0.04] border border-white/[0.08]

@@ -382,7 +382,7 @@ export default function IdentityGraph() {
               <span className="text-sm font-semibold text-white">Compromise Simulation</span>
             </div>
             <div className="space-y-2">
-              <select
+              <select name="select"
                 value={scenario}
                 onChange={(e) => setScenario(e.target.value)}
                 className="w-full bg-black border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
@@ -396,7 +396,7 @@ export default function IdentityGraph() {
               </select>
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-neutral-500">depth</span>
-                <input
+                <input name="input"
                   type="number" min={1} max={6} value={depth}
                   onChange={(e) => setDepth(Number(e.target.value) || 3)}
                   className="w-16 bg-black border border-white/10 rounded px-2 py-1 text-white font-mono"

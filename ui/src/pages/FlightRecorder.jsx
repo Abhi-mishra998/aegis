@@ -195,14 +195,14 @@ export default function FlightRecorder() {
             ))}
           </div>
           <div className="flex flex-col gap-1.5 mb-3">
-            <input
+            <input name="tool"
               type="text"
               placeholder="Filter by tool…"
               value={filter.tool}
               onChange={(e) => setFilter((f) => ({ ...f, tool: e.target.value }))}
               className="w-full text-[10px] font-mono bg-white/[0.04] border border-white/10 rounded px-2 py-1.5 text-neutral-300 placeholder-neutral-700 focus:outline-none focus:border-white/20"
             />
-            <select
+            <select name="status"
               value={filter.status}
               onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value }))}
               className="w-full text-[10px] font-mono bg-white/[0.04] border border-white/10 rounded px-2 py-1.5 text-neutral-300 focus:outline-none focus:border-white/20"
@@ -282,7 +282,7 @@ export default function FlightRecorder() {
                 </div>
               </div>
 
-              <input
+              <input name="input"
                 type="range" min={0} max={Math.max(0, replay.steps.length - 1)} value={stepIdx}
                 onChange={(e) => setStepIdx(Number(e.target.value))}
                 className="w-full"

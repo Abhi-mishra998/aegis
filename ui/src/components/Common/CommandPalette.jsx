@@ -125,7 +125,7 @@ export default function CommandPalette({ isOpen, onClose }) {
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[var(--border-subtle)]">
           <Search size={16} className="text-neutral-500 shrink-0" aria-hidden="true" />
-          <input
+          <input name="input"
             ref={inputRef}
             type="text"
             value={query}

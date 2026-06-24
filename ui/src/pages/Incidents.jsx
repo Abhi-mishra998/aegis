@@ -258,7 +258,7 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-neutral-500 block mb-1">Action</label>
-              <select
+              <select name="select"
                 value={actionType}
                 onChange={(e) => setActionType(e.target.value)}
                 className="input-standard input-compact w-full text-xs"
@@ -270,7 +270,7 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
             </div>
             <div>
               <label className="text-xs text-neutral-500 block mb-1">Responder</label>
-              <input
+              <input name="your_name"
                 type="text"
                 placeholder="Your name"
                 value={by}
@@ -281,7 +281,7 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
           </div>
           <div>
             <label className="text-xs text-neutral-500 block mb-1">Note (optional)</label>
-            <textarea
+            <textarea name="what_was_done"
               rows={2}
               placeholder="What was done..."
               value={note}
@@ -348,7 +348,7 @@ function SocFeed() {
           <span className="text-xs text-neutral-400">Live security event feed — deny, kill, escalation, high-risk</span>
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <select name="select"
             value={limit}
             onChange={(e) => setLimit(Number(e.target.value))}
             className="input-standard input-compact text-xs w-24"
@@ -602,7 +602,7 @@ function IncidentsPage() {
       key: '_select',
       width: '36px',
       label: (
-        <input
+        <input name="select_all_incidents_on_this_pag"
           type="checkbox"
           aria-label="Select all incidents on this page"
           checked={allOnPageSelected}
@@ -613,7 +613,7 @@ function IncidentsPage() {
         />
       ),
       render: (_v, row) => (
-        <input
+        <input name="has"
           type="checkbox"
           aria-label={`Select incident ${row.incident_number || row.id}`}
           checked={selectedIds.has(row.id)}
@@ -779,7 +779,7 @@ function IncidentsPage() {
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-3">
           <Filter size={13} className="text-neutral-500" />
-          <select
+          <select name="select"
             value={filterStatus}
             onChange={(e) => { setFilterStatus(e.target.value); setPage(0); }}
             className="input-standard input-compact text-xs w-36"
@@ -788,7 +788,7 @@ function IncidentsPage() {
               <option key={s} value={s}>{s || 'All Statuses'}</option>
             ))}
           </select>
-          <select
+          <select name="select"
             value={filterSeverity}
             onChange={(e) => { setFilterSeverity(e.target.value); setPage(0); }}
             className="input-standard input-compact text-xs w-36"

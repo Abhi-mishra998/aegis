@@ -75,7 +75,7 @@ export default function AgentScopePicker({
     return <span className={`${v.placeholderClass} italic`}>No agents</span>
   }
   return (
-    <select
+    <select name="select"
       value={selectedAgentId || ''}
       onChange={(e) => setSelectedAgentId(e.target.value)}
       aria-label="Select active agent"
