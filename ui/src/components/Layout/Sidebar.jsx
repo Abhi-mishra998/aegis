@@ -88,27 +88,44 @@ const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power
 export default function Sidebar({ isOpen, onClose }) {
   const location  = useLocation()
   const navigate  = useNavigate()
-  const { updateAuth, isAuthenticated } = useAuth()
+  const { updateAuth, isAuthenticated, addToast } = useAuth()
   const { isAdmin, canViewKillSwitch } = useRole()
   const navRef    = useRef(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [pendingApprovals, setPendingApprovals] = useState(0)
+  // De-dupe error toasts from the 30-60s pollers so a sustained backend
+  // outage doesn't flood the user with one toast per tick.
+  const lastToastRef = useRef({ unread: 0, approvals: 0 })
 
   const fetchUnread = useCallback(async () => {
     if (!isAuthenticated) return
     try {
       const res = await notificationService.getCount()
       setUnreadCount((res?.data?.unread ?? res?.unread ?? 0))
-    } catch {}
-  }, [isAuthenticated])
+    } catch (err) {
+      console.warn('[Sidebar] notification count fetch failed', err)
+      const now = Date.now()
+      if (now - lastToastRef.current.unread > 30_000) {
+        lastToastRef.current.unread = now
+        addToast('Could not refresh notifications — sidebar count may be stale', 'error')
+      }
+    }
+  }, [isAuthenticated, addToast])
 
   const fetchPendingApprovals = useCallback(async () => {
     if (!isAuthenticated) return
     try {
       const res = await approvalService.getPendingCount()
       setPendingApprovals((res?.data?.unread ?? res?.unread ?? 0))
-    } catch {}
-  }, [isAuthenticated])
+    } catch (err) {
+      console.warn('[Sidebar] pending-approvals fetch failed', err)
+      const now = Date.now()
+      if (now - lastToastRef.current.approvals > 30_000) {
+        lastToastRef.current.approvals = now
+        addToast('Could not refresh approval inbox — pending count may be stale', 'error')
+      }
+    }
+  }, [isAuthenticated, addToast])
 
   useEffect(() => {
     fetchUnread()
