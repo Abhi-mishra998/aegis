@@ -12,7 +12,7 @@ Usage:
 
     client = AegisBedrockAgentRuntime(
         aegis_key="acp_…",
-        aegis_url="https://ha.aegisagent.in",
+        aegis_url="https://aegisagent.in",
         tenant_id="…",
         agent_id="…",
         region_name="us-east-1",

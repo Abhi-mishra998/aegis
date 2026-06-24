@@ -273,7 +273,7 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
                 Copy this key now — it cannot be shown again. Hand it to{' '}
                 <code className="text-white">{minted.subject_email || minted.email}</code>{' '}
                 and ask them to replace their <code>ANTHROPIC_API_KEY</code> + point the
-                SDK at <code>https://ha.aegisagent.in</code>.
+                SDK at <code>https://aegisagent.in</code>.
               </p>
             </div>
 
@@ -787,7 +787,7 @@ export default function Team() {
       <p className="text-[10px] text-neutral-700 leading-relaxed">
         Each employee replaces their <code className="text-neutral-500">ANTHROPIC_API_KEY</code> with
         the minted <code className="text-neutral-500">acp_emp_…</code> virtual key and points the
-        Anthropic SDK at <code className="text-neutral-500">https://ha.aegisagent.in</code> via the
+        Anthropic SDK at <code className="text-neutral-500">https://aegisagent.in</code> via the
         <code className="text-neutral-500"> base_url</code> parameter. From the SDK's perspective
         nothing else changes — but every message lands in your audit chain, gets attributed back
         to the employee, and counts toward their daily + monthly USD cap.

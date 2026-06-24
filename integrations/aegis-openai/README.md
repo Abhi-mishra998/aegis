@@ -26,7 +26,7 @@ from aegis_openai import AegisOpenAI
 client = AegisOpenAI(
     openai_api_key="sk-...",
     aegis_key="acp_...",      # or AEGIS_API_KEY env var
-    aegis_url="https://ha.aegisagent.in",  # or AEGIS_URL env
+    aegis_url="https://aegisagent.in",  # or AEGIS_URL env
     tenant_id="00000000-0000-0000-0000-000000000001",
     agent_id="<your-agent-uuid>",
 )
@@ -68,7 +68,7 @@ After any allowed (or denied) tool call:
 
 - [aegis-anthropic](https://pypi.org/project/aegis-anthropic/) — same pattern for Anthropic tool_use
 - [aegis-langchain](https://pypi.org/project/aegis-langchain/) — same pattern for LangChain agents
-- [Aegis live demo](https://ha.aegisagent.in/live-demo) — three real scenarios across three risk profiles
+- [Aegis live demo](https://aegisagent.in/live-demo) — three real scenarios across three risk profiles
 
 ## License
 

@@ -50,7 +50,7 @@ const CODE_SNIPPET = `# Anthropic SDK — drop-in. The only change is base_url.
 import anthropic
 client = anthropic.Anthropic(
     api_key="acp_emp_…",                          # employee virtual key
-    base_url="https://ha.aegisagent.in/v1",       # Aegis proxy
+    base_url="https://aegisagent.in/v1",       # Aegis proxy
 )
 client.messages.create(
     model="claude-haiku-4-5",

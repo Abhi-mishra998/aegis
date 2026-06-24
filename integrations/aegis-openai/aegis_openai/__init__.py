@@ -352,7 +352,7 @@ class AegisOpenAIProxy:
     Constructor:
         client = AegisOpenAIProxy(
             employee_key="acp_emp_…",                       # or AEGIS_EMPLOYEE_KEY
-            gateway_url="https://ha.aegisagent.in",         # or AEGIS_URL
+            gateway_url="https://aegisagent.in",         # or AEGIS_URL
             timeout_s=60.0,
             approval_timeout_s=300.0,
             approval_poll_interval_s=3.0,
@@ -389,7 +389,7 @@ class AegisOpenAIProxy:
         base = (
             gateway_url
             or os.environ.get("AEGIS_URL")
-            or "https://ha.aegisagent.in"
+            or "https://aegisagent.in"
         ).rstrip("/")
         self._chat_url = f"{base}/v1/chat/completions"
         # /v1/approvals is skip-listed at the gateway middleware so the

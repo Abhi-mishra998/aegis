@@ -26,7 +26,7 @@ from aegis_anthropic import AegisAnthropic
 client = AegisAnthropic(
     api_key="sk-ant-...",      # Anthropic key (or ANTHROPIC_API_KEY env)
     aegis_key="acp_...",       # Aegis API key (or AEGIS_API_KEY env)
-    aegis_url="https://ha.aegisagent.in",  # or AEGIS_URL env
+    aegis_url="https://aegisagent.in",  # or AEGIS_URL env
     tenant_id="00000000-0000-0000-0000-000000000001",
     agent_id="<your-agent-uuid>",
 )
@@ -69,7 +69,7 @@ The same chain backs every SDK in the family (`aegis-anthropic`, `aegis-openai`,
 
 - [aegis-openai](https://pypi.org/project/aegis-openai/) — same pattern for OpenAI tool_calls
 - [aegis-langchain](https://pypi.org/project/aegis-langchain/) — same pattern for LangChain agents
-- [Aegis live demo](https://ha.aegisagent.in/live-demo) — three real scenarios across three risk profiles
+- [Aegis live demo](https://aegisagent.in/live-demo) — three real scenarios across three risk profiles
 
 ## License
 
