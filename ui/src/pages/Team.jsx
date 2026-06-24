@@ -25,6 +25,15 @@ import TabErrorBoundary from '../components/Common/TabErrorBoundary'
 
 /* ───────── shared helpers ──────────────────────────────────────────── */
 
+// Same idiom as services/api.js + Layout/ClerkAuthBridge.jsx, but resolved
+// to an absolute URL because we display it to operators as a copy-paste
+// SDK base_url. window.location.origin keeps the same bundle reusable on
+// dev / staging / prod — the URL we surface tracks whatever host the
+// operator is already pointed at.
+const API_BASE_URL =
+  import.meta.env?.VITE_GATEWAY_URL ||
+  (typeof window !== 'undefined' ? window.location.origin : '')
+
 function fmtUSD(n) {
   if (n == null) return '—'
   const v = Number(n) || 0
@@ -270,7 +279,7 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
                 Copy this key now — it cannot be shown again. Hand it to{' '}
                 <code className="text-white">{minted.subject_email || minted.email}</code>{' '}
                 and ask them to replace their <code>ANTHROPIC_API_KEY</code> + point the
-                SDK at <code>https://ha.aegisagent.in</code>.
+                SDK at <code>{API_BASE_URL}</code>.
               </p>
             </div>
 
@@ -720,7 +729,7 @@ export default function Team() {
       <p className="text-[10px] text-neutral-700 leading-relaxed">
         Each employee replaces their <code className="text-neutral-500">ANTHROPIC_API_KEY</code> with
         the minted <code className="text-neutral-500">acp_emp_…</code> virtual key and points the
-        Anthropic SDK at <code className="text-neutral-500">https://ha.aegisagent.in</code> via the
+        Anthropic SDK at <code className="text-neutral-500">{API_BASE_URL}</code> via the
         <code className="text-neutral-500"> base_url</code> parameter. From the SDK's perspective
         nothing else changes — but every message lands in your audit chain, gets attributed back
         to the employee, and counts toward their daily + monthly USD cap.
