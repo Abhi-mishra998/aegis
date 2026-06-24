@@ -1125,6 +1125,10 @@ async def system_health(request: Request) -> dict[str, Any]:
     # the numbers it needs without scraping Prometheus separately.
     queues: dict[str, Any] = {
         "audit_stream_length":  0,
+        # Consumer-group lag is the REAL "is the audit pipeline keeping up"
+        # signal (the stream length itself just reports the ring-buffer's
+        # MAXLEN=10K natural fill point and oscillates around the cap).
+        "audit_consumer_lag":   0,
         "audit_dlq_length":     0,
         "billing_retry_queue":  0,
         "billing_dlq_length":   0,
@@ -1144,6 +1148,21 @@ async def system_health(request: Request) -> dict[str, Any]:
         queues["audit_stream_length"] = int(await redis.xlen("acp:audit_stream"))
     except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
         logger.warning("health_redis_audit_stream_failed", error=str(exc))
+    # Consumer-group lag — count of un-ACKed entries the consumer hasn't
+    # processed yet. This is the true backlog signal. The stream-length
+    # number above includes already-ACKed entries that are still in the
+    # MAXLEN ring buffer and is NOT a lag indicator.
+    try:
+        groups = await redis.xinfo_groups("acp:audit_stream")  # type: ignore[attr-defined]
+        for g in groups:
+            name = g.get("name")
+            if isinstance(name, bytes):
+                name = name.decode()
+            if name == "acp:audit:consumers":
+                queues["audit_consumer_lag"] = int(g.get("lag", 0) or 0)
+                break
+    except (httpx.HTTPError, ConnectionError, TimeoutError, AttributeError) as exc:
+        logger.warning("health_redis_audit_consumer_lag_failed", error=str(exc))
     try:
         queues["audit_dlq_length"] = int(await redis.xlen("acp:audit_stream:dlq"))
     except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
