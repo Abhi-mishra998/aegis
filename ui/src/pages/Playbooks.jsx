@@ -76,7 +76,7 @@ function TriggerModal({ playbook, onClose, onTriggered }) {
           <label className="block text-xs text-neutral-400 mb-1.5 flex items-center gap-1.5">
             <Code size={11} /> Context JSON
           </label>
-          <textarea
+          <textarea name="text"
             value={ctx}
             onChange={e => { setCtx(e.target.value); setCtxErr('') }}
             rows={5}

@@ -134,7 +134,7 @@ function FieldRow({ field, value, onChange }) {
     return (
       <div>
         <label className="block text-xs text-neutral-400 mb-1">{field.label}</label>
-        <select
+        <select name="select"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="w-full bg-neutral-900 border border-[var(--border-subtle)] rounded-md px-2 py-1.5 text-xs text-neutral-200"
@@ -160,7 +160,7 @@ function FieldRow({ field, value, onChange }) {
   return (
     <div>
       <label className="block text-xs text-neutral-400 mb-1">{field.label}</label>
-      <input
+      <input name="input"
         type={field.type === 'url' ? 'url' : 'text'}
         placeholder={field.placeholder || ''}
         value={value}

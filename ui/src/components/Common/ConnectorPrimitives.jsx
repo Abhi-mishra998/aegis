@@ -16,7 +16,7 @@ import { CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react'
  */
 
 /* ── SecretInput ─────────────────────────────────────────────────────
- *  - text-mode (default):   single-line <input type=password> with an
+ *  - text-mode (default):   single-line <input name="input" type=password> with an
  *                           eye-toggle on the right
  *  - textarea-mode (rows≥1): multi-line textarea with a Show/Hide
  *                           toggle in the label row; masks with •••

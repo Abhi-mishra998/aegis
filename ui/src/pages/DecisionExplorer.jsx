@@ -326,7 +326,7 @@ export default function DecisionExplorer() {
           >
             <div className="relative flex-1 sm:flex-initial">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500" aria-hidden="true" />
-              <input
+              <input name="request_id"
                 type="text"
                 placeholder="request_id"
                 value={requestId}

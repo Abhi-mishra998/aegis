@@ -154,7 +154,7 @@ export default function Compliance() {
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Start date</label>
-            <input
+            <input name="input"
               type="date"
               value={startDate}
               max={endDate}
@@ -164,7 +164,7 @@ export default function Compliance() {
           </div>
           <div>
             <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">End date</label>
-            <input
+            <input name="input"
               type="date"
               value={endDate}
               min={startDate}

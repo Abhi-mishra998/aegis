@@ -144,7 +144,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-2">
             <label className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5">Rule Name</label>
-            <input
+            <input name="name"
               className="input-standard h-10 text-sm w-full"
               value={form.name}
               onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
@@ -153,7 +153,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
           </div>
           <div>
             <label className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5">Priority (0-1000)</label>
-            <input
+            <input name="priority"
               type="number" min="0" max="1000"
               className="input-standard h-10 text-sm w-full font-mono"
               value={form.priority}
@@ -180,7 +180,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
             </div>
             <div>
               <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Min violations in window</label>
-              <input type="number" min="1" max="100"
+              <input name="conditions" type="number" min="1" max="100"
                 className="input-standard h-9 text-sm w-full"
                 value={form.conditions.min_violations}
                 onChange={e => setCond('min_violations', Number(e.target.value))}
@@ -209,7 +209,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Min risk score</label>
-              <input type="number" min="0" max="1" step="0.05"
+              <input name="conditions" type="number" min="0" max="1" step="0.05"
                 className="input-standard h-9 text-sm w-full font-mono"
                 value={form.conditions.risk_score_gte}
                 onChange={e => setCond('risk_score_gte', Number(e.target.value))}
@@ -217,7 +217,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
             </div>
             <div>
               <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Agent ID (* = any)</label>
-              <input type="text"
+              <input name="conditions" type="text"
                 className="input-standard h-9 text-sm w-full font-mono"
                 value={form.conditions.agent_id}
                 onChange={e => setCond('agent_id', e.target.value)}
@@ -225,7 +225,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
             </div>
             <div>
               <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Tool filter (comma-sep)</label>
-              <input type="text"
+              <input name="conditions" type="text"
                 className="input-standard h-9 text-sm w-full font-mono"
                 placeholder="payments.write,data.export"
                 value={(form.conditions.tool_in || []).join(',')}
@@ -235,7 +235,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
           </div>
 
           <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox"
+            <input name="conditions" type="checkbox"
               checked={form.conditions.repeat_offender}
               onChange={e => setCond('repeat_offender', e.target.checked)}
               className="accent-purple-500"
@@ -254,23 +254,23 @@ function RuleFormModal({ initial, onSave, onClose }) {
           </div>
           {form.actions.map((act, i) => (
             <div key={i} className="flex items-center gap-3">
-              <select value={act.type}
+              <select name="type" value={act.type}
                 onChange={e => setAction(i, 'type', e.target.value)}
                 className="input-standard h-10 text-sm w-48">
                 {ACTION_TYPES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
               </select>
               {act.type === 'BLOCK_TOOL' && (
-                <input type="text" placeholder="tool name"
+                <input name="tool" type="text" placeholder="tool name"
                   value={act.tool || ''} onChange={e => setAction(i, 'tool', e.target.value)}
                   className="input-standard h-10 text-sm w-48 font-mono" />
               )}
               {act.type === 'THROTTLE' && (
-                <input type="text" placeholder="5/m"
+                <input name="rate" type="text" placeholder="5/m"
                   value={act.rate || ''} onChange={e => setAction(i, 'rate', e.target.value)}
                   className="input-standard h-10 text-sm w-32 font-mono" />
               )}
               {act.type === 'TRIGGER_PLAYBOOK' && (
-                <input type="text" placeholder="Playbook UUID"
+                <input name="playbook_id" type="text" placeholder="Playbook UUID"
                   value={act.playbook_id || ''} onChange={e => setAction(i, 'playbook_id', e.target.value)}
                   className="input-standard h-10 text-sm w-72 font-mono" />
               )}
@@ -297,7 +297,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
             </div>
           </div>
           <label className="flex items-center gap-2 cursor-pointer select-none mt-4">
-            <input type="checkbox" checked={form.stop_on_match}
+            <input name="stop_on_match" type="checkbox" checked={form.stop_on_match}
               onChange={e => setForm(p => ({ ...p, stop_on_match: e.target.checked }))}
               className="accent-purple-500" />
             <span className="text-xs text-neutral-400">Stop on first match</span>
@@ -308,7 +308,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-[11px] text-neutral-500 uppercase tracking-widest block mb-1.5">Cooldown (seconds)</label>
-            <input type="number" min="0"
+            <input name="cooldown_seconds" type="number" min="0"
               className="input-standard h-10 text-sm w-full font-mono"
               value={form.cooldown_seconds}
               onChange={e => setForm(p => ({ ...p, cooldown_seconds: Number(e.target.value) }))}
@@ -316,7 +316,7 @@ function RuleFormModal({ initial, onSave, onClose }) {
           </div>
           <div>
             <label className="text-[11px] text-neutral-500 uppercase tracking-widest block mb-1.5">Max triggers / hour</label>
-            <input type="number" min="1"
+            <input name="max_triggers_per_hour" type="number" min="1"
               className="input-standard h-10 text-sm w-full font-mono"
               value={form.max_triggers_per_hour}
               onChange={e => setForm(p => ({ ...p, max_triggers_per_hour: Number(e.target.value) }))}
@@ -611,12 +611,12 @@ function FeedbackModal({ rule, onClose, onDone }) {
         <p className="text-xs text-neutral-400">This trigger was a false positive. Suppress the rule temporarily and increment the FP counter.</p>
         <div>
           <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Reason</label>
-          <textarea rows={2} value={reason} onChange={e => setReason(e.target.value)}
+          <textarea name="text" rows={2} value={reason} onChange={e => setReason(e.target.value)}
             className="input-standard w-full text-xs resize-none" placeholder="Why was this a false positive?" />
         </div>
         <div>
           <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Suppress for (minutes, 0 = no suppression)</label>
-          <input type="number" min="0" max="1440" value={suppress} onChange={e => setSuppress(Number(e.target.value))}
+          <input name="input" type="number" min="0" max="1440" value={suppress} onChange={e => setSuppress(Number(e.target.value))}
             className="input-standard input-compact h-8 text-xs w-full" />
         </div>
         <div className="flex justify-end gap-2">

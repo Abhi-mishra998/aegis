@@ -162,7 +162,7 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Kind</label>
-          <select
+          <select name="select"
             value={kind}
             onChange={e => setKind(e.target.value)}
             className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
@@ -174,7 +174,7 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
           <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">
             Value {kind === 'destructive_shell' && <span className="text-amber-400">(regex)</span>}
           </label>
-          <input
+          <input name="input"
             type="text"
             value={value}
             onChange={e => setValue(e.target.value)}
@@ -185,7 +185,7 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
         </div>
         <div>
           <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Severity</label>
-          <select
+          <select name="select"
             value={severity}
             onChange={e => setSeverity(e.target.value)}
             className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
@@ -439,7 +439,7 @@ export default function ThreatIntel() {
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-            <input
+            <input name="input"
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}

@@ -109,7 +109,7 @@ export default function Fleet() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <select name="select"
             value={minutes}
             onChange={(e) => setMinutes(Number(e.target.value))}
             className="px-2 py-1 bg-neutral-900 border border-neutral-700 rounded-md text-sm"

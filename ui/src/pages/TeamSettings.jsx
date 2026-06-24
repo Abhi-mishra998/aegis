@@ -363,7 +363,7 @@ export default function TeamSettings() {
             )}
             {isAdmin && (
               <div className="flex items-center gap-2 max-w-md">
-                <input
+                <input name="engineering"
                   type="text"
                   list="ts-dept-suggest"
                   className="input-standard h-9 flex-1"

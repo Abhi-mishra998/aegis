@@ -204,7 +204,7 @@ function BudgetRequestsSection() {
             ].map(({ label, key, type, ph }) => (
               <div key={key}>
                 <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">{label}</label>
-                <input
+                <input name="input"
                   type={type}
                   value={form[key]}
                   onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
@@ -215,7 +215,7 @@ function BudgetRequestsSection() {
             ))}
             <div>
               <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Business justification</label>
-              <textarea
+              <textarea name="reason"
                 value={form.reason}
                 onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
                 placeholder="Why does this agent need a higher budget?"

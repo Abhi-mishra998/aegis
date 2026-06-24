@@ -227,7 +227,7 @@ export default function ShadowMode() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs text-neutral-400">Name</label>
-              <input
+              <input name="input"
                 value={draftName} onChange={(e) => setDraftName(e.target.value)}
                 placeholder="block-rm-rf"
                 className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-sm"
@@ -235,7 +235,7 @@ export default function ShadowMode() {
             </div>
             <div className="md:col-span-2">
               <label className="text-xs text-neutral-400">rules_json (PolicyRule[] — same shape /policy/simulate uses)</label>
-              <textarea
+              <textarea name="text"
                 value={draftRules} onChange={(e) => setDraftRules(e.target.value)}
                 className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-xs font-mono"
                 rows={8}
@@ -507,7 +507,7 @@ function OnlineEvalConfigCard({ config, onSave }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <label className="flex flex-col">
           <span className="text-neutral-400">Enabled</span>
-          <select value={enabled ? '1' : '0'} onChange={(e) => setEnabled(e.target.value === '1')}
+          <select name="select" value={enabled ? '1' : '0'} onChange={(e) => setEnabled(e.target.value === '1')}
                   className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1">
             <option value="1">on</option>
             <option value="0">off</option>
@@ -515,19 +515,19 @@ function OnlineEvalConfigCard({ config, onSave }) {
         </label>
         <label className="flex flex-col">
           <span className="text-neutral-400">Sample rate (0–1)</span>
-          <input type="number" step="0.01" min="0" max="1" value={sampleRate}
+          <input name="input" type="number" step="0.01" min="0" max="1" value={sampleRate}
                  onChange={(e) => setSampleRate(Number(e.target.value))}
                  className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1" />
         </label>
         <label className="flex flex-col">
           <span className="text-neutral-400">FP threshold (0–1)</span>
-          <input type="number" step="0.01" min="0" max="1" value={fpThreshold}
+          <input name="input" type="number" step="0.01" min="0" max="1" value={fpThreshold}
                  onChange={(e) => setFpThreshold(Number(e.target.value))}
                  className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1" />
         </label>
         <label className="flex flex-col">
           <span className="text-neutral-400">Poll interval (s)</span>
-          <input type="number" min="60" max="86400" step="60" value={poll}
+          <input name="input" type="number" min="60" max="86400" step="60" value={poll}
                  onChange={(e) => setPoll(Number(e.target.value))}
                  className="mt-1 bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1" />
         </label>

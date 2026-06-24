@@ -216,7 +216,7 @@ function AgentRow({ agent, toolOptions }) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="label-standard">Tool</label>
-                  <select
+                  <select name="tool_name"
                     value={form.tool_name}
                     onChange={(e) => setForm(f => ({ ...f, tool_name: e.target.value }))}
                     className="input-standard input-compact h-8 text-xs"
@@ -228,7 +228,7 @@ function AgentRow({ agent, toolOptions }) {
                 </div>
                 <div className="space-y-1.5">
                   <label className="label-standard">Action</label>
-                  <select
+                  <select name="action"
                     value={form.action}
                     onChange={(e) => setForm(f => ({ ...f, action: e.target.value }))}
                     className="input-standard input-compact h-8 text-xs"
@@ -340,7 +340,7 @@ export default function RBAC() {
 
       {/* Search */}
       <div className="relative">
-        <input
+        <input name="input"
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}

@@ -222,7 +222,7 @@ function RuleBlock({ rule, idx, onChange, onDelete, onMoveUp, onMoveDown, isFirs
               {ci > 0 && (
                 <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-600 w-8">AND</span>
               )}
-              <select
+              <select name="field"
                 value={cond.field}
                 onChange={(e) => updateCondition(cond.id, 'field', e.target.value)}
                 aria-label="Condition field"
@@ -232,7 +232,7 @@ function RuleBlock({ rule, idx, onChange, onDelete, onMoveUp, onMoveDown, isFirs
                   <option key={f.value} value={f.value} className="bg-[#080808]">{f.label}</option>
                 ))}
               </select>
-              <select
+              <select name="operator"
                 value={cond.operator}
                 onChange={(e) => updateCondition(cond.id, 'operator', e.target.value)}
                 aria-label="Condition operator"
@@ -242,7 +242,7 @@ function RuleBlock({ rule, idx, onChange, onDelete, onMoveUp, onMoveDown, isFirs
                   <option key={o.value} value={o.value} className="bg-[#080808]">{o.label}</option>
                 ))}
               </select>
-              <input
+              <input name="value"
                 type="text"
                 value={cond.value}
                 onChange={(e) => updateCondition(cond.id, 'value', e.target.value)}
@@ -304,7 +304,7 @@ function RuleBlock({ rule, idx, onChange, onDelete, onMoveUp, onMoveDown, isFirs
 
         {/* Description */}
         <div>
-          <input
+          <input name="description"
             type="text"
             value={rule.description}
             onChange={(e) => onChange({ ...rule, description: e.target.value })}
@@ -599,7 +599,7 @@ export default function PolicyBuilder() {
         <div className="space-y-4 min-w-0">
           <Card title="Apply to Agent" icon={ChevronRight}>
             <div className="space-y-3">
-              <select
+              <select name="select"
                 value={selectedAgent}
                 onChange={(e) => { setSelectedAgent(e.target.value); setError('') }}
                 aria-label="Select agent for policy"
@@ -759,7 +759,7 @@ export default function PolicyBuilder() {
                 <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">
                   Policy name
                 </label>
-                <input
+                <input name="input"
                   type="text"
                   value={policyName}
                   onChange={(e) => setPolicyName(e.target.value.replace(/[^a-zA-Z0-9_]/g, '_'))}
