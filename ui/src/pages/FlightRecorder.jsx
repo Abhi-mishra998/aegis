@@ -231,7 +231,11 @@ export default function FlightRecorder() {
               </button>
             ))}
             {!timelines.length && !loading && (
-              <div className="text-center p-6 flex flex-col items-center gap-2">
+              <div
+                className="text-center p-6 flex flex-col items-center gap-2"
+                role="status"
+                aria-live="polite"
+              >
                 <Film size={20} className="text-neutral-700 opacity-50" aria-hidden="true" />
                 <p className="text-xs text-neutral-400 font-medium">Timeline empty</p>
                 <p className="text-[10px] text-neutral-600 leading-relaxed max-w-[180px]">
@@ -239,12 +243,15 @@ export default function FlightRecorder() {
                   above, or kick off a run.
                 </p>
                 <Link
-                  to="/playground"
-                  className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-md border border-indigo-500/30 text-indigo-300 hover:border-indigo-500/60 hover:bg-indigo-500/[0.08] transition-colors"
+                  to="/live-feed"
+                  className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-md bg-white text-black font-medium hover:bg-neutral-200 transition-colors"
                 >
                   <Activity size={10} aria-hidden="true" />
-                  Open playground
+                  Open Live Feed
                 </Link>
+                <p className="text-[10px] text-neutral-700 leading-relaxed max-w-[180px]">
+                  Watch a request stream through the pipeline in real time — its recorded timeline will appear here a moment later.
+                </p>
               </div>
             )}
           </div>
