@@ -147,8 +147,7 @@ is moved to `transparency_historical_keys` BEFORE the new key is
 activated. The signature on every previously-issued receipt remains
 verifiable forever.
 
-Runbook: `docs/runbooks/key_rotation.md`. Drill cadence: quarterly,
-logged at `docs/runbooks/key_rotation_drill_log.md`.
+Runbook: `docs/operations/key-rotation.md`. Drill cadence: quarterly.
 
 ## Decision invariants
 
@@ -205,7 +204,7 @@ real-restore drill (`scripts/ops/restore_drill.sh`) that:
 - Runs the schema-integrity test suite against the restored DB
 - Reports MTTR
 
-Drill log: `docs/runbooks/dr_drill_log.md`.
+DR runbook: `docs/operations/disaster-recovery.md`.
 
 A backup that has never been restored doesn't exist.
 
