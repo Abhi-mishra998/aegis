@@ -17,6 +17,12 @@ What gets seeded into `<tenant_id>`:
   - 2 incidents in `incidents` — one HIGH severity (5 days ago),
     one CRITICAL (6 hours ago).
   - 1 pending CFO approval row.
+  - Realistic-complexity surfaces so the demo isn't a sanitised happy-path:
+    4× monitor-only findings (decision=monitor, NOT denied), 2× resolved
+    escalations (1 approved + 1 rejected via human_override_events), 1×
+    operator override (action=override on audit_logs), 1× policy exception
+    (action=policy_exception_granted), 1× false-positive triage (audit row
+    with metadata.false_positive=true + paired audit_notes row).
 
 Usage from the inst-2 host (which has docker exec into postgres-side
 containers):
@@ -381,6 +387,130 @@ NOTIFICATION_SPECS = [
 ]
 
 
+# ── Section 14 — realistic-complexity surfaces ─────────────────────────
+# A senior security reviewer flagged that the demo looked too clean: every
+# dangerous action got a clean deny verdict, with no monitor-only findings,
+# no approved/rejected escalations, no operator overrides, no policy
+# exceptions, and no false-positive triage. Real systems show all of that
+# complexity. These specs back the seed rows that put each of those
+# surfaces on the demo workspace so experienced engineers don't dismiss it
+# as a sanitised happy-path. All rows go through audit_logs (and
+# audit_notes / human_override_events where appropriate) — no new tables
+# or migrations introduced.
+
+# Monitor-only findings — Aegis caught something interesting but did NOT
+# block. Operators filter /audit-logs by decision=monitor to see these.
+# Each row gets a non-empty `findings` so the UI badge renders.
+MONITOR_ONLY_SPECS = [
+    # (agent_name, tool, params_hint, finding_label, risk, hours_ago, params)
+    ("db-copilot",         "query_database",
+     "SELECT * FROM orders WHERE created_at > now() - INTERVAL '90 days'",
+     "Security:SuspiciousLargeQuery", 42, 4),
+    ("support-bot",        "send_email",
+     "draft to customer; body contains 14-digit numeric sequence",
+     "Privacy:PossibleCardNumberInBody", 35, 11),
+    ("sales-research-agent", "web_search",
+     "site:linkedin.com OR site:apollo.io competitor mass-scrape",
+     "Security:CompetitiveIntelMassScrape", 28, 26),
+    ("devops-agent",       "http_request",
+     "GET /v1/secrets/list (read-only, namespace=staging)",
+     "Security:SecretsEnumerationReadOnly", 45, 50),
+]
+
+# Resolved escalations — one approved + one rejected. Each spec emits a
+# decision='escalate' audit row plus a matching human_override_events row
+# (event_type='approval' or 'override') so the Approval Inbox /approval-
+# inbox history view shows the resolved record.
+RESOLVED_ESCALATION_SPECS = [
+    {
+        "agent_name":    "finance-bot",
+        "tool":          "wire_transfer",
+        "params_hint":   "$150,000 to ACME Corp (existing vendor)",
+        "finding":       "money_transfer_external",
+        "risk":          55,
+        "hours_ago":     6,
+        "resolution":    "approval",   # → APPROVED
+        "actor_role":    "CFO",
+        "reason":        "Approved: vendor in pre-approved list, amount within Q3 budget cap.",
+    },
+    {
+        "agent_name":    "devops-agent",
+        "tool":          "http_request",
+        "params_hint":   "DELETE /v1/pods/prod-payments-* (cluster=prod-primary)",
+        "finding":       "kubectl_prod_destruction",
+        "risk":          72,
+        "hours_ago":     30,
+        "resolution":    "override",   # → REJECTED (operator rejected the agent's request)
+        "actor_role":    "CTO",
+        "reason":        "Rejected: agent attempted to delete payments pods during peak hours; deferred to next maintenance window.",
+    },
+]
+
+# Operator override — analyst manually re-classifies a finding (here:
+# flips a deny to an allow on a query that turned out to be legitimate
+# after investigation). Recorded as a synthetic audit row with
+# action='override' so /audit-logs filtering by action=override surfaces
+# the workflow.
+OPERATOR_OVERRIDE_SPECS = [
+    {
+        "agent_name":      "db-copilot",
+        "tool":            "query_database",
+        "params_hint":     "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL",
+        "original_decision": "deny",
+        "new_decision":    "allow",
+        "finding":         "destructive_sql_false_match",
+        "risk":            10,
+        "hours_ago":       17,
+        "actor_role":      "SOC_ANALYST",
+        "justification":   "Reviewed by SOC analyst: query is read-only COUNT(*), the 'DELETE' substring inside column name 'deleted_at' triggered the rule by accident. Original deny overridden to allow; rule narrowed in shadow policy v2.",
+    },
+]
+
+# Policy exception — owner has whitelisted a specific tool for a specific
+# agent (e.g. devops-agent can run `terraform plan` on staging without
+# escalation). Recorded as a synthetic audit row with
+# action='policy_exception_granted' so the operator can prove "policy
+# isn't all-or-nothing".
+POLICY_EXCEPTION_SPECS = [
+    {
+        "agent_name":   "devops-agent",
+        "tool":         "http_request",
+        "params_hint":  "exception scope: tool=terraform_plan, target=staging-* (read-only)",
+        "finding":      "policy_exception_granted_scoped",
+        "risk":         5,
+        "hours_ago":    72,
+        "actor_role":   "OWNER",
+        "justification": "Devops-agent granted standing exception for `terraform plan` against staging-* workspaces only (read-only, no apply). Expires 2026-09-22. Granted under change ticket CHG-3271.",
+        "scope": {
+            "agent":   "devops-agent",
+            "tool":    "terraform_plan",
+            "target":  "staging-*",
+            "expires": "2026-09-22",
+            "change_ticket": "CHG-3271",
+        },
+    },
+]
+
+# False positive marked-resolved — a previously-flagged finding (here an
+# alert from the support-bot sending a customer email) was investigated
+# and confirmed benign. Recorded as an audit row whose metadata_json
+# carries `false_positive: true` plus an audit_notes row with
+# note_type='false_positive' tying the analyst's justification to the
+# audit entry.
+FALSE_POSITIVE_SPECS = [
+    {
+        "agent_name":    "support-bot",
+        "tool":          "send_email",
+        "params_hint":   "auto-reply to support@customer.example with attached invoice PDF",
+        "finding":       "Privacy:AttachmentLooksLikePII",
+        "risk":          38,
+        "hours_ago":     20,
+        "actor_role":    "DPO",
+        "note_body":     "False positive: the attached PDF is the customer's own monthly invoice that they explicitly requested in the ticket thread. The PII detector matched on the embedded line items (customer name + email) which is the recipient themselves — not a leak. Filter narrowed; ticket re-opened to confirm with customer.",
+    },
+]
+
+
 def _weighted_pick(now: datetime) -> tuple[dict, datetime]:
     """Pick a decision template by weight + an offset timestamp within
     the past 14 days. Returns (template_dict, timestamp)."""
@@ -474,6 +604,20 @@ async def main() -> None:
         print(f"    would insert {len(FLIGHT_RECORDER_SPECS)} rows into flight_recorder_timelines via execution_timelines "
               f"(+ {flight_step_total} execution_steps, acp_flight_recorder)")
         print(f"    would insert {len(NOTIFICATION_SPECS)} rows into notifications via acp_notifications (acp_audit)")
+        # Realistic-complexity surfaces (Section 14) — show monitor-only
+        # findings, resolved escalations (approved + rejected), an
+        # operator override, a policy exception, and a false-positive
+        # triage so the demo doesn't look like a sanitised happy-path.
+        print(f"    would insert {len(MONITOR_ONLY_SPECS)} rows into audit_logs with decision=monitor "
+              f"(monitor-only findings, acp_audit)")
+        print(f"    would insert {len(RESOLVED_ESCALATION_SPECS)} rows into audit_logs (decision=escalate) "
+              f"+ {len(RESOLVED_ESCALATION_SPECS)} rows into human_override_events (1 approval, 1 override, acp_autonomy)")
+        print(f"    would insert {len(OPERATOR_OVERRIDE_SPECS)} rows into audit_logs with action=override "
+              f"(operator manual reclassification, acp_audit)")
+        print(f"    would insert {len(POLICY_EXCEPTION_SPECS)} rows into audit_logs with action=policy_exception_granted "
+              f"(scoped tool whitelist, acp_audit)")
+        print(f"    would insert {len(FALSE_POSITIVE_SPECS)} rows into audit_logs (metadata.false_positive=true) "
+              f"+ {len(FALSE_POSITIVE_SPECS)} rows into audit_notes (note_type=false_positive, acp_audit)")
         # Best-effort owner-id resolve for completeness; tolerated to
         # fail (no DATABASE_URL or no DB reachable from this host).
         if id_url:
@@ -1069,6 +1213,245 @@ async def main() -> None:
             print(f"  WARN notification insert {title[:40]}: {str(exc)[:140]}")
     print(f"  notifications inserted: {notifications_inserted}/{len(NOTIFICATION_SPECS)}")
 
+    # ── 14. Realistic-complexity surfaces (audit_logs + audit_notes + overrides)
+    #     A senior security reviewer flagged that every dangerous action
+    #     in the seed got a clean deny verdict — no monitor-only findings,
+    #     no resolved escalations, no operator overrides, no policy
+    #     exceptions, no false-positive triage. Real systems have all of
+    #     those, and experienced engineers spot a sanitised happy-path
+    #     immediately. This section adds 6 categories that surface that
+    #     complexity, all built on existing tables (no new migration).
+    #     [surface] INSERT INTO audit_logs + audit_notes + human_override_events
+    #
+    # Helper that mirrors section 2 but takes explicit overrides so each
+    # row can pick its own action/decision/timestamp without re-piping
+    # the entire 16-arg INSERT every call site.
+    async def _insert_realism_audit(
+        *,
+        agent_id: uuid.UUID,
+        action: str,
+        tool: str,
+        decision: str,
+        reason: str | None,
+        metadata: dict,
+        ts: datetime,
+        request_id: str | None = None,
+    ) -> tuple[uuid.UUID, str]:
+        """Insert one audit_logs row with chain hashing + return (id, request_id)."""
+        row_id = uuid.uuid4()
+        req_id = request_id or f"req-{row_id.hex[:16]}"
+        shard = random.randint(0, 15)
+        prev_hash = last_hashes.get(shard)
+        event_hash = _hash_row(prev_hash, str(row_id), ts, decision, reason)
+        await aud_conn.execute(
+            "INSERT INTO audit_logs (id, tenant_id, org_id, agent_id, action, tool, decision, reason, "
+            "metadata_json, request_id, event_hash, prev_hash, chain_shard, billing_status, timestamp, "
+            "created_at, updated_at) "
+            "VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, "
+            "'completed', $13, $13, $13)",
+            row_id, tenant_id, agent_id, action, tool, decision, reason,
+            _json.dumps(metadata), req_id, event_hash,
+            prev_hash, shard, ts,
+        )
+        last_hashes[shard] = event_hash
+        return row_id, req_id
+
+    # 14a. Monitor-only findings — Aegis flagged but did NOT block.
+    monitor_inserted = 0
+    for agent_name, tool, params_hint, finding, risk, hours_ago in MONITOR_ONLY_SPECS:
+        ag_id = _agent_by_name.get(agent_name)
+        if ag_id is None:
+            print(f"  WARN monitor-only skipped (no agent {agent_name!r})")
+            continue
+        ts = now - timedelta(hours=hours_ago, minutes=random.randint(0, 59))
+        metadata = {
+            "risk_score":  risk,
+            "findings":    [finding],
+            "params_hint": params_hint,
+            "demo_seed":   True,
+            # Monitor-only is the explicit policy outcome here, not a
+            # downgrade from deny — surface that to the UI tooltip.
+            "monitor_reason": "policy_signal_below_block_threshold",
+        }
+        try:
+            await _insert_realism_audit(
+                agent_id=ag_id, action="execute_tool", tool=tool,
+                decision="monitor", reason=finding, metadata=metadata, ts=ts,
+            )
+            monitor_inserted += 1
+        except Exception as exc:
+            print(f"  WARN monitor-only insert {finding[:40]}: {str(exc)[:140]}")
+    print(f"  monitor-only audit_logs inserted: {monitor_inserted}/{len(MONITOR_ONLY_SPECS)}")
+
+    # 14b. Resolved escalations (1 approved + 1 rejected). Each spec
+    #      emits a decision='escalate' audit row plus a paired
+    #      human_override_events row with event_type='approval' or
+    #      'override' so the Approval Inbox history view shows the
+    #      resolved record. Re-open the autonomy connection because
+    #      section 9 closed it after seeding playbooks.
+    resolved_escalation_audits = 0
+    resolved_escalation_overrides = 0
+    realism_autonomy_conn = None
+    try:
+        realism_autonomy_conn = await asyncpg.connect(
+            _swap("autonomy"), statement_cache_size=0, timeout=10,
+        )
+    except Exception as exc:
+        print(f"  WARN autonomy re-connect for realism overrides: {str(exc)[:140]}")
+    for spec in RESOLVED_ESCALATION_SPECS:
+        ag_id = _agent_by_name.get(spec["agent_name"])
+        if ag_id is None:
+            print(f"  WARN resolved-escalation skipped (no agent {spec['agent_name']!r})")
+            continue
+        ts = now - timedelta(hours=spec["hours_ago"], minutes=random.randint(0, 59))
+        metadata = {
+            "risk_score":  spec["risk"],
+            "findings":    [spec["finding"]],
+            "params_hint": spec["params_hint"],
+            "demo_seed":   True,
+            "approval_required": True,
+            "approver_role":     spec["actor_role"],
+        }
+        try:
+            _row_id, req_id = await _insert_realism_audit(
+                agent_id=ag_id, action="execute_tool", tool=spec["tool"],
+                decision="escalate", reason=spec["finding"], metadata=metadata, ts=ts,
+            )
+            resolved_escalation_audits += 1
+        except Exception as exc:
+            print(f"  WARN resolved-escalation audit insert {spec['finding'][:40]}: {str(exc)[:140]}")
+            continue
+        # Pair the audit row with a matching override event a few
+        # minutes later so the inbox indexes it as resolved.
+        if realism_autonomy_conn is None:
+            continue
+        override_ts = ts + timedelta(minutes=random.randint(3, 25))
+        try:
+            await realism_autonomy_conn.execute(
+                "INSERT INTO human_override_events (id, org_id, tenant_id, actor, actor_role, "
+                "event_type, target_kind, target_id, request_id, reason, metadata_json, occurred_at) "
+                "VALUES ($1, $2, $2, $3, $4, $5, 'request', $6, $7, $8, $9::jsonb, $10)",
+                uuid.uuid4(), tenant_id, args.owner_email, spec["actor_role"],
+                spec["resolution"], req_id, req_id, spec["reason"],
+                _json.dumps({
+                    "tool":     spec["tool"],
+                    "agent_id": str(ag_id),
+                    "via":      "demo_seed_realism",
+                }),
+                override_ts,
+            )
+            resolved_escalation_overrides += 1
+        except Exception as exc:
+            print(f"  WARN resolved-escalation override insert {req_id}: {str(exc)[:140]}")
+    if realism_autonomy_conn is not None:
+        await realism_autonomy_conn.close()
+    print(f"  resolved escalations inserted: {resolved_escalation_audits} audit + "
+          f"{resolved_escalation_overrides} override events")
+
+    # 14c. Operator override — post-hoc reclassification (e.g. deny that
+    #      turned out to be a false rule match). Free-standing audit row
+    #      with action='override'; no paired escalation/approval event.
+    operator_override_inserted = 0
+    for spec in OPERATOR_OVERRIDE_SPECS:
+        ag_id = _agent_by_name.get(spec["agent_name"])
+        if ag_id is None:
+            print(f"  WARN operator-override skipped (no agent {spec['agent_name']!r})")
+            continue
+        ts = now - timedelta(hours=spec["hours_ago"], minutes=random.randint(0, 59))
+        metadata = {
+            "risk_score":        spec["risk"],
+            "findings":          [spec["finding"]],
+            "params_hint":       spec["params_hint"],
+            "demo_seed":         True,
+            "original_decision": spec["original_decision"],
+            "new_decision":      spec["new_decision"],
+            "actor_role":        spec["actor_role"],
+            "justification":     spec["justification"],
+        }
+        try:
+            await _insert_realism_audit(
+                agent_id=ag_id, action="override", tool=spec["tool"],
+                decision=spec["new_decision"], reason=spec["finding"],
+                metadata=metadata, ts=ts,
+            )
+            operator_override_inserted += 1
+        except Exception as exc:
+            print(f"  WARN operator-override insert {spec['finding'][:40]}: {str(exc)[:140]}")
+    print(f"  operator overrides inserted: {operator_override_inserted}/{len(OPERATOR_OVERRIDE_SPECS)}")
+
+    # 14d. Policy exception — owner whitelists a tool for an agent.
+    #      Recorded as a synthetic audit row with action='policy_exception_granted'
+    #      since there's no dedicated policy_exceptions table.
+    policy_exception_inserted = 0
+    for spec in POLICY_EXCEPTION_SPECS:
+        ag_id = _agent_by_name.get(spec["agent_name"])
+        if ag_id is None:
+            print(f"  WARN policy-exception skipped (no agent {spec['agent_name']!r})")
+            continue
+        ts = now - timedelta(hours=spec["hours_ago"], minutes=random.randint(0, 59))
+        metadata = {
+            "risk_score":     spec["risk"],
+            "findings":       [spec["finding"]],
+            "params_hint":    spec["params_hint"],
+            "demo_seed":      True,
+            "actor_role":     spec["actor_role"],
+            "justification":  spec["justification"],
+            "exception_scope": spec["scope"],
+        }
+        try:
+            await _insert_realism_audit(
+                agent_id=ag_id, action="policy_exception_granted", tool=spec["tool"],
+                decision="allow", reason=spec["finding"], metadata=metadata, ts=ts,
+            )
+            policy_exception_inserted += 1
+        except Exception as exc:
+            print(f"  WARN policy-exception insert {spec['finding'][:40]}: {str(exc)[:140]}")
+    print(f"  policy exceptions inserted: {policy_exception_inserted}/{len(POLICY_EXCEPTION_SPECS)}")
+
+    # 14e. False positive marked-resolved — audit row carries
+    #      metadata.false_positive=true and a paired audit_notes row
+    #      with note_type='false_positive' so the FP-triage workflow is
+    #      visible end-to-end.
+    false_positive_audits = 0
+    false_positive_notes = 0
+    for spec in FALSE_POSITIVE_SPECS:
+        ag_id = _agent_by_name.get(spec["agent_name"])
+        if ag_id is None:
+            print(f"  WARN false-positive skipped (no agent {spec['agent_name']!r})")
+            continue
+        ts = now - timedelta(hours=spec["hours_ago"], minutes=random.randint(0, 59))
+        metadata = {
+            "risk_score":     spec["risk"],
+            "findings":       [spec["finding"]],
+            "params_hint":    spec["params_hint"],
+            "demo_seed":      True,
+            "false_positive": True,
+            "resolved_by":    args.owner_email,
+            "resolver_role":  spec["actor_role"],
+            "resolution_note_preview": spec["note_body"][:120],
+        }
+        try:
+            audit_row_id, _req = await _insert_realism_audit(
+                agent_id=ag_id, action="execute_tool", tool=spec["tool"],
+                decision="monitor", reason=spec["finding"], metadata=metadata, ts=ts,
+            )
+            false_positive_audits += 1
+        except Exception as exc:
+            print(f"  WARN false-positive audit insert {spec['finding'][:40]}: {str(exc)[:140]}")
+            continue
+        try:
+            await aud_conn.execute(
+                "INSERT INTO audit_notes (id, audit_id, tenant_id, created_by, note_type, body, created_at) "
+                "VALUES ($1, $2, $3, $4, 'false_positive', $5, $6)",
+                uuid.uuid4(), audit_row_id, tenant_id, args.owner_email,
+                spec["note_body"], ts + timedelta(minutes=random.randint(8, 45)),
+            )
+            false_positive_notes += 1
+        except Exception as exc:
+            print(f"  WARN false-positive note insert: {str(exc)[:140]}")
+    print(f"  false-positive triage inserted: {false_positive_audits} audit + "
+          f"{false_positive_notes} audit_notes")
+
     await id_conn.close(); await reg_conn.close(); await aud_conn.close(); await api_conn.close()
 
     print(f"\n=== DONE ===")
@@ -1081,6 +1464,10 @@ async def main() -> None:
     print(f"  {eval_dataset_inserted} evaluation datasets ({eval_case_inserted} cases), "
           f"{fr_timelines_inserted} flight-recorder timelines ({fr_steps_inserted} steps), "
           f"{notifications_inserted} notifications.")
+    print(f"  Realistic-complexity surfaces: {monitor_inserted} monitor-only, "
+          f"{resolved_escalation_audits} resolved escalations ({resolved_escalation_overrides} overrides), "
+          f"{operator_override_inserted} operator overrides, {policy_exception_inserted} policy exceptions, "
+          f"{false_positive_audits} false-positive triage ({false_positive_notes} notes).")
     print(f"  Sign in as {args.owner_email}, open https://aegisagent.in/dashboard")
 
 
