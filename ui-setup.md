@@ -1,5 +1,9 @@
 # Aegis — How a Company Actually Rolls It Out
 
+> Looking for the 5-minute, no-signup evaluator tour first? See
+> [setup-agies.md](setup-agies.md). This file picks up at Day 0 after
+> sign-up and walks the post-signup adoption flow through Day 7.
+
 This is the operational counterpart to `setup-agies.md` (which is the
 evaluator's tour). This file is for the person on the customer side who
 just signed up and needs to take the platform from "logged in" to "every
@@ -7,9 +11,10 @@ agent in our company is governed."
 
 Everything in this doc is **doable today** with the version live on
 `aegisagent.in` — you do not need to wait for a new SDK release. The
-existing PyPI packages (`aegis-anthropic`, `aegis-openai`,
-`aegis-langchain`, `aegis-bedrock`) point at the production gateway and
-keep working across our backend deploys.
+2026-06-24 PyPI packages (`aegis-anthropic==1.1.2`, `aegis-openai==1.1.2`,
+`aegis-langchain==1.1.3`, `aegis-bedrock==1.1.3`) default to the
+consolidated `https://aegisagent.in` gateway and keep working across our
+backend deploys.
 
 ---
 
@@ -50,8 +55,10 @@ keep working across our backend deploys.
 > If you only want to test the product first, go through the
 > evaluator-flow in [setup-agies.md](setup-agies.md) instead —
 > `https://aegisagent.in/` → "Spawn demo workspace" gives you a 30-min
-> sandbox with seeded agents, audit rows, incidents, shadow policies
-> and an Identity Graph already populated. No signup needed.
+> sandbox with 5 named agents (db-copilot, support-bot, devops-agent,
+> finance-bot, sales-research-agent), 60 audit events across 14 days,
+> 2 incidents, 2 shadow policies, 10 identity-graph nodes, 8 edges —
+> all populated automatically on spawn. No signup needed.
 
 ---
 
@@ -109,10 +116,10 @@ the UUID in the SDK constructor.
 
 | Stack | Install |
 |---|---|
-| Anthropic Python SDK | `pip install aegis-anthropic` |
-| OpenAI Python SDK | `pip install aegis-openai` |
-| LangChain agent | `pip install aegis-langchain` |
-| AWS Bedrock Agents | `pip install "aegis-bedrock[bedrock]"` |
+| Anthropic Python SDK | `pip install 'aegis-anthropic==1.1.2'` |
+| OpenAI Python SDK | `pip install 'aegis-openai==1.1.2'` |
+| LangChain agent | `pip install 'aegis-langchain==1.1.3'` |
+| AWS Bedrock Agents | `pip install 'aegis-bedrock[bedrock]==1.1.3'` |
 
 ### Step 3: swap the constructor
 
