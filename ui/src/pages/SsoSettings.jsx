@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { ssoService } from '../services/api'
 import { SecretInput } from '../components/Common/ConnectorPrimitives'
+import { useAuth } from '../hooks/useAuth'
 
 const PROVIDER_TYPES = [
   { value: 'saml',  label: 'SAML 2.0',   desc: 'Okta, Azure AD, ADFS, OneLogin' },
@@ -13,6 +14,7 @@ const PROVIDER_TYPES = [
 ]
 
 export default function SsoSettings() {
+  const { addToast } = useAuth()
   const [cfg, setCfg] = useState({
     provider_type: 'saml',
     entity_id: '', sso_url: '', certificate: '',
@@ -35,15 +37,23 @@ export default function SsoSettings() {
         const list = d?.data || d || []
         if (Array.isArray(list) && list.length > 0) setProviderTypes(list)
       })
-      .catch(() => {})
+      .catch(err => {
+        // Non-fatal: falls back to hard-coded SAML/OIDC list.
+        console.warn('[SsoSettings] provider list fetch failed', err)
+        addToast('Could not load SSO provider catalog — using default SAML/OIDC options', 'info')
+      })
     ssoService.getConfig()
       .then(d => {
         const c = d?.data || d || {}
         if (c.provider_type) setCfg(prev => ({ ...prev, ...c }))
       })
-      .catch(() => setLoadError(true))
+      .catch(err => {
+        console.warn('[SsoSettings] SSO config fetch failed', err)
+        setLoadError(true)
+        addToast('Failed to load SSO configuration — form fields may be stale', 'error')
+      })
       .finally(() => setLoading(false))
-  }, [])
+  }, [addToast])
 
   useEffect(() => { loadConfig() }, [loadConfig])
 

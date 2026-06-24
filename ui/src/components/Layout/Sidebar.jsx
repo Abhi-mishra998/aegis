@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Users, Shield, FileText, X, Zap,
+  Users, Shield, FileText, X, Power, Zap,
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
@@ -83,33 +83,49 @@ const adminNav = [
   { path: '/billing',       label: 'Billing',       icon: CreditCard },
 ]
 
-// Kill Switch lives in the Topbar (U1) as a top-right emergency surface so
-// operators can reach it without expanding Admin nav. Don't re-add it here.
+const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power, danger: true }
 
 export default function Sidebar({ isOpen, onClose }) {
   const location  = useLocation()
   const navigate  = useNavigate()
-  const { updateAuth, isAuthenticated } = useAuth()
-  const { isAdmin } = useRole()
+  const { updateAuth, isAuthenticated, addToast } = useAuth()
+  const { isAdmin, canViewKillSwitch } = useRole()
   const navRef    = useRef(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [pendingApprovals, setPendingApprovals] = useState(0)
+  // De-dupe error toasts from the 30-60s pollers so a sustained backend
+  // outage doesn't flood the user with one toast per tick.
+  const lastToastRef = useRef({ unread: 0, approvals: 0 })
 
   const fetchUnread = useCallback(async () => {
     if (!isAuthenticated) return
     try {
       const res = await notificationService.getCount()
       setUnreadCount((res?.data?.unread ?? res?.unread ?? 0))
-    } catch {}
-  }, [isAuthenticated])
+    } catch (err) {
+      console.warn('[Sidebar] notification count fetch failed', err)
+      const now = Date.now()
+      if (now - lastToastRef.current.unread > 30_000) {
+        lastToastRef.current.unread = now
+        addToast('Could not refresh notifications — sidebar count may be stale', 'error')
+      }
+    }
+  }, [isAuthenticated, addToast])
 
   const fetchPendingApprovals = useCallback(async () => {
     if (!isAuthenticated) return
     try {
       const res = await approvalService.getPendingCount()
       setPendingApprovals((res?.data?.unread ?? res?.unread ?? 0))
-    } catch {}
-  }, [isAuthenticated])
+    } catch (err) {
+      console.warn('[Sidebar] pending-approvals fetch failed', err)
+      const now = Date.now()
+      if (now - lastToastRef.current.approvals > 30_000) {
+        lastToastRef.current.approvals = now
+        addToast('Could not refresh approval inbox — pending count may be stale', 'error')
+      }
+    }
+  }, [isAuthenticated, addToast])
 
   useEffect(() => {
     fetchUnread()
@@ -127,7 +143,7 @@ export default function Sidebar({ isOpen, onClose }) {
   const [advancedOpen, setAdvancedOpen] = useState(advancedActive)
   useEffect(() => { if (advancedActive) setAdvancedOpen(true) }, [advancedActive])
 
-  const admin = adminNav
+  const admin = canViewKillSwitch ? [...adminNav, killSwitchItem] : adminNav
   const adminActive = admin.some((i) => location.pathname.startsWith(i.path))
   const [adminOpen, setAdminOpen] = useState(adminActive)
   useEffect(() => { if (adminActive) setAdminOpen(true) }, [adminActive])

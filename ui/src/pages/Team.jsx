@@ -101,6 +101,7 @@ function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon 
 /* ───────── Add-employee modal ───────────────────────────────────────── */
 
 function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
+  const { addToast } = useAuth()
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [department, setDepartment] = useState('')
@@ -141,7 +142,11 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
       navigator.clipboard.writeText(minted.api_key)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (_) {}
+    } catch (err) {
+      // Show-once key — silent failure loses it forever, so tell the user to copy manually.
+      console.warn('[Team] employee-key clipboard write failed', err)
+      addToast('Could not copy key to clipboard — select the value above and copy it manually', 'error')
+    }
   }
 
   const departmentOptions = useMemo(() => {
