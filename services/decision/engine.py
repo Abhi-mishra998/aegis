@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime
 
 import structlog
@@ -242,6 +243,13 @@ class DecisionEngine:
 
         # Diagnostic-only context for forensics — never affects routing.
         raw_diagnostic_flags = list(ctx.behavior_flags or []) + list(ctx.inference_flags or [])
+
+        # DeprecationWarning emitted to signal customer-facing removal in v2.0 — see ROADMAP.md
+        warnings.warn(
+            "The 'reasons' field is deprecated; use 'findings'",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         return Decision(
             action=action,

@@ -669,6 +669,10 @@ async def refresh_token(
     # 3. Only after a successful mint do we revoke the old token. A failure
     #    here is logged but non-fatal — the new token is already valid and
     #    the old one will expire naturally at its original exp.
+    # Dead code review: emitted from this branch only, but the surrounding
+    # function refresh_token() is the live POST /auth/refresh route handler
+    # (line 597) used by every SDK + UI session refresh. The warning is the
+    # only signal SOC has for a Redis-side revoke failure, so it stays.
     try:
         await token_svc.revoke(token)
     except Exception as exc:
