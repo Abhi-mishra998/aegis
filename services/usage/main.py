@@ -16,6 +16,7 @@ from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.usage.billing_routes.router import router as billing_router
+from services.usage.dlq_replay import run_dlq_replay_loop as run_billing_dlq_replay_loop
 from services.usage.router.billing_dlq import router as billing_dlq_router
 from services.usage.router.usage import router as usage_router
 
@@ -388,10 +389,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     reconciliation_task = asyncio.create_task(billing_reconciliation_worker())
     pending_billing_task = asyncio.create_task(pending_billing_recovery_worker())
 
+    # Drains acp:billing_dlq every 60s. Transient failures get RPUSHed back onto
+    # acp:billing_retry_queue for the gateway worker; non-recoverable entries
+    # are promoted to acp:billing_dlq:permanently_failed so they surface on
+    # /system/health instead of a silently-growing DLQ.
+    billing_dlq_replay_task = asyncio.create_task(run_billing_dlq_replay_loop(redis))
+
     yield
 
     reconciliation_task.cancel()
     pending_billing_task.cancel()
+    billing_dlq_replay_task.cancel()
     await redis.aclose()
     await engine.dispose()
 

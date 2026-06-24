@@ -1130,10 +1130,15 @@ async def system_health(request: Request) -> dict[str, Any]:
         "billing_dlq_length":   0,
         "outbox_pending":       0,
         "outbox_failed":        0,
-        # Phase 3 — audit pipeline health (lifetime totals from Prometheus).
+        # Audit pipeline health (lifetime totals from Prometheus).
         "audit_permanently_failed_length":      0,
         "audit_success_rate_pct":               100.0,
         "audit_dlq_replay_success_rate_pct":    100.0,
+        # Billing pipeline health (mirrors the audit shape — see
+        # services/usage/dlq_replay.py + acp_billing_events counters).
+        "billing_permanently_failed_length":      0,
+        "billing_success_rate_pct":               100.0,
+        "billing_dlq_replay_success_rate_pct":    100.0,
     }
     try:
         queues["audit_stream_length"] = int(await redis.xlen("acp:audit_stream"))
@@ -1157,14 +1162,19 @@ async def system_health(request: Request) -> dict[str, Any]:
         queues["billing_dlq_length"] = int(await redis.llen("acp:billing_dlq"))  # type: ignore[not-async]
     except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
         logger.warning("health_redis_billing_dlq_failed", error=str(exc))
-    # Compute the two success-rate percentages from the Prometheus counters
-    # the audit consumer + DLQ replay worker maintain. Lifetime totals are
-    # the cleanest signal — the UI labels the tile so operators see it's
-    # "since-deploy" rather than implying a rolling window the metric
-    # doesn't actually represent.
+    # Audit pipeline rates from lifetime Prometheus counters maintained by
+    # the audit consumer + DLQ replay worker. Lifetime totals are the
+    # cleanest signal — the UI labels the tile so operators see it's
+    # "since-deploy" rather than implying a rolling window.
     try:
         from prometheus_client import REGISTRY as _PROM_REG  # type: ignore[import-not-found]
-        samples = {}
+        # ── Audit pipeline ─────────────────────────────────────────────
+        audit_samples = {}
+        # ── Billing pipeline ───────────────────────────────────────────
+        billing_attempted = 0.0
+        billing_failed = 0.0
+        billing_replayed = 0.0
+        billing_permanently_failed = 0.0
         for metric in _PROM_REG.collect():
             if metric.name in ("acp_slo_audit_durability", "acp_audit_dlq_replay"):
                 for s in metric.samples:
@@ -1173,17 +1183,35 @@ async def system_health(request: Request) -> dict[str, Any]:
                         "acp_audit_dlq_replay_total",
                     ):
                         key = (s.name, tuple(sorted(s.labels.items())))
-                        samples[key] = s.value
-        persisted = samples.get(
+                        audit_samples[key] = s.value
+            elif metric.name == "acp_billing_dlq_replay":
+                for s in metric.samples:
+                    if s.name != "acp_billing_dlq_replay_total":
+                        continue
+                    outcome = s.labels.get("outcome")
+                    if outcome == "replayed":
+                        billing_replayed = s.value
+                    elif outcome == "permanently_failed":
+                        billing_permanently_failed = s.value
+            elif metric.name == "acp_billing_events":
+                for s in metric.samples:
+                    if s.name == "acp_billing_events_total":
+                        billing_attempted = s.value
+            elif metric.name == "acp_billing_events_failed":
+                for s in metric.samples:
+                    if s.name == "acp_billing_events_failed_total":
+                        billing_failed = s.value
+
+        persisted = audit_samples.get(
             ("acp_slo_audit_durability_total", (("stage", "persisted"),)), 0.0,
         )
-        dlq_landings = samples.get(
+        dlq_landings = audit_samples.get(
             ("acp_slo_audit_durability_total", (("stage", "dlq"),)), 0.0,
         )
-        replayed = samples.get(
+        replayed = audit_samples.get(
             ("acp_audit_dlq_replay_total", (("outcome", "replayed"),)), 0.0,
         )
-        permanently_failed = samples.get(
+        audit_permanently_failed = audit_samples.get(
             ("acp_audit_dlq_replay_total", (("outcome", "permanently_failed"),)), 0.0,
         )
         write_total = persisted + dlq_landings
@@ -1191,13 +1219,32 @@ async def system_health(request: Request) -> dict[str, Any]:
             queues["audit_success_rate_pct"] = round(
                 (persisted / write_total) * 100, 2,
             )
-        replay_total = replayed + permanently_failed
+        replay_total = replayed + audit_permanently_failed
         if replay_total > 0:
             queues["audit_dlq_replay_success_rate_pct"] = round(
                 (replayed / replay_total) * 100, 2,
             )
+        if billing_attempted > 0:
+            persisted_b = max(billing_attempted - billing_failed, 0.0)
+            queues["billing_success_rate_pct"] = round(
+                (persisted_b / billing_attempted) * 100, 2,
+            )
+        billing_replay_total = billing_replayed + billing_permanently_failed
+        if billing_replay_total > 0:
+            queues["billing_dlq_replay_success_rate_pct"] = round(
+                (billing_replayed / billing_replay_total) * 100, 2,
+            )
     except Exception as exc:
-        logger.warning("health_audit_success_rate_failed", error=str(exc))
+        logger.warning("health_audit_billing_rate_failed", error=str(exc))
+
+    # Billing permanently-failed list depth (the bucket the replay worker
+    # promotes truly-irrecoverable events into).
+    try:
+        queues["billing_permanently_failed_length"] = int(
+            await redis.llen("acp:billing_dlq:permanently_failed"),  # type: ignore[not-async]
+        )
+    except (httpx.HTTPError, ConnectionError, TimeoutError) as exc:
+        logger.warning("health_redis_billing_perm_failed_failed", error=str(exc))
 
     # Outbox depths via the audit service (Postgres-backed counters).
     try:
