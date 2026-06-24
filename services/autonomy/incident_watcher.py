@@ -15,18 +15,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from typing import Any
 
 import structlog
+
+from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
 
 _INCIDENT_STREAM = "acp:incidents:queue"
 _WATCHER_GROUP   = "autonomy-playbook-watcher"
 _WATCHER_CONSUMER = "autonomy-watcher-1"
-_REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 
 # ── Condition evaluator (pure function — no I/O) ──────────────────────────────
@@ -176,9 +176,7 @@ async def run_incident_watcher(session_factory) -> None:
     Durable Redis Stream consumer.  Runs as a background task inside the
     autonomy service lifespan and never raises — errors are logged.
     """
-    from redis.asyncio import Redis  # noqa: PLC0415
-
-    redis = Redis.from_url(_REDIS_URL, decode_responses=False)
+    redis = get_redis_client(decode_responses=False)
 
     try:
         await redis.xgroup_create(_INCIDENT_STREAM, _WATCHER_GROUP, id="$", mkstream=True)

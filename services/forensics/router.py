@@ -19,10 +19,10 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from redis.asyncio import Redis
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.config import settings
+from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
 
@@ -1066,7 +1066,7 @@ async def export_investigation(
     # Cache in Redis with 1-hour TTL
     export_key = f"acp:forensics_export:{agent_str}"
     try:
-        redis: Redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
         try:
             await redis.setex(export_key, _EXPORT_TTL, json.dumps(export_doc, default=str))
         finally:
