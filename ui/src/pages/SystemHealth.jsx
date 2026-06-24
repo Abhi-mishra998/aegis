@@ -19,8 +19,18 @@ import SkeletonLoader from '../components/Common/SkeletonLoader'
 // DLQ thresholds are depth guards (Alertmanager fires on age > 60s, not depth,
 // but we surface depth as the visible UI signal for on-call engineers).
 const QUEUE_THRESHOLDS = {
-  AUDIT_STREAM_WARN: 40_000,
-  AUDIT_STREAM_CRIT: 45_000, // matches prometheus-rules.yml
+  // The audit stream is a debug ring buffer capped by the producer at
+  // MAXLEN=10K (`sdk/common/audit_stream.py`). Steady-state fill at
+  // ~10K is NORMAL; only an overflow above the cap (Redis approximate
+  // trim slack) is interesting. Treat 12K as warn, 15K as crit.
+  AUDIT_STREAM_WARN: 12_000,
+  AUDIT_STREAM_CRIT: 15_000,
+  // Consumer lag is the REAL "is the audit pipeline keeping up" signal —
+  // count of un-ACKed entries the consumer hasn't processed yet.
+  // services/audit/main.py logs a warning at lag > 1000, so we warn
+  // earlier (500) and crit at the consumer's own warn threshold.
+  AUDIT_CONSUMER_LAG_WARN:  500,
+  AUDIT_CONSUMER_LAG_CRIT: 1_000,
   AUDIT_DLQ_WARN:       1,
   AUDIT_DLQ_CRIT:      50,
   BILLING_RETRY_WARN:   1,
@@ -269,13 +279,20 @@ export default function SystemHealth() {
               from /system/health
             </span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
             <QueueTile
-              label="Audit Stream"
+              label="Audit Ring Buffer"
               value={queues.audit_stream_length ?? 0}
               warn={QUEUE_THRESHOLDS.AUDIT_STREAM_WARN}
               crit={QUEUE_THRESHOLDS.AUDIT_STREAM_CRIT}
-              hint="depth of acp:audit_stream"
+              hint="debug-only — capped at MAXLEN=10K; Postgres is the source of truth"
+            />
+            <QueueTile
+              label="Consumer Lag"
+              value={queues.audit_consumer_lag ?? 0}
+              warn={QUEUE_THRESHOLDS.AUDIT_CONSUMER_LAG_WARN}
+              crit={QUEUE_THRESHOLDS.AUDIT_CONSUMER_LAG_CRIT}
+              hint="un-ACKed audit events — the real backlog signal"
             />
             <QueueTile
               label="Audit DLQ"
