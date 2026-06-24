@@ -18,8 +18,9 @@
 // All data tenant-scoped at the backend via JWT. No mocked arrays.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  ShieldCheck, AlertTriangle, ListChecks, Clock, PlayCircle,
+  ShieldCheck, AlertTriangle, ListChecks, Clock, PlayCircle, BookOpen,
 } from 'lucide-react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -321,13 +322,36 @@ export default function Evaluation() {
               {jobs.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-3 py-10 text-center">
-                    <div className="flex flex-col items-center gap-3 max-w-md mx-auto">
+                    <div
+                      className="flex flex-col items-center gap-3 max-w-md mx-auto"
+                      role="status"
+                      aria-live="polite"
+                    >
                       <PlayCircle size={26} className="text-neutral-600 opacity-40" aria-hidden="true" />
                       <p className="text-sm text-neutral-300 font-medium">No evaluations queued</p>
                       <p className="text-xs text-neutral-500 leading-relaxed">
                         Run <code className="text-neutral-300 bg-white/[0.05] px-1 py-0.5 rounded">/evaluation/start</code>{' '}
-                        — or click the button below to enqueue the OWASP attack corpus
-                        against the live decision pipeline.
+                        — or seed the OWASP corpus from the staging tab to enqueue
+                        the attack suite against the live decision pipeline.
+                      </p>
+                      <div className="flex items-center gap-2 flex-wrap justify-center">
+                        <Link
+                          to="/policies?tab=staging"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200 transition-colors"
+                        >
+                          <PlayCircle size={11} aria-hidden="true" />
+                          Seed OWASP corpus
+                        </Link>
+                        <Link
+                          to="/policies"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs text-neutral-300 hover:bg-white/[0.04] transition-colors"
+                        >
+                          <BookOpen size={11} aria-hidden="true" />
+                          Or browse policy library
+                        </Link>
+                      </div>
+                      <p className="text-[10px] text-neutral-600 leading-relaxed max-w-xs">
+                        Seeding stages 560 OWASP attack cases as shadow policies — the next nightly run will replay them and populate this table.
                       </p>
                       <button
                         onClick={enqueueDefault}
@@ -335,7 +359,7 @@ export default function Evaluation() {
                         className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-emerald-500/30 text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-500/[0.08] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <PlayCircle size={11} aria-hidden="true" />
-                        {enqueueing ? 'Enqueueing…' : datasets.length ? 'Run nightly corpus' : 'Seed OWASP corpus first'}
+                        {enqueueing ? 'Enqueueing…' : datasets.length ? 'Run nightly corpus now' : 'Seed OWASP corpus first'}
                       </button>
                     </div>
                   </td>
