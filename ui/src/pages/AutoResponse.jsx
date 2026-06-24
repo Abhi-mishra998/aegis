@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useContext, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useContext, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Zap, Plus, Trash2, ToggleLeft, ToggleRight, FlaskConical,
@@ -1037,19 +1037,32 @@ export default function AutoResponse() {
 
   // Direct SSE subscription so rule fires + incident touchpoints
   // refresh rule + metric counters without waiting on the 30s poll.
+  // 6 s debounce on SSE-driven refresh — see ui/src/pages/Dashboard.jsx for
+  // the failure mode. The live-events feed still updates on every event
+  // (it's a local-state push, not a refetch), only the heavy fetchAll is
+  // throttled.
+  const lastSseRefreshRef = useRef(0)
+  const SSE_REFRESH_DEBOUNCE_MS = 6_000
+  const debouncedFetchAll = useCallback(() => {
+    const now = Date.now()
+    if (now - lastSseRefreshRef.current >= SSE_REFRESH_DEBOUNCE_MS) {
+      lastSseRefreshRef.current = now
+      fetchAll()
+    }
+  }, [fetchAll])
   const sseChannels = useMemo(() => ({
     auto_response_executed: (payload) => {
       setLiveEvents(prev => [payload, ...prev].slice(0, 20))
-      fetchAll()
+      debouncedFetchAll()
     },
-    incident_updated: () => fetchAll(),
-  }), [fetchAll])
+    incident_updated: debouncedFetchAll,
+  }), [debouncedFetchAll])
   useSSE({
     channels: sseChannels,
     onMessage: (evt) => {
       const t = String(evt?.type || '').toLowerCase()
       if (t.includes('auto_response') || t.includes('incident')) {
-        fetchAll()
+        debouncedFetchAll()
       }
     },
   })
