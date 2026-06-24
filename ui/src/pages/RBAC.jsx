@@ -8,6 +8,7 @@ import Button from '../components/Common/Button'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { registryService } from '../services/api'
 import { eventBus } from '../lib/eventBus'
+import { useAuth } from '../hooks/useAuth'
 
 const TOOL_OPTIONS_FALLBACK = [
   'read_file', 'write_file', 'delete_file',
@@ -246,6 +247,7 @@ function AgentRow({ agent, toolOptions }) {
 }
 
 export default function RBAC() {
+  const { addToast } = useAuth()
   const [agents,      setAgents]      = useState([])
   const [toolOptions, setToolOptions] = useState(TOOL_OPTIONS_FALLBACK)
   const [loading, setLoading] = useState(true)
@@ -273,11 +275,15 @@ export default function RBAC() {
     registryService.getTools().then((res) => {
       const tools = res?.data || res
       if (Array.isArray(tools) && tools.length) setToolOptions(tools)
-    }).catch(() => {})
+    }).catch((err) => {
+      // Non-fatal: falls back to TOOL_OPTIONS_FALLBACK.
+      console.warn('[RBAC] tool catalog fetch failed', err)
+      addToast('Could not load tool catalog — Add Permission falls back to built-in tool list', 'info')
+    })
     // 30-second polling to keep agent/permission list current
     const interval = setInterval(load, 30_000)
     return () => { mountedRef.current = false; clearInterval(interval) }
-  }, [load])
+  }, [load, addToast])
 
   // Real-time: reload agent list when agents are registered or updated via SSE
   useEffect(() => {
