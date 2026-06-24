@@ -253,18 +253,44 @@ export default function DecisionExplorer() {
     if (!rid) return
     setLoading(true)
     setError('')
-    try {
-      const resp = await flightService.getDecisionGraph(rid)
-      // The backend wraps responses in { success, data }; api.js may unwrap.
-      // Be defensive either way.
-      const payload = resp?.data ?? resp
-      setGraph(payload)
-    } catch (e) {
-      setGraph(null)
-      setError(e?.message || 'Failed to load decision graph')
-    } finally {
-      setLoading(false)
+    // SSE delivers a `policy_decision` event the moment the decision
+    // commits in the gateway, but the flight recorder ingests the spans
+    // asynchronously — typically 100-800ms later. The user clicks the
+    // banner faster than ingestion → first /flight/decision/{rid}/graph
+    // call 404s and the operator sees "Failed to load decision graph"
+    // for a fresh decision that absolutely exists. We retry on 404 with
+    // an exponential backoff (250ms, 500ms, 1000ms, 1500ms) before
+    // surfacing the error.
+    const BACKOFFS_MS = [0, 250, 500, 1000, 1500]
+    let lastErr = null
+    for (const delay of BACKOFFS_MS) {
+      if (delay) await new Promise((r) => setTimeout(r, delay))
+      try {
+        const resp = await flightService.getDecisionGraph(rid)
+        const payload = resp?.data ?? resp
+        // Some race-window responses come back 200 with an empty
+        // nodes array. Treat that as "not ready yet" and retry too.
+        if (!payload || !Array.isArray(payload.nodes) || payload.nodes.length === 0) {
+          lastErr = new Error('decision graph not yet recorded')
+          continue
+        }
+        setGraph(payload)
+        setLoading(false)
+        return
+      } catch (e) {
+        lastErr = e
+        const status = e?._status || 0
+        // 4xx other than 404 won't change on retry — surface immediately.
+        if (status >= 400 && status < 500 && status !== 404) break
+      }
     }
+    setGraph(null)
+    setError(
+      lastErr?.message?.includes('not yet recorded')
+        ? `Decision ${String(rid).slice(0, 8)}… not yet in the flight recorder — try again in a moment.`
+        : (lastErr?.message || 'Failed to load decision graph')
+    )
+    setLoading(false)
   }, [])
 
   useEffect(() => { if (initialRid) fetchGraph(initialRid) }, [initialRid, fetchGraph])
