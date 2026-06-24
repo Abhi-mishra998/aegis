@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   Activity,
@@ -15,18 +15,24 @@ import {
   ShieldCheck,
   Trash2,
   TrendingUp,
-  UserPlus,
   Users,
 } from 'lucide-react'
 import { teamService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import Button from '../components/Common/Button'
 import Card from '../components/Common/Card'
-import SkeletonLoader from '../components/Common/SkeletonLoader'
 import TabErrorBoundary from '../components/Common/TabErrorBoundary'
-import { eventBus } from '../lib/eventBus'
 
 /* ───────── shared helpers ──────────────────────────────────────────── */
+
+// Same idiom as services/api.js + Layout/ClerkAuthBridge.jsx, but resolved
+// to an absolute URL because we display it to operators as a copy-paste
+// SDK base_url. window.location.origin keeps the same bundle reusable on
+// dev / staging / prod — the URL we surface tracks whatever host the
+// operator is already pointed at.
+const API_BASE_URL =
+  import.meta.env?.VITE_GATEWAY_URL ||
+  (typeof window !== 'undefined' ? window.location.origin : '')
 
 function fmtUSD(n) {
   if (n == null) return '—'
@@ -101,7 +107,6 @@ function MetricTile({ label, value, sublabel, accent = 'text-white', icon: Icon 
 /* ───────── Add-employee modal ───────────────────────────────────────── */
 
 function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
-  const { addToast } = useAuth()
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [department, setDepartment] = useState('')
@@ -142,11 +147,7 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
       navigator.clipboard.writeText(minted.api_key)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      // Show-once key — silent failure loses it forever, so tell the user to copy manually.
-      console.warn('[Team] employee-key clipboard write failed', err)
-      addToast('Could not copy key to clipboard — select the value above and copy it manually', 'error')
-    }
+    } catch (_) {}
   }
 
   const departmentOptions = useMemo(() => {
@@ -278,7 +279,7 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
                 Copy this key now — it cannot be shown again. Hand it to{' '}
                 <code className="text-white">{minted.subject_email || minted.email}</code>{' '}
                 and ask them to replace their <code>ANTHROPIC_API_KEY</code> + point the
-                SDK at <code>https://aegisagent.in</code>.
+                SDK at <code>{API_BASE_URL}</code>.
               </p>
             </div>
 
@@ -308,36 +309,23 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
 
 /* ───────── Tab: Members ─────────────────────────────────────────────── */
 
-function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke, liveEmails }) {
+function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke }) {
   return (
     <Card title="Members" icon={Users}>
       {loading ? (
-        <div className="space-y-2">
-          <SkeletonLoader variant="row" count={5} />
+        <div className="text-xs text-neutral-500 py-10 text-center">
+          <Loader2 size={20} className="animate-spin mx-auto mb-2" />
+          Loading team…
         </div>
       ) : employees.length === 0 ? (
-        <div className="py-12 text-center space-y-4">
-          <Users size={32} className="text-neutral-700 mx-auto" aria-hidden="true" />
-          <div className="space-y-1">
-            <div className="text-sm text-neutral-300 font-medium">No team members yet</div>
-            <div className="text-xs text-neutral-500 max-w-md mx-auto leading-relaxed">
-              Invite engineers via the button below, or enable SSO so they're auto-provisioned
-              on their first sign-in.
-            </div>
-          </div>
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            {isAdmin && (
-              <Button size="sm" onClick={onAdd}>
-                <UserPlus size={14} /> Invite via /team/invite
-              </Button>
-            )}
-            <Link
-              to="/sso"
-              className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/[0.08] text-xs text-neutral-300 hover:text-white hover:border-white/20 transition-colors"
-            >
-              <Shield size={12} /> Configure SSO at /settings/sso
-            </Link>
-          </div>
+        <div className="text-xs text-neutral-500 py-10 text-center space-y-3">
+          <Users size={26} className="text-neutral-700 mx-auto" />
+          <div>No employees on Aegis yet.</div>
+          {isAdmin && (
+            <Button size="sm" onClick={onAdd}>
+              <Plus size={14} /> Add your first employee
+            </Button>
+          )}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -354,9 +342,7 @@ function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke, l
               </tr>
             </thead>
             <tbody>
-              {employees.map((e) => {
-                const isLive = liveEmails?.has?.((e.email || '').toLowerCase())
-                return (
+              {employees.map((e) => (
                 <tr key={e.key_id} className="border-b border-white/[0.04] last:border-b-0">
                   <td className="py-3 pr-3">
                     <Link
@@ -364,20 +350,8 @@ function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke, l
                       className="block group"
                       title="Open employee profile"
                     >
-                      <div className="flex items-center gap-2">
-                        {isLive && (
-                          <span
-                            className="relative inline-flex w-2 h-2 shrink-0"
-                            title="Operating an agent right now"
-                            aria-label="Currently active"
-                          >
-                            <span className="absolute inline-flex w-full h-full rounded-full bg-green-400/40 animate-ping" />
-                            <span className="relative inline-flex rounded-full w-2 h-2 bg-green-400" />
-                          </span>
-                        )}
-                        <div className="text-neutral-200 font-medium group-hover:text-white group-hover:underline">
-                          {e.name || (e.email || '').split('@')[0]}
-                        </div>
+                      <div className="text-neutral-200 font-medium group-hover:text-white group-hover:underline">
+                        {e.name || (e.email || '').split('@')[0]}
                       </div>
                       <div className="text-[10px] text-neutral-600 group-hover:text-neutral-400">
                         {e.email}
@@ -411,8 +385,7 @@ function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke, l
                     </td>
                   )}
                 </tr>
-                )
-              })}
+              ))}
             </tbody>
           </table>
         </div>
@@ -427,7 +400,10 @@ function DepartmentsTab({ departments, loading }) {
   return (
     <Card title="Department View" icon={Building2}>
       {loading ? (
-        <SkeletonLoader variant="row" count={4} />
+        <div className="text-xs text-neutral-500 py-10 text-center">
+          <Loader2 size={20} className="animate-spin mx-auto mb-2" />
+          Aggregating…
+        </div>
       ) : departments.length === 0 ? (
         <div className="text-xs text-neutral-500 py-10 text-center space-y-2">
           <Building2 size={26} className="text-neutral-700 mx-auto" />
@@ -581,11 +557,6 @@ export default function Team() {
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
   const [showAdd,   setShowAdd]   = useState(false)
-  // Live activity: emails that have had an agent_changed event in the
-  // last 60s. Used to render the green ping next to a member's row so
-  // the CIO can see who is operating which agent right now.
-  const [liveEmails, setLiveEmails] = useState(new Set())
-  const liveTimersRef = useRef(new Map())
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -618,39 +589,6 @@ export default function Team() {
     const id = setInterval(() => { load() }, 30_000)
     return () => clearInterval(id)
   }, [load])
-
-  // Real-time: subscribe to agent_changed so the Members tab can light
-  // up a green ping next to whichever employee is operating an agent
-  // right now. Pings auto-fade after 60s.
-  useEffect(() => {
-    const unsub = eventBus.on('agent_changed', (payload) => {
-      const email = (payload?.actor_email || payload?.email || payload?.user_email || '')
-        .toString()
-        .toLowerCase()
-      if (!email) return
-      setLiveEmails((prev) => {
-        const next = new Set(prev)
-        next.add(email)
-        return next
-      })
-      const prevTimer = liveTimersRef.current.get(email)
-      if (prevTimer) clearTimeout(prevTimer)
-      const t = setTimeout(() => {
-        setLiveEmails((prev) => {
-          const next = new Set(prev)
-          next.delete(email)
-          return next
-        })
-        liveTimersRef.current.delete(email)
-      }, 60_000)
-      liveTimersRef.current.set(email, t)
-    })
-    return () => {
-      unsub?.()
-      liveTimersRef.current.forEach((t) => clearTimeout(t))
-      liveTimersRef.current.clear()
-    }
-  }, [])
 
   const revoke = async (keyId, email) => {
     if (!window.confirm(`Revoke ${email}'s Aegis key? Their Anthropic SDK calls will start failing immediately.`)) return
@@ -694,7 +632,6 @@ export default function Team() {
         onRefresh={load}
         onAdd={() => setShowAdd(true)}
         onRevoke={revoke}
-        liveEmails={liveEmails}
       />
     )
   })()
@@ -792,7 +729,7 @@ export default function Team() {
       <p className="text-[10px] text-neutral-700 leading-relaxed">
         Each employee replaces their <code className="text-neutral-500">ANTHROPIC_API_KEY</code> with
         the minted <code className="text-neutral-500">acp_emp_…</code> virtual key and points the
-        Anthropic SDK at <code className="text-neutral-500">https://aegisagent.in</code> via the
+        Anthropic SDK at <code className="text-neutral-500">{API_BASE_URL}</code> via the
         <code className="text-neutral-500"> base_url</code> parameter. From the SDK's perspective
         nothing else changes — but every message lands in your audit chain, gets attributed back
         to the employee, and counts toward their daily + monthly USD cap.
