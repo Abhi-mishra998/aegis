@@ -302,7 +302,9 @@ export default function SsoSettings() {
           {testResult && (
             <span className={`flex items-center gap-1.5 text-xs ${testResult.reachable ? 'text-green-400' : 'text-red-400'}`}>
               {testResult.reachable ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-              {testResult.reachable ? `Reachable — ${testResult.issuer || testResult.status}` : testResult.error || 'Unreachable'}
+              {testResult.reachable
+                ? `Reachable — ${testResult.issuer || testResult.status}`
+                : (testResult.error || testResult.status || 'Unreachable')}
             </span>
           )}
         </div>

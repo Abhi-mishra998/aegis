@@ -1582,6 +1582,12 @@ def _siem_key(tenant_id: uuid.UUID) -> str:
     return f"acp:siem:{tenant_id}"
 
 
+# Per-tenant SIEM config schema. Used by GET (read+mask), POST (save), and
+# /test/* (merge unsaved form values). Single source of truth.
+_SIEM_CONFIG_FIELDS = ("splunk_url", "splunk_token", "datadog_key", "datadog_site")
+_SIEM_MASKED_SECRET_FIELDS = frozenset({"splunk_token", "datadog_key"})
+
+
 def _mask(value: str | None) -> str:
     """Show only the last 4 characters of a secret value."""
     if not value:
@@ -1618,9 +1624,12 @@ async def save_siem_config(
 ) -> APIResponse[dict]:
     """Persist SIEM config {splunk_url, splunk_token, datadog_key, datadog_site} to Redis."""
     mapping: dict[str, str] = {}
-    for field in ("splunk_url", "splunk_token", "datadog_key", "datadog_site"):
+    for field in _SIEM_CONFIG_FIELDS:
         if field in payload:
-            mapping[field] = str(payload[field])
+            value = str(payload[field])
+            if field in _SIEM_MASKED_SECRET_FIELDS and value.startswith("***"):
+                continue
+            mapping[field] = value
 
     if not mapping:
         raise HTTPException(status_code=400, detail="No recognised SIEM fields provided")
@@ -1634,11 +1643,33 @@ async def save_siem_config(
     return APIResponse(data={"saved": list(mapping.keys())})
 
 
+def _merge_siem_overrides(stored: dict[str, str], body: dict[str, Any] | None) -> dict[str, str]:
+    """Overlay unsaved form values from the request body onto stored Redis config.
+
+    Masked secrets (``***xxxx``) returned by GET /siem/config are ignored so a
+    blind round-trip never overwrites a real stored secret with the placeholder.
+    """
+    if not body:
+        return stored
+    merged = dict(stored)
+    for key in _SIEM_CONFIG_FIELDS:
+        val = body.get(key)
+        if val and not str(val).startswith("***"):
+            merged[key] = str(val)
+    return merged
+
+
 @compliance_router.post("/siem/test/splunk", response_model=APIResponse[dict])
 async def test_splunk_connection(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    body: dict[str, Any] | None = None,
 ) -> APIResponse[dict]:
-    """Push one synthetic test event to Splunk and return the result."""
+    """Push one synthetic test event to Splunk and return the result.
+
+    Accepts an optional body with ``splunk_url`` and ``splunk_token`` so the
+    UI's "Send test event" button can validate freshly-typed credentials
+    before the operator hits Save.
+    """
     from services.audit.siem_export import push_to_splunk  # noqa: PLC0415
 
     r = _get_redis()
@@ -1647,6 +1678,8 @@ async def test_splunk_connection(
         cfg: dict[str, str] = {k.decode(): v.decode() for k, v in raw.items()}
     finally:
         await r.aclose()
+
+    cfg = _merge_siem_overrides(cfg, body)
 
     test_event = {
         "type": "acp_siem_test",
@@ -1665,8 +1698,14 @@ async def test_splunk_connection(
 @compliance_router.post("/siem/test/datadog", response_model=APIResponse[dict])
 async def test_datadog_connection(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    body: dict[str, Any] | None = None,
 ) -> APIResponse[dict]:
-    """Push one synthetic test event to Datadog and return the result."""
+    """Push one synthetic test event to Datadog and return the result.
+
+    Accepts an optional body with ``datadog_key`` and ``datadog_site`` so the
+    UI's "Send test event" button can validate freshly-typed credentials
+    before the operator hits Save.
+    """
     from services.audit.siem_export import push_to_datadog  # noqa: PLC0415
 
     r = _get_redis()
@@ -1675,6 +1714,8 @@ async def test_datadog_connection(
         cfg: dict[str, str] = {k.decode(): v.decode() for k, v in raw.items()}
     finally:
         await r.aclose()
+
+    cfg = _merge_siem_overrides(cfg, body)
 
     test_event = {
         "type": "acp_siem_test",
@@ -1745,6 +1786,9 @@ async def manual_siem_push(
     finally:
         await r_client.aclose()
 
+    if target not in ("splunk", "datadog", "all"):
+        raise HTTPException(status_code=400, detail="target must be splunk, datadog, or all")
+
     results: dict[str, Any] = {"events_fetched": len(events)}
 
     if target in ("splunk", "all"):
@@ -1761,8 +1805,22 @@ async def manual_siem_push(
             site=cfg.get("datadog_site", "datadoghq.com"),
         )
 
-    if target not in ("splunk", "datadog", "all"):
-        raise HTTPException(status_code=400, detail="target must be splunk, datadog, or all")
+    # Roll the per-target shapes into a flat {status, sent, reason} so the UI's
+    # "Push now" affordance can render "Pushed N events" without branching on
+    # which target was selected. Precedence: any send wins; else any error;
+    # else skipped.
+    per_target = [results[t] for t in ("splunk", "datadog") if t in results]
+    sent_total = sum(int(r.get("sent", 0) or 0) for r in per_target if r.get("status") == "sent")
+    errors = [r for r in per_target if r.get("status") == "error"]
+    if sent_total > 0:
+        results["status"] = "sent"
+    elif errors:
+        results["status"] = "error"
+        results["reason"] = errors[0].get("reason") or f"HTTP {errors[0].get('http_status', '?')}"
+    elif per_target:
+        results["status"] = "skipped"
+        results["reason"] = "; ".join(r.get("reason", "skipped") for r in per_target)
+    results["sent"] = sent_total
 
     return APIResponse(data=results)
 
