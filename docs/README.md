@@ -35,11 +35,11 @@ The [AEVF section](AEVF/README.md) is where that promise becomes operational: an
 
 ## Platform at a glance (current state)
 
-- **Live URL:** `https://aegisagent.in` — clean canonical URL (the `ha.aegisagent.in` alias still resolves and is documented where the prod-ha topology is being named explicitly). Multi-AZ ASG of 2× `m6g.medium` Graviton behind ALB; Multi-AZ RDS Postgres; Redis replication group; WAFv2; KMS-rooted ed25519 signing keys in SSM SecureString.
+- **Live URL:** `https://aegisagent.in` — the single canonical URL. The legacy `ha.aegisagent.in` alias was retired on 2026-06-24; every SDK, webhook, and doc now points at `aegisagent.in` only. Multi-AZ ASG of 2× `m6g.medium` Graviton behind ALB; Multi-AZ RDS Postgres; Redis replication group; WAFv2; KMS-rooted ed25519 signing keys in SSM SecureString.
 - **16 application services across 22 containers.**
 - **Cryptographic audit chain** — every decision signed with ed25519, chained via SHA-256 `prev_hash`, rolled into a daily Merkle root, **format published as the open AEVF spec at `/aevf/spec.md`**. The audit table is protected by an append-only DB trigger — no `UPDATE` / `DELETE` will even reach disk.
 - **49 React UI pages** — every page wired to a live backend.
-- **3 framework SDKs on PyPI — pinned to `==1.1.0`:** `aegis-anthropic`, `aegis-openai`, `aegis-langchain` — drop-in wrappers for Anthropic / OpenAI / LangChain agents. See [SDK 1.1.0 Release](integrations/sdk-1.1.0-release.md) for the changelog and pin-line.
+- **4 framework SDKs on PyPI (2026-06-24 release):** `aegis-anthropic==1.1.2`, `aegis-openai==1.1.2`, `aegis-langchain==1.1.3`, `aegis-bedrock==1.1.3` — drop-in wrappers for Anthropic / OpenAI / LangChain / Bedrock agents, all defaulting to the consolidated `aegisagent.in` gateway. See [SDK 1.1.0 Release](integrations/sdk-1.1.0-release.md) for the changelog history.
 - **Streaming control-plane events:** the SSE channel surfaces four new event types — `decision.upserted`, `incident.opened`, `incident.closed`, and `mitre.coverage.updated` (per-agent MITRE coverage in the Threat Graph).
 - **Compliance coverage** — signed verifiable bundles for **SOC 2, EU AI Act, NIST AI RMF, and India DPDP Act 2023** (with Rules 2025-11-13); GRC export shaped for Vanta / Drata / Secureframe / Hyperproof; AEVF back-reference on every SIEM event and every GRC row.
 - **Live demo at `/live-demo`** — scenario picker (fintech_data_egress / devops_destruction / support_pii_exfil), buyer-editable prompts, every deny earned from action semantics across all risk levels.
@@ -114,10 +114,10 @@ docs/
 
 ## Links
 
-- **Live URL:** [aegisagent.in](https://aegisagent.in) (clean canonical URL; `ha.aegisagent.in` alias still resolves)
+- **Live URL:** [aegisagent.in](https://aegisagent.in) — the single canonical URL (the legacy `ha.aegisagent.in` alias was retired on 2026-06-24)
 - **AEVF landing:** [aegisagent.in/aevf/](https://aegisagent.in/aevf/)
 - **Reference verifier on PyPI (1.1.0):** [`pip install 'aegis-aevf==1.1.0'`](https://pypi.org/project/aegis-aevf/)
-- **Framework SDKs (1.1.0):** [`pip install 'aegis-anthropic==1.1.0'`](https://pypi.org/project/aegis-anthropic/) · [`pip install 'aegis-openai==1.1.0'`](https://pypi.org/project/aegis-openai/) · [`pip install 'aegis-langchain==1.1.0'`](https://pypi.org/project/aegis-langchain/)
+- **Framework SDKs (2026-06-24):** [`pip install 'aegis-anthropic==1.1.2'`](https://pypi.org/project/aegis-anthropic/) · [`pip install 'aegis-openai==1.1.2'`](https://pypi.org/project/aegis-openai/) · [`pip install 'aegis-langchain==1.1.3'`](https://pypi.org/project/aegis-langchain/) · [`pip install 'aegis-bedrock==1.1.3'`](https://pypi.org/project/aegis-bedrock/)
 - **Client onboarding (long-form):** [`setup-agies.md`](../setup-agies.md) at the repo root
 - **E2E PASS evidence:** [`final-testing.md`](../final-testing.md) at the repo root (31/31 PASS)
 - **Repository:** [github.com/Abhi-mishra998/aegis](https://github.com/Abhi-mishra998/aegis)
