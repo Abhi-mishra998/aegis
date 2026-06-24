@@ -540,6 +540,7 @@ async def list_demo_scenarios() -> dict[str, Any]:
 #                                lambda at the demo_expires_at deadline.
 
 import asyncio
+import signal
 import subprocess
 from datetime import UTC, datetime, timedelta as _td
 from pathlib import Path as _Path
@@ -652,6 +653,203 @@ async def _seed_demo_data(tenant_id: str, owner_email: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 (2026-06-24) — lifecycle ownership for demo workspaces.
+#
+# Before this refactor a buyer's demo would tear down in the wrong order:
+#
+#   tenant DELETE → worker still alive → worker emits /execute →
+#   audit consumer FK-inserts → FK fails (tenant row gone) → audit_dlq +1
+#
+# The architect's correction: deletion must be the LAST step.
+#
+#   stop worker → confirm reaped → drain audit stream → delete tenant
+#
+# Both ``_run_demo_traffic`` (TTL path) and ``cleanup_expired_demos`` (cron
+# path) now share these helpers so the ordering rule has exactly one
+# implementation. ``_terminate_demo_worker`` is also safe to call when no
+# worker was registered (out-of-band crash, no Redis PID stash) — it returns
+# True so the drain + delete still happen.
+# ---------------------------------------------------------------------------
+
+_TRAFFIC_PID_KEY = "acp:demo_traffic:{tenant_id}"
+_DRAIN_TIMEOUT_SECONDS = 30.0
+_EXIT_CONFIRM_TIMEOUT_SECONDS = 10.0
+_AUDIT_CONSUMER_GROUP = "acp:audit:consumers"  # mirrors services/audit/main.py
+_AUDIT_STREAM_KEY = "acp:audit_stream"
+
+
+async def _wait_for_proc_exit(
+    proc: subprocess.Popen,
+    timeout: float = _EXIT_CONFIRM_TIMEOUT_SECONDS,
+) -> bool:
+    """Poll proc.poll() with a deadline. Returns True if the kernel reaped
+    the process (proc.returncode is set), False on timeout. Caller decides
+    what to do with a zombie — for the demo lifecycle we abort the tenant
+    delete rather than orphan the worker."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return True
+        await asyncio.sleep(0.1)
+    return proc.poll() is not None
+
+
+async def _terminate_demo_worker(tenant_id: str, redis) -> bool:
+    """Stop the live-traffic subprocess for `tenant_id`, confirm exit.
+
+    Reads the PID from the Redis stash written by ``_run_demo_traffic``.
+    Sends SIGTERM, waits up to 5 s, then SIGKILL. Returns True if no worker
+    was registered OR if it exited cleanly. Returns False only when we
+    failed to confirm the process was reaped within ``_EXIT_CONFIRM_TIMEOUT_SECONDS``
+    after the kill — caller must NOT proceed to delete the tenant in that
+    case (better orphan tenant than orphan worker emitting orphan events).
+    """
+    pid_key = _TRAFFIC_PID_KEY.format(tenant_id=tenant_id)
+    try:
+        pid_raw = await redis.get(pid_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "demo_worker_pid_lookup_failed",
+            tenant_id=tenant_id, error=str(exc),
+        )
+        # Without Redis we can't find the PID — treat as "no worker known"
+        # rather than block tenant deletion forever.
+        return True
+
+    if not pid_raw:
+        logger.info("demo_worker_no_pid_registered", tenant_id=tenant_id)
+        return True
+
+    try:
+        pid = int(pid_raw.decode() if isinstance(pid_raw, bytes) else pid_raw)
+    except (TypeError, ValueError):
+        logger.warning("demo_worker_pid_unparseable", tenant_id=tenant_id, raw=str(pid_raw))
+        return True
+
+    # Best-effort: the process may already be dead (crash, external reaper).
+    # That's fine — we just confirm the exit then continue.
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        logger.info("demo_worker_already_exited", tenant_id=tenant_id, pid=pid)
+        await redis.delete(pid_key)
+        return True
+    except PermissionError as exc:
+        logger.error(
+            "demo_worker_signal_denied",
+            tenant_id=tenant_id, pid=pid, error=str(exc),
+        )
+        # We can't kill it — refuse to proceed so the worker doesn't outlive
+        # the tenant. The caller will abort the delete.
+        return False
+
+    if await _wait_for_pid_exit(pid, timeout=5.0):
+        await redis.delete(pid_key)
+        logger.info("demo_worker_terminated", tenant_id=tenant_id, pid=pid)
+        return True
+
+    # SIGTERM didn't take — escalate to SIGKILL and confirm one more time.
+    try:
+        os.kill(pid, signal.SIGKILL)
+        logger.warning("demo_worker_sigkill_sent", tenant_id=tenant_id, pid=pid)
+    except ProcessLookupError:
+        pass
+
+    if await _wait_for_pid_exit(pid, timeout=_EXIT_CONFIRM_TIMEOUT_SECONDS):
+        await redis.delete(pid_key)
+        logger.info("demo_worker_terminated", tenant_id=tenant_id, pid=pid)
+        return True
+
+    logger.error(
+        "demo_worker_exit_unconfirmed",
+        tenant_id=tenant_id, pid=pid,
+        note="not deleting tenant — worker would emit orphan events",
+    )
+    return False
+
+
+async def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
+    """Poll ``os.kill(pid, 0)`` (existence check) until the process is gone
+    or ``timeout`` elapses. Returns True if the process exited."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(0.2)
+    return False
+
+
+async def _wait_for_audit_drain(
+    redis,
+    tenant_id: str,
+    timeout: float = _DRAIN_TIMEOUT_SECONDS,
+) -> bool:
+    """Poll XPENDING for the audit consumer group, counting messages whose
+    payload's tenant_id matches `tenant_id`. Returns True once the count
+    reaches 0 within `timeout` seconds.
+
+    Returns True on timeout too — better to proceed with the delete than to
+    block the cron sweep forever on an unrelated audit-consumer outage. The
+    failure mode is logged so operators see the orphan risk.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            pending = await redis.xpending_range(
+                _AUDIT_STREAM_KEY, _AUDIT_CONSUMER_GROUP, "-", "+", count=200,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "demo_audit_drain_xpending_failed",
+                tenant_id=tenant_id, error=str(exc),
+            )
+            return True
+
+        if not pending:
+            logger.info("demo_audit_drain_complete", tenant_id=tenant_id, remaining=0)
+            return True
+
+        # Count messages whose payload's tenant_id == this tenant. We have
+        # to XRANGE-look them up because XPENDING only returns IDs + idle
+        # times — not the fields.
+        ids = [entry["message_id"] for entry in pending]
+        try:
+            messages = await redis.xrange(_AUDIT_STREAM_KEY, min=ids[0], max=ids[-1])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "demo_audit_drain_xrange_failed",
+                tenant_id=tenant_id, error=str(exc),
+            )
+            return True
+
+        # Caller passes a decode_responses=False client (mirrors the audit
+        # consumer in services/audit/main.py), so fields are bytes-keyed.
+        target = tenant_id.encode()
+        outstanding = sum(
+            1 for _, fields in messages
+            if fields.get(b"tenant_id") == target
+        )
+
+        if outstanding == 0:
+            logger.info(
+                "demo_audit_drain_complete",
+                tenant_id=tenant_id, remaining_for_tenant=0, total_pending=len(pending),
+            )
+            return True
+
+        await asyncio.sleep(0.5)
+
+    logger.warning(
+        "demo_audit_drain_timeout",
+        tenant_id=tenant_id, timeout_s=timeout,
+        note="proceeding with tenant delete — residual events may FK-fail to DLQ",
+    )
+    return True
+
+
 async def _run_demo_traffic(tenant_id: str, jwt: str, ttl_seconds: int) -> None:
     """Background traffic generator so the Live Feed actually flows during
     the demo's TTL window. Best-effort: any failure is swallowed.
@@ -659,8 +857,14 @@ async def _run_demo_traffic(tenant_id: str, jwt: str, ttl_seconds: int) -> None:
     Spawns ``scripts/generate_real_traffic.py`` as a Popen, stashes the
     PID in Redis under ``acp:demo_traffic:<tenant>`` (TTL = ttl_seconds+60
     so an external reaper can SIGTERM if we miss the kill), then waits
-    ttl_seconds and SIGTERMs the process. SIGKILLs 5 s later if it's
-    still alive.
+    ttl_seconds and SIGTERMs the process.
+
+    Phase 2 (2026-06-24): the TTL path now goes through
+    ``_terminate_demo_worker`` + ``_wait_for_audit_drain`` so the worker's
+    last in-flight ``/execute`` calls drain into the audit stream BEFORE the
+    cleanup-expired-demos sweep deletes the tenant row. Without this gate
+    the worker's tail emissions caused FK-insert failures in the audit
+    consumer (visible on prod as ``audit_dlq=65``).
     """
     repo_root = _Path(__file__).resolve().parents[3]
     traffic_script = repo_root / "scripts" / "generate_real_traffic.py"
@@ -691,11 +895,17 @@ async def _run_demo_traffic(tenant_id: str, jwt: str, ttl_seconds: int) -> None:
         logger.warning("demo_traffic_failed", tenant_id=tenant_id, error=str(exc))
         return
 
-    # Stash PID in Redis so an out-of-band reaper can clean up if we crash.
+    # Stash PID in Redis so an out-of-band reaper can clean up if we crash,
+    # and so the cleanup-expired-demos sweep can find the same PID and
+    # terminate it before deleting the tenant row.
+    from sdk.common.redis import get_redis_client  # noqa: PLC0415
+    pid_redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
-        from sdk.common.redis import get_redis_client  # noqa: PLC0415
-        _r = get_redis_client(settings.REDIS_URL, decode_responses=True)
-        await _r.set(f"acp:demo_traffic:{tenant_id}", str(proc.pid), ex=ttl_seconds + 60)
+        await pid_redis.set(
+            _TRAFFIC_PID_KEY.format(tenant_id=tenant_id),
+            str(proc.pid),
+            ex=ttl_seconds + 60,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("demo_traffic_pid_record_failed", tenant_id=tenant_id, error=str(exc))
 
@@ -703,12 +913,30 @@ async def _run_demo_traffic(tenant_id: str, jwt: str, ttl_seconds: int) -> None:
 
     # Wait for the demo TTL, then terminate the traffic generator.
     await asyncio.sleep(ttl_seconds)
+
+    # Lifecycle gate: stop the worker, confirm exit, drain audit. We do NOT
+    # delete the tenant here — the cleanup-expired-demos sweep owns deletion.
+    # This handler just guarantees the worker isn't emitting past TTL so the
+    # sweep's per-tenant drain check can complete quickly.
     if proc.poll() is None:
         proc.terminate()
-        await asyncio.sleep(5)
-        if proc.poll() is None:
+        if not await _wait_for_proc_exit(proc, timeout=5.0):
             proc.kill()
-    logger.info("demo_traffic_terminated", tenant_id=tenant_id, pid=proc.pid, returncode=proc.returncode)
+            await _wait_for_proc_exit(proc, timeout=5.0)
+    logger.info(
+        "demo_traffic_terminated",
+        tenant_id=tenant_id, pid=proc.pid, returncode=proc.returncode,
+    )
+
+    # Drain THIS tenant's residual audit events before the sweep deletes the
+    # tenant row. Best-effort — the sweep's own drain call is the
+    # authoritative gate; this is opportunistic so by the time the cron
+    # fires the queue is usually already empty.
+    try:
+        binary_redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
+        await _wait_for_audit_drain(binary_redis, tenant_id, timeout=10.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("demo_traffic_drain_failed", tenant_id=tenant_id, error=str(exc))
 
 
 @router.post("/spawn-workspace")
@@ -1116,11 +1344,28 @@ async def cleanup_expired_demos(
     presenting a valid X-Mesh-Token signed by a trusted service key gets
     in. The mesh-caller identity (``_auth``) is recorded on the audit row.
 
+    Phase 2 lifecycle ordering (2026-06-24): per tenant, the sweep now
+    enforces
+
+        stop worker → confirm exit → drain audit stream → delete tenant
+
+    so the audit consumer never sees a tenant_id whose row has already been
+    deleted. Previously the order was inverted (delete first, then worker
+    eventually died) and the worker's tail events drove ``audit_dlq`` up by
+    one row per emit. Tenants where worker termination cannot be confirmed
+    are SKIPPED — better orphan-tenant than orphan-worker emitting orphan
+    events into a freshly emptied DB.
+
     Intended invocation: a 24h cron or a Lambda mints a mesh JWT (using
     its own ACP_MESH_PRIVATE_KEY_PEM) and POSTs here at the
     demo_expires_at deadline.
     """
+    from sdk.common.redis import get_redis_client
     from services.identity.models import Tenant
+
+    pid_redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
+    audit_redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
+
     cutoff = datetime.now(UTC)
     result = await db.execute(
         _select(Tenant.id).where(
@@ -1130,11 +1375,39 @@ async def cleanup_expired_demos(
     )
     expired_ids = [str(r[0]) for r in result.all()]
 
-    if expired_ids:
-        await db.execute(
-            _delete(Tenant).where(Tenant.id.in_(expired_ids)),
-        )
-        await db.commit()
+    deleted_ids: list[str] = []
+    skipped_ids: list[dict[str, str]] = []
+
+    for tenant_id in expired_ids:
+        # 1. Stop the live-traffic worker (if registered).
+        worker_stopped = await _terminate_demo_worker(tenant_id, pid_redis)
+        if not worker_stopped:
+            skipped_ids.append({"tenant_id": tenant_id, "reason": "worker_exit_unconfirmed"})
+            logger.error(
+                "demo_cleanup_skipped",
+                tenant_id=tenant_id, reason="worker_exit_unconfirmed",
+            )
+            continue
+
+        # 2. Drain residual audit events for THIS tenant. Best-effort; the
+        # helper returns True on timeout but logs the orphan risk.
+        await _wait_for_audit_drain(audit_redis, tenant_id)
+
+        # 3. Delete the tenant LAST — only after the worker is gone and the
+        # audit stream has flushed any in-flight events for this tenant.
+        try:
+            await db.execute(
+                _delete(Tenant).where(Tenant.id == tenant_id),
+            )
+            await db.commit()
+            deleted_ids.append(tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            skipped_ids.append({"tenant_id": tenant_id, "reason": f"delete_failed: {exc!s}"})
+            logger.error(
+                "demo_cleanup_delete_failed",
+                tenant_id=tenant_id, error=str(exc),
+            )
 
     # N12 fix — record a tamper-evident audit row for every cleanup run.
     # Destructive multi-tenant deletes must always be traceable to the
@@ -1143,20 +1416,19 @@ async def cleanup_expired_demos(
     # app.state.redis being populated (the gateway boot path doesn't set it).
     try:
         from sdk.common.audit_stream import push_audit_event
-        from sdk.common.redis import get_redis_client
-        _audit_redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
         await push_audit_event(
-            redis=_audit_redis,
+            redis=audit_redis,
             tenant_id="system",
             agent_id=None,
             action="demo_cleanup_swept",
             tool="demo.cleanup-expired",
             decision="allow",
-            reason=f"swept {len(expired_ids)} expired demo tenant(s)",
+            reason=f"swept {len(deleted_ids)} expired demo tenant(s)",
             metadata={
                 "triggered_by": _auth,
-                "swept_count":  len(expired_ids),
-                "swept_ids":    expired_ids,
+                "swept_count":  len(deleted_ids),
+                "swept_ids":    deleted_ids,
+                "skipped":      skipped_ids,
                 "cutoff":       cutoff.isoformat(),
             },
             request_id=request.headers.get("X-Request-ID"),
@@ -1166,10 +1438,15 @@ async def cleanup_expired_demos(
 
     logger.info(
         "demo_cleanup_swept",
-        count=len(expired_ids),
+        deleted_count=len(deleted_ids),
+        skipped_count=len(skipped_ids),
         triggered_by=_auth,
     )
     return {
         "success": True,
-        "data": {"swept_count": len(expired_ids), "swept_ids": expired_ids},
+        "data": {
+            "swept_count": len(deleted_ids),
+            "swept_ids":   deleted_ids,
+            "skipped":     skipped_ids,
+        },
     }

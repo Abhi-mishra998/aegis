@@ -109,6 +109,20 @@ AUDIT_STREAM_DROPPED_TOTAL = Counter(
     "acp_audit_stream_dropped_total",
     "Audit events dropped from the head of the stream by MAXLEN trimming",
 )
+
+# Phase 1 (2026-06-24): Producer-side validation. The audit consumer used to
+# absorb every malformed event into acp:audit_stream:dlq, hiding the bad caller
+# behind a generic "consumer DLQ depth" alert. Producer-side rejection moves
+# the failure to a separate stream (acp:audit_stream:producer_dlq) AND a
+# counter labelled by failure reason so the offending call site is debuggable
+# from Prometheus alone.
+AUDIT_PRODUCER_DLQ_TOTAL = Counter(
+    "acp_audit_producer_dlq_total",
+    "Audit events rejected at the producer (never reached the stream)",
+    # reason: missing_field, invalid_tenant_uuid, invalid_request_id,
+    #         producer_dlq_write_failed
+    ["reason"],
+)
 GROQ_EVENT_FAILURES_TOTAL = Counter(
     "acp_groq_event_failures_total",
     "Count of failures emitting Groq decision events (was previously silent)",

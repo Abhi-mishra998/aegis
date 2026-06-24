@@ -28,7 +28,6 @@ from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX
 from sdk.common.resilient_client import ResilientClient
-from sdk.utils import SLO_AUDIT_DURABILITY_TOTAL
 
 logger = structlog.get_logger(__name__)
 
@@ -596,33 +595,22 @@ class ServiceClient:
 
     async def log_audit_stream(self, redis: Redis, log_data: dict[str, Any]) -> None:
         """
-        Directly push audit event to Redis Stream (PRODUCER).
-        Ensures zero-loss durability on the hot path.
-        """
-        try:
-            # 1. Record Production SLO
-            SLO_AUDIT_DURABILITY_TOTAL.labels(stage="produced").inc()
+        Push an audit event to the Redis Stream via the centralized producer.
 
-            payload = {
-                k: ("" if v is None else (json.dumps(v) if not isinstance(v, str) else v))
-                for k, v in log_data.items()
-            }
-            # maxlen=10_000 keeps the stream's steady-state below the
-            # /system/health "Degraded Performance" threshold (12_000).
-            # The old 50_000 cap meant the stream sat near full at sustained
-            # load and tripped the 45_000 warning continuously even though
-            # the consumer group's lag was 0 — every entry already XACK'd,
-            # just retained by the cap. The audit DB write is the durability
-            # path; the stream is a transient handoff buffer.
-            await redis.xadd(
-                "acp:audit_stream",
-                payload,
-                maxlen=10_000,
-                approximate=True,
-            )
+        Phase 1 (2026-06-24) — all direct ``xadd("acp:audit_stream", ...)``
+        sites were moved through ``sdk.common.audit_stream.emit_audit_event``
+        so required-field validation (tenant_id / request_id / action /
+        decision / ts) happens BEFORE the bad event reaches the consumer.
+        Malformed events land in ``acp:audit_stream:producer_dlq`` with a
+        stacktrace instead of being silently absorbed by the consumer DLQ
+        (which left the offending caller invisible). The SLO counter and
+        MAXLEN handling are owned by the helper now.
+        """
+        from sdk.common.audit_stream import emit_audit_event
+        try:
+            await emit_audit_event(redis, log_data)
         except Exception as exc:
             logger.error("audit_stream_write_failed", error=str(exc))
-            SLO_AUDIT_DURABILITY_TOTAL.labels(stage="failed_at_producer").inc()
             raise
 
     # ------------------------------------------------------------------
