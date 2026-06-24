@@ -1,22 +1,25 @@
 # Aegis ACP — Framework Integration Packages
 
-Three pip-installable packages that add Aegis governance to existing AI agents in 3 lines of code.
+Four pip-installable packages that add Aegis governance to existing AI agents in 3 lines of code.
 Every tool call is checked against your policies before execution. Blocked calls return a descriptive message — your agent handles it naturally without code changes.
 
-## Packages
+All four packages default to the consolidated production gateway at `https://aegisagent.in`; override with `gateway_url=` / `AEGIS_URL` only for self-host.
 
-| Package | Framework | What it wraps |
-|---|---|---|
-| `aegis-langchain` | LangChain | `AgentExecutor` tool `_run` / `_arun` |
-| `aegis-openai` | OpenAI | `chat.completions.create()` → `tool_calls` |
-| `aegis-anthropic` | Anthropic | `messages.create()` → `tool_use` blocks |
+## Packages (2026-06-24 release)
+
+| Package | Version | Framework | What it wraps |
+|---|---|---|---|
+| `aegis-langchain` | `1.1.3` | LangChain | `AgentExecutor` tool `_run` / `_arun` |
+| `aegis-openai` | `1.1.2` | OpenAI | `chat.completions.create()` → `tool_calls` |
+| `aegis-anthropic` | `1.1.2` | Anthropic | `messages.create()` → `tool_use` blocks |
+| `aegis-bedrock` | `1.1.3` | AWS Bedrock | `bedrock-agent-runtime` invoke + retrieve |
 
 ---
 
 ## aegis-langchain
 
 ```bash
-pip install aegis-langchain
+pip install 'aegis-langchain==1.1.3'
 # or from source:
 pip install -e integrations/aegis-langchain
 ```
@@ -52,7 +55,7 @@ agent.invoke(input, config={"callbacks": [handler]})
 ## aegis-openai
 
 ```bash
-pip install aegis-openai
+pip install 'aegis-openai==1.1.2'
 ```
 
 ```python
@@ -81,7 +84,7 @@ for block in getattr(response, "_aegis_blocked", []):
 ## aegis-anthropic
 
 ```bash
-pip install aegis-anthropic
+pip install 'aegis-anthropic==1.1.2'
 ```
 
 ```python
@@ -109,7 +112,7 @@ response = client.messages.create(
 
 ## Environment variables
 
-All three packages read from the same set of env vars:
+All four packages read from the same set of env vars:
 
 | Variable | Description |
 |---|---|
@@ -122,9 +125,9 @@ All three packages read from the same set of env vars:
 
 ## Fail-closed by default
 
-All three packages **fail closed** if Aegis is unreachable: tool calls return `deny` with reason `aegis_unreachable_fail_closed` or `aegis_http_<code>`. Allowing unchecked tool calls through because the security plane was down defeats the whole point of the integration — it's the exact failure mode the SDK exists to prevent.
+All four packages **fail closed** if Aegis is unreachable: tool calls return `deny` with reason `aegis_unreachable_fail_closed` or `aegis_http_<code>`. Allowing unchecked tool calls through because the security plane was down defeats the whole point of the integration — it's the exact failure mode the SDK exists to prevent.
 
-This is enforced in `aegis_anthropic/__init__.py:AegisClient.check()` and the equivalent in `aegis_openai` / `aegis_langchain`. Your agent still continues — the loop just sees a denied tool result and reasons over it like any other observation.
+This is enforced in `aegis_anthropic/__init__.py:AegisClient.check()` and the equivalent in `aegis_openai` / `aegis_langchain` / `aegis_bedrock`. Your agent still continues — the loop just sees a denied tool result and reasons over it like any other observation.
 
 ---
 

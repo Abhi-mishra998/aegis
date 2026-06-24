@@ -5,6 +5,10 @@
 **Time from this page → first decision audited:** 10 minutes.
 **Site:** https://aegisagent.in
 
+> Already signed up and rolling out to your team? For the post-signup
+> adoption flow (Day 0 → Day 7), see [ui-setup.md](ui-setup.md). This
+> document is the evaluator's 5-minute no-signup tour.
+
 This document is intentionally written for the *person who has to make the buy-or-pass decision* — not the engineer who will integrate later (that audience has its own SDK reference at https://aegisagent.in/developer). Wherever you see a screen, you can open it in your own workspace and verify the claim live before you read on.
 
 ---
@@ -57,8 +61,8 @@ If at any point during the evaluation a claim in this document does not match wh
 Use this if you want to confirm the product is alive before committing to a signup.
 
 1. Open **https://aegisagent.in** in a fresh tab.
-2. On the landing page, click **"Spawn a demo workspace"**. We mint you an anonymous 30-minute workspace with full OWNER role on a sandbox tenant.
-3. You land on your dashboard. The KPIs are zero because nothing has happened yet.
+2. On the landing page, click **"Spawn a demo workspace"**. We mint you an anonymous 30-minute workspace with full OWNER role on a sandbox tenant. The workspace is auto-seeded on spawn with 5 named agents (db-copilot, support-bot, devops-agent, finance-bot, sales-research-agent), 60 audit events across 14 days, 2 incidents, 2 shadow policies, 10 identity-graph nodes, and 8 edges — every sidebar surface (Live Feed, Incidents, Shadow Mode, Identity Graph, Forensics, Audit Logs) is populated immediately, so you do not start on empty screens.
+3. You land on your dashboard. KPI tiles show the seeded counts immediately; the live tick badge will start incrementing as soon as you fire any new action.
 4. Open **Live Feed** in the sidebar. Leave it open.
 5. Back on Dashboard, click **"Run sample agent action"** (or go to Advanced → Agent Playground and fire any tool call). Within 200 ms a row appears on Live Feed.
 6. Fire a deliberately dangerous one: in the Playground, change the tool to `read_file` with path `/etc/passwd`. The Live Feed row shows up red with `decision=deny`, `policy_id=SEC-PATH-001`, MITRE tactic `TA0009`. Click the row → see the full signed receipt, the signal that fired, and the policy that matched.
@@ -159,7 +163,7 @@ This is the right path when:
 The SDK is one `pip install` and four lines of code:
 
 ```python
-pip install aegis-anthropic        # or aegis-openai / aegis-bedrock / aegis-langchain
+pip install 'aegis-anthropic==1.1.2'   # or aegis-openai==1.1.2 / aegis-bedrock==1.1.3 / aegis-langchain==1.1.3
 ```
 
 Then in your agent:
@@ -170,7 +174,7 @@ client = AegisAnthropic(api_key="acp_...")  # the Aegis key, not your Anthropic 
 response = client.messages.create(...)       # behaves like Anthropic, just governed
 ```
 
-The wizard mints you an `acp_...` key during onboarding. Three more SDKs available on PyPI today: `aegis-openai`, `aegis-bedrock`, `aegis-langchain`. A vanilla `aegis-aevf` package ships our offline verifier as a separate audit-only install.
+The wizard mints you an `acp_...` key during onboarding. The 2026-06-24 PyPI release ships four SDKs — `aegis-anthropic==1.1.2`, `aegis-openai==1.1.2`, `aegis-langchain==1.1.3`, `aegis-bedrock==1.1.3` — all defaulting to the consolidated `https://aegisagent.in` gateway. A separate `aegis-aevf==1.1.0` package ships our offline verifier as an audit-only install.
 
 ### Path B — Aegis-as-a-proxy (zero code changes)
 

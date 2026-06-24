@@ -9,6 +9,22 @@ cryptographically verifiable audit trail.
 * Deploy target: AWS (ap-south-1 reference deployment) / any Linux + Docker host
 * Status: production (single-tenant prod-ha + multi-tenant ready)
 
+## What's new (2026-06-24)
+
+Single-domain consolidation — the `ha.aegisagent.in` alias was retired in
+favour of the canonical `aegisagent.in`. Every demo workspace spawn now
+auto-seeds the full sidebar: 5 named agents (db-copilot, support-bot,
+devops-agent, finance-bot, sales-research-agent), 60 audit events across
+14 days, 2 incidents, 2 shadow policies, 10 identity-graph nodes, 8
+edges — so a first-time evaluator sees a populated UI within seconds of
+clicking "Spawn demo workspace". The framework SDKs were re-pinned to
+the current published versions (`aegis-anthropic` 1.1.2,
+`aegis-openai` 1.1.2, `aegis-langchain` 1.1.3, `aegis-bedrock` 1.1.3,
+`aegis-aevf` 1.1.0) so that fresh installs pick up the
+single-domain default automatically. WAF Bot Control was retuned for
+monitoring-friendly responses — legitimate auditor probes no longer get
+silently 403'd by the bot-block rule, the action moves to count-and-tag.
+
 ## What the gateway does on every request
 
 ```
@@ -31,34 +47,39 @@ client                                                              upstream too
 
 ## Quick start (local Docker stack, ~3 minutes)
 
+<!-- intentional local dev -->
 ```bash
+# Local dev — these URLs only resolve on the developer's own machine.
+# Production traffic always uses https://aegisagent.in.
 git clone https://github.com/Abhi-mishra998/aegis.git
 cd aegis
 cp .env.example infra/.env          # fill in JWT_SECRET_KEY, INTERNAL_SECRET
 cd infra
 docker compose -f docker-compose.yml up -d
 docker compose ps                   # 20+ services, expect all "healthy"
-```
 
-UI at `http://localhost:8080`. Admin login: `admin@acp.local` / `admin1234`
-(seeded by `scripts/utils/seed_admin.py`; rotate before exposing the
-stack).
+# UI at http://localhost:8080
+# Admin login: admin@acp.local / admin1234
+# (seeded by scripts/utils/seed_admin.py; rotate before exposing the stack)
+```
 
 ## SDK quick start
 
 ```bash
-pip install aegis-anthropic aegis-openai aegis-langchain
+pip install 'aegis-anthropic==1.1.2' 'aegis-openai==1.1.2' \
+            'aegis-langchain==1.1.3' 'aegis-bedrock==1.1.3'
 ```
 
 Wrap your existing SDK client — every tool call routes through Aegis
-before reaching the provider:
+before reaching the provider. The SDKs default to `https://aegisagent.in`,
+so `aegis_url=` is optional on the canonical deployment:
 
 ```python
 from aegis_anthropic import AegisAnthropic
 
 client = AegisAnthropic(
     aegis_key="acp_…",
-    aegis_url="https://your-aegis-host",
+    aegis_url="https://aegisagent.in",   # default; override for self-host
     tenant_id="…",
     agent_id="…",
     api_key="sk-ant-…",       # your Anthropic key
@@ -66,7 +87,7 @@ client = AegisAnthropic(
 resp = client.messages.create(model="claude-sonnet-4-5", tools=[…], messages=[…])
 ```
 
-Same shape for `aegis-openai` and `aegis-langchain`. See
+Same shape for `aegis-openai`, `aegis-langchain`, and `aegis-bedrock`. See
 [`docs/integrations/sdk-wrappers.md`](docs/integrations/sdk-wrappers.md).
 
 ## Verifying an evidence bundle (offline, no Aegis account)
@@ -77,7 +98,7 @@ evidence bundle Aegis exports and verifies it without contacting our
 infrastructure:
 
 ```bash
-pip install aegis-aevf
+pip install 'aegis-aevf==1.1.0'
 aegis-verify --bundle bundle.json
 ```
 
