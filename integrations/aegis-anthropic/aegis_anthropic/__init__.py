@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.1.1"
+__version__ = "1.1.3"
 __all__ = [
     "AegisAnthropic",
     "AegisAnthropicProxy",
@@ -37,54 +37,113 @@ __all__ = [
     "AegisApprovalRejected",
     "AegisApprovalTimeout",
     "AegisClient",
+    "AegisExecuteError",
+    "AegisNetworkError",
     "__version__",
 ]
 
 
-class AegisClient:
-    """Synchronous Aegis governance client (shared across all integrations)."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared base — duplicated verbatim across the 4 PyPI packages by design so
+# each one stays self-contained (no cross-package imports). If you change the
+# shape of _AegisGuard here, mirror the same change into
+# aegis-openai / aegis-langchain / aegis-bedrock so the four SDKs keep the
+# same docstrings, defaults, and error surface.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class AegisExecuteError(Exception):
+    """Aegis /execute returned a non-decision response (5xx, non-JSON, etc.).
+
+    The wrapper still surfaces a fail-closed `deny` decision to the caller —
+    this exception is reserved for direct callers of `_call_execute` who want
+    to distinguish transport failures from policy denials.
+    """
+
+
+class AegisNetworkError(AegisExecuteError):
+    """Could not reach Aegis at all (DNS, TCP, TLS, timeout)."""
+
+
+class _AegisGuard:
+    """Private base class — owns the HTTP call into Aegis /execute.
+
+    Each vendor-specific package re-implements this class verbatim so the
+    PyPI wheels stay self-contained. The shape (constructor kwargs, method
+    names, return contract) is identical across packages on purpose.
+
+    The constructor follows the env-var fallback pattern every vendor
+    wrapper already uses:
+      - `aegis_key`  ← `AEGIS_API_KEY`
+      - `aegis_url`  ← `AEGIS_URL`  (default `https://aegisagent.in`)
+      - `tenant_id`  ← `AEGIS_TENANT_ID`
+      - `agent_id`   ← `AEGIS_AGENT_ID`
+    """
+
+    _DEFAULT_AEGIS_URL = "https://aegisagent.in"
+    _PACKAGE_NAME = "aegis-anthropic"
 
     def __init__(
         self,
-        api_key: str,
-        gateway_url: str,
+        *,
+        aegis_key: str,
+        aegis_url: str,
         tenant_id: str,
         agent_id: str,
-        timeout: float = 10.0,
+        timeout: float = 8.0,
+        max_retries: int = 3,
     ) -> None:
-        self._url = gateway_url.rstrip("/")
+        self._url = (aegis_url or self._DEFAULT_AEGIS_URL).rstrip("/")
         self._agent_id = agent_id
+        self._timeout = timeout
+        self._max_retries = max(1, int(max_retries))
         self._headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {aegis_key}",
             "X-Tenant-ID": tenant_id,
             "X-Agent-ID": agent_id,
             "Content-Type": "application/json",
+            "User-Agent": self._attach_user_agent_header(),
         }
-        self._timeout = timeout
 
-    def check(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        try:
-            with httpx.Client(timeout=self._timeout) as c:
-                resp = c.post(
-                    f"{self._url}/execute",
-                    headers=self._headers,
-                    json={
-                        # Canonical field names the gateway expects. The
-                        # `tool_name` / `parameters` aliases used to "work"
-                        # via a fallback but the audit row was logged with
-                        # tool="unknown" — a real governance bug.
-                        "agent_id": self._agent_id,
-                        "tool":      tool_name,
-                        "arguments": tool_input,
-                    },
-                )
+    def _attach_user_agent_header(self) -> str:
+        """Per-package User-Agent string sent on every /execute call."""
+        return f"{self._PACKAGE_NAME}/{__version__}"
+
+    def _call_execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST `payload` to /execute and return the parsed decision dict.
+
+        Returns a dict shaped `{action, risk, findings, ...}`. NEVER raises
+        on policy denials — instead returns a deny/escalate decision. Only
+        raises `AegisNetworkError` / `AegisExecuteError` when even the
+        fail-closed deny couldn't be synthesised (which in practice does
+        not happen — the except clauses below catch everything).
+        """
+        import time as _time
+
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                with httpx.Client(timeout=self._timeout) as c:
+                    resp = c.post(
+                        f"{self._url}/execute",
+                        headers=self._headers,
+                        json=payload,
+                    )
+            except httpx.RequestError as exc:
+                # Connect / read / write / timeout — retry with linear
+                # backoff (0.1s, 0.2s, …). HTTP responses (4xx/5xx) are
+                # NOT retried — they're deterministic and re-sending
+                # won't change them in the short window the agent is
+                # waiting.
+                last_exc = exc
+                if attempt < self._max_retries - 1:
+                    _time.sleep(0.1 * (attempt + 1))
+                continue
+
             if resp.status_code in (200, 403):
-                # Sprint B follow-up 2026-06-14: the WAFv2 layer returns
-                # `text/html` 403 for sensitive paths (e.g. /root/.aws/
-                # credentials reads). Calling resp.json() on that raises
-                # JSONDecodeError which surfaced as `aegis_error:…` and
-                # confused buyers. Sniff Content-Type and synthesise the
-                # waf_blocked finding so the agent sees a real reason.
+                # WAFv2 returns text/html on sensitive-path blocks;
+                # resp.json() would raise JSONDecodeError. Surface as
+                # `waf_blocked` so the agent sees a real reason.
                 ctype = (resp.headers.get("content-type") or "").lower()
                 if "html" in ctype or "json" not in ctype:
                     if resp.status_code == 403:
@@ -96,29 +155,34 @@ class AegisClient:
                 try:
                     return self._normalize(resp.json())
                 except Exception:
-                    # JSON parse fell over despite the Content-Type — still
-                    # treat 403 as a WAF / edge block.
                     if resp.status_code == 403:
                         return {
                             "action":   "deny",
                             "risk":     1.0,
                             "findings": ["waf_blocked"],
                         }
-                    raise
-            # 4xx other than 403, or 5xx — treat as fail-CLOSED. Letting
-            # unchecked tool calls through because the security plane was
-            # unreachable defeats the whole point of the integration.
+                    # Unparseable 200 — treat as fail-closed.
+                    return {
+                        "action":   "deny",
+                        "risk":     1.0,
+                        "findings": ["aegis_unparseable_response"],
+                    }
+            # 4xx other than 403, or 5xx — fail CLOSED. Letting unchecked
+            # tool calls through because the security plane was unreachable
+            # defeats the whole point of the integration.
             return {
                 "action":   "deny",
                 "risk":     1.0,
                 "findings": [f"aegis_http_{resp.status_code}"],
             }
-        except Exception as exc:
-            return {
-                "action":   "deny",
-                "risk":     1.0,
-                "findings": [f"aegis_error:{type(exc).__name__}"],
-            }
+
+        # Exhausted retries on transport errors.
+        return {
+            "action":   "deny",
+            "risk":     1.0,
+            "findings": [f"aegis_error:{type(last_exc).__name__}"]
+                        if last_exc else ["aegis_error:unknown"],
+        }
 
     @staticmethod
     def _normalize(body: dict[str, Any]) -> dict[str, Any]:
@@ -135,7 +199,6 @@ class AegisClient:
             data = body
         if isinstance(data, dict) and data.get("action"):
             return data
-        # Error body, no decision payload — synthesize a safe one.
         err = (body.get("error") if isinstance(body, dict) else None) or "denied"
         action = "escalate" if "approval_required" in str(err).lower() else "deny"
         return {
@@ -143,6 +206,42 @@ class AegisClient:
             "risk":     1.0,
             "findings": [str(err)[:120]],
         }
+
+
+class AegisClient(_AegisGuard):
+    """Synchronous Aegis governance client (shared across all integrations).
+
+    Backwards-compatible adapter over `_AegisGuard`. Existing callers that
+    construct `AegisClient(api_key=..., gateway_url=..., tenant_id=..., ...)`
+    keep working unchanged.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        gateway_url: str,
+        tenant_id: str,
+        agent_id: str,
+        timeout: float = 10.0,
+    ) -> None:
+        super().__init__(
+            aegis_key=api_key,
+            aegis_url=gateway_url,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            timeout=timeout,
+        )
+
+    def check(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        # Canonical field names the gateway expects. The
+        # `tool_name` / `parameters` aliases used to "work" via a fallback
+        # but the audit row was logged with tool="unknown" — a real
+        # governance bug.
+        return self._call_execute({
+            "agent_id":  self._agent_id,
+            "tool":      tool_name,
+            "arguments": tool_input,
+        })
 
     def is_blocked(self, decision: dict[str, Any]) -> bool:
         return decision.get("action", "deny") in (

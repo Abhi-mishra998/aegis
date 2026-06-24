@@ -31,48 +31,117 @@ from typing import Any, Iterable
 
 import httpx
 
-__version__ = "1.1.2"
-__all__ = ["AegisBedrockAgentRuntime", "AegisClient", "__version__"]
+__version__ = "1.1.4"
+__all__ = [
+    "AegisBedrockAgentRuntime",
+    "AegisClient",
+    "AegisExecuteError",
+    "AegisNetworkError",
+    "__version__",
+]
 
 
-class AegisClient:
-    """Synchronous Aegis governance client. Identical contract to the
-    AegisClient in aegis-anthropic / aegis-openai — same /execute call,
-    same WAF / JSON / fail-closed surfacing."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared base — duplicated verbatim across the 4 PyPI packages by design so
+# each one stays self-contained (no cross-package imports). If you change the
+# shape of _AegisGuard here, mirror the same change into
+# aegis-anthropic / aegis-openai / aegis-langchain so the four SDKs keep the
+# same docstrings, defaults, and error surface.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class AegisExecuteError(Exception):
+    """Aegis /execute returned a non-decision response (5xx, non-JSON, etc.).
+
+    The wrapper still surfaces a fail-closed `deny` decision to the caller —
+    this exception is reserved for direct callers of `_call_execute` who want
+    to distinguish transport failures from policy denials.
+    """
+
+
+class AegisNetworkError(AegisExecuteError):
+    """Could not reach Aegis at all (DNS, TCP, TLS, timeout)."""
+
+
+class _AegisGuard:
+    """Private base class — owns the HTTP call into Aegis /execute.
+
+    Each vendor-specific package re-implements this class verbatim so the
+    PyPI wheels stay self-contained. The shape (constructor kwargs, method
+    names, return contract) is identical across packages on purpose.
+
+    The constructor follows the env-var fallback pattern every vendor
+    wrapper already uses:
+      - `aegis_key`  ← `AEGIS_API_KEY`
+      - `aegis_url`  ← `AEGIS_URL`  (default `https://aegisagent.in`)
+      - `tenant_id`  ← `AEGIS_TENANT_ID`
+      - `agent_id`   ← `AEGIS_AGENT_ID`
+    """
+
+    _DEFAULT_AEGIS_URL = "https://aegisagent.in"
+    _PACKAGE_NAME = "aegis-bedrock"
 
     def __init__(
         self,
-        api_key: str,
-        gateway_url: str,
+        *,
+        aegis_key: str,
+        aegis_url: str,
         tenant_id: str,
         agent_id: str,
-        timeout: float = 10.0,
+        timeout: float = 8.0,
+        max_retries: int = 3,
     ) -> None:
-        self._url = gateway_url.rstrip("/")
+        self._url = (aegis_url or self._DEFAULT_AEGIS_URL).rstrip("/")
         self._agent_id = agent_id
+        self._timeout = timeout
+        self._max_retries = max(1, int(max_retries))
         self._headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {aegis_key}",
             "X-Tenant-ID": tenant_id,
             "X-Agent-ID": agent_id,
             "Content-Type": "application/json",
+            "User-Agent": self._attach_user_agent_header(),
         }
-        self._timeout = timeout
 
-    def check(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        try:
-            with httpx.Client(timeout=self._timeout) as c:
-                resp = c.post(
-                    f"{self._url}/execute",
-                    headers=self._headers,
-                    json={
-                        "agent_id": self._agent_id,
-                        "tool":      tool_name,
-                        "arguments": tool_input,
-                    },
-                )
+    def _attach_user_agent_header(self) -> str:
+        """Per-package User-Agent string sent on every /execute call."""
+        return f"{self._PACKAGE_NAME}/{__version__}"
+
+    def _call_execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST `payload` to /execute and return the parsed decision dict.
+
+        Returns a dict shaped `{action, risk, findings, ...}`. NEVER raises
+        on policy denials — instead returns a deny/escalate decision. Only
+        raises `AegisNetworkError` / `AegisExecuteError` when even the
+        fail-closed deny couldn't be synthesised (which in practice does
+        not happen — the except clauses below catch everything).
+        """
+        import time as _time
+
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                with httpx.Client(timeout=self._timeout) as c:
+                    resp = c.post(
+                        f"{self._url}/execute",
+                        headers=self._headers,
+                        json=payload,
+                    )
+            except httpx.RequestError as exc:
+                # Connect / read / write / timeout — retry with linear
+                # backoff (0.1s, 0.2s, …). HTTP responses (4xx/5xx) are
+                # NOT retried — they're deterministic and re-sending
+                # won't change them in the short window the agent is
+                # waiting.
+                last_exc = exc
+                if attempt < self._max_retries - 1:
+                    _time.sleep(0.1 * (attempt + 1))
+                continue
+
             if resp.status_code in (200, 403):
-                # WAF returns text/html on sensitive-path blocks; surface
-                # as waf_blocked instead of JSONDecodeError.
+                # WAFv2 returns text/html on sensitive-path blocks;
+                # resp.json() would raise JSONDecodeError. Surface as
+                # `waf_blocked` so the agent sees a real reason.
                 ctype = (resp.headers.get("content-type") or "").lower()
                 if "html" in ctype or "json" not in ctype:
                     if resp.status_code == 403:
@@ -90,21 +159,39 @@ class AegisClient:
                             "risk":     1.0,
                             "findings": ["waf_blocked"],
                         }
-                    raise
+                    # Unparseable 200 — treat as fail-closed.
+                    return {
+                        "action":   "deny",
+                        "risk":     1.0,
+                        "findings": ["aegis_unparseable_response"],
+                    }
+            # 4xx other than 403, or 5xx — fail CLOSED. Letting unchecked
+            # tool calls through because the security plane was unreachable
+            # defeats the whole point of the integration.
             return {
                 "action":   "deny",
                 "risk":     1.0,
                 "findings": [f"aegis_http_{resp.status_code}"],
             }
-        except Exception as exc:
-            return {
-                "action":   "deny",
-                "risk":     1.0,
-                "findings": [f"aegis_error:{type(exc).__name__}"],
-            }
+
+        # Exhausted retries on transport errors.
+        return {
+            "action":   "deny",
+            "risk":     1.0,
+            "findings": [f"aegis_error:{type(last_exc).__name__}"]
+                        if last_exc else ["aegis_error:unknown"],
+        }
 
     @staticmethod
     def _normalize(body: dict[str, Any]) -> dict[str, Any]:
+        """Map every /execute response shape onto {action, risk, findings}.
+
+        * 200 success → unwrap `data` envelope, return as-is.
+        * 403 with `approval_required` → treat as `escalate`.
+        * 403 with `error` set but `action` missing → treat as `deny` and
+          carry the error string as a finding so the agent sees why.
+        * Anything else with `success: false` → fail-closed deny.
+        """
         data = body.get("data") if isinstance(body, dict) else None
         if data is None and isinstance(body, dict) and body.get("action"):
             data = body
@@ -117,6 +204,38 @@ class AegisClient:
             "risk":     1.0,
             "findings": [str(err)[:120]],
         }
+
+
+class AegisClient(_AegisGuard):
+    """Synchronous Aegis governance client.
+
+    Backwards-compatible adapter over `_AegisGuard`. Existing callers that
+    construct `AegisClient(api_key=..., gateway_url=..., tenant_id=..., ...)`
+    keep working unchanged.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        gateway_url: str,
+        tenant_id: str,
+        agent_id: str,
+        timeout: float = 10.0,
+    ) -> None:
+        super().__init__(
+            aegis_key=api_key,
+            aegis_url=gateway_url,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            timeout=timeout,
+        )
+
+    def check(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        return self._call_execute({
+            "agent_id":  self._agent_id,
+            "tool":      tool_name,
+            "arguments": tool_input,
+        })
 
     def is_blocked(self, decision: dict[str, Any]) -> bool:
         return decision.get("action", "deny") in (
