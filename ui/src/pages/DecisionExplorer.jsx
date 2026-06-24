@@ -13,7 +13,7 @@
 // The page accepts ?request_id=... in the URL so it deep-links from
 // other pages (Flight Recorder, Forensics, Live Feed).
 
-import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import ReactFlow, {
   Background,
@@ -240,6 +240,8 @@ export default function DecisionExplorer() {
   // on 1366×768 laptops which are the most common SOC analyst setup.
   const [filtersOpen, setFiltersOpen] = useState(true)
   const filtersInitRef = useRef(false)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   useEffect(() => {
     if (filtersInitRef.current) return
@@ -251,7 +253,7 @@ export default function DecisionExplorer() {
 
   const fetchGraph = useCallback(async (rid) => {
     if (!rid) return
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     // SSE delivers a `policy_decision` event the moment the decision
     // commits in the gateway, but the flight recorder ingests the spans
@@ -276,6 +278,7 @@ export default function DecisionExplorer() {
         }
         setGraph(payload)
         setLoading(false)
+        hasLoadedRef.current = true
         return
       } catch (e) {
         lastErr = e
@@ -291,6 +294,7 @@ export default function DecisionExplorer() {
         : (lastErr?.message || 'Failed to load decision graph')
     )
     setLoading(false)
+    hasLoadedRef.current = true
   }, [])
 
   useEffect(() => { if (initialRid) fetchGraph(initialRid) }, [initialRid, fetchGraph])

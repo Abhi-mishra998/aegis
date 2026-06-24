@@ -34,9 +34,11 @@ export default function FlightRecorder() {
   const [receiptError, setReceiptError] = useState('')
   const [inclusion, setInclusion] = useState(null)
   const [inclusionError, setInclusionError] = useState('')
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchTimelines = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     setError('')
     try {
       const params = { ...filter }
@@ -61,7 +63,10 @@ export default function FlightRecorder() {
       // console.warn made flight-recorder look frozen on a backend outage.
       setError(e?.message || 'Flight recorder unreachable')
     }
-    finally { setLoading(false) }
+    finally {
+      setLoading(false)
+      hasLoadedRef.current = true
+    }
   }, [filter, selectedAgentId])
 
   useEffect(() => {
