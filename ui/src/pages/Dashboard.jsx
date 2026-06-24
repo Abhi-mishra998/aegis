@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -242,17 +242,30 @@ export default function Dashboard() {
   // SSE handshake needs the acp_token cookie set by /auth/clerk/provision;
   // gate on tenant_id so we don't open a doomed connection during the
   // sign-in bridge window.
+  //
+  // Per-event refresh is debounced: the live-traffic generator (and any
+  // active demo) emits multiple `decision` events per second. The previous
+  // implementation called `setRefreshTick++` on every one, which fired
+  // four dashboard fetches per tick — easily ~12 req/s into the per-tenant
+  // 50-rps token bucket. The bucket emptied, the gateway returned 429s,
+  // `loading` flapped true/false faster than React could paint real data,
+  // and the dashboard was stuck on skeletons forever. We now collapse any
+  // burst to one refresh per 6 seconds; the 20 s background poll covers
+  // anything missed in the gap.
+  const lastSseRefreshRef = useRef(0);
+  const SSE_REFRESH_DEBOUNCE_MS = 6_000;
   useSSE({
     enabled: Boolean(tenant_id),
     onMessage: (evt) => {
       if (!evt?.type) return;
       setLiveEventCount((c) => c + 1);
-      // Sprint 20 UX pass — when a decision or override event lands,
-      // re-pull the mandate KPIs so the Escalated tile + breakdown
-      // refresh without the operator hitting Refresh.
       const t = String(evt.type).toLowerCase();
       if (t.includes('decision') || t.includes('override') || t.includes('approval') || t.includes('escalate')) {
-        setRefreshTick((tick) => tick + 1);
+        const now = Date.now();
+        if (now - lastSseRefreshRef.current >= SSE_REFRESH_DEBOUNCE_MS) {
+          lastSseRefreshRef.current = now;
+          setRefreshTick((tick) => tick + 1);
+        }
       }
     },
   });
