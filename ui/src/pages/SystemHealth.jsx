@@ -299,6 +299,53 @@ export default function SystemHealth() {
         </div>
       )}
 
+      {/* Audit Pipeline Health (Phase 3, 2026-06-24): replay worker results */}
+      {data && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Activity size={14} className="text-neutral-400" />
+            <span className="text-sm font-semibold text-white">Audit Pipeline Health</span>
+            <span className="ml-auto text-[10px] font-mono text-neutral-600">
+              since-deploy totals from /system/health
+            </span>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <QueueTile
+              label="Audit Success Rate"
+              value={queues.audit_success_rate_pct ?? 100}
+              warn={99.9}
+              crit={99}
+              hint="persisted / (persisted + dlq_landings)"
+              isRate
+              invert
+            />
+            <QueueTile
+              label="Replay Success Rate"
+              value={queues.audit_dlq_replay_success_rate_pct ?? 100}
+              warn={95}
+              crit={90}
+              hint="replayed / (replayed + permanently_failed)"
+              isRate
+              invert
+            />
+            <QueueTile
+              label="DLQ Pending"
+              value={queues.audit_dlq_length ?? 0}
+              warn={QUEUE_THRESHOLDS.AUDIT_DLQ_WARN}
+              crit={QUEUE_THRESHOLDS.AUDIT_DLQ_CRIT}
+              hint="awaiting replay worker (60s tick)"
+            />
+            <QueueTile
+              label="Permanently Failed"
+              value={queues.audit_permanently_failed_length ?? 0}
+              warn={1}
+              crit={50}
+              hint="non-recoverable — see runbook"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Auto-refresh note */}
       <p className="text-xs text-neutral-700 text-center">
         Auto-refreshes every 30 seconds
@@ -307,14 +354,20 @@ export default function SystemHealth() {
   )
 }
 
-function QueueTile({ label, value, warn, crit, hint }) {
-  const status =
-    value >= crit ? 'crit' : value >= warn ? 'warn' : 'ok'
+function QueueTile({ label, value, warn, crit, hint, isRate = false, invert = false }) {
+  // Default (depth): higher = worse — `value >= crit` is bad.
+  // Inverted (success rate): lower = worse — `value <= crit` is bad.
+  const status = invert
+    ? (value <= crit ? 'crit' : value <= warn ? 'warn' : 'ok')
+    : (value >= crit ? 'crit' : value >= warn ? 'warn' : 'ok')
   const cls = {
     ok:   { text: 'text-green-400',  border: 'border-green-500/15', bg: 'bg-green-500/5' },
     warn: { text: 'text-yellow-300', border: 'border-yellow-500/25', bg: 'bg-yellow-500/5' },
     crit: { text: 'text-red-400',    border: 'border-red-500/30',   bg: 'bg-red-500/10' },
   }[status]
+  const display = isRate
+    ? `${Number(value).toFixed(2)}%`
+    : Number(value).toLocaleString()
   return (
     <div className={`rounded-xl border ${cls.border} ${cls.bg} p-3 flex flex-col gap-1.5`}>
       <div className="flex items-center gap-2">
@@ -322,7 +375,7 @@ function QueueTile({ label, value, warn, crit, hint }) {
         <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 truncate">{label}</span>
       </div>
       <span className={`text-xl font-bold font-mono tabular-nums ${cls.text}`}>
-        {Number(value).toLocaleString()}
+        {display}
       </span>
       {hint && <p className="text-[10px] text-neutral-600 truncate">{hint}</p>}
     </div>
