@@ -328,8 +328,11 @@ export default function Playbooks() {
   const [installing,   setInstalling]   = useState(null)
   const [autoStatsMap, setAutoStatsMap] = useState({})
 
+  // First load = full skeleton; subsequent refreshes update silently
+  // in place so SSE events don't blank the playbook table on every tick.
+  const hasLoadedRef = useRef(false)
   const load = useCallback(async () => {
-    setLoading(true)
+    if (!hasLoadedRef.current) setLoading(true)
     try {
       const [pbRes, tmplRes, statsRes, autoRes] = await Promise.allSettled([
         playbookService.list(),
@@ -351,6 +354,7 @@ export default function Playbooks() {
     } catch {}
     setLoading(false)
     setHasLoaded(true)
+    hasLoadedRef.current = true
   }, [])
 
   useEffect(() => { load() }, [load])

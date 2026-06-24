@@ -196,6 +196,10 @@ export default function Dashboard() {
   // *after* this page mounted — without re-deriving on tenant_id, the user
   // sees a permanent "—" / "Failed to load" until they manually click
   // Refresh).
+  // First load = full skeleton; subsequent refreshes update silently
+  // in place so SSE-driven refetches don't blank the metric tiles every
+  // few seconds (the "blinking dashboard" the operator complains about).
+  const hasLoadedRef = useRef(false);
   useEffect(() => {
     if (!tenant_id) {
       // ProtectedRoute holds the bridge-syncing screen until tenant_id
@@ -205,7 +209,7 @@ export default function Dashboard() {
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     Promise.allSettled([
       workspaceService.inventory(),
       workspaceService.me(),
@@ -224,6 +228,7 @@ export default function Dashboard() {
       const items = evResp?.data?.items || evResp?.data || evResp?.items || [];
       setRecentEvents(Array.isArray(items) ? items.slice(0, 8) : []);
       setLoading(false);
+      hasLoadedRef.current = true;
       // Inventory + overview are the must-have fetches; treat failure as
       // total only if BOTH fail. Recent events + workspace identity can
       // degrade gracefully on a partial outage.
