@@ -1,12 +1,10 @@
 """Scheduled report delivery — model + CRUD."""
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import redis.asyncio as aioredis
 import structlog
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -14,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from sdk.common.db import Base
+from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
 
@@ -123,8 +122,8 @@ async def list_deliveries(
 # ---------------------------------------------------------------------------
 
 
-def _get_redis() -> aioredis.Redis:
-    return aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379"))
+def _get_redis():
+    return get_redis_client(decode_responses=False)
 
 
 # ---------------------------------------------------------------------------

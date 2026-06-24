@@ -1508,13 +1508,11 @@ async def export_incident_pdf(
 # manual-push + connection-test endpoints.
 # ---------------------------------------------------------------------------
 
-import os as _os  # noqa: E402
-
-import redis.asyncio as aioredis  # noqa: E402
+from sdk.common.redis import get_redis_client  # noqa: E402
 
 
-def _get_redis() -> aioredis.Redis:
-    return aioredis.from_url(_os.environ.get("REDIS_URL", "redis://redis:6379"))
+def _get_redis():
+    return get_redis_client(decode_responses=False)
 
 
 def _siem_key(tenant_id: uuid.UUID) -> str:
@@ -2019,8 +2017,8 @@ async def get_unread_count_endpoint(
     return APIResponse(data={"unread": count})
 
 
-def _threat_intel_redis() -> aioredis.Redis:
-    return aioredis.from_url(_os.environ.get("REDIS_URL", "redis://redis:6379"))
+def _threat_intel_redis():
+    return get_redis_client(decode_responses=False)
 
 
 @compliance_router.post("/threat-intel/ip", response_model=APIResponse[dict])
@@ -2315,12 +2313,8 @@ async def update_incident(
 
         # Write audit row for the update
         try:
-            import os as _os  # noqa: PLC0415
-
-            import redis.asyncio as _aioredis  # noqa: PLC0415
-
             from services.audit.writer import AuditWriter  # noqa: PLC0415
-            _r = _aioredis.from_url(_os.environ.get("REDIS_URL", "redis://redis:6379"))
+            _r = get_redis_client(decode_responses=False)
             try:
                 from services.audit.schemas import AuditLogCreate  # noqa: PLC0415
                 audit_payload = AuditLogCreate(
