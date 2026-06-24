@@ -298,6 +298,26 @@ AUDIT_CHAIN_VIOLATIONS_TOTAL = Counter(
 )
 AUDIT_CHAIN_VIOLATIONS_TOTAL.inc(0)
 
+# 2026-06-24 — Billing DLQ replay worker outcome counter, mirroring the
+# audit-side AUDIT_DLQ_REPLAY_TOTAL added in commit 0f5e24a. Labelled by
+# `outcome`:
+#   replayed             — event RPUSHed back onto acp:billing_retry_queue
+#                          for the gateway worker to retry
+#   skipped              — payload unparseable; promoted to permanently_failed
+#                          with the raw bytes preserved for forensic review
+#   permanently_failed   — retry_count >= MAX_RETRIES OR non-recoverable
+#                          error class (FK violation, tenant deleted, the
+#                          gateway's max_retries_exhausted marker)
+# Lifetime cumulative — the gateway's /system/health derives the dashboard
+# success-rate tile from this counter.
+BILLING_DLQ_REPLAY_TOTAL = Counter(
+    "acp_billing_dlq_replay_total",
+    "Billing DLQ replay attempts by outcome (lifetime, cumulative).",
+    ["outcome"],
+)
+for _billing_replay_outcome in ("replayed", "skipped", "permanently_failed"):
+    BILLING_DLQ_REPLAY_TOTAL.labels(outcome=_billing_replay_outcome).inc(0)
+
 
 # Run-3 (2026-05-14): Transactional outbox pattern — durability backstop for the
 # sync billing path. The audit writer inserts pending_usage_events atomically

@@ -302,7 +302,7 @@ export default function SystemHealth() {
         </div>
       )}
 
-      {/* Audit Pipeline Health (Phase 3, 2026-06-24): replay worker results */}
+      {/* Audit Pipeline Health — replay worker + lifetime durability */}
       {data && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
           <div className="flex items-center gap-2 mb-4">
@@ -344,6 +344,53 @@ export default function SystemHealth() {
               warn={1}
               crit={50}
               hint="non-recoverable — see runbook"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Billing Pipeline Health — same shape, mirrors billing replay worker */}
+      {data && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Activity size={14} className="text-neutral-400" />
+            <span className="text-sm font-semibold text-white">Billing Pipeline Health</span>
+            <span className="ml-auto text-[10px] font-mono text-neutral-600">
+              since-deploy totals from /system/health
+            </span>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <QueueTile
+              label="Billing Success Rate"
+              value={queues.billing_success_rate_pct ?? 100}
+              warn={99.9}
+              crit={99}
+              hint="(attempted - failed) / attempted"
+              isRate
+              invert
+            />
+            <QueueTile
+              label="Replay Success Rate"
+              value={queues.billing_dlq_replay_success_rate_pct ?? 100}
+              warn={95}
+              crit={90}
+              hint="replayed / (replayed + permanently_failed)"
+              isRate
+              invert
+            />
+            <QueueTile
+              label="DLQ Pending"
+              value={queues.billing_dlq_length ?? 0}
+              warn={QUEUE_THRESHOLDS.BILLING_DLQ_WARN}
+              crit={QUEUE_THRESHOLDS.BILLING_DLQ_CRIT}
+              hint="awaiting billing replay worker (60s tick)"
+            />
+            <QueueTile
+              label="Permanently Failed"
+              value={queues.billing_permanently_failed_length ?? 0}
+              warn={1}
+              crit={50}
+              hint="non-recoverable — see billing-dlq runbook"
             />
           </div>
         </div>
