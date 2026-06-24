@@ -90,6 +90,20 @@ const SECTIONS = [
     href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/architecture/reference/README.md',
     linkLabel: 'AWS / Azure / hybrid patterns',
   },
+  {
+    icon: Shield,
+    title: 'Failure-mode behaviour',
+    body: 'What happens if Redis / OPA / Postgres dies? Documented per dependency with the exact code path that implements the fail-behaviour. Default is fail-closed for policy decisions (a governance product can never default-allow during an outage); fail-open for observability. Circuit breakers + exponential-backoff retries on every cross-service call via sdk/common/resilient_client.py.',
+    href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/architecture-failure-modes.md',
+    linkLabel: 'Architecture & failure modes',
+  },
+  {
+    icon: Activity,
+    title: 'Versioning + provenance',
+    body: 'Every release ships a git SHA + build timestamp. GET /status exposes the running version, SHA, and build_time as JSON — any monitor or evaluator can answer "what version is live?" without internal access. Same provenance lands in every audit-row signature, so a year-old record still names the exact build that produced it.',
+    href: '/status',
+    linkLabel: 'Live /status endpoint',
+  },
 ]
 
 const COMPLIANCE = [
