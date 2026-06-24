@@ -652,6 +652,65 @@ async def _seed_demo_data(tenant_id: str, owner_email: str) -> None:
         )
 
 
+async def _run_demo_traffic(tenant_id: str, jwt: str, ttl_seconds: int) -> None:
+    """Background traffic generator so the Live Feed actually flows during
+    the demo's TTL window. Best-effort: any failure is swallowed.
+
+    Spawns ``scripts/generate_real_traffic.py`` as a Popen, stashes the
+    PID in Redis under ``acp:demo_traffic:<tenant>`` (TTL = ttl_seconds+60
+    so an external reaper can SIGTERM if we miss the kill), then waits
+    ttl_seconds and SIGTERMs the process. SIGKILLs 5 s later if it's
+    still alive.
+    """
+    repo_root = _Path(__file__).resolve().parents[3]
+    traffic_script = repo_root / "scripts" / "generate_real_traffic.py"
+    if not traffic_script.exists():
+        logger.warning(
+            "demo_traffic_skipped_missing_script",
+            traffic_path=str(traffic_script),
+            tenant_id=tenant_id,
+        )
+        return
+
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            [
+                "python3", str(traffic_script),
+                "--host", "http://localhost:8000",
+                "--tenant-id", tenant_id,
+                "--token", jwt,
+                "--rounds", "200",
+                "--concurrency", "1",
+                "--quiet",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("demo_traffic_failed", tenant_id=tenant_id, error=str(exc))
+        return
+
+    # Stash PID in Redis so an out-of-band reaper can clean up if we crash.
+    try:
+        from sdk.common.redis import get_redis_client  # noqa: PLC0415
+        _r = get_redis_client(settings.REDIS_URL, decode_responses=True)
+        await _r.set(f"acp:demo_traffic:{tenant_id}", str(proc.pid), ex=ttl_seconds + 60)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("demo_traffic_pid_record_failed", tenant_id=tenant_id, error=str(exc))
+
+    logger.info("demo_traffic_started", tenant_id=tenant_id, pid=proc.pid, ttl_seconds=ttl_seconds)
+
+    # Wait for the demo TTL, then terminate the traffic generator.
+    await asyncio.sleep(ttl_seconds)
+    if proc.poll() is None:
+        proc.terminate()
+        await asyncio.sleep(5)
+        if proc.poll() is None:
+            proc.kill()
+    logger.info("demo_traffic_terminated", tenant_id=tenant_id, pid=proc.pid, returncode=proc.returncode)
+
+
 @router.post("/spawn-workspace")
 async def spawn_demo_workspace(
     request: Request,
@@ -1024,6 +1083,12 @@ async def spawn_demo_workspace(
     # visitor lands on isn't empty. Defined at line 597, was previously
     # dead code (no call site). Errors are swallowed inside the helper.
     asyncio.create_task(_seed_demo_data(tenant_id, owner_email))
+    # Second background task: trickle live decisions for the demo TTL so
+    # Live Feed visibly rolls during the buyer's session, not just shows
+    # backfill. Fully sandboxed to this tenant via the JWT; killed at TTL.
+    asyncio.create_task(
+        _run_demo_traffic(tenant_id, token, _DEMO_JWT_TTL_MINUTES * 60),
+    )
     return {
         "success": True,
         "data": {
