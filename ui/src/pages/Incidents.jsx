@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useContext, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
@@ -552,17 +552,30 @@ function IncidentsPage() {
   // into the eventBus. Re-pulls the list on any incident/escalation
   // touchpoint. Falls back silently if SSE is disconnected — polling
   // above still covers the gap.
+  // SSE refresh is debounced to one fetchAll per 6 s. Without this gate the
+  // live-traffic worker's ~3 events/s storm of escalate events triggered a
+  // fetchAll storm against the 50-rps tenant bucket → 429s → page flapped on
+  // skeletons. Same bug Dashboard had on 2026-06-24 — same fix.
+  const lastSseRefreshRef = useRef(0);
+  const SSE_REFRESH_DEBOUNCE_MS = 6_000;
+  const debouncedRefresh = useCallback(() => {
+    const now = Date.now();
+    if (now - lastSseRefreshRef.current >= SSE_REFRESH_DEBOUNCE_MS) {
+      lastSseRefreshRef.current = now;
+      fetchAll();
+    }
+  }, [fetchAll]);
   const sseChannels = useMemo(() => ({
-    incident_updated: () => fetchAll(),
-    approval_required: () => fetchAll(),
-    approval_resolved: () => fetchAll(),
-  }), [fetchAll]);
+    incident_updated: debouncedRefresh,
+    approval_required: debouncedRefresh,
+    approval_resolved: debouncedRefresh,
+  }), [debouncedRefresh]);
   useSSE({
     channels: sseChannels,
     onMessage: (evt) => {
       const t = String(evt?.type || '').toLowerCase();
       if (t.includes('incident') || t.includes('escalate') || t.includes('approval')) {
-        fetchAll();
+        debouncedRefresh();
       }
     },
   });

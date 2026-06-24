@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Shield, Play, RefreshCw, Plus, Trash2, History,
@@ -357,17 +357,29 @@ export default function Playbooks() {
 
   // Real-time refresh: react to playbook + ARE + incident events so the
   // run-count + auto-trigger stats update without a manual refresh.
+  // 6 s debounce on SSE-driven refresh — see ui/src/pages/Dashboard.jsx for
+  // the failure mode (live traffic emits events faster than this page can
+  // re-fetch + render → 429s → permanent skeletons).
+  const lastSseRefreshRef = useRef(0)
+  const SSE_REFRESH_DEBOUNCE_MS = 6_000
+  const debouncedLoad = useCallback(() => {
+    const now = Date.now()
+    if (now - lastSseRefreshRef.current >= SSE_REFRESH_DEBOUNCE_MS) {
+      lastSseRefreshRef.current = now
+      load()
+    }
+  }, [load])
   const sseChannels = useMemo(() => ({
-    auto_response_executed: () => load(),
-    playbook_run:           () => load(),
-    incident_updated:       () => load(),
-  }), [load])
+    auto_response_executed: debouncedLoad,
+    playbook_run:           debouncedLoad,
+    incident_updated:       debouncedLoad,
+  }), [debouncedLoad])
   useSSE({
     channels: sseChannels,
     onMessage: (evt) => {
       const t = String(evt?.type || '').toLowerCase()
       if (t.includes('playbook') || t.includes('auto_response') || t.includes('incident')) {
-        load()
+        debouncedLoad()
       }
     },
   })
