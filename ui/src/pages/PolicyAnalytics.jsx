@@ -556,7 +556,23 @@ export default function PolicyAnalytics() {
           Top Triggered Policies
         </h2>
         {chartData.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-xs text-neutral-600">No data — run some traffic first.</div>
+          <div
+            className="h-48 flex flex-col items-center justify-center gap-2 px-4 text-center"
+            role="status"
+            aria-live="polite"
+          >
+            <p className="text-xs text-neutral-500">No data — run some traffic first.</p>
+            <Link
+              to="/policies?tab=simulator"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200 transition-colors"
+            >
+              <PlayCircle size={12} aria-hidden="true" />
+              Run policy simulation
+            </Link>
+            <p className="text-[10px] text-neutral-600 max-w-xs leading-relaxed">
+              Replays a synthetic request through your live policy stack so this chart and the breakdown table light up — usually under two seconds.
+            </p>
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>

@@ -254,29 +254,33 @@ export default function IdentityGraph() {
               <div
                 className="w-full rounded-xl bg-white/[0.02] border border-dashed border-white/10 flex items-center justify-center px-6"
                 style={{ height: dims.h }}
+                role="status"
+                aria-live="polite"
               >
                 <div className="text-center space-y-3 max-w-md">
                   <Network size={32} className="text-neutral-700 mx-auto" aria-hidden="true" />
                   <p className="text-sm text-neutral-200 font-medium">Graph is empty</p>
                   <p className="text-xs text-neutral-500 leading-relaxed">
                     The identity graph is generated automatically when registered agents
-                    interact with users and tools. Fire a request through the gateway and
-                    the first nodes will appear here within a few seconds.
+                    interact with users and tools.
                   </p>
                   <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
                     <Link
                       to="/agents"
-                      className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200"
+                      className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-white text-black text-xs font-medium hover:bg-neutral-200 transition-colors"
                     >
-                      <Users size={12} /> View Agents
+                      <Users size={12} aria-hidden="true" /> View Agents
                     </Link>
                     <Link
                       to="/onboarding"
-                      className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/10 text-xs text-neutral-300 hover:text-white hover:border-white/20"
+                      className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/10 text-xs text-neutral-300 hover:text-white hover:border-white/20 transition-colors"
                     >
                       Run onboarding
                     </Link>
                   </div>
+                  <p className="text-[10px] text-neutral-600 leading-relaxed">
+                    Opens the Agents page so you can register or inspect an agent — once it makes its first call the graph populates within a few seconds.
+                  </p>
                 </div>
               </div>
             ) : (
