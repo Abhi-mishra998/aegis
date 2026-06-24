@@ -255,9 +255,14 @@ export default function Billing() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [costAttribution, setCostAttribution] = useState(null);
   const mountedRef = useRef(true);
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedSumRef = useRef(false);
+  const hasLoadedInvRef = useRef(false);
+  const hasLoadedDashRef = useRef(false);
+  const hasLoadedAnomRef = useRef(false);
 
   const fetchSummary = useCallback(async () => {
-    setSumLoad(true);
+    if (!hasLoadedSumRef.current) setSumLoad(true);
     setSumError('');
     try {
       const res = await billingService.getSummary(selectedAgentId);
@@ -268,11 +273,12 @@ export default function Billing() {
       if (mountedRef.current) setSumError(err.message || 'Billing module unreachable.');
     } finally {
       if (mountedRef.current) setSumLoad(false);
+      hasLoadedSumRef.current = true;
     }
   }, [selectedAgentId]);
 
   const fetchInvoices = useCallback(async () => {
-    setInvLoad(true);
+    if (!hasLoadedInvRef.current) setInvLoad(true);
     setInvError('');
     try {
       const res = await billingService.getInvoices(selectedAgentId);
@@ -283,11 +289,12 @@ export default function Billing() {
       if (mountedRef.current) setInvError(err.message || 'Invoice ledger unreachable.');
     } finally {
       if (mountedRef.current) setInvLoad(false);
+      hasLoadedInvRef.current = true;
     }
   }, [selectedAgentId]);
 
   const fetchDashboard = useCallback(async () => {
-    setDashLoad(true);
+    if (!hasLoadedDashRef.current) setDashLoad(true);
     setDashError('');
     try {
       const res = await billingService.getDashboard();
@@ -298,11 +305,12 @@ export default function Billing() {
       if (mountedRef.current) setDashError(err.message || 'Revenue dashboard unreachable.');
     } finally {
       if (mountedRef.current) setDashLoad(false);
+      hasLoadedDashRef.current = true;
     }
   }, []);
 
   const fetchAnomalies = useCallback(async () => {
-    setAnomLoad(true);
+    if (!hasLoadedAnomRef.current) setAnomLoad(true);
     setAnomError('');
     try {
       const res = await billingService.getAnomalies();
@@ -311,6 +319,7 @@ export default function Billing() {
       if (mountedRef.current) setAnomError(err.message || 'Anomaly detector unreachable.');
     } finally {
       if (mountedRef.current) setAnomLoad(false);
+      hasLoadedAnomRef.current = true;
     }
   }, []);
 

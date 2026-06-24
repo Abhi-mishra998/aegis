@@ -136,10 +136,12 @@ export default function SystemHealth() {
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const intervalRef = useRef(null)
+  // First load = full skeleton; subsequent SSE/poll refetches swap data silently.
+  const hasLoadedRef = useRef(false)
 
   const fetchHealth = useCallback(async (isManual = false) => {
     if (isManual) setRefreshing(true)
-    else if (!data) setLoading(true)
+    else if (!hasLoadedRef.current) setLoading(true)
 
     try {
       const res = await dashboardService.getSystemHealth()
@@ -152,8 +154,9 @@ export default function SystemHealth() {
     } finally {
       setLoading(false)
       setRefreshing(false)
+      hasLoadedRef.current = true
     }
-  }, [data])
+  }, [])
 
   useEffect(() => {
     fetchHealth()
