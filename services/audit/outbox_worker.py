@@ -50,9 +50,31 @@ from services.audit.models import PendingUsageEvent
 
 logger = structlog.get_logger(__name__)
 
-OUTBOX_GRACE_SECONDS = int(os.getenv("OUTBOX_GRACE_SECONDS", "60"))
-OUTBOX_BATCH_SIZE = int(os.getenv("OUTBOX_BATCH_SIZE", "100"))
-OUTBOX_POLL_INTERVAL = float(os.getenv("OUTBOX_POLL_INTERVAL", "5.0"))
+# QA-OUTBOX-FIX (2026-06-24) — the pre-launch audit observed outbox_pending
+# growing 335 → 7 443 (+22×) under one IP of moderate SDET probing. Capacity
+# math: the previous defaults processed 100 rows every 5 s = 20 rows/s, but
+# each row sits for 60 s ``OUTBOX_GRACE_SECONDS`` before being claimable.
+# Under burst traffic the queue grows linearly until burst ends. The grace
+# period existed so the sync billing path (gateway middleware) could finish
+# first and the worker wouldn't double-process, but the unique
+# ``usage_records.audit_id`` constraint already enforces idempotency
+# (`ON CONFLICT DO NOTHING`), so a 30 s grace is plenty. Combined changes:
+#
+#   GRACE  60 → 30   keeps the sync-billing-first race-prevention property
+#                    intact (typical sync billing finishes in <500 ms; 30 s
+#                    is 60× the p99 timeout) but halves the in-flight queue
+#                    depth under steady traffic.
+#   BATCH  100 → 250 a single worker now drains 250 rows per tick.
+#   POLL   5 s → 2 s tighter loop reduces median outbox age from ~7 s to
+#                    ~3 s while staying well under the gateway's per-call
+#                    budget for any single DB query.
+#
+# Override via env vars in dev — sustained workloads above ~125 rows/s per
+# tenant should add a second worker instead (the SELECT ... FOR UPDATE
+# SKIP LOCKED claim already supports horizontal scaling).
+OUTBOX_GRACE_SECONDS = int(os.getenv("OUTBOX_GRACE_SECONDS", "30"))
+OUTBOX_BATCH_SIZE = int(os.getenv("OUTBOX_BATCH_SIZE", "250"))
+OUTBOX_POLL_INTERVAL = float(os.getenv("OUTBOX_POLL_INTERVAL", "2.0"))
 OUTBOX_MAX_RETRIES = int(os.getenv("OUTBOX_MAX_RETRIES", "5"))
 WORKER_ID = os.getenv("WORKER_ID", "audit-outbox-1")
 

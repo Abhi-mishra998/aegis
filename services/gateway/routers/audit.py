@@ -27,6 +27,7 @@ from services.gateway._helpers import (
     internal_headers,
     passthrough,
     reject_mismatched_tenant_query,
+    strict_int,
     trust_proxy,
 )
 
@@ -51,11 +52,18 @@ async def audit_summary(request: Request) -> Any:
 
 @router.get("/audit/logs", tags=["audit"])
 async def list_audit_logs(request: Request) -> Any:
-    """Proxy → Audit logs list."""
+    """Proxy → Audit logs list.
+
+    QA-VALIDATION-FIX (2026-06-24) — switched ``?limit`` + ``?offset`` from
+    ``clamp_int`` (silent fallback to default on malformed input) to
+    ``strict_int`` (raises 422 on malformed input). Caught by the audit
+    pentest probe ``?limit=10' OR '1'='1`` returning 200 with 50 rows
+    instead of 422.
+    """
     reject_mismatched_tenant_query(request)
     params: dict[str, Any] = {
-        "limit":  clamp_int(request.query_params.get("limit"),  50, 1, 500),
-        "offset": clamp_int(request.query_params.get("offset"),  0, 0, 100_000),
+        "limit":  strict_int(request.query_params.get("limit"),  50, 1, 500,    field="limit"),
+        "offset": strict_int(request.query_params.get("offset"),  0, 0, 100_000, field="offset"),
     }
     for key in ("agent_id", "action", "decision"):
         if val := request.query_params.get(key):

@@ -495,6 +495,10 @@ class AuditAggregator:
         params = {"tenant_id": str(tenant_id), "since": since, "limit": limit}
         if agent_id is not None:
             params["agent_id"] = str(agent_id)
+        # nosec B608 - QA-FP-FIX (2026-06-24): the only f-string
+        # interpolation here is the static literal `agent_clause`
+        # ("" or "AND agent_id = :agent_id"); :agent_id flows through
+        # SQLAlchemy bind params, not the f-string. False positive.
         raw = await db.execute(
             text(f"""
                 SELECT finding, COUNT(*) AS cnt
@@ -512,7 +516,7 @@ class AuditAggregator:
                 GROUP BY finding
                 ORDER BY cnt DESC
                 LIMIT :limit
-            """),
+            """),  # noqa: S608 — false positive; see comment above
             params,
         )
 
@@ -607,6 +611,8 @@ class AuditAggregator:
         params = {"tenant_id": str(tenant_id), "since": since, "bins": bins}
         if agent_id is not None:
             params["agent_id"] = str(agent_id)
+        # nosec B608 - QA-FP-FIX (2026-06-24): same static-literal
+        # agent_clause + bind-params pattern as line ~498. False positive.
         raw = await db.execute(
             text(f"""
                 SELECT
@@ -1234,6 +1240,8 @@ class AuditAggregator:
         since = now - timedelta(days=days)
 
         agent_clause = "AND agent_id = :agent_id" if agent_id is not None else ""
+        # nosec B608 - QA-FP-FIX (2026-06-24): same static-literal
+        # agent_clause + bind-params pattern. False positive.
         stmt = text(f"""
             SELECT
                 finding,

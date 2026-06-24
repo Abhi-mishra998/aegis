@@ -158,7 +158,21 @@ class _AegisGuard:
                         "risk":     1.0,
                         "findings": ["aegis_unparseable_response"],
                     }
-            # 4xx other than 403, or 5xx — fail CLOSED. Letting unchecked
+            # QA-SDK-FIX (2026-06-24) — see aegis-anthropic for rationale.
+            # Surface 429 as ``action=rate_limited`` (infra throttle), not
+            # ``deny`` (policy violation). Mirrors the canonical fix across
+            # all 4 wrapper packages.
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After") or ""
+                findings = ["aegis_rate_limited"]
+                if retry_after:
+                    findings.append(f"retry_after={retry_after}")
+                return {
+                    "action":   "rate_limited",
+                    "risk":     0.0,
+                    "findings": findings,
+                }
+            # 4xx other than 403/429, or 5xx — fail CLOSED. Letting unchecked
             # tool calls through because the security plane was unreachable
             # defeats the whole point of the integration.
             return {

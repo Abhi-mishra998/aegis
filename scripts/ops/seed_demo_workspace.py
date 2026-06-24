@@ -40,13 +40,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json as _json
 import os
 import random
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+
+# QA-CHAIN-FIX (2026-06-24) — the seeder previously used a custom 5-field
+# hash (prev_hash|row_id|ts|decision|reason). The production writer at
+# `services/audit/writer.py:83` uses sdk.common.audit_hash.compute_event_hash
+# which hashes a JSON-canonical payload of 6 specific fields. The two
+# never agreed, so `aegis-verify` reported every demo bundle as tampered
+# (V2 + V3 FAIL). Switch the seeder to the same canonical hash so the
+# chain a fresh tenant exports is byte-for-byte verifiable.
+# Path is added so this script runs both inside the gateway container
+# (cwd = /opt/aegis) and from a developer laptop (cwd = repo root).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from sdk.common.audit_hash import GENESIS_HASH, compute_event_hash  # noqa: E402
 
 try:
     import asyncpg  # type: ignore[import-not-found]
@@ -521,11 +532,35 @@ def _weighted_pick(now: datetime) -> tuple[dict, datetime]:
     return template, ts
 
 
-def _hash_row(prev_hash: str | None, row_id: str, ts: datetime, decision: str, reason: str | None) -> str:
-    """SHA-256 of (prev_hash || canonical_row). Matches the production
-    chain emitter shape closely enough for aegis-verify to walk."""
-    canon = f"{prev_hash or ''}|{row_id}|{ts.isoformat()}|{decision}|{reason or ''}"
-    return hashlib.sha256(canon.encode()).hexdigest()
+def _hash_row(
+    *,
+    prev_hash: str | None,
+    tenant_id: uuid.UUID | str,
+    agent_id: uuid.UUID | str,
+    action: str,
+    tool: str | None,
+    decision: str,
+    request_id: str,
+) -> str:
+    """Canonical event-hash matching the production audit writer.
+
+    Source of truth: ``sdk/common/audit_hash.py::compute_event_hash``.
+    The same hash is what ``services/audit/integrity.py`` and the
+    public ``tools/aegis_verify/verifier.py`` recompute. Seeded rows
+    must use this exactly or `aegis-verify` reports `V2_event_hash_recompute`
+    FAIL for every row in the bundle. When prev_hash is None, fall back
+    to GENESIS_HASH (``"0" * 64``), not the empty string — empty would
+    break V3 chain-link on the very first row of every fresh shard.
+    """
+    return compute_event_hash(
+        prev_hash=prev_hash or GENESIS_HASH,
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        action=action,
+        tool=tool,
+        decision=decision,
+        request_id=request_id,
+    )
 
 
 async def main() -> None:
@@ -709,13 +744,30 @@ async def main() -> None:
         agent_id = random.choice(inserted_agents)
         shard = random.randint(0, 15)
         prev_hash = last_hashes[shard]
-        event_hash = _hash_row(prev_hash, str(row_id), ts, decision, reason)
+        # QA-CHAIN-FIX (2026-06-24): request_id must be generated BEFORE
+        # the hash so it can participate in compute_event_hash. Previously
+        # this was inlined in the INSERT VALUES — the hash never saw it
+        # because the seeder used its own custom 5-field hash.
+        request_id = str(uuid.uuid4())
+        event_hash = _hash_row(
+            prev_hash=prev_hash,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            action="execute_tool",
+            tool=tool,
+            decision=decision,
+            request_id=request_id,
+        )
         metadata = {
             "risk_score":  risk,
             "findings":    [reason] if reason else [],
             "params_hint": params_hint,
             "demo_seed":   True,
         }
+        # QA-CHAIN-FIX (2026-06-24): persist GENESIS_HASH for the very first
+        # row of a shard, not NULL. Otherwise `/audit/chain/verify` reports
+        # `expected_prev=0000…, actual_prev=null` for fresh tenants.
+        prev_hash_to_store = prev_hash or GENESIS_HASH
         try:
             await aud_conn.execute(
                 "INSERT INTO audit_logs (id, tenant_id, org_id, agent_id, action, tool, decision, reason, "
@@ -724,8 +776,8 @@ async def main() -> None:
                 "VALUES ($1, $2, $2, $3, 'execute_tool', $4, $5, $6, $7::jsonb, $8, $9, $10, $11, "
                 "'completed', $12, $12, $12)",
                 row_id, tenant_id, agent_id, tool, decision, reason,
-                __import__("json").dumps(metadata), str(uuid.uuid4()), event_hash,
-                prev_hash, shard, ts,
+                _json.dumps(metadata), request_id, event_hash,
+                prev_hash_to_store, shard, ts,
             )
             last_hashes[shard] = event_hash
             written += 1
@@ -1242,7 +1294,18 @@ async def main() -> None:
         req_id = request_id or f"req-{row_id.hex[:16]}"
         shard = random.randint(0, 15)
         prev_hash = last_hashes.get(shard)
-        event_hash = _hash_row(prev_hash, str(row_id), ts, decision, reason)
+        # QA-CHAIN-FIX (2026-06-24): canonical hash matching the production
+        # writer; GENESIS_HASH on first-row-per-shard. See module top docstring.
+        event_hash = _hash_row(
+            prev_hash=prev_hash,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            action=action,
+            tool=tool,
+            decision=decision,
+            request_id=req_id,
+        )
+        prev_hash_to_store = prev_hash or GENESIS_HASH
         await aud_conn.execute(
             "INSERT INTO audit_logs (id, tenant_id, org_id, agent_id, action, tool, decision, reason, "
             "metadata_json, request_id, event_hash, prev_hash, chain_shard, billing_status, timestamp, "
@@ -1251,7 +1314,7 @@ async def main() -> None:
             "'completed', $13, $13, $13)",
             row_id, tenant_id, agent_id, action, tool, decision, reason,
             _json.dumps(metadata), req_id, event_hash,
-            prev_hash, shard, ts,
+            prev_hash_to_store, shard, ts,
         )
         last_hashes[shard] = event_hash
         return row_id, req_id

@@ -79,6 +79,70 @@ class _RateLimitMixin:
             return self._deny("IP-based rate limit exceeded", 429)
         return None
 
+    # QA-MW-FIX (2026-06-24) — burst-on-401 limiter (closes P2-5).
+    # The pentest report showed 50 anonymous requests to /workspace/me
+    # from a single IP all returned 401 with zero 429. That meant a
+    # credential-stuffer could pound any auth-gated endpoint at full
+    # speed from one IP forever. WAF runs at L4 and doesn't see the
+    # app-layer 401, so this limiter must live here. We keep a 60-second
+    # rolling INCR per IP and 429 the IP after _AUTH_FAIL_BURST_LIMIT
+    # consecutive failures. Counter clears on first successful auth
+    # (see middleware.py _dispatch_with_resilience).
+    _AUTH_FAIL_BURST_WINDOW = 60   # seconds
+    _AUTH_FAIL_BURST_LIMIT  = 25   # 401s per IP per window
+
+    async def _check_auth_failure_burst(self, client_ip: str) -> Response | None:
+        """Return 429 if this IP has burned through the auth-failure budget.
+
+        Runs BEFORE auth on every non-skiplisted request. Read-only — does
+        not increment; only the actual 401 path increments (via
+        ``_record_auth_failure``). Fail-open on Redis errors so an outage
+        in the rate-limit Redis cannot lock customers out.
+        """
+        if not client_ip or client_ip == "unknown":
+            return None
+        key = f"acp:ratelimit:auth_fail:{client_ip}"
+        try:
+            n = await self.redis.get(key)
+        except Exception:
+            return None
+        if n is None:
+            return None
+        try:
+            count = int(n)
+        except (TypeError, ValueError):
+            return None
+        if count > self._AUTH_FAIL_BURST_LIMIT:
+            RATE_LIMIT_EXCEEDED_TOTAL.labels(layer="auth_fail_ip", tier="none").inc()
+            return self._deny(
+                f"Too many authentication failures from this IP; retry in "
+                f"{self._AUTH_FAIL_BURST_WINDOW}s",
+                429,
+            )
+        return None
+
+    async def _record_auth_failure(self, client_ip: str) -> None:
+        """Increment the per-IP 401 counter (60s rolling)."""
+        if not client_ip or client_ip == "unknown":
+            return
+        key = f"acp:ratelimit:auth_fail:{client_ip}"
+        try:
+            cnt = await self.redis.incr(key)
+            if cnt == 1:
+                await self.redis.expire(key, self._AUTH_FAIL_BURST_WINDOW)
+        except Exception:
+            pass  # fail-open
+
+    async def _clear_auth_failure_counter(self, client_ip: str) -> None:
+        """Successful auth resets the burst counter — a legitimate user
+        who mistypes once shouldn't be locked out of their own session."""
+        if not client_ip or client_ip == "unknown":
+            return
+        try:
+            await self.redis.delete(f"acp:ratelimit:auth_fail:{client_ip}")
+        except Exception:
+            pass  # fail-open
+
     async def _check_execute_sliding_window(
         self,
         tenant_id_str: str,

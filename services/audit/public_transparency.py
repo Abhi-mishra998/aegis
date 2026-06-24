@@ -130,13 +130,53 @@ def publish_root(
         return False
 
 
+# QA-CRYPTO-FIX (2026-06-24) — kid values that must NEVER reach the public
+# transparency bucket. The audit found ``keys/smoke-kid.pem`` (a 57-byte
+# leftover smoke-test key from 2026-06-14) sitting next to the real
+# rotation history in production S3, which any auditor would flag.
+# We can't retroactively block this directly from the publisher, but we
+# can make sure the next deploy refuses to publish anything whose kid
+# looks like a smoke / test / dev artefact. Pattern is intentionally
+# strict: real kids are 32-char lowercase hex SHA-256 fingerprints.
+import re as _re
+
+_SMOKE_KID_PREFIXES = ("smoke", "test", "dev", "qa", "ci", "demo")
+_VALID_KID_RE = _re.compile(r"^[0-9a-f]{32,}$")
+
+
+def _is_smoke_kid(kid: str) -> bool:
+    """True when the kid is clearly not a production-grade fingerprint."""
+    k = (kid or "").lower().strip()
+    if not k:
+        return True
+    if any(k.startswith(p) for p in _SMOKE_KID_PREFIXES):
+        return True
+    # Real kids are hex fingerprints of the public key. Anything that fails
+    # this regex is by definition not a SHA-fingerprint kid — almost
+    # certainly a placeholder string from a test or local-dev run.
+    if not _VALID_KID_RE.match(k):
+        return True
+    return False
+
+
 def publish_signing_key(kid: str, public_pem: str) -> bool:
     """One-time write of the public signing key. Skipped if the object exists.
 
     Safe to call on every audit-service boot — boto3 `HeadObject` short-
     circuits on a no-op when the key is already present.
+
+    QA-CRYPTO-FIX (2026-06-24) — refuses to publish kids that look like
+    smoke / test / dev artefacts. Production kids are 32+ char lowercase
+    hex SHA-256 fingerprints (see ``_VALID_KID_RE``). See ``_is_smoke_kid``.
     """
     if not is_enabled():
+        return False
+    if _is_smoke_kid(kid):
+        log.warning(
+            "public_signing_key_publish_refused_smoke_kid",
+            kid=kid,
+            reason="kid does not match production fingerprint pattern",
+        )
         return False
     s3 = _get_s3()
     if s3 is None:

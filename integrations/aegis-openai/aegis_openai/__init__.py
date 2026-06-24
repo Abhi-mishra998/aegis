@@ -167,7 +167,21 @@ class _AegisGuard:
                         "risk":     1.0,
                         "findings": ["aegis_unparseable_response"],
                     }
-            # 4xx other than 403, or 5xx — fail CLOSED. Letting unchecked
+            # QA-SDK-FIX (2026-06-24) — see aegis-anthropic for rationale.
+            # Surface 429 as ``action=rate_limited`` (infra throttle), not
+            # ``deny`` (policy violation). Mirrors the canonical fix across
+            # all 4 wrapper packages.
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After") or ""
+                findings = ["aegis_rate_limited"]
+                if retry_after:
+                    findings.append(f"retry_after={retry_after}")
+                return {
+                    "action":   "rate_limited",
+                    "risk":     0.0,
+                    "findings": findings,
+                }
+            # 4xx other than 403/429, or 5xx — fail CLOSED. Letting unchecked
             # tool calls through because the security plane was unreachable
             # defeats the whole point of the integration.
             return {
@@ -328,8 +342,30 @@ class AegisOpenAI:
         tenant_id: str | None = None,
         agent_id: str | None = None,
         timeout: float = 10.0,
+        aegis_url: str | None = None,  # deprecated alias
+        api_key: str | None = None,    # alias for openai_api_key — see note below
         **openai_kwargs: Any,
     ) -> None:
+        # QA-SDK-FIX (2026-06-24) — canonical SDK kwargs across the 4
+        # wrapper packages: ``api_key`` (the LLM provider key) +
+        # ``aegis_key`` + ``gateway_url`` + ``tenant_id`` + ``agent_id``.
+        # The OpenAI wrapper historically named its provider-key kwarg
+        # ``openai_api_key`` to avoid confusion with anthropic, which
+        # made cross-LLM portable code awkward. Both names are now
+        # accepted; ``openai_api_key`` is the preferred form for code
+        # that imports only this package. Same deprecation alias for
+        # ``aegis_url=`` as on the other wrappers.
+        if openai_api_key is None and api_key is not None:
+            openai_api_key = api_key
+        if gateway_url is None and aegis_url is not None:
+            import warnings as _warnings
+            _warnings.warn(
+                "AegisOpenAI: `aegis_url=` is deprecated; use `gateway_url=` "
+                "to match the canonical Aegis SDK kwarg.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            gateway_url = aegis_url
         try:
             import openai as _openai
             self._openai = _openai.OpenAI(api_key=openai_api_key, **openai_kwargs)

@@ -341,7 +341,14 @@ async def list_roots(
     until: date | None = None,
     limit: int = Query(90, ge=1, le=365),
 ) -> APIResponse[list[dict]]:
-    """List persisted daily roots, newest first."""
+    """List persisted daily roots, newest first.
+
+    QA-TRANSPARENCY-FIX (2026-06-24) — when the list is empty the meta
+    block now carries a ``seal_cadence`` hint so customers / auditors
+    understand that ``[]`` means "the daily seal at 00:00 UTC hasn't
+    run yet for any of this tenant's audit rows", not "transparency is
+    broken". The old bare ``[]`` confused evaluators on day-of signup.
+    """
     q = select(TransparencyRoot).where(TransparencyRoot.tenant_id == tenant_id)
     if since:
         q = q.where(TransparencyRoot.root_date >= since)
@@ -350,7 +357,7 @@ async def list_roots(
     q = q.order_by(TransparencyRoot.root_date.desc()).limit(limit)
 
     rows = (await db.execute(q)).scalars().all()
-    return APIResponse(data=[
+    data = [
         {
             "root_date":    r.root_date.isoformat(),
             "root_hash":    r.root_hash,
@@ -359,7 +366,29 @@ async def list_roots(
             "signed":       r.signed_root_payload,
         }
         for r in rows
-    ])
+    ]
+    meta: dict[str, Any] | None = None
+    if not data:
+        # Cheap probe: does this tenant have ANY audit rows yet? If so,
+        # the empty response is just "seal hasn't run yet". If not, the
+        # tenant is genuinely brand new and has nothing to seal.
+        any_row = (
+            await db.execute(
+                select(AuditLog.id).where(AuditLog.tenant_id == tenant_id).limit(1)
+            )
+        ).first()
+        meta = {
+            "seal_cadence":  "daily at 00:00 UTC",
+            "public_mirror": "s3://aegis-public-roots-628478946931/",
+            "has_audit_rows": bool(any_row),
+            "explanation":   (
+                "Roots are sealed daily; a fresh tenant has none until the "
+                "first end-of-day seal completes."
+                if any_row is None
+                else "Daily seal pending — re-check after the next 00:00 UTC tick."
+            ),
+        }
+    return APIResponse(data=data, meta=meta)
 
 
 @transparency_router.get("/roots/{root_date}", response_model=APIResponse[dict])

@@ -165,7 +165,21 @@ class _AegisGuard:
                         "risk":     1.0,
                         "findings": ["aegis_unparseable_response"],
                     }
-            # 4xx other than 403, or 5xx — fail CLOSED. Letting unchecked
+            # QA-SDK-FIX (2026-06-24) — see aegis-anthropic for rationale.
+            # Surface 429 as ``action=rate_limited`` (infra throttle), not
+            # ``deny`` (policy violation). Mirrors the canonical fix across
+            # all 4 wrapper packages.
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After") or ""
+                findings = ["aegis_rate_limited"]
+                if retry_after:
+                    findings.append(f"retry_after={retry_after}")
+                return {
+                    "action":   "rate_limited",
+                    "risk":     0.0,
+                    "findings": findings,
+                }
+            # 4xx other than 403/429, or 5xx — fail CLOSED. Letting unchecked
             # tool calls through because the security plane was unreachable
             # defeats the whole point of the integration.
             return {
@@ -286,12 +300,29 @@ class AegisBedrockAgentRuntime:
     def __init__(
         self,
         aegis_key: str | None = None,
-        aegis_url: str | None = None,
+        gateway_url: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
         timeout: float = 10.0,
+        aegis_url: str | None = None,  # deprecated alias
         **boto_kwargs: Any,
     ) -> None:
+        # QA-SDK-FIX (2026-06-24) — the canonical kwarg across all 4
+        # wrapper SDKs is ``gateway_url``. This package previously took
+        # ``aegis_url`` only, so customers writing portable code across
+        # aegis-anthropic / aegis-openai / aegis-langchain / aegis-bedrock
+        # hit a TypeError on this one. ``aegis_url`` is kept as a backwards
+        # compatible alias with a deprecation hint; new code should use
+        # ``gateway_url``.
+        if gateway_url is None and aegis_url is not None:
+            import warnings as _warnings
+            _warnings.warn(
+                "AegisBedrockAgentRuntime: `aegis_url=` is deprecated; "
+                "use `gateway_url=` to match the other Aegis SDK wrappers.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            gateway_url = aegis_url
         try:
             import boto3
         except ImportError as exc:
@@ -300,7 +331,7 @@ class AegisBedrockAgentRuntime:
         self._client = boto3.client("bedrock-agent-runtime", **boto_kwargs)
         self._aegis = AegisClient(
             api_key=aegis_key or os.environ["AEGIS_API_KEY"],
-            gateway_url=aegis_url or os.environ.get(
+            gateway_url=gateway_url or os.environ.get(
                 "AEGIS_URL", "https://aegisagent.in"),
             tenant_id=tenant_id or os.environ.get("AEGIS_TENANT_ID", ""),
             agent_id=agent_id or os.environ.get(
