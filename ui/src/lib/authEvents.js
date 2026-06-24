@@ -13,18 +13,29 @@ const REASON_LABELS = {
   csrf_failure:     'CSRF Validation Failed',
 }
 
-// Demo sessions (anonymous "Try live demo" CTA) carry a tightly-scoped
-// 30-min JWT against a shared sandbox tenant. Not every endpoint is
-// authorised for that token (e.g. /webhooks/config requires a real user
-// row). We deliberately swallow auth failures in demo mode so the
-// occasional 401 doesn't blow the session out — the affected widget
-// just renders empty.
+// Demo sessions (anonymous "Spawn demo workspace" CTA) carry a tightly-
+// scoped 30-min JWT against a fresh per-visitor sandbox tenant. Not every
+// endpoint is authorised for that token — /auth/me requires
+// typ=ACP_ACCESS which the demo JWT doesn't carry; some user-management
+// reads require a real user row, etc. We deliberately swallow auth
+// failures in demo mode so the occasional 401 doesn't blow the session
+// out: the affected widget just renders empty + the rest of the dashboard
+// keeps working.
+//
+// 2026-06-24: the canonical demo marker is `session_kind=demo` in
+// sessionStorage (set by the IIFE at main.jsx:17 when a ?demo_token=…
+// URL arrives). The legacy `aegis_demo_mode=1` flag from an earlier
+// sprint was never wired to anything that actually sets it — every
+// demo session ran with `isDemoMode()` returning False, which caused
+// /auth/me 401s on a brand-new demo to fire the SOC incident overlay,
+// redirect to /login, and (after the demo CTA spawned a fresh tenant)
+// loop. Adding the canonical marker fixes both the false-positive
+// incident AND the resulting redirect loop.
 function isDemoMode() {
   try {
-    return (
-      sessionStorage.getItem('aegis_demo_mode') === '1' ||
-      new URLSearchParams(window.location.search).get('demo') === '1'
-    )
+    if (sessionStorage.getItem('session_kind') === 'demo') return true
+    if (sessionStorage.getItem('aegis_demo_mode') === '1') return true
+    return new URLSearchParams(window.location.search).get('demo') === '1'
   } catch {
     return false
   }
