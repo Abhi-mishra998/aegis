@@ -911,16 +911,55 @@ async def upsert_tenant(
     """
     Create or update a tenant record. Used by provisioning scripts.
     Body: {tenant_id, org_id, tier, rpm_limit, name}
-    """
 
-    tenant_id_val = uuid.UUID(body["tenant_id"])
-    org_id_val    = uuid.UUID(body.get("org_id", body["tenant_id"]))
+    QA-VALIDATION-FIX (2026-06-24) — every missing/invalid field now
+    produces an explicit 4xx with a structured detail string instead
+    of letting ``KeyError``, ``ValueError`` or ``ValueError`` from the
+    enum constructor surface as a bare ``500 An internal server error
+    occurred``. Pre-fix audit captured ``POST /auth/tenants`` with
+    body=``{}`` returning 500; that's a hostile UX for any provisioning
+    script that mistypes a field.
+    """
+    if not isinstance(body, dict) or "tenant_id" not in body:
+        raise HTTPException(
+            status_code=422,
+            detail="Missing required field: 'tenant_id' (UUID).",
+        )
+    try:
+        tenant_id_val = uuid.UUID(str(body["tenant_id"]))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid tenant_id: expected a UUID, got {body['tenant_id']!r}",
+        ) from exc
+    try:
+        org_id_val = uuid.UUID(str(body.get("org_id") or body["tenant_id"]))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid org_id: expected a UUID, got {body.get('org_id')!r}",
+        ) from exc
     tier_val      = body.get("tier", "basic")
-    rpm_val       = int(body.get("rpm_limit", _TIER_RPM_DEFAULTS.get(tier_val, 60)))
+    try:
+        rpm_val   = int(body.get("rpm_limit", _TIER_RPM_DEFAULTS.get(tier_val, 60)))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid rpm_limit: expected an integer, got {body.get('rpm_limit')!r}",
+        ) from exc
     name_val      = body.get("name", "Default Tenant")
     degraded_val  = body.get("degraded_mode_policy", DegradedModePolicy.BLOCK_HIGH_RISK.value)
     # Validate enum membership eagerly so a typo gets a 4xx rather than a 500 deeper in.
-    degraded_policy = DegradedModePolicy(degraded_val)
+    try:
+        degraded_policy = DegradedModePolicy(degraded_val)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid degraded_mode_policy: {degraded_val!r}; expected one of "
+                f"{[m.value for m in DegradedModePolicy]}"
+            ),
+        ) from exc
 
     result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_id_val))
     existing = result.scalar_one_or_none()
