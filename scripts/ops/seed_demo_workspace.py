@@ -736,13 +736,31 @@ async def main() -> None:
         )
         last_hashes[shard] = prev
 
-    written = 0
-    for i in range(args.rows):
+    # QA-CHAIN-FIX-2 (2026-06-25) — pre-generate every (template, ts, shard,
+    # agent) tuple, then sort globally by timestamp before inserting. The
+    # original loop generated random timestamps in arbitrary insertion order
+    # so the prev_hash chain followed insertion order, but ``aegis-verify``
+    # walks rows BY TIMESTAMP per shard (see ``tools/aegis_verify/verifier.py``
+    # V3 check). When the two orderings disagree the chain looks broken even
+    # though every hash is canonical. Two violations would slip through per
+    # ~700 rows. Sorting first guarantees insertion-order == timestamp-order
+    # within each shard, so the chain matches what V3 expects.
+    pregenerated: list[tuple] = []
+    for _i in range(args.rows):
         template, ts = _weighted_pick(now)
         tool, params_hint, decision, reason, risk, _w = template
         row_id = uuid.uuid4()
         agent_id = random.choice(inserted_agents)
         shard = random.randint(0, 15)
+        pregenerated.append((ts, shard, row_id, agent_id, tool, params_hint, decision, reason, risk))
+    # Sort by timestamp so the loop below inserts in chronological order;
+    # the chain for each shard then advances monotonically over time, which
+    # is the invariant the production writer also satisfies (rows arrive in
+    # chronological order in real traffic).
+    pregenerated.sort(key=lambda t: t[0])
+
+    written = 0
+    for ts, shard, row_id, agent_id, tool, params_hint, decision, reason, risk in pregenerated:
         prev_hash = last_hashes[shard]
         # QA-CHAIN-FIX (2026-06-24): request_id must be generated BEFORE
         # the hash so it can participate in compute_event_hash. Previously
@@ -1319,6 +1337,51 @@ async def main() -> None:
         last_hashes[shard] = event_hash
         return row_id, req_id
 
+    async def _rehash_all_for_chain_order() -> int:
+        """QA-CHAIN-FIX-2 (2026-06-25) — final pass that rewrites every
+        seeded row's ``prev_hash`` + ``event_hash`` so the chain follows
+        timestamp order per shard, the invariant ``aegis-verify`` V2/V3
+        require. Sections 2 + 14a-14f insert in arbitrary timestamp order
+        because each sub-section walks its own SPECS list; without this
+        pass the verifier reports ~2 V3 chain-gap violations on every
+        fresh tenant. Single SELECT + transaction-wrapped UPDATEs; FK
+        references from audit_notes / human_override_events to
+        audit_logs.id stay valid (we only mutate hash columns)."""
+        per_shard_rows = await aud_conn.fetch(
+            "SELECT id, chain_shard, tenant_id, agent_id, action, tool, decision, "
+            "       request_id, timestamp "
+            "  FROM audit_logs "
+            " WHERE tenant_id = $1 "
+            " ORDER BY chain_shard ASC, timestamp ASC, id ASC",
+            tenant_id,
+        )
+        if not per_shard_rows:
+            return 0
+        last_by_shard: dict[int, str] = {}
+        async with aud_conn.transaction():
+            n = 0
+            for r in per_shard_rows:
+                shard = int(r["chain_shard"])
+                prev = last_by_shard.get(shard, GENESIS_HASH)
+                new_event = _hash_row(
+                    prev_hash=prev,
+                    tenant_id=r["tenant_id"],
+                    agent_id=r["agent_id"],
+                    action=r["action"],
+                    tool=r["tool"],
+                    decision=r["decision"],
+                    request_id=r["request_id"],
+                )
+                await aud_conn.execute(
+                    "UPDATE audit_logs SET prev_hash = $1, event_hash = $2, "
+                    "       updated_at = now() "
+                    " WHERE id = $3 AND tenant_id = $4",
+                    prev, new_event, r["id"], tenant_id,
+                )
+                last_by_shard[shard] = new_event
+                n += 1
+        return n
+
     # 14a. Monitor-only findings — Aegis flagged but did NOT block.
     monitor_inserted = 0
     for agent_name, tool, params_hint, finding, risk, hours_ago in MONITOR_ONLY_SPECS:
@@ -1514,6 +1577,13 @@ async def main() -> None:
             print(f"  WARN false-positive note insert: {str(exc)[:140]}")
     print(f"  false-positive triage inserted: {false_positive_audits} audit + "
           f"{false_positive_notes} audit_notes")
+
+    # QA-CHAIN-FIX-2 (2026-06-25) — rebuild every seeded row's prev_hash +
+    # event_hash so the chain follows timestamp order per shard. Sections
+    # 2 + 14a-14f insert in arbitrary timestamp order; the verifier walks
+    # by timestamp; without this pass we get ~2 V3 violations per tenant.
+    rehashed = await _rehash_all_for_chain_order()
+    print(f"  chain rehash (timestamp order): {rehashed} rows updated")
 
     await id_conn.close(); await reg_conn.close(); await aud_conn.close(); await api_conn.close()
 
