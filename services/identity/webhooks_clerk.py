@@ -639,8 +639,16 @@ async def receive_clerk_webhook(
             replay_key, "1", ex=_SVIX_REPLAY_TTL_SECONDS, nx=True,
         )
     except Exception as exc:
+        # Sprint 25 A7 — fail-CLOSED with Retry-After so Svix retries this
+        # event later when Redis is back. The previous fail-open behavior
+        # treated every Svix retry as first-time, triggering duplicate user
+        # provisioning on every retry while Redis was down.
         logger.warning("clerk_webhook_replay_check_failed", error=str(exc))
-        first_time = True  # fail open on Redis hiccup so we don't drop events
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Idempotency check temporarily unavailable; retry",
+            headers={"Retry-After": "30"},
+        )
 
     if not first_time:
         logger.info("clerk_webhook_replay_ignored", svix_id=svix_id)

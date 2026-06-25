@@ -151,7 +151,7 @@ _BENIGN_CORPUS = [
     "What time does the office open on Saturdays?",
     "Reset my password via the standard self-service flow.",
     "Pull up the Q3 financial report.",
-    "Search the docs for 'voice agent latency'.",
+    "Search the docs for 'audit log retention'.",
 ]
 
 

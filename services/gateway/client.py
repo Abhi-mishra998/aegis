@@ -983,8 +983,7 @@ class ServiceClient:
         Never raises — gateway request path must not be blocked by incident recording.
         """
         try:
-            import json as _json
-            payload = _json.dumps({
+            payload = json.dumps({
                 "tenant_id":  tenant_id,
                 "agent_id":   agent_id,
                 "severity":   severity,

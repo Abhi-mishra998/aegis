@@ -157,7 +157,6 @@ async def get_summary(
         cached_raw = None
     if cached_raw:
         try:
-            import json as _json
             return APIResponse(
                 data=AuditSummaryResponse.model_validate(_json.loads(cached_raw))
             )
@@ -245,7 +244,6 @@ async def get_summary(
     # QA-PERF-FIX (2026-06-24) — populate the 30 s cache. Fail-open on
     # Redis errors; the response is already computed correctly.
     try:
-        import json as _json
         await redis.setex(_cache_key, 30, summary.model_dump_json())
     except Exception:
         pass
@@ -270,7 +268,6 @@ async def get_heatmap(
     second one almost certainly populates the cache and the dashboard
     self-heals within 30 s.
     """
-    import json as _json
     _cache_key = f"acp:audit_heatmap:{tenant_id}:{agent_id or '_'}"
     try:
         cached = await redis.get(_cache_key)
@@ -385,7 +382,6 @@ async def pack_enforcement(
     # is the cost. Cache the rolled-up payload for 30 s so the
     # /compliance page tile doesn't re-aggregate on every poll. Same
     # pattern as /summary + /heatmap.
-    import json as _json
     _cache_key = f"acp:pack_enforcement:{tenant_id}:{days}"
     try:
         cached = await redis.get(_cache_key)
@@ -415,7 +411,6 @@ async def pack_enforcement(
 
     # Aggregate in Python — at 2000 rows max this stays cheap and
     # avoids juggling JSONB array unnest in SQL.
-    import json as _json
     by_pack: dict[str, dict] = {}
     for r in rows:
         meta = r.metadata_json

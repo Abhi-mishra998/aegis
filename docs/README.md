@@ -28,7 +28,6 @@ The [AEVF section](AEVF/README.md) is where that promise becomes operational: an
 - **Architecture (7 pages)** — the system overview, the 11-stage gateway pipeline, the data model, multi-tenancy, deployment topology, UI primitives, and a worked end-to-end decision.
 - **Services (18 pages + index)** — every backend microservice documented to a 13-point spec.
 - **UI (34 pages + index)** — every page in the React UI documented to a 10-point spec.
-- **Voice Guide (4 pages)** — the voice-driven Q&A interface in the navbar (Deepgram → Groq → Cartesia + hybrid RAG).
 - **Security (7 pages)** — cryptographic audit chain, JWT auth, RBAC, kill switch, OPA policies, threat scenarios, secret management.
 - **Operations (6 main + 3 runbooks)** — deployment, backup/restore, key rotation, soak tests, tenant data requests, observability.
 - **API (4 pages)** — full reference, authentication, error codes, copy-paste examples.
@@ -44,7 +43,6 @@ The [AEVF section](AEVF/README.md) is where that promise becomes operational: an
 - **Compliance coverage** — signed verifiable bundles for **SOC 2, EU AI Act, NIST AI RMF, and India DPDP Act 2023** (with Rules 2025-11-13); GRC export shaped for Vanta / Drata / Secureframe / Hyperproof; AEVF back-reference on every SIEM event and every GRC row.
 - **Live demo at `/live-demo`** — scenario picker (fintech_data_egress / devops_destruction / support_pii_exfil), buyer-editable prompts, every deny earned from action semantics across all risk levels.
 - **Minimal self-host mode** at `infra/minimal/` — 3 docker services (aegis-core + postgres + redis), validated 10/10 on a throwaway EC2.
-- **Voice Agent in the navbar** — Deepgram nova-3 → Groq llama-3.3-70b (Gemini fallback) → Cartesia sonic-3, hybrid RAG over **1 794 chunks from 103 docs**.
 
 ## Reading order if you have an hour
 

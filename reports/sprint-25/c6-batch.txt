@@ -1,0 +1,38 @@
+Sprint 25 batch 9 — C6 DLQ permanently-failed viewer + Prom rules
+==================================================================
+
+Bug (pre-fix):
+  - acp:audit_stream:permanently_failed (Redis STREAM, populated by audit/dlq_replay.py:158 via XADD)
+  - acp:billing_dlq:permanently_failed (Redis LIST, populated by usage/dlq_replay.py:150 via LPUSH)
+  - Both grew silently with no read endpoint and no Prom alert.
+  - Operator only discovered the gap at month-end reconciliation.
+
+Fix (smallest path):
+  - NEW services/gateway/routers/dlq.py with 2 admin-gated GET endpoints:
+    * GET /system/dlq/audit/permanently-failed?limit=N    (XRANGE)
+    * GET /system/dlq/billing/permanently-failed?limit=N  (LRANGE)
+  - Both gated by require_admin_role (ADMIN/SECURITY JWT roles only).
+  - Both paginated via limit query (1..500, default 50).
+  - Replay/re-queue intentionally NOT added — needs audit trail of who
+    re-played which entry (sprint-26).
+
+  - infra/prometheus-rules.yml: 2 new alerts mirroring OutboxPoisonGrowing:
+    * BillingPermanentlyFailedGrowing — increase(acp_billing_dlq_replay_total{outcome="permanently_failed"}[5m]) > 0
+    * AuditPermanentlyFailedGrowing   — increase(acp_audit_dlq_replay_total{outcome="permanently_failed"}[5m]) > 0
+  - Reuses EXISTING counters (BILLING_DLQ_REPLAY_TOTAL / AUDIT_DLQ_REPLAY_TOTAL).
+    No new metric definitions needed.
+
+  - services/gateway/main.py: 1 import + 1 include_router call.
+
+Smoke verification (stubbed Redis):
+  - audit endpoint returns depth + parsed entries ✓
+  - billing endpoint returns depth + JSON-parsed entries ✓
+
+UI tile (per sprint plan) intentionally NOT added — sprint-26 work after
+the UI archive sprint (D1) decides which dashboard surface stays. The API
+is ready when the UI catches up.
+
+Files touched:
+  + services/gateway/routers/dlq.py (NEW, 92 lines)
+  ~ services/gateway/main.py        (+2 lines: import + include_router)
+  ~ infra/prometheus-rules.yml      (+19 lines: 2 alert rules)

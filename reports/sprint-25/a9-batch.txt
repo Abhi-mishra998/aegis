@@ -1,0 +1,24 @@
+Sprint 25 batch 3 — A9 + B5 retract
+====================================
+
+A9 (sweep silent except Exception: pass):
+  Sites edited (8 of original 10):
+    - services/behavior/_baseline.py:114 → logger.warning baseline_gauge_set_failed
+    - services/behavior/_baseline.py:342 → logger.warning baseline_score_failed
+    - services/usage/dlq_replay.py:105 → logger.warning dlq_payload_parse_failed
+    - services/usage/router/fleet.py:190 → logger.debug redis_aclose_failed (cleanup, not policy)
+    - services/security/incidents/recorder.py:273 → logger.warning remediation_dispatch_failed (added logger import)
+    - services/audit/playground_router.py:298 → logger.warning shadow_cache_invalidate_failed (added logger import)
+    - services/gateway/_mw_rate_limit.py:230 → +Prom counter site=record_auth_failure + log
+    - services/gateway/_mw_rate_limit.py:248 → +Prom counter site=clear_auth_failure + log
+    - services/gateway/_mw_rate_limit.py:286 → +Prom counter site=execute_sliding_window + log
+
+  Sites intentionally skipped:
+    - services/behavior/_baseline.py:283 → wraps a logger.info() call itself; logging-the-logger-failure is pointless
+
+A9 follow-up still owed (operational, not code):
+  - Prometheus alert rule: alert if rate(acp_rate_limiter_redis_failure_total[5m]) > 10/min
+
+B5 retract (false positive):
+  - report-bussines-25.md §4.3 row updated: HMAC compare row marked RETRACTED with citation that
+    services/gateway/routers/itsm_webhooks.py:106 already uses hmac.compare_digest()

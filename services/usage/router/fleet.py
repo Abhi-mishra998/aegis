@@ -187,5 +187,5 @@ async def get_burn_down(
     finally:
         try:
             await redis.aclose()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("redis_aclose_failed", error=str(exc))

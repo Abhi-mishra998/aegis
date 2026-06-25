@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json as _json
 import os
 import random
@@ -873,7 +874,6 @@ async def main() -> None:
         ("PII row-count cap candidate", "Escalate SELECT * on users when row_limit > 100", 1.0,
          [{"if": {"tool": "query_database", "table_contains": "users", "row_limit_gt": 100}, "then": "escalate"}]),
     ]
-    import json as _json
     for name, desc, rate, rules in shadow_specs:
         try:
             await aud_conn.execute(

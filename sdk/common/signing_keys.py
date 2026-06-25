@@ -18,8 +18,7 @@ Three providers ship:
   a customer-managed key). The audit service fetches the plaintext via
   ``ssm:GetParameter(WithDecryption=True)`` at boot — the PEM never lands on
   disk and key rotation is a single ``ssm:PutParameter`` call. CloudTrail
-  records every access. This matches the project's existing
-  ``/aegis-voice-guide/*`` convention.
+  records every access.
 * :class:`AwsKmsSigningKeyProvider` — envelope-encryption path. The PEM is
   KMS-encrypted at rest under a Customer Master Key the operator provides; the
   audit service calls ``kms:Decrypt`` at boot. Useful when the PEM blob is too

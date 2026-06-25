@@ -192,6 +192,14 @@ async def upsert_jira_config(
     if not payload.base_url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="base_url must include scheme")
 
+    # Sprint 25 B1 — outbound SSRF protection. Block tenant-supplied
+    # base_url that resolves to AWS metadata, localhost, or private CIDR.
+    from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
+    try:
+        validate_outbound_url(payload.base_url)
+    except OutboundUrlBlocked as exc:
+        raise HTTPException(status_code=400, detail=f"base_url rejected: {exc.reason}") from exc
+
     res = await db.execute(
         select(JiraIntegration).where(JiraIntegration.tenant_id == tenant_id),
     )
@@ -366,6 +374,13 @@ async def upsert_snow_config(
 
     if not payload.instance_url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="instance_url must include scheme")
+
+    # Sprint 25 B1 — outbound SSRF protection (same guard as Jira upsert above).
+    from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
+    try:
+        validate_outbound_url(payload.instance_url)
+    except OutboundUrlBlocked as exc:
+        raise HTTPException(status_code=400, detail=f"instance_url rejected: {exc.reason}") from exc
 
     res = await db.execute(
         select(ServicenowIntegration).where(

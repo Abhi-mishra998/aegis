@@ -111,8 +111,8 @@ def _set_lock_gauge(agent_id: str, locked: bool) -> None:
         return
     try:
         BASELINE_LOCKED_GAUGE.labels(agent_id=agent_id).set(1 if locked else 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("baseline_gauge_set_failed", agent_id=agent_id, error=str(exc))
 
 
 def is_baseline_locked(call_count: int) -> bool:
@@ -339,8 +339,8 @@ async def record_and_score(
                     findings.append(
                         f"behavior_anomaly:unusual_target:{table_norm}"
                     )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("baseline_score_failed", agent_id=agent_id, error=str(exc))
     return findings
 
 

@@ -1,0 +1,32 @@
+Sprint 25 batch 7 — A7 Clerk webhook fail-closed-with-retry
+============================================================
+
+Bug (pre-fix):
+  - services/identity/webhooks_clerk.py:637-643
+  - Redis SET NX raised Exception → `first_time = True` (silent fail-open)
+  - Every Svix retry while Redis was down was treated as a NEW event
+  - Handler ran every retry → duplicate user provisioning → account-takeover risk
+
+Fix:
+  - except block now raises HTTPException(503, headers={"Retry-After": "30"})
+  - Svix sees 5xx + Retry-After → exponential-backoff retry per Svix docs
+  - When Redis recovers, next retry hits SET NX → genuine idempotency check works
+  - Net effect: 0 duplicate-user provisions even under Redis downtime
+
+Why 503 (not 500, not 429):
+  - 4xx tells Svix "permanent failure, stop retrying" (except 429)
+  - 503 + Retry-After is the standard "temporarily unavailable, come back" pattern
+  - Svix retry policy honors Retry-After on 503 (and 429)
+
+Behavior round-trip:
+  - Fake Redis that raises ConnectionError on .set()
+  - Replicated try/except block → HTTPException(503, "Idempotency check
+    temporarily unavailable; retry", headers={"Retry-After": "30"}) ✓
+
+Closes:
+  - One CRITICAL from report-bussines-25.md §4.2
+  - The "account-takeover via webhook replay" risk path
+
+Test owed (Phase E1 / sprint-26):
+  - tests/test_clerk_webhook_idempotency.py with monkey-patched Redis
+    asserting 503 instead of 200-with-duplicate-user

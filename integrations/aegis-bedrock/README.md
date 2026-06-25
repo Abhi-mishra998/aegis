@@ -1,5 +1,7 @@
 # aegis-bedrock
 
+> ⚠️ **Sprint 25 freeze (2026-06-26):** `aegis-bedrock` is now **maintenance-only**. The Aegis team has narrowed focus to a single hero SDK, `aegis-anthropic`, while we drive design-partner revenue. `aegis-bedrock` continues to receive **security patches** but **no new features** until further notice. The drop-in Bedrock contract below remains fully supported against the canonical `/execute` API; you can keep using it in production.
+
 AWS Bedrock Agents governance middleware for Aegis ACP. Intercepts
 `invoke_agent` action-group calls and consults Aegis `/execute` before any
 tool runs — same SDK contract as `aegis-anthropic` and `aegis-openai`.

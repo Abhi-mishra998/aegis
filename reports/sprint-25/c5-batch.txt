@@ -1,0 +1,55 @@
+Sprint 25 batch 11 — C5 coordinated migration ordering
+=======================================================
+
+Bug (pre-fix):
+  - 8 migrate_* services in infra/docker-compose.prod.yml all started in
+    parallel as soon as pgbouncer reported healthy.
+  - 8 parallel alembic processes opened DB sessions simultaneously, each
+    against its own DB (acp_identity, acp_registry, ..., acp_autonomy).
+  - Risk class: pgbouncer/Postgres connection-pool saturation at boot
+    causing some migrations to fail with "too many connections" or
+    pgbouncer "server is shutting down" errors. Partial deployment state
+    when this happens.
+
+Reality check:
+  - Each migration targets a SEPARATE database (per-service isolation).
+  - No cross-DB FK constraints possible at the DB level.
+  - The "FK race across services" concern from the original audit was
+    architecturally wrong. The REAL win is rate-limiting boot pressure
+    on pgbouncer.
+
+Fix:
+  - Chained the 8 migration jobs via Docker Compose
+    `condition: service_completed_successfully`:
+      migrate_identity (head, pgbouncer only)
+        → migrate_registry
+          → migrate_api
+            → migrate_autonomy
+              → migrate_audit
+                → migrate_usage
+                  → migrate_identity_graph
+                    → migrate_flight_recorder
+  - Each link adds 1 line to the predecessor's depends_on block.
+  - All keep their existing `pgbouncer: service_healthy` requirement.
+  - All keep `restart: on-failure` — if a chain member fails, it retries,
+    and successors wait for its eventual success. This is the CORRECT
+    behavior — better than a partial migration state.
+
+Operational impact:
+  - Boot time of a fresh prod stack increases from "all 8 in parallel"
+    to "8 sequential" — roughly 8x serial time vs. 1x parallel. On a
+    cold stack with each migration taking ~10s, this is ~80s vs ~10s.
+  - Trade-off: longer boot for reliable boot. Healthy stacks deploy in
+    < 10s anyway because alembic upgrade head is a no-op when there's
+    nothing to apply.
+  - If a chain member hangs indefinitely, ALL successors wait. This is
+    intentional: a hung migration with restart:on-failure means the
+    deployment is genuinely broken and shouldn't proceed.
+
+YAML verification:
+  - python3 yaml.safe_load() parses without errors
+  - Chain structure verified programmatically: each successor lists exactly
+    its expected predecessor with condition=service_completed_successfully
+
+Files touched:
+  ~ infra/docker-compose.prod.yml — 7 edits, ~4 added lines per edit

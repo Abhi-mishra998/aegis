@@ -1,0 +1,11 @@
+{
+  "generated_at": 1782414203,
+  "harness": "scripts/redteam/e2_gpt4o_corpus.py",
+  "attacker_model": "gpt-4o",
+  "status": "BLOCKED",
+  "blocker": "OpenAI account `insufficient_quota` \u2014 key authenticates (200 on /v1/models) but every chat.completions request returns 429 quota-exceeded. Top up the OpenAI account or use a different paid account.",
+  "scenarios_attempted": 10,
+  "scenarios_completed": 0,
+  "to_resume": "Top up at https://platform.openai.com/account/billing then re-run: OPENAI_API_KEY=... python3 scripts/redteam/e2_gpt4o_corpus.py",
+  "verification": "Spawned demo workspace + listed 5 seeded agents successfully (devops-agent id=310ffe8d-\u2026). Aegis path is wired; only the GPT-4o leg is blocked."
+}

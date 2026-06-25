@@ -395,38 +395,6 @@ export const parseApiError = (error, fallback = "Something went wrong. Please tr
   return error.message || fallback;
 };
 
-// Voice Agent — LiveKit token mint. Wraps the gateway /voice/token endpoint
-// behind the same fetch convention as the other services so auth headers,
-// credentials, and 401 surfacing stay consistent. Previously the panel did a
-// raw fetch() that bypassed Clerk token attachment.
-export const voiceService = {
-  getToken: async () => {
-    const headers = {};
-    await attachClerkAuth(headers);
-    const res = await fetch(`${API_BASE}/voice/token`, {
-      credentials: "include",
-      headers,
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      let parsedBody = null;
-      let parsedError = txt;
-      try {
-        parsedBody = JSON.parse(txt);
-        parsedError = parsedBody.error || parsedBody.detail || parsedBody.message || txt;
-      } catch (_) { /* non-JSON body */ }
-      const err = new Error(parsedError || `Voice token request failed (${res.status})`);
-      err._status = res.status;
-      err._body = parsedBody;
-      err._wwwAuth = res.headers.get("WWW-Authenticate") || "";
-      err._noRetry = true;
-      throw err;
-    }
-    const body = await res.json();
-    return body.data || body;
-  },
-};
-
 // Auth Service
 export const authService = {
   login: async (data) => {
@@ -701,14 +669,6 @@ export const registryService = {
   getSummary: () => request("/agents/summary"),
 };
 
-export const riskService = {
-  getSummary: (agentId) => request(_withAgent("/risk/summary", agentId)),
-  getTimeline: (agentId) => request(_withAgent("/risk/timeline", agentId)),
-  getTopThreats: (agentId) => request(_withAgent("/risk/top-threats", agentId)),
-  getInsights: (agentId) => request(_withAgent("/insights/recent", agentId)),
-  getSignalWeights: () => request("/risk/signal-weights"),
-};
-
 export const forensicsService = {
   listInvestigations: (params = {}) => {
     const q = new URLSearchParams();
@@ -763,10 +723,6 @@ export const playgroundService = {
         ...(options.headers || {}),
       },
     }),
-};
-
-export const decisionService = {
-  getHistory: (limit = 20, agentId) => request(_withAgent(`/decision/history?limit=${limit}`, agentId)),
 };
 
 export const dashboardService = {
@@ -1280,21 +1236,9 @@ export const userService = {
   deactivate: (id) => request(`/users/${id}`, { method: 'DELETE' }),
 }
 
-export const securityService = {
-  getPosture: () => request('/security/posture'),
-}
-
 export const adminService = {
   listTenants: () => request('/admin/tenants'),
   getTenant: (id) => request(`/admin/tenants/${id}`),
-}
-
-export const demoService = {
-  // Run one end-to-end Groq-agent demo. Returns the full trace.
-  runGroqAgent: (payload) => request('/demo/groq-agent', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
 }
 
 // Sprint 17 — Aegis for Teams. The /team page lists each employee's
@@ -1336,14 +1280,6 @@ export const teamService = {
     request(`/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
 }
 
-// Sprint S5 — hierarchical teams used by TeamSettings.jsx.
-// Backend at /teams (services/identity).
-export const teamsService = {
-  list:   () => request('/teams'),
-  create: (payload) => request('/teams', { method: 'POST', body: JSON.stringify(payload) }),
-  remove: (teamId) => request(`/teams/${encodeURIComponent(teamId)}`, { method: 'DELETE' }),
-}
-
 // Sprint EI-3 — Okta SCIM bearer-token management used by
 // settings/ScimTokensTab.jsx. Backend at /scim/tokens.
 export const scimService = {
@@ -1372,31 +1308,5 @@ export const integrationsService = {
   testServiceNow:   () => request('/integrations/servicenow/test', { method: 'POST' }),
   rotateServiceNowWebhookSecret: () =>
     request('/integrations/servicenow/webhook-secret/rotate', { method: 'POST' }),
-}
-
-// Sprint S2 — Slack OAuth status used by Dashboard.jsx + WebhookSettings.jsx.
-// Restoring the export the bundle expected (it was lost in a prior refactor
-// and is the source of the `REQUEST_FAILED /sso/slack/status` console error +
-// the `slackOAuthService is undefined` runtime exception). Backend lives at
-// services/gateway/routers/slack_oauth.py if/when it ships; for now the
-// status endpoint returns `{connected: false}` on missing/404 so the UI's
-// "Connect Slack" CTA renders correctly.
-export const slackOAuthService = {
-  status: () =>
-    request('/sso/slack/status').catch((err) => {
-      // 404 / route-missing is the steady state until Slack OAuth ships;
-      // fail open so the UI shows "not connected" instead of crashing.
-      if (err && (err.status === 404 || err.status === 401)) {
-        return { data: { connected: false } }
-      }
-      throw err
-    }),
-  disconnect: () =>
-    request('/sso/slack/disconnect', { method: 'POST' }).catch((err) => {
-      if (err && err.status === 404) {
-        return { data: { ok: true } }
-      }
-      throw err
-    }),
 }
 

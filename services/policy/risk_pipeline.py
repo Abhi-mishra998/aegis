@@ -189,7 +189,9 @@ async def cumulative_scores(
         if isinstance(m, bytes):
             m = m.decode("utf-8", "replace")
         try:
-            agent_score += int(m.split(":", 2)[2])
+            parts = m.split(":", 2)
+            if len(parts) == 3:
+                agent_score += int(parts[2])
         except Exception:
             continue
 
@@ -197,7 +199,9 @@ async def cumulative_scores(
         if isinstance(m, bytes):
             m = m.decode("utf-8", "replace")
         try:
-            agent_long_score += int(m.split(":", 2)[2])
+            parts = m.split(":", 2)
+            if len(parts) == 3:
+                agent_long_score += int(parts[2])
         except Exception:
             continue
 

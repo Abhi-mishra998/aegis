@@ -1,5 +1,7 @@
 # aegis-openai
 
+> ⚠️ **Sprint 25 freeze (2026-06-26):** `aegis-openai` is now **maintenance-only**. The Aegis team has narrowed focus to a single hero SDK, `aegis-anthropic`, while we drive design-partner revenue. `aegis-openai` continues to receive **security patches** but **no new features** until further notice. The drop-in OpenAI contract below remains fully supported against the canonical `/execute` API; you can keep using it in production.
+
 > Drop-in OpenAI SDK wrapper that routes every `tool_calls` invocation through Aegis's runtime governance pipeline before execution.
 
 [![PyPI](https://img.shields.io/badge/pypi-aegis--openai-blue)](https://pypi.org/project/aegis-openai/)

@@ -87,4 +87,11 @@ class HumanOverrideEvent(Base, OrgMixin, TenantMixin, IdMixin):
     __table_args__ = (
         Index("ix_overrides_tenant_time", "tenant_id", "occurred_at"),
         Index("ix_overrides_tenant_target", "tenant_id", "target_kind", "target_id"),
+        # Sprint 25 B2 — prevent double-approval races. NULL request_id is
+        # allowed (notes / manual stops); duplicate non-null request_ids are
+        # blocked. Migration sp25b2_unique_override creates this in the DB.
+        UniqueConstraint(
+            "tenant_id", "event_type", "request_id",
+            name="uq_human_override_request",
+        ),
     )

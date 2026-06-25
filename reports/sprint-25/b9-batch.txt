@@ -1,0 +1,31 @@
+Sprint 25 batch 5 — B9 mass-assignment hardening
+=================================================
+
+Audit context:
+  - Pre-sweep: 0 Pydantic schemas in the entire codebase used extra="forbid"
+  - Pydantic v2 default behavior = silently ignore extra fields
+  - Mass-assignment risk depends on whether handlers do **payload.dict()
+    into an ORM. Found only ONE such site: services/usage/repository/usage.py:36
+    (UsageRecord insert, not a security-sensitive entity).
+  - Real exposure for security-facing POST endpoints is therefore LOW today,
+    but defense-in-depth + better error UX (422 instead of silent drop) is cheap.
+
+Schemas hardened:
+  - services/registry/schemas.py::AgentCreate         (POST /agents body)
+  - services/registry/schemas.py::PermissionCreate    (POST /agents/{id}/permissions body)
+  - services/policy/router.py::PolicyTestRequest      (POST /policies/test body)
+
+Verification (Pydantic round-trip):
+  - AgentCreate with extra `is_admin=True`         → ValidationError ✓
+  - PermissionCreate with extra `is_admin=True`    → ValidationError ✓
+  - PolicyTestRequest with extra `is_admin=True`   → ValidationError ✓
+
+Intentionally NOT hardened (deferred to sprint-26):
+  - Internal-only schemas (EvaluationRequest, SimulateRequest) — gated by
+    verify_internal_secret, no external attack surface.
+  - services/usage/repository/usage.py:36 — UsageRecord.values(**payload.model_dump())
+    pattern. UsageRecord is a billing usage row; extras would hit the SQLAlchemy
+    column-not-found error path, not become writeable columns. Flag for verify.
+  - The other ~14 BaseModel POST schemas across identity/, audit/, identity_graph/.
+    Ponytail rule: don't expand the ticket beyond what was asked. Sprint-26
+    sweep can apply ConfigDict(extra="forbid") project-wide.

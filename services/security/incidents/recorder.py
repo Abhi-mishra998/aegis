@@ -38,6 +38,10 @@ import time
 import uuid
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +274,8 @@ async def record_step(
                         tenant_id=tenant_id,
                         agent_id=agent_id,
                     ))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("remediation_dispatch_failed", incident_id=inc_id, error=str(exc))
 
         # Maintain the participating_agents list.
         agents_raw = await redis.hget(meta_k, "participating_agents")

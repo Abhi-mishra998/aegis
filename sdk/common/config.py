@@ -7,7 +7,7 @@ Supports both Docker and Local environments cleanly.
 
 from __future__ import annotations
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -184,6 +184,34 @@ class ACPSettings(BaseSettings):
     FLIGHT_RECORDER_SERVICE_URL: str = Field(default="http://localhost:8014")
     AUTONOMY_SERVICE_URL: str = Field(default="http://localhost:8015")
 
+    # Sprint 25 A4 — fail-fast if a prod deploy still has localhost service URLs.
+    # The defaults above let dev/CI/examples work without env wiring; this
+    # validator catches the silent-misroute bug where a missing env var in
+    # production falls back to http://localhost:800X and the service happily
+    # talks to itself instead of the intended cluster peer.
+    _PROD_REQUIRED_SERVICE_URLS = (
+        "REGISTRY_SERVICE_URL", "IDENTITY_SERVICE_URL", "POLICY_SERVICE_URL",
+        "AUDIT_SERVICE_URL", "API_SERVICE_URL", "BEHAVIOR_SERVICE_URL",
+        "DECISION_SERVICE_URL", "USAGE_SERVICE_URL", "INSIGHT_SERVICE_URL",
+        "FORENSICS_SERVICE_URL", "IDENTITY_GRAPH_SERVICE_URL",
+        "FLIGHT_RECORDER_SERVICE_URL", "AUTONOMY_SERVICE_URL",
+    )
+
+    @model_validator(mode="after")
+    def _no_localhost_urls_in_prod(self) -> "ACPSettings":
+        if self.ENVIRONMENT != "production":
+            return self
+        bad = [
+            f for f in self._PROD_REQUIRED_SERVICE_URLS
+            if getattr(self, f, "").startswith("http://localhost")
+        ]
+        if bad:
+            raise ValueError(
+                "ENVIRONMENT=production but these service URLs still point at "
+                f"localhost (probably missing env vars): {', '.join(bad)}"
+            )
+        return self
+
     # Optional: POST incident payloads here (Slack incoming webhook, custom SIEM, etc.)
     ALERT_WEBHOOK_URL: str = Field(default="", description="Generic webhook URL for incident alerts (leave empty to disable)")
     SLACK_WEBHOOK_URL: str = Field(default="", description="Slack incoming webhook URL for security alerts (leave empty to disable)")
@@ -193,8 +221,7 @@ class ACPSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────
     # Sprint 2b extends targets from {splunk, datadog} to also include
     # elastic, sentinel, chronicle. Credentials can come from env (legacy)
-    # or AWS SSM Parameter Store at /aegis-siem/<target>/* — matching the
-    # existing /aegis-voice-guide/* convention.
+    # or AWS SSM Parameter Store at /aegis-siem/<target>/*.
     SIEM_TARGET: str = Field(default="", description="SIEM target: '' | 'splunk' | 'datadog' | 'elastic' | 'sentinel' | 'chronicle'")
     SIEM_CRED_SOURCE: str = Field(default="env", description="SIEM credential source: 'env' (default) | 'ssm'")
     SIEM_SSM_PREFIX: str = Field(default="/aegis-siem", description="SSM Parameter Store prefix when SIEM_CRED_SOURCE=ssm")

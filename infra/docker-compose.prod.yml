@@ -168,9 +168,12 @@ services:
         cd /app/services/api && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — chained after registry (see migrate_registry comment).
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_registry:
+        condition: service_completed_successfully
     restart: on-failure
 
   migrate_identity:
@@ -202,9 +205,16 @@ services:
         cd /app/services/registry && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — chained after identity to rate-limit pgbouncer pressure
+    # at boot. Per-DB isolation means there is no cross-DB FK risk; the win
+    # is preventing 8 parallel alembic processes from saturating pgbouncer's
+    # pool. Order: identity → registry → api → autonomy → audit → usage →
+    # identity_graph → flight_recorder.
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_identity:
+        condition: service_completed_successfully
     restart: on-failure
 
   migrate_audit:
@@ -219,9 +229,12 @@ services:
         cd /app/services/audit && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — chained after autonomy (see migrate_registry comment).
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_autonomy:
+        condition: service_completed_successfully
     restart: on-failure
 
   migrate_usage:
@@ -236,9 +249,12 @@ services:
         cd /app/services/usage && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — chained after audit (see migrate_registry comment).
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_audit:
+        condition: service_completed_successfully
     restart: on-failure
 
   migrate_identity_graph:
@@ -253,9 +269,12 @@ services:
         cd /app/services/identity_graph && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — chained after usage (see migrate_registry comment).
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_usage:
+        condition: service_completed_successfully
     restart: on-failure
 
   migrate_flight_recorder:
@@ -270,9 +289,12 @@ services:
         cd /app/services/flight_recorder && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — tail of the chain (see migrate_registry comment).
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_identity_graph:
+        condition: service_completed_successfully
     restart: on-failure
 
   migrate_autonomy:
@@ -287,9 +309,12 @@ services:
         cd /app/services/autonomy && alembic upgrade head
     secrets:
       - db_password
+    # Sprint 25 C5 — chained after api (see migrate_registry comment).
     depends_on:
       pgbouncer:
         condition: service_healthy
+      migrate_api:
+        condition: service_completed_successfully
     restart: on-failure
 
   # ─────────────────────────────────────────
@@ -311,6 +336,10 @@ services:
     depends_on:
       migrate_registry:
         condition: service_completed_successfully
+    # Sprint 25 C2 — drain window for in-flight requests on SIGTERM.
+    # Docker default of 10s is too short for the /execute 2s budget +
+    # downstream retries; 30s matches typical ALB drain.
+    stop_grace_period: 30s
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -344,6 +373,7 @@ services:
         condition: service_healthy
       registry:
         condition: service_healthy
+    stop_grace_period: 30s
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -366,6 +396,7 @@ services:
         condition: service_healthy
       registry:
         condition: service_healthy
+    stop_grace_period: 30s
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -393,6 +424,7 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    stop_grace_period: 30s
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -416,6 +448,7 @@ services:
     depends_on:
       migrate_api:
         condition: service_completed_successfully
+    stop_grace_period: 30s
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -439,6 +472,7 @@ services:
     depends_on:
       migrate_usage:
         condition: service_completed_successfully
+    stop_grace_period: 30s
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -483,6 +517,7 @@ services:
         condition: service_healthy
       usage:
         condition: service_healthy
+    stop_grace_period: 30s
     restart: always
 
 # ─────────────────────────────────────────

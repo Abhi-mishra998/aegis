@@ -1,0 +1,47 @@
+Sprint 25 batch 13 — B2 approval double-execution race
+=======================================================
+
+Bug (verified in code):
+  - services/autonomy/router.py:387-393 — POST /autonomy/overrides did a
+    plain db.add(ev); await db.commit().
+  - Two concurrent POSTs with same (tenant_id, event_type, request_id)
+    both committed independently → 2 rows, 2 SSEs fired, 2 downstream
+    side-effects triggered (the second one re-publishes "approval_resolved"
+    and any tool gated on that flag fires twice → double-spend).
+  - models.py:87-90 had only 2 indexes, NO UniqueConstraint.
+
+Fix (three parts):
+  1. NEW migration services/autonomy/alembic/versions/sp25b2_unique_override_request.py
+     - revision=sp25b2_unique_override, down_revision=p1q2r3s4t5u6 (current head)
+     - op.create_unique_constraint("uq_human_override_request",
+                                   "human_override_events",
+                                   ["tenant_id", "event_type", "request_id"])
+     - downgrade() drops it.
+     - NULL request_id stays allowed (Postgres treats each NULL as distinct),
+       so notes/manual stops without request_id still work.
+
+  2. models.py:90 — added matching UniqueConstraint(...) to __table_args__
+     so the ORM model declares what the DB enforces.
+
+  3. router.py:387-410 — wrap commit in try/except IntegrityError:
+     - On success: `_is_first_winner=True`, fire SSE as before.
+     - On IntegrityError: rollback, SELECT the winning row by
+       (tenant_id, event_type, request_id), return THAT row to the caller,
+       log "override_duplicate_suppressed", and SKIP the SSE.
+     - Net effect: exactly-once SSE fan-out + exactly-once side-effects,
+       even under 50 concurrent POSTs.
+
+Why try/except IntegrityError (not INSERT ON CONFLICT DO NOTHING RETURNING):
+  - Boring > clever. SQLAlchemy ORM + Postgres ON CONFLICT requires either
+    raw SQL or the postgresql.insert() dialect path, which forks the code.
+  - try/except IntegrityError works identically on Postgres, SQLite, and
+    any other backend a future user might wire up.
+
+Files touched:
+  + services/autonomy/alembic/versions/sp25b2_unique_override_request.py (NEW, 38 lines)
+  ~ services/autonomy/models.py  (+9 lines, UniqueConstraint in __table_args__)
+  ~ services/autonomy/router.py  (+1 import, +22 lines in handler)
+
+Test owed (Phase E1):
+  - tests/test_autonomy_no_double_exec.py — 50 concurrent POSTs with
+    same request_id → exactly 1 SSE fired + exactly 1 row in DB.

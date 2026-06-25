@@ -28,6 +28,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from redis.asyncio import Redis as _Redis
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
@@ -390,7 +391,30 @@ async def add_override(
         metadata_json=payload.metadata,
     )
     db.add(ev)
-    await db.commit()
+    # Sprint 25 B2 — race guard for double-approval. The unique constraint
+    # (tenant_id, event_type, request_id) added in migration sp25b2_unique_override
+    # blocks the second concurrent INSERT. On conflict we return the row
+    # that won the race and DO NOT fire the SSE again — exactly-once.
+    _is_first_winner = True
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        _is_first_winner = False
+        existing = await db.execute(
+            select(HumanOverrideEvent).where(
+                HumanOverrideEvent.tenant_id == tenant_id,
+                HumanOverrideEvent.event_type == payload.event_type,
+                HumanOverrideEvent.request_id == payload.request_id,
+            ).limit(1)
+        )
+        ev = existing.scalar_one()
+        logger.info(
+            "override_duplicate_suppressed",
+            tenant_id=str(tenant_id),
+            request_id=payload.request_id,
+            event_type=payload.event_type,
+        )
 
     # Observe wall-clock-to-resolve into the customer-SLO histogram. No-op
     # when event_type is not "approval" or when the request_id has no matching
@@ -411,17 +435,20 @@ async def add_override(
     # services/gateway/_helpers.publish_event so the gateway's SSE
     # fan-out picks it up. Fire-and-forget — a Redis stall here must
     # not roll back the override the DB already accepted.
-    asyncio.create_task(_safe_bg(_publish_approval_resolved(
-        tenant_id=str(tenant_id),
-        agent_id=str(payload.target_id) if payload.target_kind == "agent" else None,
-        event_type=payload.event_type,
-        target_kind=payload.target_kind,
-        target_id=str(payload.target_id),
-        request_id=payload.request_id,
-        actor=actor,
-        actor_role=actor_role,
-        reason=payload.reason,
-    )))
+    # Sprint 25 B2 — skip the publish when this request lost the race
+    # (the winner already fired it).
+    if _is_first_winner:
+        asyncio.create_task(_safe_bg(_publish_approval_resolved(
+            tenant_id=str(tenant_id),
+            agent_id=str(payload.target_id) if payload.target_kind == "agent" else None,
+            event_type=payload.event_type,
+            target_kind=payload.target_kind,
+            target_id=str(payload.target_id),
+            request_id=payload.request_id,
+            actor=actor,
+            actor_role=actor_role,
+            reason=payload.reason,
+        )))
     return APIResponse(data=OverrideOut.model_validate(ev))
 
 

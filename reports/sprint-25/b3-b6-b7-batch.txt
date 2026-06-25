@@ -1,0 +1,28 @@
+Sprint 25 batch 4 — B3 + B6 retract + B7 clarify
+=================================================
+
+B3 (kill-switch TOCTOU): FIXED
+  - services/gateway/middleware.py — added second kill-switch check immediately
+    before `response = await call_next(request)` at the execute boundary.
+  - Closes the multi-stage race window between L763 (early check) and L2142+
+    (execute) where an operator engaging the switch mid-flight on a slow
+    /execute could have the request still complete.
+
+B6 (JWT aud validation): RETRACTED — false positive
+  - report-bussines-25.md §4.3 row updated.
+  - services/identity/oidc.py:207 already calls
+    jwt.decode(..., audience=cfg["client_id"], options={"verify_aud": True, ...}).
+  - Validation is correct; sub-agent hallucinated the gap.
+
+B7-first-half (state-unpack length check): RETRACTED — false positive
+  - services/identity/oidc.py:351 already has `if len(parts) != 4: raise`.
+  - Sub-agent missed it.
+
+B7-second-half (open-redirect in SSO proxy): DOWNGRADED to LOW
+  - services/gateway/routers/sso.py:98 and :108 forward the upstream Location
+    header from the internal identity service (trusted source), not from user
+    input. The SSO router does NOT accept a `next=` query param.
+  - Real attack requires identity-service compromise. Defense-in-depth fix
+    (Location host allowlist) deferred until external attack vector is shown.
+
+Cumulative session: 10 of 28 sprint-25 tickets closed or retracted.
