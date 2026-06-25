@@ -227,7 +227,7 @@ Confidence: **HIGH** for the bundle shape + verifier integration. Confidence: **
 | "Auto-seeded with 5 named agents" | `/agents` after fresh `/demo/spawn-workspace` | matches (5 agents per tenant in fresh demo) | HIGH |
 | Latency claim: "~28 ms inter-service round-trip p95" | `/system/health.latency p95` (end_to_end) | **36 ms p95** at probe time — within 30 % of the stated number; previous "<21 ms" claim was already corrected in this branch | HIGH (with the caveat: 13 samples in the snapshot window) |
 | "14-day shadow mode for Clerk" | `services/identity/router.py` Tenant.shadow_mode_until | code present, defaults to 14 days from create | HIGH |
-| "Kill switch <5 s engage time" | not exercised this session | LOW — claim stands but **not measured** in this run |
+| "Kill switch <5 s engage time" | **engage 446 ms, disengage 407 ms** measured live on a fresh demo tenant (per-tenant scope, no other traffic affected) | **HIGH** — `post-b1bfc19/kill_switch.log`. ~12× faster than the doc claim. Status endpoint confirms state transitions (`disengaged` → `engaged, reason="manual_admin_lockdown"` → `disengaged`) |
 | "6 OPA rego files" | `find services -name "*.rego"` | matches (6) | HIGH |
 | "ed25519 transparency root signing" | live `/transparency/keys` returns ed25519 key | matches | HIGH |
 | "Cross-tenant blocked" (multiple docs) | 5/5 cross-tenant probes returned `403 Tenant mismatch` | matches | HIGH |
@@ -302,7 +302,7 @@ Not NO-GO — because no security defect surfaced under sustained probing.
 
 ### What I could not verify in this session
 
-- **Kill-switch engagement under load** (LOW): I did not engage it to avoid disrupting live demo traffic. The code path exists; the timing claim "<5 s" stands as a code-evidence-only claim.
+- ~~**Kill-switch engagement under load**~~ **CLOSED.** Measured live on a per-tenant fresh demo workspace (no other traffic affected): **engage 446 ms, disengage 407 ms** — ~12× faster than the "<5 s" doc claim. Status endpoint confirms the engaged-state transition with `reason="manual_admin_lockdown"`. Evidence: `post-b1bfc19/kill_switch.log`. *Caveat:* this is per-tenant engage time, not a global-shutdown drill.
 - ~~**Full 1,000-scenario LLM corpus**~~ **CLOSED — corpus drained at 1,000/1,000 attempts (306 valid Claude responses, the rest Anthropic-rate-limited). See Section F for final numbers and `F-llm-redteam-1000-summary.json` for the raw artefact.**
 - **Sustained `/execute` p99 from multi-IP load** (LOW): one-source-IP testing collides with the burst limiter. The number that matters to an enterprise — p99 at 100 simultaneous tenants from 100 source IPs — would need distributed load harness (k6 / locust on a fleet), not a single laptop.
 
