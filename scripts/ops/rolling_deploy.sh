@@ -105,14 +105,17 @@ deploy_one_host() {
 
   # ALB recovery check before touching next host
   echo "==== ALB recovery probe ===="
+  local ok=0
   for i in 1 2 3 4 5 6 7 8 9 10; do
+    local code
     code=$(probe_alb)
     echo "  [t+$((i*4))s] /status -> $code"
     if [ "$code" = "200" ]; then
-      ok=$((ok+1))
+      ok=$((ok + 1))
     fi
     sleep 4
   done
+  echo "ALB-recovery: $ok / 10 probes returned 200"
 }
 
 # Walk hosts one at a time. If any fails, stop — ALB still has the
