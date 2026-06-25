@@ -36,12 +36,20 @@ deploy_one_host() {
   local HOST="$1"
   echo
   echo "==== deploy $SHA → $HOST ===="
+  # SSM timeout 1800s (was 900s before 2026-06-25). safe_deploy.sh
+  # walks: fetch bundle + extract + force-recreate ~22 containers +
+  # `_waiting 90s for healthchecks` + 30s settle + final probe. Cold-start
+  # paths (first image pull, OPA reload, gateway warmup) push the script
+  # close to 900s; 4 of 6 attempts on the 2026-06-25 prod deploy got
+  # SIGTERM'd at the previous ceiling even though every container ended
+  # healthy. 1800s costs nothing on the happy path (the poll loop below
+  # exits as soon as SSM reports Success).
   CMD=$(aws ssm send-command --region "$REGION" \
     --instance-ids "$HOST" \
     --document-name "AWS-RunShellScript" \
     --comment "rolling deploy $SHA → $HOST" \
     --parameters "commands=[\"aws s3 cp s3://aegis-prod-backups-628478946931/releases/safe_deploy.sh /tmp/safe_deploy.sh --region $REGION\",\"chmod +x /tmp/safe_deploy.sh\",\"sudo /tmp/safe_deploy.sh $SHA $FORCE_CLEAN 2>&1\"]" \
-    --timeout-seconds 900 \
+    --timeout-seconds 1800 \
     --query "Command.CommandId" --output text)
   echo "CMD=$CMD"
 

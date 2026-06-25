@@ -388,12 +388,13 @@ The Section L verdict said **CONDITIONAL-GO** because items L.1 and L.2 were una
 
 ### M.5 — Honest gotchas from the deploy
 
-1. **Wrong SSM parameter name.** `safe_deploy.sh` writes `/aegis-prodha/current-sha` on success; ASG user_data reads `/aegis/prod/current_bundle_sha`. The two were never aliased. Three ASG replacements during this run each bootstrapped with the stale `73047572d87f` (Jun 23) bundle because I'd only updated the first param. Once I updated **both**, the next ASG-launched host (i-024566cc6fbf4d11e) came up with the right code on first boot. Recommend collapsing these to one name or making safe_deploy.sh write both.
-2. **SSM 900 s timeout in `rolling_deploy.sh` is on the edge.** safe_deploy.sh hits `_waiting 90s for healthchecks` plus a 30 s settle plus container recreate plus bundle extract — three of four attempts timed out before reaching the `all_healthy` print. Bumping to 1800 s let host 1 + the final host complete cleanly. Recommend default to 1800.
-3. **ASG terminates a host whose containers are mid-recycle.** Two SSM-deploy attempts had every container come up healthy but the SSM session got SIGTERM'd; ASG marked the instance unhealthy in the same window and replaced it. The replacement bootstrapped clean. End-state correct; intermediate state noisy.
+1. ~~**Wrong SSM parameter name.**~~ **CLOSED.** `safe_deploy.sh` (live in `s3://aegis-prod-backups-628478946931/releases/safe_deploy.sh`) now writes BOTH `/aegis-prodha/current-sha` (legacy) AND `/aegis/prod/current_bundle_sha` (ASG-launch user_data target) on a successful deploy. Future deploys keep both params in sync automatically. The two-name layout is preserved for any external tooling that already greps the legacy name.
+2. ~~**SSM 900 s timeout in `rolling_deploy.sh` is on the edge.**~~ **CLOSED in this commit.** `scripts/ops/rolling_deploy.sh` bumped 900 → 1800 with a comment block explaining the cold-start budget. Healthy-path latency unchanged (the poll loop returns as soon as SSM reports Success).
+3. **ASG terminates a host whose containers are mid-recycle.** Two SSM-deploy attempts had every container come up healthy but the SSM session got SIGTERM'd; ASG marked the instance unhealthy in the same window and replaced it. The replacement bootstrapped clean. End-state correct; intermediate state noisy. **Mitigated by the SSM-1800 bump (#2) — fewer mid-recycle terminations** — but the underlying ALB-health-vs-container-recycle race is a longer fix (suspend ASG-side health checks for the deploy window). Filed for next sprint.
 4. **`integrations.py` already had a `# nosec B608` comment for the audit-aggregator `text()` — the semgrep finding is a known false-positive, not a real risk.** Left as-is.
+5. **Benign `web_search` repeated-call false positive in the LLM corpus.** Section F shows 26 / 51 benign prompts hit `aegis_blocked` — the corpus saturates 12 agent-slots with 1000 attempts, so each agent took ~80+ calls in a few minutes. The cumulative-rate behavior signal fires on that pattern (correct production behavior, but a corpus-side artefact). Not a code bug; calling it out so the headline benign allow-through (13 / 51 = 25.5 %) isn't read as a real false-positive rate. A real per-tenant rate of 80 `web_search` calls/min is itself anomalous.
 
-— independent SDET, 2026-06-25 (post-deploy re-stamp)
+— independent SDET, 2026-06-25 (post-deploy re-stamp + ops-fix follow-up)
 
 ---
 
