@@ -186,10 +186,49 @@ def _system_path_access(args: dict[str, Any]) -> bool:
         return True
     if "../" in (args.get("path") or ""):
         return True
+    # Credential-bearing files anywhere on the filesystem — mirror of the
+    # rego cred_suffixes/cred_tokens clauses added 2026-06-25 after the
+    # 1000-LLM corpus surfaced `read_file services/gateway/.env` slipping
+    # through this Python fast-path port. The old prefix-only check only
+    # matched `/etc`-rooted paths; sensitive files elsewhere (`.env`,
+    # `id_rsa`, `~/.aws/credentials`, `~/.docker/config.json`, server
+    # PEMs, `.pgpass`) all evaded it.
+    _CRED_SUFFIXES = (
+        ".env", ".env.local", ".env.production", ".env.staging",
+        "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+        ".pem", ".key", ".pfx", ".p12", ".gpg", ".asc", ".kdbx",
+        ".pgpass", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
+        "htpasswd",
+    )
+    _CRED_TOKENS_PATH = (
+        ".aws/credentials", ".aws/config",
+        ".docker/config.json",
+        ".kube/config",
+        ".gnupg/",
+        "pgbouncer/userlist.txt",
+        "secrets.yaml", "secrets.yml",
+        "credentials.json",
+    )
+    if path:
+        if any(path.endswith(suf) for suf in _CRED_SUFFIXES):
+            return True
+        if any(tok in path for tok in _CRED_TOKENS_PATH):
+            return True
     cmd = _s(args, "command_norm")
     sensitive = ("/etc/shadow", "/etc/passwd", "/root/.ssh",
                  "/.ssh/id_", "/proc/self", "/sys/firmware")
-    return any(s in cmd for s in sensitive)
+    if any(s in cmd for s in sensitive):
+        return True
+    # Shell-command form of the credential-bearing tokens above.
+    _CRED_TOKENS_CMD = (
+        ".aws/credentials", ".aws/config",
+        ".docker/config.json",
+        ".kube/config",
+        ".gnupg/",
+        "pgbouncer/userlist.txt",
+        ".git-credentials", ".pgpass", ".netrc",
+    )
+    return any(tok in cmd for tok in _CRED_TOKENS_CMD)
 
 
 def _external_exfil(args: dict[str, Any]) -> bool:
