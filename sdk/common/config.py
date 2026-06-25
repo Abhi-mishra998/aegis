@@ -7,8 +7,24 @@ Supports both Docker and Local environments cleanly.
 
 from __future__ import annotations
 
+import os
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Sprint 25 A4 — kept at MODULE level (not inside ACPSettings) because
+# leading-underscore class attributes in Pydantic v2 BaseSettings get
+# treated as `ModelPrivateAttr` and become non-iterable proxies.
+# Discovered via the 2026-06-26 prod deploy crash: every service that
+# imported settings.py died at import with TypeError on the iteration
+# inside the validator below.
+_PROD_REQUIRED_SERVICE_URLS: tuple[str, ...] = (
+    "REGISTRY_SERVICE_URL", "IDENTITY_SERVICE_URL", "POLICY_SERVICE_URL",
+    "AUDIT_SERVICE_URL", "API_SERVICE_URL", "BEHAVIOR_SERVICE_URL",
+    "DECISION_SERVICE_URL", "USAGE_SERVICE_URL", "INSIGHT_SERVICE_URL",
+    "FORENSICS_SERVICE_URL", "IDENTITY_GRAPH_SERVICE_URL",
+    "FLIGHT_RECORDER_SERVICE_URL", "AUTONOMY_SERVICE_URL",
+)
 
 
 class ACPSettings(BaseSettings):
@@ -185,30 +201,31 @@ class ACPSettings(BaseSettings):
     AUTONOMY_SERVICE_URL: str = Field(default="http://localhost:8015")
 
     # Sprint 25 A4 — fail-fast if a prod deploy still has localhost service URLs.
-    # The defaults above let dev/CI/examples work without env wiring; this
-    # validator catches the silent-misroute bug where a missing env var in
-    # production falls back to http://localhost:800X and the service happily
-    # talks to itself instead of the intended cluster peer.
-    _PROD_REQUIRED_SERVICE_URLS = (
-        "REGISTRY_SERVICE_URL", "IDENTITY_SERVICE_URL", "POLICY_SERVICE_URL",
-        "AUDIT_SERVICE_URL", "API_SERVICE_URL", "BEHAVIOR_SERVICE_URL",
-        "DECISION_SERVICE_URL", "USAGE_SERVICE_URL", "INSIGHT_SERVICE_URL",
-        "FORENSICS_SERVICE_URL", "IDENTITY_GRAPH_SERVICE_URL",
-        "FLIGHT_RECORDER_SERVICE_URL", "AUTONOMY_SERVICE_URL",
-    )
-
+    # The defaults above let dev/CI/examples work without env wiring; the
+    # validator below catches the silent-misroute bug where a missing env var
+    # in production falls back to http://localhost:800X and the service
+    # happily talks to itself instead of the intended cluster peer.
+    #
+    # Sprint 25 hotfix (2026-06-26) — opt-in via AEGIS_VALIDATE_SERVICE_URLS=1.
+    # Without the opt-in, this validator is a no-op: prod deploys that
+    # haven't yet wired all 13 service URLs into docker-compose keep working
+    # exactly as before. Set the flag once compose has every URL set + the
+    # ASG/k8s rollout has been tested.
     @model_validator(mode="after")
     def _no_localhost_urls_in_prod(self) -> "ACPSettings":
         if self.ENVIRONMENT != "production":
             return self
+        if os.environ.get("AEGIS_VALIDATE_SERVICE_URLS", "0") != "1":
+            return self
         bad = [
-            f for f in self._PROD_REQUIRED_SERVICE_URLS
+            f for f in _PROD_REQUIRED_SERVICE_URLS
             if getattr(self, f, "").startswith("http://localhost")
         ]
         if bad:
             raise ValueError(
-                "ENVIRONMENT=production but these service URLs still point at "
-                f"localhost (probably missing env vars): {', '.join(bad)}"
+                "ENVIRONMENT=production + AEGIS_VALIDATE_SERVICE_URLS=1 but "
+                "these service URLs still point at localhost (probably missing "
+                f"env vars): {', '.join(bad)}"
             )
         return self
 
