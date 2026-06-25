@@ -800,7 +800,13 @@ async def main() -> None:
             last_hashes[shard] = event_hash
             written += 1
         except Exception as exc:
-            print(f"  WARN audit insert {i}: {str(exc)[:120]}")
+            # QA-FIX (2026-06-25) — was `{i}` from the old `for i in range(...)`
+            # loop signature; my pre-sort refactor renamed the loop variable
+            # to row_id/etc and left this WARN referencing an undefined `i`.
+            # That NameError fires the moment any insert fails and KILLS the
+            # whole seeder — user saw "5 agents but no incidents/IAG/graph"
+            # because sections 3-13 never ran.
+            print(f"  WARN audit insert {row_id}: {str(exc)[:120]}")
     print(f"  audit_logs inserted: {written}/{args.rows}")
 
     # ── 3. Incidents (real schema: agent_id + incident_number + trigger + risk_score)
@@ -1578,12 +1584,23 @@ async def main() -> None:
     print(f"  false-positive triage inserted: {false_positive_audits} audit + "
           f"{false_positive_notes} audit_notes")
 
-    # QA-CHAIN-FIX-2 (2026-06-25) — rebuild every seeded row's prev_hash +
-    # event_hash so the chain follows timestamp order per shard. Sections
-    # 2 + 14a-14f insert in arbitrary timestamp order; the verifier walks
-    # by timestamp; without this pass we get ~2 V3 violations per tenant.
-    rehashed = await _rehash_all_for_chain_order()
-    print(f"  chain rehash (timestamp order): {rehashed} rows updated")
+    # QA-CHAIN-FIX-2 (2026-06-25) — best-effort: rebuild every seeded row's
+    # prev_hash + event_hash so the chain follows timestamp order per shard.
+    # WRAPPED in try/except because audit_logs has a BEFORE-UPDATE trigger
+    # (`deny_audit_log_mutation` from migration 3a519b48a6f2) that raises
+    # P0001 on every UPDATE. The rehash IS the right idea but cannot run
+    # against the live trigger; doing so used to crash the seeder mid-flight
+    # and the user saw "5 agents but no incidents / IAG / storylines"
+    # because sections 3-13 had committed but the script crashed before
+    # the final print. We accept the 2 known V3 violations per tenant
+    # rather than dropping a global write-protection. A proper fix is to
+    # generate every row in chronological order from the start so no
+    # rehash is needed.
+    try:
+        rehashed = await _rehash_all_for_chain_order()
+        print(f"  chain rehash (timestamp order): {rehashed} rows updated")
+    except Exception as exc:
+        print(f"  chain rehash skipped (expected — append-only trigger blocks UPDATE): {str(exc)[:120]}")
 
     await id_conn.close(); await reg_conn.close(); await aud_conn.close(); await api_conn.close()
 
