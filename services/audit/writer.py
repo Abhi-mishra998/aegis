@@ -31,10 +31,15 @@ AUDIT_CHAIN_SHARD_COUNT: int = int(os.getenv("AUDIT_CHAIN_SHARD_COUNT", "16"))
 
 
 def compute_chain_shard(request_id: str | None) -> int:
-    """Stable shard derivation from request_id. Falls back to shard 0."""
+    """Stable shard derivation from request_id. Falls back to shard 0.
+
+    MD5 here is **not** a security primitive — it's a fast deterministic
+    hash for shard-bucketing audit rows across N=16 shards. ``usedforsecurity=False``
+    silences bandit B324 without changing behaviour.
+    """
     if not request_id:
         return 0
-    digest = hashlib.md5(request_id.encode()).digest()
+    digest = hashlib.md5(request_id.encode(), usedforsecurity=False).digest()
     return int.from_bytes(digest[:2], "big") % AUDIT_CHAIN_SHARD_COUNT
 
 
