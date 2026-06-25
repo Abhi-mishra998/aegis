@@ -587,7 +587,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         # `_AUTH_FAIL_BURST_WINDOW` seconds. Successful auth clears the
         # counter so a legitimate user mistyping once isn't penalised.
         # Fail-open on Redis errors so a cache blip can't lock out customers.
-        _early_client_ip = request.client.host if request.client else "unknown"
+        # QA-MW-FIX-2 (2026-06-24, post-deploy) — use ``_real_client_ip``
+        # so the counter is keyed on the originating client IP (from
+        # X-Forwarded-For) when the request comes through nginx/ALB,
+        # not the proxy-side IP shared by all customers.
+        _early_client_ip = self._real_client_ip(request)
         _af_resp = await self._check_auth_failure_burst(_early_client_ip)
         if _af_resp is not None:
             return _af_resp
@@ -2388,9 +2392,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         # Cheap (1 INCR + 1 EXPIRE on first miss); fail-open if Redis is
         # down. We catch 401 here because every auth-failure raise in
         # `_mw_auth.py` propagates as HTTPException through this handler.
+        # Use the same real-client-IP helper as the check so increment
+        # and check land on the same Redis key.
         if e.status_code == 401:
             try:
-                _af_ip = request.client.host if request.client else "unknown"
+                _af_ip = self._real_client_ip(request)
                 await self._record_auth_failure(_af_ip)
             except Exception:
                 pass  # fail-open — never let a counter blip 500 the request
@@ -2818,9 +2824,12 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
 
         # QA-MW-FIX (2026-06-24) — clear the per-IP auth-failure counter on
         # success so a legitimate user who mistyped once during sign-in is
-        # not locked out for the rest of the 60-second window. Fail-open.
+        # not locked out for the rest of the 60-second window. Use the
+        # real-client-IP helper so the clear only zeroes out this exact
+        # client's counter, not the proxy-side IP shared by everyone.
+        # Fail-open.
         try:
-            _ok_ip = request.client.host if request.client else "unknown"
+            _ok_ip = self._real_client_ip(request)
             await self._clear_auth_failure_counter(_ok_ip)
         except Exception:
             pass  # fail-open

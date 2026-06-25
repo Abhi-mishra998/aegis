@@ -85,11 +85,54 @@ class _RateLimitMixin:
     # credential-stuffer could pound any auth-gated endpoint at full
     # speed from one IP forever. WAF runs at L4 and doesn't see the
     # app-layer 401, so this limiter must live here. We keep a 60-second
-    # rolling INCR per IP and 429 the IP after _AUTH_FAIL_BURST_LIMIT
-    # consecutive failures. Counter clears on first successful auth
-    # (see middleware.py _dispatch_with_resilience).
+    # rolling INCR per real-client IP and 429 the IP after
+    # _AUTH_FAIL_BURST_LIMIT consecutive failures. Counter clears on
+    # the next successful auth FROM THE SAME REAL CLIENT IP only — a
+    # different legitimate user from a different IP cannot reset an
+    # attacker's counter.
     _AUTH_FAIL_BURST_WINDOW = 60   # seconds
     _AUTH_FAIL_BURST_LIMIT  = 25   # 401s per IP per window
+
+    @staticmethod
+    def _real_client_ip(request: Any) -> str:
+        """Return the originating-client IP, trusting X-Forwarded-For
+        when the immediate upstream is a known proxy (nginx / ALB).
+
+        Why this exists: ``request.client.host`` returns the IP of the
+        last hop (nginx in our stack). Every customer request appears
+        to come from the same nginx IP, so per-IP limiters fire either
+        never or for everyone. The QA pre-launch audit found 50 anon
+        bursts on /workspace/me producing 50× 401 + zero 429 for
+        exactly this reason. Reading the first entry of XFF gives the
+        attacker's real source IP.
+
+        Spoofing note: a malicious client can pre-set X-Forwarded-For.
+        We only trust the header when the immediate upstream is a
+        loopback / private-range IP (nginx-on-the-host or an internal
+        ALB target). Public hits from a direct attacker land on
+        ``request.client.host`` straight away — no XFF trust at all.
+        """
+        try:
+            host = (request.client.host if request.client else "") or ""
+        except Exception:
+            host = ""
+        # Trust XFF only when the immediate upstream is internal.
+        trust = (
+            host.startswith("127.")
+            or host.startswith("10.")
+            or host.startswith("172.")
+            or host.startswith("192.168.")
+            or host in ("", "::1", "localhost", "unknown")
+        )
+        if trust:
+            xff = request.headers.get("X-Forwarded-For", "")
+            if xff:
+                # First entry = originating client, per nginx's
+                # `proxy_add_x_forwarded_for` semantics.
+                first = xff.split(",")[0].strip()
+                if first:
+                    return first
+        return host or "unknown"
 
     async def _check_auth_failure_burst(self, client_ip: str) -> Response | None:
         """Return 429 if this IP has burned through the auth-failure budget.
