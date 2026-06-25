@@ -1,0 +1,40 @@
+Sprint 25 batch 16 — E6 branch hygiene
+========================================
+
+Reality check:
+  - Sprint plan target: git branch -a ≤ 5
+  - Actual local branch count at start: 147 (not ~20 as the audit guessed)
+  - Breakdown:
+      * ~100 worktree-agent-* (Claude Code internal scratch in .claude/worktrees/)
+      * 15 docs/p-hard-1-unit-* (unmerged)
+      * 10 batch/* + 6 ui-* (all merged but held by worktrees)
+      * 1 audit/public-surface-2026-06-21 (merged)
+      * 1 main
+
+Action taken (safe-only):
+  - Used `git branch -d` (refuses unmerged + worktree-held).
+  - Deleted 5 of 17 candidate user-branches:
+      batch/04-empty-state-ctas
+      p3-cleanup-batch-n23-n28
+      ui-a11y-u10
+      ui-api-hardening-u5
+      ui-developer-panel-u6
+  - 12 skipped — checked out in .claude/worktrees/agent-*/ scratch areas.
+
+Final state: 142 local branches.
+
+To finish E6 (requires owner judgment):
+  1. `git worktree list` — review which Claude Code scratch worktrees are
+     still useful vs orphaned.
+  2. `git worktree prune` — clear dangling refs.
+  3. `for d in .claude/worktrees/agent-*; do git worktree remove --force "$d"; done`
+     — destroys ~100 scratch worktree dirs. ONLY if owner confirms.
+  4. Re-run the safe `git branch -d` sweep after worktrees release.
+  5. Decide on the 15 docs/p-hard-1-unit-* branches:
+     - If the docs were merged piecewise → git branch -D
+     - If still WIP → leave them.
+
+Not done in this autonomous batch:
+  - Destructive worktree removal (matches CLAUDE.md "investigate before
+    deleting unfamiliar dirs").
+  - Force-delete of unmerged docs/* branches.

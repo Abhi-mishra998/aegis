@@ -102,8 +102,8 @@ def _decode_item(raw: bytes | str) -> dict[str, Any]:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("dlq_payload_parse_failed", error=str(exc), text_prefix=text[:80] if isinstance(text, str) else "")
     return {}
 
 

@@ -7,8 +7,8 @@ _readme = (_here / "README.md").read_text() if (_here / "README.md").exists() el
 
 setup(
     name="aegis-bedrock",
-    version="1.1.4",
-    description="AWS Bedrock Agents governance middleware for Aegis ACP",
+    version="1.1.5",
+    description="AWS Bedrock Agents governance middleware for Aegis ACP (maintenance-only — Anthropic SDK is the active hero)",
     long_description=_readme,
     long_description_content_type="text/markdown",
     author="Aegis ACP",

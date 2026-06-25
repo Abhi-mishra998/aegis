@@ -1,0 +1,60 @@
+Sprint 25 batch 15 — B1 outbound SSRF allowlist
+================================================
+
+Reality check (per ponytail discipline — 31% FP rate from this agent):
+  - Audit claim was SSRF on SIEM URLs + integration base_urls + Slack webhook.
+  - Verified SIEM URLs come from env/SSM (operator-configured, not tenant-
+    controlled) → NOT a real risk path for B1.
+  - Verified Jira base_url + ServiceNow instance_url + Slack webhook_url
+    ARE tenant-controlled with only http(s) prefix checks → REAL risk.
+
+Fix:
+  - NEW sdk/common/outbound_url_allowlist.py — 110-line module with one
+    public function validate_outbound_url(url, *, allowed_schemes=("https",))
+    that raises OutboundUrlBlocked(reason, message).
+
+    Checks (in order so the most-specific reason wins):
+      1. Non-empty URL
+      2. Scheme in allowed_schemes (default HTTPS only)
+      3. Host present
+      4. Port (if explicit) in {80, 443, 8080, 8443}
+      5. Resolved IP not: loopback, link-local (incl. 169.254 AWS metadata),
+         multicast, unspecified, reserved, or private CIDR.
+
+    Built-in self-check via `if __name__ == "__main__"`: 3 valid URLs
+    pass + 13 invalid URLs blocked with matching reason codes.
+
+Wire-ins (3 real sites):
+  - services/gateway/routers/integrations.py:194 — PUT /integrations/jira
+  - services/gateway/routers/integrations.py:378 — PUT /integrations/servicenow
+  - services/identity/router.py:1362 — PUT slack webhook_url
+
+Sites intentionally NOT wired:
+  - services/audit/siem.py — SIEM URLs are operator-set, not tenant-set.
+    Defense-in-depth could still call the helper from the SIEM forwarder
+    (sprint-26 if anyone cares).
+
+Smoke verification (16 test cases, all pass):
+  - OK: 8.8.8.8, 1.1.1.1:8443, [2606:4700:4700::1111]
+  - BLOCKED: 169.254 (AWS metadata) → link_local
+  - BLOCKED: 127.0.0.1 → loopback
+  - BLOCKED: 10.x, 192.168.x, 172.16.x → private_cidr
+  - BLOCKED: [::1] → loopback
+  - BLOCKED: [fe80::1] → link_local
+  - BLOCKED: http://*, file://, ftp:// → scheme_blocked
+  - BLOCKED: :22 → port_blocked
+  - BLOCKED: empty / no_host → empty_url / no_host
+
+Skipped (per ponytail "smallest fix that closes the bug"):
+  - DNS rebinding defense (re-validate at request time). Adds latency to
+    every webhook delivery; deferred until a real DNS-rebind exploit is
+    demonstrated. Validation happens at PUT time which is the realistic
+    attack vector (tenant saves bad URL).
+  - Prometheus counter acp_outbound_ssrf_blocked_total. The 400 + structured
+    "reason" field on the response is sufficient signal for now; CI E1 can
+    add the counter as a follow-up.
+
+Files touched:
+  + sdk/common/outbound_url_allowlist.py (NEW, 155 lines with self-check)
+  ~ services/gateway/routers/integrations.py (+13 lines, 2 wire-in sites)
+  ~ services/identity/router.py (+11 lines, 1 wire-in site)

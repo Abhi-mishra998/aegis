@@ -21,6 +21,7 @@ Usage:
 
 import base64
 import json
+import os
 import random
 import subprocess
 import time
@@ -28,6 +29,16 @@ import uuid
 
 import httpx
 from locust import HttpUser, between, events, task
+
+# Sprint 25 A3 — credentials read from env at import, never hardcoded.
+# Empty defaults so a misconfigured run fails with 401 instead of silently
+# probing a real account. Set ACP_LOAD_TEST_EMAIL + ACP_LOAD_TEST_PASSWORD
+# in the operator's shell before invoking locust.
+_LOAD_TEST_EMAIL = os.environ.get("ACP_LOAD_TEST_EMAIL", "")
+_LOAD_TEST_PASSWORD = os.environ.get("ACP_LOAD_TEST_PASSWORD", "")
+_LOAD_TEST_TENANT_ID = os.environ.get(
+    "ACP_LOAD_TEST_TENANT_ID", "00000000-0000-0000-0000-000000000001"
+)
 
 # ------------------------------------------------------------------
 # HELPERS
@@ -43,7 +54,7 @@ def _extract_tenant_from_jwt(token: str) -> str:
         return ""
 
 
-def _generate_fresh_token(host: str, email: str = "admin@acp.local", password: str = "admin1234", tenant_id: str = "00000000-0000-0000-0000-000000000001") -> tuple[str, str] | None:
+def _generate_fresh_token(host: str, email: str = _LOAD_TEST_EMAIL, password: str = _LOAD_TEST_PASSWORD, tenant_id: str = _LOAD_TEST_TENANT_ID) -> tuple[str, str] | None:
     """
     Generate a fresh JWT token by calling the /auth/token endpoint.
     Returns (token, tenant_id) on success, None on failure.

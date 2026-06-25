@@ -14,10 +14,22 @@ from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 
+from prometheus_client import Counter
+
 from sdk.common.config import settings
 from sdk.utils import RATE_LIMIT_EXCEEDED_TOTAL
 
 logger = structlog.get_logger(__name__)
+
+# Sprint 25 A9 — Redis-failure visibility in the rate-limiter fail-open paths.
+# All 3 sites previously did `except Exception: pass` silently; now they
+# emit a structured log AND bump this counter so SOC can alert when
+# Redis becomes flaky enough to disable rate-limiting at scale.
+RATE_LIMITER_REDIS_FAILURE_TOTAL = Counter(
+    "acp_rate_limiter_redis_failure_total",
+    "Redis call failed inside a rate-limiter fail-open path",
+    ["site"],
+)
 
 _GLOBAL_RATE_LIMIT = settings.GLOBAL_RATE_LIMIT
 _IP_RATE_LIMIT = settings.IP_RATE_LIMIT
@@ -224,7 +236,9 @@ class _RateLimitMixin:
             cnt = await self.redis.incr(key)
             if cnt == 1:
                 await self.redis.expire(key, self._AUTH_FAIL_BURST_WINDOW)
-        except Exception:
+        except Exception as exc:
+            RATE_LIMITER_REDIS_FAILURE_TOTAL.labels(site="record_auth_failure").inc()
+            logger.warning("ratelimit_record_auth_failure_failed", client_ip=client_ip, error=str(exc))
             pass  # fail-open
 
     async def _clear_auth_failure_counter(self, client_ip: str) -> None:
@@ -234,7 +248,9 @@ class _RateLimitMixin:
             return
         try:
             await self.redis.delete(f"acp:ratelimit:auth_fail:{client_ip}")
-        except Exception:
+        except Exception as exc:
+            RATE_LIMITER_REDIS_FAILURE_TOTAL.labels(site="clear_auth_failure").inc()
+            logger.warning("ratelimit_clear_auth_failure_failed", client_ip=client_ip, error=str(exc))
             pass  # fail-open
 
     async def _check_execute_sliding_window(
@@ -269,7 +285,9 @@ class _RateLimitMixin:
                 if j_cnt > _JTI_LIMIT:
                     RATE_LIMIT_EXCEEDED_TOTAL.labels(layer="execute_sw_token", tier="none").inc()
                     return self._deny("Rate limit exceeded: token request volume too high", 429)
-        except Exception:
+        except Exception as exc:
+            RATE_LIMITER_REDIS_FAILURE_TOTAL.labels(site="execute_sliding_window").inc()
+            logger.warning("ratelimit_execute_sw_failed", error=str(exc))
             pass  # fail-open
         return None
 

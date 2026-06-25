@@ -28,9 +28,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = structlog.get_logger(__name__)
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.db import get_db, get_tenant_id
@@ -295,8 +298,8 @@ async def publish(
     try:
         from services.gateway.shadow_eval_hook import invalidate_cache
         invalidate_cache(tenant_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("shadow_cache_invalidate_failed", tenant_id=str(tenant_id), error=str(exc))
 
     return APIResponse(
         data=PublishResponse(

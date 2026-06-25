@@ -21,6 +21,26 @@ groups:
           summary: "Outbox poison count growing — billing data at risk"
           description: "acp_outbox_poison_total increased in the last 5m. Investigate /usage/record terminal failures."
 
+      # Sprint 25 C6 — alert on growth of either DLQ's permanently-failed
+      # bucket. Pre-C6 these grew silently until month-end reconciliation
+      # surfaced the gap. The viewer at /system/dlq/{audit,billing}/permanently-failed
+      # is the operator UI for triage.
+      - alert: BillingPermanentlyFailedGrowing
+        expr: increase(acp_billing_dlq_replay_total{outcome="permanently_failed"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Billing DLQ promoted an event to permanently_failed"
+          description: "Inspect /system/dlq/billing/permanently-failed for the offending audit_id and root cause (likely tenant FK violation or max_retries_exhausted)."
+
+      - alert: AuditPermanentlyFailedGrowing
+        expr: increase(acp_audit_dlq_replay_total{outcome="permanently_failed"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Audit DLQ promoted an event to permanently_failed"
+          description: "Inspect /system/dlq/audit/permanently-failed for the offending entry. Audit-chain integrity is at risk if these are not reconciled."
+
       - alert: BillingDLQNonZero
         expr: max_over_time(acp_audit_stream_length[1m]) > 45000
         for: 5m

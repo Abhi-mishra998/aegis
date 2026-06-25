@@ -1,0 +1,16 @@
+Sprint 25 batch 2 — A3 + A5 closed
+==================================
+
+A3 (purge hardcoded test credentials):
+  - tests/load/locustfile.py:46 → defaults now read from env (ACP_LOAD_TEST_EMAIL/_PASSWORD/_TENANT_ID)
+  - Literal "admin1234" no longer present in source
+  - Empty defaults force misconfigured run to fail with 401 instead of hitting a real account
+
+A5 (unguarded int() in tenant PATCH):
+  - services/identity/router.py — added _parse_int + _parse_float helpers
+  - 5 int() + 1 float() unguarded coercions now return 400 with field name + value
+  - Closes 6 unguarded coercion sites (1 more than the originally-reported 4)
+
+Verification:
+  - Both files ast.parse OK
+  - Ruff F+E clean

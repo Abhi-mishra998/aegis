@@ -293,9 +293,6 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/decisions",
     "/signals",
     "/simulations",
-    # Voice Guide bridge — mints LiveKit JWTs and reports worker status.
-    # Pure read-only management surface, no agent execution semantics.
-    "/voice",
     # /demo/groq-agent calls Groq + loops back to /execute on the operator's
     # behalf. The outer call itself isn't an agent tool invocation, so it
     # must skip the tool-name extraction; the inner /execute calls take the
@@ -631,8 +628,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 and hmac.compare_digest(scrape_secret, settings.PROMETHEUS_SCRAPE_SECRET)
             ):
                 return await call_next(request)
-            from fastapi.responses import JSONResponse as _JSON
-            return _JSON(
+            return JSONResponse(
                 {
                     "error":  "Unauthorized",
                     "detail": "metrics endpoint requires X-Mesh-Token or X-Prometheus-Secret",
@@ -695,8 +691,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                     actual_role=_actual_role, reason=_reason,
                     tenant_id=t_id_str,
                 )
-                from fastapi.responses import JSONResponse as _JSON  # noqa: PLC0415
-                return _JSON(
+                return JSONResponse(
                     {"error": "Forbidden", "detail": _reason},
                     status_code=403,
                 )
@@ -723,8 +718,7 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         "demo_token_blocked_endpoint",
                         path=_path, tenant_id=t_id_str,
                     )
-                    from fastapi.responses import JSONResponse as _JSON  # noqa: PLC0415
-                    return _JSON(
+                    return JSONResponse(
                         {"error": "Forbidden", "detail": "demo workspaces cannot access this endpoint"},
                         status_code=403,
                     )
@@ -2145,6 +2139,12 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 },
                 tokens_in=int(tokens or 0),
             )))
+            # Sprint 25 B3 — kill-switch TOCTOU recheck. Early check at ~L763
+            # can be raced by an operator engaging the switch mid-flight on a
+            # slow /execute (5+ stages between early check and this point).
+            if await self.redis.get(f"acp:tenant_kill:{t_id_str}"):
+                action = "kill"
+                raise HTTPException(status_code=403, detail="Tenant blocked mid-request (kill switch engaged)")
             response = await call_next(request)
             # Post-execution snapshot — records the upstream tool's outcome
             # status so timelines show the actual execution result, not just
@@ -2839,19 +2839,6 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             pass  # fail-open
 
         return tenant_id, agent_id, t_id_str, tier
-
-    async def _handle_idempotency_phase(
-        self, request: Request, t_id_str: str
-    ) -> str | Response:
-        """Prevent double-execution early."""
-        raw_body = await request.body()
-        body_hash = hashlib.sha256(raw_body).hexdigest() if raw_body else "empty"
-
-        idem_resp = await self._check_idempotency(request, t_id_str, body_hash)
-        if idem_resp:
-            return idem_resp
-
-        return body_hash
 
     async def _handle_security_phase(
         self,

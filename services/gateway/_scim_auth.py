@@ -33,7 +33,10 @@ async def resolve_scim_bearer(request: Request, db: AsyncSession) -> uuid.UUID:
     if not auth.lower().startswith("bearer "):
         raise _scim_unauthorized("Missing Bearer token")
 
-    token = auth.split(None, 1)[1].strip()
+    parts = auth.split(None, 1)
+    if len(parts) < 2:
+        raise _scim_unauthorized("Malformed Authorization header")
+    token = parts[1].strip()
     if not token.startswith("scim_"):
         raise _scim_unauthorized("SCIM bearer tokens must begin with 'scim_'")
 

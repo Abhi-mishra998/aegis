@@ -1362,6 +1362,16 @@ async def put_slack_config(
                 status_code=400,
                 detail="webhook_url must be a Slack incoming webhook (https://hooks.slack.com/…)",
             )
+        # Sprint 25 B1 — outbound SSRF protection: even though we enforce
+        # the Slack-host prefix above, validate the resolved IP isn't
+        # private/loopback in case DNS is poisoned or someone bypasses the
+        # prefix check in a future refactor.
+        if url:
+            from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
+            try:
+                validate_outbound_url(url)
+            except OutboundUrlBlocked as exc:
+                raise HTTPException(status_code=400, detail=f"webhook_url rejected: {exc.reason}") from exc
         tenant.slack_webhook_url = url or None
         if not url:
             # Disable also clears the secret.
@@ -2200,6 +2210,21 @@ async def invite_user(
 # Distinct from POST /auth/tenants (which is a full upsert used by
 # provisioning); this endpoint only updates the columns the request
 # explicitly sets, leaving everything else alone.
+def _parse_int(v: Any, label: str) -> int:
+    """Sprint 25 A5 — coerce to int or 400. Was previously unguarded → 500."""
+    try:
+        return int(v)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {label}: {v!r}") from exc
+
+
+def _parse_float(v: Any, label: str) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {label}: {v!r}") from exc
+
+
 @router.patch(
     "/admin/tenants/{tenant_id}",
     response_model=APIResponse[dict],
@@ -2249,29 +2274,29 @@ async def patch_admin_tenant(
             raise HTTPException(status_code=400, detail=f"Invalid tier: {body['tier']}") from exc
 
     if "rpm_limit" in body:
-        existing.rpm_limit = int(body["rpm_limit"])
+        existing.rpm_limit = _parse_int(body["rpm_limit"], "rpm_limit")
         applied["rpm_limit"] = existing.rpm_limit
 
     if "requests_per_second" in body:
-        existing.requests_per_second = int(body["requests_per_second"])
+        existing.requests_per_second = _parse_int(body["requests_per_second"], "requests_per_second")
         applied["requests_per_second"] = existing.requests_per_second
 
     if "burst" in body:
-        existing.burst = int(body["burst"])
+        existing.burst = _parse_int(body["burst"], "burst")
         applied["burst"] = existing.burst
 
     if "daily_request_cap" in body:
-        existing.daily_request_cap = int(body["daily_request_cap"])
+        existing.daily_request_cap = _parse_int(body["daily_request_cap"], "daily_request_cap")
         applied["daily_request_cap"] = existing.daily_request_cap
 
     if "monthly_request_cap" in body:
         v = body["monthly_request_cap"]
-        existing.monthly_request_cap = int(v) if v is not None else None
+        existing.monthly_request_cap = _parse_int(v, "monthly_request_cap") if v is not None else None
         applied["monthly_request_cap"] = existing.monthly_request_cap
 
     if "daily_inference_cost_cap_usd" in body:
         v = body["daily_inference_cost_cap_usd"]
-        existing.daily_inference_cost_cap_usd = float(v) if v is not None else None
+        existing.daily_inference_cost_cap_usd = _parse_float(v, "daily_inference_cost_cap_usd") if v is not None else None
         applied["daily_inference_cost_cap_usd"] = existing.daily_inference_cost_cap_usd
 
     if "degraded_mode_policy" in body:

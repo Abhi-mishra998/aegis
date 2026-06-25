@@ -1,0 +1,39 @@
+Sprint 25 batch 8 — C3 /health deep-probe (gateway only)
+=========================================================
+
+Bug (pre-fix):
+  - sdk/utils.py:514 — every service's /health returned 200 unconditionally
+    as long as FastAPI was up. Gateway's ELB used /health for routing.
+  - A gateway host with Redis or DB down still got traffic until the
+    request-side circuit-breaker tripped → 5xx storm before ELB drained.
+
+Fix (smallest path that closes the bug):
+  - sdk/utils.py:466 — setup_app gains `register_health: bool = True`
+    kwarg. Default keeps existing behavior for all 16 services.
+  - services/gateway/main.py:559 — calls setup_app(..., register_health=False)
+    and registers its own /health that pings Redis with 200ms timeout,
+    returning 503 with structured body on failure.
+
+Why Redis-only (not fan-out to all 13 services):
+  - /system/health already fans out for OPERATOR visibility
+  - ELB-level fan-out is the wrong pattern: one slow downstream → all
+    gateway hosts marked unhealthy → cascade
+  - Gateway's critical dep IS Redis (auth cache, rate limit, kill-switch,
+    behavior scoring). If Redis is up, gateway can do useful work even
+    while one downstream is degraded.
+
+Smoke verification (handler logic replicated in isolation):
+  - Healthy Redis (returns True)             → HTTP 200
+  - Hung Redis (await > 200ms)               → HTTP 503
+  - Booming Redis (raises ConnectionError)   → HTTP 503
+
+Other 15 services unaffected — they still get the trivial /health.
+
+Operational note:
+  - docker-compose.prod.yml + ALB target group still point at /health.
+    No deploy-side change needed. The handler at /health now means what
+    the ELB always assumed it meant.
+  - If you want extra paranoia: add DB ping too. Skipped for now — gateway
+    is mostly a proxy and tolerates DB blips (audit writes go through
+    Redis outbox, tenant lookups are cached). Redis ping is the right
+    fail-fast signal.

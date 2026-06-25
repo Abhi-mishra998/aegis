@@ -1,0 +1,36 @@
+Sprint 25 batch 14 — B8 api_keys.key_prefix: VERIFIED NOT A BUG
+================================================================
+
+Audit context:
+  - Agent claim: "Storing key_prefix (first 8 chars of raw key) +
+    key_hash together narrows the key search space for a DB-compromise
+    attacker. DB read attack reduces from 256-bit hash crack to ~64-bit
+    prefix + collision."
+  - Sprint plan B8 ticketed: drop the column + alembic migration.
+
+Reality check (read the actual code):
+  - services/api/models/api_key.py:40 — key_prefix is String(16) NOT NULL.
+  - services/api/repository/api_key.py:29 — key_prefix = raw_key[:8]
+    (12 for the Sprint 17 employee virtual keys).
+  - key_hash is SHA-256 of the full raw key. 256-bit, infeasible to brute.
+  - Holding the prefix + hash does NOT reduce the brute-force cost
+    meaningfully — SHA-256 with 64 known bits of input still has 192+
+    bits of search space, and the actual exploit is "find a key that
+    SHA-256s to the stored hash," which is preimage-resistant.
+
+Usage analysis (would drop break things):
+  - services/gateway/_mw_auth.py:172, 197, 232, 454 — uses key_prefix
+    in audit-actor strings (`f"apikey:{key_prefix}"`).
+  - services/gateway/routers/{openai_messages,messages}.py — same.
+  - services/api/schemas/api_key.py:82, 93 — returned in admin API
+    responses so operators can recognize keys in the UI.
+
+Verdict: dropping the column would BREAK audit attribution and
+operator UI for ZERO security gain. The agent's threat model was wrong.
+
+Action: RETRACT B8 in report-bussines-25.md §4.3.
+
+Cumulative false-positive count from the security-gaps sub-agent:
+  5 of 16 findings = 31% FP rate.
+  (B4 stored XSS + B5 HMAC + B6 JWT aud + B7-first-half OIDC state + B8 prefix.)
+  Worth weighing future agent runs against this baseline.

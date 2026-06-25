@@ -10,7 +10,7 @@ from typing import Annotated, Any
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from sdk.common.auth import verify_internal_secret
 from sdk.common.auth import mesh_headers
@@ -578,6 +578,9 @@ class PolicyTestCase(BaseModel):
 
 
 class PolicyTestRequest(BaseModel):
+    # Sprint 25 B9 — reject unknown body fields on admin dry-run tool
+    model_config = ConfigDict(extra="forbid")
+
     rego: str
     test_cases: list[PolicyTestCase]
 

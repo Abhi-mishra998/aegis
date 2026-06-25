@@ -1,5 +1,7 @@
 # aegis-langchain
 
+> ⚠️ **Sprint 25 freeze (2026-06-26):** `aegis-langchain` is now **maintenance-only**. The Aegis team has narrowed focus to a single hero SDK, `aegis-anthropic`, while we drive design-partner revenue. `aegis-langchain` continues to receive **security patches** but **no new features** until further notice. The drop-in LangChain contract below remains fully supported against the canonical `/execute` API; you can keep using it in production.
+
 > Drop-in LangChain middleware that routes every tool invocation through Aegis's runtime governance pipeline before execution.
 
 [![PyPI](https://img.shields.io/badge/pypi-aegis--langchain-blue)](https://pypi.org/project/aegis-langchain/)

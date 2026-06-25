@@ -1,0 +1,44 @@
+Sprint 25 batch 12 — C2 graceful shutdown
+==========================================
+
+Bug (pre-fix):
+  - Docker default stop_grace_period = 10s
+  - Gateway lifespan post-yield immediately cancelled background workers +
+    closed HTTP/Redis clients with no drain window for in-flight /execute
+    requests
+  - Result on deploy: 5xx storm for ~10s as ELB took time to notice the
+    host was unhealthy, while in-flight policy decisions never completed
+    and audit chain rows were lost
+
+Fix (two-part):
+  1. infra/docker-compose.prod.yml — added `stop_grace_period: 30s` to all
+     7 long-running services:
+       gateway, api, identity, registry, audit, usage, policy
+     migrate_* jobs skipped (one-shot, exit naturally)
+     postgres/redis/pgbouncer/opa skipped (their own shutdown semantics)
+  2. services/gateway/main.py lifespan post-yield:
+       - flip app.state._shutting_down = True
+       - asyncio.sleep(25) → ELB drain window + in-flight requests finish
+       - THEN existing cleanup (close clients, cancel workers)
+  3. services/gateway/main.py /health handler now returns 503 with
+       reason="shutdown_in_progress" while _shutting_down is True
+       so ELB notices immediately and stops routing new traffic to this host
+
+Why 25s (not 30s):
+  - compose stop_grace_period is 30s
+  - leave 5s headroom for the actual cleanup (pubsub close, worker cancel,
+    HTTP/Redis clients aclose, OTLP exporter flush)
+
+Why not poll the semaphore directly:
+  - asyncio.Semaphore does not expose live in-flight count via public API
+  - Polling the private `_value` attribute is brittle across Python versions
+  - Fixed 25s sleep is the boring-correct choice: ELB drain happens in
+    that window, /execute 2s budget completes 12x over
+
+Smoke verification (handler logic in isolation):
+  - _shutting_down=False, Redis OK         → HTTP 200
+  - _shutting_down=True                    → HTTP 503 "draining"
+
+Files touched:
+  ~ infra/docker-compose.prod.yml — 7 services, +1-4 lines each
+  ~ services/gateway/main.py      — lifespan +6 lines, /health +6 lines

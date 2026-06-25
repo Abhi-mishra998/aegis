@@ -8,6 +8,9 @@ from sdk.common.enums import AgentStatus, PermissionAction
 
 
 class PermissionCreate(BaseModel):
+    # Sprint 25 B9 — reject unknown body fields (e.g. attacker-injected `is_admin`)
+    model_config = ConfigDict(extra="forbid")
+
     tool_name: str = Field(..., max_length=150)
     action: PermissionAction = PermissionAction.ALLOW
     granted_by: str = Field(default="system", min_length=1, max_length=100)
@@ -80,6 +83,9 @@ def _validate_no_html(field_name: str, v: str | None) -> str | None:
 
 
 class AgentCreate(BaseModel):
+    # Sprint 25 B9 — reject unknown body fields (e.g. attacker-injected `is_admin`)
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., max_length=100)
     description: str = Field(..., min_length=10, max_length=500)
     owner_id: str = Field(..., min_length=1, max_length=100)

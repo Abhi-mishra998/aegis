@@ -1,0 +1,41 @@
+Sprint 25 batch 6 — A4 localhost-defaults fail-fast in production
+==================================================================
+
+Change:
+  - sdk/common/config.py: added @model_validator(mode="after") that bombs
+    Settings instantiation when ENVIRONMENT=="production" and any of the
+    13 *_SERVICE_URL fields still equals the http://localhost:* default.
+
+Why this is a real bug:
+  - 13 internal service URLs default to http://localhost:800X for
+    dev/CI/example convenience.
+  - In a deployed prod gateway, a missing env var (e.g. forgot to add
+    REGISTRY_SERVICE_URL to docker-compose.prod.yml) silently falls back
+    to localhost and the gateway happily POSTs to itself, returning 404
+    for every cross-service call.
+  - Pre-fix: silent misroute, debugged by grep in logs.
+  - Post-fix: container fails to start with a clear list of missing URLs.
+
+Why NOT remove the defaults entirely (Option A, rejected):
+  - Would break local dev (no docker-compose convenience), CI, and the
+    in-repo examples/ directory that imports settings for smoke tests.
+  - Option B (defaults preserved + ENVIRONMENT-gated check) is the
+    smaller change that closes the bug without breaking dev workflow.
+
+Round-trip verification:
+  - Case 1: ENVIRONMENT=development, localhost defaults     → LOAD OK
+  - Case 2: ENVIRONMENT=production, localhost defaults      → REJECTED ✓
+  - Case 3: ENVIRONMENT=production, all 13 URLs set         → LOAD OK
+
+Files touched:
+  - sdk/common/config.py: +1 import (model_validator), +25 lines
+    (1 validator method + 1 class-attribute tuple listing the 13 URLs)
+
+Operational notes for the deploy:
+  - Every service container in infra/docker-compose.prod.yml already sets
+    these env vars explicitly (grepped). Production deploys today are
+    safe; this validator catches FUTURE config drift.
+  - If a deployer adds a 14th internal service, they must add it to
+    _PROD_REQUIRED_SERVICE_URLS in sdk/common/config.py. The class-attribute
+    placement keeps this honest — the field declaration and the
+    requirement list live next to each other.

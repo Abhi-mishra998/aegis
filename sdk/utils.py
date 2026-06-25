@@ -463,10 +463,14 @@ def setup_tracing(app: FastAPI, service_name: str) -> None:
 
 
 
-def setup_app(app: FastAPI, service_name: str) -> None:
+def setup_app(app: FastAPI, service_name: str, *, register_health: bool = True) -> None:
     """
     Consolidated setup for all ACP services.
     Includes: logging, tracing, metrics, exception handlers, and CORS.
+
+    Sprint 25 C3 — `register_health=False` lets the gateway skip the trivial
+    /health that this helper installs and register its own deep-probe version
+    (Redis ping) instead, so ELB drains a host that lost its critical dep.
     """
     # 1. Observability
     setup_logging(service_name)
@@ -511,10 +515,11 @@ def setup_app(app: FastAPI, service_name: str) -> None:
     # 3. Standard Exception Handlers (traps unhandled and SDK exceptions)
     setup_exception_handlers(app)
 
-    @app.get("/health", tags=["ops"])
-    async def health() -> dict[str, str]:
-        return {
-            "status": "healthy",
-            "service": service_name,
-            "version": "1.0.0",  # Pull from version.py in prod
-        }
+    if register_health:
+        @app.get("/health", tags=["ops"])
+        async def health() -> dict[str, str]:
+            return {
+                "status": "healthy",
+                "service": service_name,
+                "version": "1.0.0",  # Pull from version.py in prod
+            }

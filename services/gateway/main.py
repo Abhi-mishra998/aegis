@@ -341,7 +341,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # *next* request instead of waiting up to 60s for the TTL to expire.
     from services.gateway.auth import run_revocation_listener
     revocation_listener = asyncio.create_task(run_revocation_listener(redis))
+    # Sprint 25 C2 — start in not-draining state; flag flips to True after yield
+    # so /health returns 503 during the drain window and ELB stops routing.
+    _app.state._shutting_down = False
     yield
+    # Sprint 25 C2 — graceful shutdown. Flip the flag so the deep /health
+    # returns 503 immediately; ELB sees it and drains; sleep gives in-flight
+    # /execute requests their 2s budget + downstream-retry headroom to finish
+    # naturally. 25s leaves 5s under the compose stop_grace_period of 30s
+    # for the cleanup below.
+    _app.state._shutting_down = True
+    await asyncio.sleep(25)
     await pubsub_manager.close()
     billing_worker.cancel()
     queue_age_worker.cancel()
@@ -535,8 +545,7 @@ async def _rate_limit_401(request: Request, call_next):
             await redis.expire(key, _RATE_LIMIT_WINDOW_S)
         if count > _RATE_LIMIT_401_PER_MIN:
             ttl = max(1, await redis.ttl(key))
-            from fastapi.responses import JSONResponse as _JR
-            return _JR(
+            return JSONResponse(
                 status_code=429,
                 content={"success": False, "error": "Auth-failure rate limit exceeded", "meta": {"code": 429}},
                 headers={"Retry-After": str(ttl), "WWW-Authenticate": 'Bearer realm="rate_limited"'},
@@ -556,8 +565,41 @@ app.add_middleware(SecurityMiddleware, redis=redis)  # type: ignore[arg-type]
 from services.gateway.middleware import SecurityHeadersMiddleware  # noqa: E402
 app.add_middleware(SecurityHeadersMiddleware)
 
-# Consolidated SDK Setup (logging, tracing, metrics, CORS, exception handlers, /health)
-setup_app(app, "gateway")
+# Consolidated SDK Setup (logging, tracing, metrics, CORS, exception handlers)
+# Sprint 25 C3 — gateway skips the SDK's trivial /health and registers a
+# deep-probe version below so ELB drains a host that lost its Redis dep.
+setup_app(app, "gateway", register_health=False)
+
+
+@app.get("/health", tags=["ops"])
+async def gateway_health(request: Request) -> JSONResponse:
+    """Sprint 25 C3 + C2 — deep /health for ELB.
+
+    Returns 503 in two cases so ELB drains the host:
+      * Sprint 25 C2 — graceful shutdown in progress (lifespan post-yield
+        flipped `_shutting_down`)
+      * Sprint 25 C3 — Redis (the gateway's critical dep) unreachable
+
+    Does NOT fan out to downstream services: those have their own /health
+    that the operator-facing /system/health probes. Circuit-breakers handle
+    downstream-unavailable inside the request path; ELB only needs to know
+    whether *this* host can do the work.
+    """
+    if getattr(request.app.state, "_shutting_down", False):
+        return JSONResponse(
+            status_code=503,
+            content={"status": "draining", "service": "gateway",
+                     "reason": "shutdown_in_progress"},
+        )
+    try:
+        await asyncio.wait_for(redis.ping(), timeout=0.2)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "service": "gateway",
+                     "reason": "redis_unreachable", "error": str(exc)[:80]},
+        )
+    return JSONResponse(content={"status": "healthy", "service": "gateway", "version": "1.0.0"})
 
 # sprint-3.1 — per-domain router modules. The 3,920-LOC main.py is being
 # decomposed; admin is the first extraction. Each router lives under
@@ -582,6 +624,7 @@ from services.gateway.routers.compliance import (
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
 from services.gateway.routers.demo import router as _demo_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
+from services.gateway.routers.dlq import router as _dlq_router  # noqa: E402
 from services.gateway.routers.forensics import router as _forensics_router  # noqa: E402
 from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
 from services.gateway.routers.policy import router as _policy_router  # noqa: E402
@@ -630,6 +673,7 @@ from services.gateway.routers.openai_messages import router as _openai_messages_
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
+app.include_router(_dlq_router)
 # autonomy must be included BEFORE proxies — proxies has a catch-all
 # /autonomy/{full_path:path} that would otherwise eat the specific
 # /autonomy/overrides route that publishes the approval_resolved SSE
@@ -1363,8 +1407,7 @@ async def csp_violation_report(request: Request) -> Response:
     """
     body_bytes = await request.body()
     try:
-        import json as _json  # noqa: PLC0415
-        payload = _json.loads(body_bytes.decode("utf-8") or "{}")
+        payload = json.loads(body_bytes.decode("utf-8") or "{}")
     except Exception:  # noqa: BLE001
         payload = {"raw": body_bytes[:400].decode("utf-8", errors="replace")}
     # Flatten the `csp-report` envelope (W3C report format) for easier

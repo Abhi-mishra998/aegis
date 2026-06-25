@@ -1247,10 +1247,9 @@ async def _build_grc_export_response(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     # default → JSON
-    import json as _json
     filename = f"acp-grc-{str(tenant_id)[:8]}-{ts}.json"
     return Response(
-        content=_json.dumps({
+        content=json.dumps({
             "format":            "aegis-grc-export/2026-06",
             "aevf_spec_version": "aevf/0.1.0",
             "tenant_id":         str(tenant_id),
@@ -2160,12 +2159,10 @@ async def threat_intel_ip_endpoint(
         # Check cache
         cached = await r.get(cache_key)
         if cached:
-            import json as _json  # noqa: PLC0415
-            result = _json.loads(cached)
+            result = json.loads(cached)
         else:
             result = await enrich_ip(ip)
-            import json as _json  # noqa: PLC0415 F811
-            await r.set(cache_key, _json.dumps(result), ex=3600)
+            await r.set(cache_key, json.dumps(result), ex=3600)
 
         await r.incr(count_key)
     finally:
@@ -2191,12 +2188,10 @@ async def threat_intel_domain_endpoint(
     try:
         cached = await r.get(cache_key)
         if cached:
-            import json as _json  # noqa: PLC0415
-            result = _json.loads(cached)
+            result = json.loads(cached)
         else:
             result = await enrich_domain(domain)
-            import json as _json  # noqa: PLC0415 F811
-            await r.set(cache_key, _json.dumps(result), ex=3600)
+            await r.set(cache_key, json.dumps(result), ex=3600)
 
         await r.incr(count_key)
     finally:

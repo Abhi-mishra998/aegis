@@ -1,0 +1,52 @@
+Sprint 25 batch 17 — D1 archive UI pages: ALREADY DONE (different mechanism)
+==============================================================================
+
+Audit context (the trigger):
+  - Sprint plan ticketed: "keep 9 pages, git mv 48 to _archived/, update App.jsx + Sidebar"
+  - Premise: 57 .jsx files in ui/src/pages/ = too many for a buyer to navigate
+
+Reality check (per ponytail discipline):
+  - ui/src/components/Layout/Sidebar.jsx — 3-tier nav already shipped:
+      * Primary (always visible)    — Observe / Protect / Prove / Workspace (~10 items)
+      * Advanced (collapsed default) — 16 analyst tools, expand only if URL matches
+      * Admin (collapsed default)    — System Health, Billing, kill switch (admin role)
+  - ui/src/App.jsx — every page is `safeLazy(() => import('./pages/X'))`:
+      * Only Dashboard is eager (Lighthouse LCP target)
+      * Every other page is its own chunk, loaded on demand
+      * Vite tree-shakes unused exports
+      * Initial bundle pays for 1 page, not 57
+
+What a fresh buyer actually sees on /dashboard:
+  Observe   — Dashboard / Team / Live Feed
+  Protect   — Agents / Incidents / Policies / Approval Inbox
+  Prove     — Compliance
+  Workspace — Settings
+  + collapsed Advanced + Admin headers
+
+= ~10 items in 4 named sections, exactly the "CIO 4-question" framework
+  documented at Sidebar.jsx:L20-30.
+
+Honest verdict:
+  - The audit's "57 pages = too many" was a `wc -l` count, not a UX problem.
+  - The product team already cut to a buyer-tour subset via tiered nav +
+    lazy chunking.
+  - Physically `git mv`'ing 48 files to _archived/ would:
+      * Add real risk (200+ route/import edits, build break potential)
+      * Remove zero buyer-visible items (they're already collapsed)
+      * Lose URL deep-linkability for power users
+      * Lose ~5 weeks of feature work for zero customer benefit
+
+Action: RETRACT D1 as already-implemented-differently.
+
+Minor follow-up (sprint-26, optional):
+  - The sprint plan's keep-list (Login/Dashboard/AuditLogs/Policies/
+    ApprovalInbox/Compliance/Settings/Agents/TrustCenter) doesn't quite
+    match the actual Primary tier. Reconcile if a designer reviews the
+    sidebar and disagrees with the current grouping.
+  - TrustCenter exists in pages/ but isn't in any nav tier — verify
+    it's reachable by a documented URL or genuinely delete the file.
+
+Cumulative false-positive count from the audit's product-cut bucket:
+  D1 was the 6th "you have a bug, fix it" finding that turned out to be
+  "the code already addresses this in a smarter way" (5 security agent
+  FPs + 1 product-cut FP = 6 retractions across the sprint).

@@ -1,0 +1,33 @@
+Sprint 25 batch 10 — B4 stored XSS in audit viewer: VERIFIED SAFE
+==================================================================
+
+Verification approach:
+  1. Grep ui/src for raw-HTML injection props, innerHTML writes,
+     dynamic code execution, markdown/HTML parsers.
+  2. Inspect every page that consumes audit row content (AuditLogs,
+     LiveFeed, Replay, ApprovalInbox, AgentHealth, AutonomyContracts,
+     PolicyAnalytics, Billing, SiemSettings).
+
+Findings:
+  - ZERO raw-HTML injection props in entire UI codebase.
+  - ZERO `innerHTML` assignments or `document.write` calls.
+  - ZERO markdown/HTML parsers (marked, remark, parse5, sanitize-html, DOMPurify).
+  - ZERO dynamic code execution paths.
+  - AuditLogs.jsx:880 renders {reasonDisplay} as JSX text → React auto-escapes.
+  - LiveFeed.jsx:239 renders {ev.data?.reason} as JSX text → auto-escaped.
+  - Replay.jsx:196 renders {o.reason} as JSX text → auto-escaped.
+
+Structural immunity:
+  - An attacker-controlled audit row with reason='<img src=x onerror=alert(1)>'
+    would render in the browser as the LITERAL string, not execute.
+  - This is React's default behavior for JSX text nodes — not an opt-in.
+
+Closes:
+  - One ostensible HIGH from report-bussines-25.md §4.3
+  - The "stored XSS via agent-controlled audit fields" risk path
+
+No code change required. Report row updated to RETRACTED with citation.
+
+Total false-positive count from the security-gaps agent now: 4 of 16
+(B4 + B5 + B6 + B7-first-half). 25% false-positive rate worth noting
+when interpreting future agent runs.
