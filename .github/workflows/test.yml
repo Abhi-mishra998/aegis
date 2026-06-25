@@ -22,7 +22,7 @@ jobs:
       INTERNAL_SECRET: "ci-unit-test-internal-secret-placeholder"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -78,7 +78,7 @@ jobs:
       POSTGRES_PASSWORD: "ci_e2e_pwd"
       AEGIS_BASE_URL: "http://localhost:5173"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -189,7 +189,7 @@ jobs:
     # Skip if no helm files changed in the PR.
     if: contains(github.event.head_commit.message, '[skip-helm]') == false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Helm
         uses: azure/setup-helm@v4

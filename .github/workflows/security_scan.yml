@@ -34,7 +34,7 @@ jobs:
     name: Trivy filesystem CVE scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -62,7 +62,7 @@ jobs:
     name: Gitleaks secret-pattern scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # full history so historical secret leaks are caught too
 
@@ -78,7 +78,7 @@ jobs:
     name: Checkov IaC scan (Terraform + Dockerfile)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: bridgecrewio/checkov-action@v12
         with:
@@ -106,7 +106,7 @@ jobs:
     name: Bandit Python AST security scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -124,7 +124,7 @@ jobs:
     name: CycloneDX SBOM generation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -167,7 +167,7 @@ jobs:
     # edit to .ini / .conf / .env.aws.template files.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fail on stale `acp-postgres-prod` references
         run: |
