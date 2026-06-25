@@ -431,6 +431,11 @@ M post-deploy verify     — POST-50ebff6-tenant.json (fresh tenant),
                            POST-50ebff6-readfile.log (6/6 sensitive paths deny),
                            POST-50ebff6-burst.log (5/5 valid-bearer bypass),
                            POST-1acd041-* (initial post-deploy probes)
+post-deploy regression   — post-8fb069a/regress.log
+                           (15/15 PASS: 4 cred-path deny + 5 burst-bypass +
+                            4 cross-tenant + 3 JWT-forgery + 2 WAF/SSRF +
+                            1 SCIM — all probes confirm no regression
+                            from any of today's 8 commits)
 ```
 
 **Re-run recipe (anyone can reproduce):**
