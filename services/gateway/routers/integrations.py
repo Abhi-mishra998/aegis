@@ -491,18 +491,54 @@ def _mint_webhook_secret() -> str:
     return _s.token_hex(32)
 
 
+# Hosts the webhook builder is allowed to reflect back into a URL that
+# is then pasted into a customer's Jira / SNOW config. Anything else is
+# rejected to "aegisagent.in" so a forged X-Forwarded-Host header from
+# an attacker proxy can't silently retarget the webhook to their domain.
+# Extend via settings.PUBLIC_BASE_URL host or by editing this set —
+# both paths are intentional, not config-driven, because the value
+# becomes a *trust anchor* once the customer pastes it into a 3rd-party
+# vendor config.
+_WEBHOOK_HOST_ALLOWLIST: frozenset[str] = frozenset({
+    "aegisagent.in",
+    "ha.aegisagent.in",
+    "dev.aegisagent.in",
+})
+
+
 def _webhook_base_url(request: Request, vendor: str, tenant_id: uuid.UUID) -> str:
     """Build the per-tenant webhook URL the operator pastes into Jira/SNOW.
 
-    Honours X-Forwarded-Host when behind the ALB so the URL reflects the
-    Aegis domain the customer reaches us on (not the internal host).
+    Honours X-Forwarded-Host when behind the ALB **and** the host is in
+    a small allowlist of known Aegis frontends. Anything else (forged
+    headers, oddball Hosts) falls back to ``aegisagent.in`` so a
+    malicious upstream cannot retarget the customer's outbound webhook
+    to an attacker domain.
     """
-    host = (
+    raw_host = (
         request.headers.get("X-Forwarded-Host")
         or request.headers.get("Host")
         or "aegisagent.in"
     )
+    # Strip port + take first comma-separated entry (some proxies stack hosts).
+    candidate = raw_host.split(",", 1)[0].strip().split(":", 1)[0].lower()
+    # Also honour settings.PUBLIC_BASE_URL host if it's set, to keep
+    # ha-stack URLs working without touching this allowlist.
+    pub_host = ""
+    try:
+        from urllib.parse import urlparse
+        pub_url = getattr(settings, "PUBLIC_BASE_URL", "") or ""
+        if pub_url:
+            pub_host = (urlparse(pub_url).hostname or "").lower()
+    except Exception:
+        pub_host = ""
+    if candidate in _WEBHOOK_HOST_ALLOWLIST or (pub_host and candidate == pub_host):
+        host = candidate
+    else:
+        host = "aegisagent.in"
     scheme = request.headers.get("X-Forwarded-Proto") or "https"
+    if scheme.lower() not in ("http", "https"):
+        scheme = "https"
     return f"{scheme}://{host}/webhooks/{vendor}/{tenant_id}"
 
 

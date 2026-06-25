@@ -7,10 +7,12 @@ which are initialised by SecurityMiddleware.__init__ at runtime.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import structlog
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from jose import JWTError, jwt
 
 from sdk.common.config import settings
 from sdk.utils import RATE_LIMIT_EXCEEDED_TOTAL
@@ -134,15 +136,64 @@ class _RateLimitMixin:
                     return first
         return host or "unknown"
 
-    async def _check_auth_failure_burst(self, client_ip: str) -> Response | None:
+    @staticmethod
+    def _has_valid_acp_signature(request: Request) -> bool:
+        """Local-only HS256 signature check on the ``Authorization`` bearer.
+
+        Returns True iff the bearer parses + verifies against the local
+        ``JWT_SECRET_KEY`` with the configured algorithm. Expiry is NOT
+        enforced here — a marginally-expired bearer still bypasses the
+        anonymous-burst gate, and the downstream auth path will still
+        reject it cleanly (and re-increment the counter via 401).
+
+        Why this exists: the pentest matrix on 2026-06-25 surfaced a
+        cascade where 26 anonymous 401 probes from one IP tripped the
+        burst gate, and the next *legitimate* probe with a valid OWNER
+        JWT (E13: ``/audit/export?days=1``) returned 429 even though
+        the bearer was sound. A security tester sweeping endpoints from
+        a single laptop should not lock themselves out of their own
+        authenticated probes. The fix below makes the gate strictly
+        an *anonymous-or-invalid-bearer* gate — exactly what it was
+        always meant to be.
+        """
+        auth = request.headers.get("Authorization", "")
+        if not auth or not auth.lower().startswith("bearer "):
+            return False
+        token = auth[7:].strip()
+        if not token or token.count(".") != 2:
+            return False
+        try:
+            jwt.decode(
+                token,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM],
+                options={"verify_exp": False, "verify_aud": False},
+            )
+            return True
+        except JWTError:
+            return False
+        except Exception:
+            return False
+
+    async def _check_auth_failure_burst(
+        self,
+        client_ip: str,
+        request: Request | None = None,
+    ) -> Response | None:
         """Return 429 if this IP has burned through the auth-failure budget.
 
         Runs BEFORE auth on every non-skiplisted request. Read-only — does
         not increment; only the actual 401 path increments (via
         ``_record_auth_failure``). Fail-open on Redis errors so an outage
         in the rate-limit Redis cannot lock customers out.
+
+        A request that carries a locally-verifiable HS256 ACP bearer
+        bypasses the gate entirely — see ``_has_valid_acp_signature``.
         """
         if not client_ip or client_ip == "unknown":
+            return None
+        # Locally-verifiable bearers bypass the anonymous-burst gate.
+        if request is not None and self._has_valid_acp_signature(request):
             return None
         key = f"acp:ratelimit:auth_fail:{client_ip}"
         try:

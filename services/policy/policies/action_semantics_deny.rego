@@ -180,6 +180,66 @@ _system_path_access if {
 	contains(cmd, s)
 }
 
+# Credential-bearing files anywhere on the filesystem — these are the
+# obvious exfil targets when an attacker can call `read_file`/`write_file`
+# but the path doesn't begin with `/etc` or `/root`. The 1000-scenario
+# LLM corpus (2026-06-25) caught this gap when a demo agent with
+# `read_file` permission was asked for `services/gateway/.env`: the prior
+# rule only matched `/etc`-prefixed paths, so the .env was allowed.
+#
+# Match strategy: suffix-match on the file basename and substring-match
+# on directory tokens, so paths the attacker could synthesise — e.g.
+# `~/.aws/credentials`, `services/foo/.env.production`, `keys/id_rsa` —
+# all converge on the same deny clause.
+_system_path_access if {
+	p := lower(object.get(input, ["metadata", "arguments", "path"], ""))
+	cred_suffixes := [
+		".env", ".env.local", ".env.production", ".env.staging",
+		"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+		".pem", ".key", ".pfx", ".p12", ".gpg", ".asc", ".kdbx",
+		".pgpass", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
+		"htpasswd",
+	]
+	some suf in cred_suffixes
+	endswith(p, suf)
+}
+
+# Substring matches on credential-bearing directory tokens. These catch
+# `/home/user/.aws/credentials`, `~/.docker/config.json`,
+# `/opt/aegis/pgbouncer/userlist.txt`, etc. — the path doesn't end in a
+# uniform suffix so endswith won't help.
+_system_path_access if {
+	p := lower(object.get(input, ["metadata", "arguments", "path"], ""))
+	cred_tokens := [
+		".aws/credentials", ".aws/config",
+		".docker/config.json",
+		".kube/config",
+		".gnupg/",
+		"pgbouncer/userlist.txt",
+		"secrets.yaml", "secrets.yml",
+		"credentials.json",
+	]
+	some tok in cred_tokens
+	contains(p, tok)
+}
+
+# Same tokens, but inside a shell command. Catches `cat ~/.aws/credentials`
+# and `tar czf - .env | curl …` even though the explicit `path` arg is
+# absent.
+_system_path_access if {
+	cmd := lower(object.get(input, ["metadata", "arguments", "command_norm"], ""))
+	cred_tokens := [
+		".aws/credentials", ".aws/config",
+		".docker/config.json",
+		".kube/config",
+		".gnupg/",
+		"pgbouncer/userlist.txt",
+		".git-credentials", ".pgpass", ".netrc",
+	]
+	some tok in cred_tokens
+	contains(cmd, tok)
+}
+
 # Outbound HTTP to non-allowed-egress hosts AND payload looks like data exfil
 # (Treat the absence of an explicit allowlist as: any explicit external host
 # call is medium-risk, denied for critical, allowed for low. Hard-deny is

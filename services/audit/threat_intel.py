@@ -38,7 +38,10 @@ async def enrich_ip(ip: str) -> dict:
 
 
 def _demo_ip(ip: str) -> dict:
-    h = int(hashlib.md5(ip.encode()).hexdigest(), 16)
+    # MD5 is fine here: we need a stable deterministic mapping from the
+    # input string to a small bucket of demo values, not a security
+    # primitive. usedforsecurity=False silences bandit B324.
+    h = int(hashlib.md5(ip.encode(), usedforsecurity=False).hexdigest(), 16)
     return {
         "ip": ip,
         "abuse_score": h % 100,
@@ -76,7 +79,9 @@ async def enrich_domain(domain: str) -> dict:
 
 
 def _demo_domain(domain: str) -> dict:
-    h = int(hashlib.md5(domain.encode()).hexdigest(), 16)
+    # MD5 is fine here — see _demo_ip for the rationale. Deterministic
+    # bucketing of demo data, not a security primitive.
+    h = int(hashlib.md5(domain.encode(), usedforsecurity=False).hexdigest(), 16)
     categories = ["malware", "phishing", "c2", "spam", "clean"]
     return {
         "domain": domain,

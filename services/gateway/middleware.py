@@ -592,7 +592,11 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         # X-Forwarded-For) when the request comes through nginx/ALB,
         # not the proxy-side IP shared by all customers.
         _early_client_ip = self._real_client_ip(request)
-        _af_resp = await self._check_auth_failure_burst(_early_client_ip)
+        # QA-MW-FIX-3 (2026-06-25) — pass the request so a locally-verifiable
+        # ACP bearer can bypass the anonymous-burst gate. The pentest matrix
+        # caught a cascade where 26× anon 401 from one IP locked out the same
+        # IP's authenticated probes; see _has_valid_acp_signature for the why.
+        _af_resp = await self._check_auth_failure_burst(_early_client_ip, request)
         if _af_resp is not None:
             return _af_resp
 
