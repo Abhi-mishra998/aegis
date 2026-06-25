@@ -59,30 +59,54 @@ async def _ensure_group(redis: Redis) -> None:
 async def _get_or_create_timeline(
     db, tenant_id: uuid.UUID, request_id: str, ev: dict[str, Any]
 ) -> ExecutionTimeline:
-    existing = (await db.execute(
+    # QA-FLIGHT-FIX (2026-06-25) — the previous SELECT-then-INSERT was a
+    # classic check-then-act race. Two events for the same
+    # ``(tenant_id, request_id)`` (typically ``timeline_start`` + first
+    # ``step``, or ``timeline_start`` + ``timeline_end``) processed by the
+    # same consumer in adjacent async ticks both see the row as missing,
+    # both INSERT, and the second one trips ``uq_timelines_tenant_request``
+    # with ``UniqueViolationError``. The error log on prod shows hundreds
+    # of these per minute under demo traffic; the side-effect is that
+    # ``/flight/decision/{rid}/graph`` returns 404 for the very decision
+    # the operator clicked on the live banner, because the row never
+    # made it to the DB. Fix: upsert with ``ON CONFLICT DO NOTHING`` on
+    # ``(tenant_id, request_id)`` and re-SELECT to fetch whichever row
+    # won the race. The re-SELECT is one extra round-trip but eliminates
+    # the duplicate-key error stream and lets Decision Explorer render
+    # the graph on the first or second poll instead of timing out.
+    fast = (await db.execute(
         select(ExecutionTimeline).where(
             ExecutionTimeline.tenant_id == tenant_id,
             ExecutionTimeline.request_id == request_id,
         )
     )).scalar_one_or_none()
-    if existing is not None:
-        return existing
+    if fast is not None:
+        return fast
     agent_id = ev.get("agent_id")
     try:
         agent_uuid = uuid.UUID(agent_id) if agent_id else None
     except Exception:
         agent_uuid = None
-    t = ExecutionTimeline(
+    stmt = insert(ExecutionTimeline).values(
         tenant_id=tenant_id, org_id=tenant_id,
         request_id=request_id, agent_id=agent_uuid,
         tool=ev.get("tool"),
-        session_id=(ev.get("session_id") or None),  # Sprint 3.5
+        session_id=(ev.get("session_id") or None),
         metadata_json=ev.get("metadata") or {},
         status="in_progress",
+    ).on_conflict_do_nothing(
+        index_elements=["tenant_id", "request_id"],
     )
-    db.add(t)
+    await db.execute(stmt)
     await db.commit()
-    return t
+    # Re-fetch — either we inserted (and this returns the new row) or a
+    # concurrent worker inserted it before us (and this returns theirs).
+    return (await db.execute(
+        select(ExecutionTimeline).where(
+            ExecutionTimeline.tenant_id == tenant_id,
+            ExecutionTimeline.request_id == request_id,
+        )
+    )).scalar_one()
 
 
 async def _apply_event(db, ev: dict[str, Any]) -> None:

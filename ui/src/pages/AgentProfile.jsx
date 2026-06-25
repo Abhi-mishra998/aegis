@@ -285,6 +285,23 @@ export default function AgentProfile() {
   const [refreshing, setRefreshing] = useState(false)
 
   const load = useCallback(async () => {
+    // QA-UI-FIX (2026-06-25) — clear every per-agent state slice BEFORE the
+    // new fetch. Without this, navigating from sales-research-agent to
+    // devops-agent leaves the previous agent's data on screen until each
+    // new Promise resolves; some panels (drift / benchmark / risk-trend)
+    // resolve fast and others slow, so the operator briefly sees a
+    // Frankenstein view that mixes both agents' rows. Reset to null first
+    // so every panel shows its loading skeleton, then update with the
+    // newly-fetched values.
+    setAgent(null)
+    setProfile(null)
+    setRecentLogs([])
+    setDrift(null)
+    setTrend(null)
+    setBenchmark(null)
+    setToolUsage(null)
+    setDailyDecisions(null)
+    setAgentFindings(null)
     setRefreshing(true)
     try {
       const [agentRes, profileRes, logsRes, driftRes, trendRes, benchRes, toolRes, dailyRes, findRes] = await Promise.allSettled([
