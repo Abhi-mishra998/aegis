@@ -728,6 +728,14 @@ async def main() -> None:
     now = datetime.now(tz=timezone.utc)
     # For chain continuity, look up the last existing row per shard
     last_hashes: dict[int, str | None] = {}
+    # QA-CHAIN-FIX-3 (2026-06-25) — also track the LAST written timestamp
+    # per shard so section 14a-14f can never insert a realism row with a
+    # timestamp before the most-recent section-2 row in the same shard.
+    # That kept V3 failing on ~4 rows per tenant even after the section-2
+    # pre-sort fix. Hoisting the dict here means section 2 maintains it
+    # as it inserts, and the realism helper picks up where section 2
+    # left off.
+    last_ts_per_shard_section2: dict[int, datetime] = {}
     for shard in range(16):
         prev = await aud_conn.fetchval(
             "SELECT event_hash FROM audit_logs WHERE tenant_id = $1 AND chain_shard = $2 "
@@ -798,6 +806,7 @@ async def main() -> None:
                 prev_hash_to_store, shard, ts,
             )
             last_hashes[shard] = event_hash
+            last_ts_per_shard_section2[shard] = ts
             written += 1
         except Exception as exc:
             # QA-FIX (2026-06-25) — was `{i}` from the old `for i in range(...)`
@@ -1299,6 +1308,22 @@ async def main() -> None:
     #     complexity, all built on existing tables (no new migration).
     #     [surface] INSERT INTO audit_logs + audit_notes + human_override_events
     #
+    # QA-CHAIN-FIX-3 (2026-06-25) — per-shard "last inserted timestamp"
+    # guard so the chain we BUILD at insert-time matches the order the
+    # verifier WALKS at read-time. Sections 2 + 14a-14f each pick their
+    # own random timestamp within a 14-day window, and section 2's
+    # pre-sort fixed itself, but the 14a-14f sub-sections still write
+    # to arbitrary shards in arbitrary timestamp order. When two
+    # realism rows land on the same shard with the 14d row arriving
+    # AFTER 14e but having an EARLIER timestamp, aegis-verify V3
+    # reports a chain-gap. The trigger blocks our after-the-fact rehash,
+    # so the only correct cure is to never write a row with a timestamp
+    # before its shard's most-recently-written row. If we'd violate
+    # that, nudge the row to (last_ts + 1 microsecond). Total drift on
+    # any row is sub-second; the demo realism remains intact.
+    # Seed the per-shard floor from whatever section 2 already wrote.
+    last_ts_per_shard: dict[int, datetime] = dict(last_ts_per_shard_section2)
+
     # Helper that mirrors section 2 but takes explicit overrides so each
     # row can pick its own action/decision/timestamp without re-piping
     # the entire 16-arg INSERT every call site.
@@ -1318,6 +1343,13 @@ async def main() -> None:
         req_id = request_id or f"req-{row_id.hex[:16]}"
         shard = random.randint(0, 15)
         prev_hash = last_hashes.get(shard)
+        # If this row's timestamp would create a non-monotonic chain on
+        # the shard, advance it to one microsecond after the previous
+        # row's timestamp. Keeps insertion-order == timestamp-order.
+        prev_ts = last_ts_per_shard.get(shard)
+        if prev_ts is not None and ts <= prev_ts:
+            ts = prev_ts + timedelta(microseconds=1)
+        last_ts_per_shard[shard] = ts
         # QA-CHAIN-FIX (2026-06-24): canonical hash matching the production
         # writer; GENESIS_HASH on first-row-per-shard. See module top docstring.
         event_hash = _hash_row(
