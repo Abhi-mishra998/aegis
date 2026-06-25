@@ -8,12 +8,46 @@
 # This wrapper forces one-host-at-a-time + verifies recovery before
 # touching the next.
 #
+# 2026-06-25 — adds ASG process suspension for the deploy window (matrix-25
+# Section M.5 #3 closure). HealthCheck + Terminate are suspended at start so
+# the unavoidable container-recycle window on each host doesn't trigger an
+# ELB-health-check failure that makes ASG terminate the host mid-deploy.
+# Resumed on EXIT via trap so even script interrupt / failure leaves the
+# ASG in its original (healthy) state.
+#
 # USAGE: ./rolling_deploy.sh <SHA> [--force-clean]
 set -euo pipefail
 SHA="${1:?usage: rolling_deploy.sh <SHA> [--force-clean]}"
 FORCE_CLEAN="${2:-auto}"
 REGION="ap-south-1"
 ASG_NAME="aegis-prod-asg"
+
+# Trap-on-EXIT — resume ASG processes regardless of how the script exits
+# (success, failure, SIGINT). Safe to call when no processes are suspended:
+# resume-processes is idempotent. Keep this trap installed for the whole
+# script so an early failure (e.g. resolve-ASG-hosts crash) doesn't leave
+# the ASG in a suspended state.
+_resume_asg() {
+  echo
+  echo "==== resume ASG processes ===="
+  aws autoscaling resume-processes --region "$REGION" \
+    --auto-scaling-group-name "$ASG_NAME" \
+    --scaling-processes HealthCheck Terminate 2>&1 | tail -3 || true
+}
+trap _resume_asg EXIT
+
+echo "==== suspend ASG HealthCheck + Terminate for the deploy window ===="
+# WHY both processes:
+#   • HealthCheck: prevents ASG from marking the host unhealthy when the
+#     ALB target-group health temporarily fails during container recycle.
+#   • Terminate:   belt-and-braces — even if a stale Unhealthy was already
+#     latched before we suspended HealthCheck, ASG can't act on it without
+#     this process.
+# AZRebalance / AlarmNotification / ReplaceUnhealthy stay live, so anything
+# *outside* the deploy window still cycles correctly.
+aws autoscaling suspend-processes --region "$REGION" \
+  --auto-scaling-group-name "$ASG_NAME" \
+  --scaling-processes HealthCheck Terminate
 
 echo "==== resolve ASG hosts ===="
 HOSTS=$(aws autoscaling describe-auto-scaling-groups --region "$REGION" \
