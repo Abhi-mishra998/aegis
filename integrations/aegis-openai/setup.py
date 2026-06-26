@@ -7,7 +7,7 @@ _readme = (_here / "README.md").read_text() if (_here / "README.md").exists() el
 
 setup(
     name="aegis-openai",
-    version="1.1.4",
+    version="1.1.5",
     description="OpenAI tool_calls governance middleware for Aegis ACP (maintenance-only — Anthropic SDK is the active hero)",
     long_description=_readme,
     long_description_content_type="text/markdown",

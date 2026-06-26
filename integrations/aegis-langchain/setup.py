@@ -7,7 +7,7 @@ _readme = (_here / "README.md").read_text() if (_here / "README.md").exists() el
 
 setup(
     name="aegis-langchain",
-    version="1.1.5",
+    version="1.1.6",
     description="LangChain governance middleware for Aegis ACP (maintenance-only — Anthropic SDK is the active hero)",
     long_description=_readme,
     long_description_content_type="text/markdown",
