@@ -331,6 +331,7 @@ function Footer() {
           <span>AI governance &amp; runtime security platform</span>
         </div>
         <div className="flex items-center gap-4">
+          <Link to="/pricing" className="hover:text-white">Pricing</Link>
           <Link to="/login" className="hover:text-white">Sign in</Link>
           <Link to="/signup" className="hover:text-white">Start free</Link>
         </div>
@@ -353,6 +354,9 @@ export default function Landing() {
             <span className="text-sm font-bold text-white tracking-tight">Aegis</span>
           </div>
           <div className="flex items-center gap-2">
+            <Link to="/pricing" className="text-xs text-neutral-300 hover:text-white px-3 py-1.5 rounded-md transition-colors hidden sm:inline-flex">
+              Pricing
+            </Link>
             <Link to="/login" className="text-xs text-neutral-300 hover:text-white px-3 py-1.5 rounded-md transition-colors">
               Sign in
             </Link>

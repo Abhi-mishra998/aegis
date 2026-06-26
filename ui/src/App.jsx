@@ -44,6 +44,7 @@ const safeLazy = (loader) => lazy(() => loader().catch((err) => {
 // Order preserved from the original eager list for review.
 const Login              = safeLazy(() => import('./pages/Login'));
 const Signup             = safeLazy(() => import('./pages/Signup'));
+const Pricing            = safeLazy(() => import('./pages/Pricing'));
 const OnboardingWizard   = safeLazy(() => import('./pages/OnboardingWizard'));
 const ShadowModeReview   = safeLazy(() => import('./pages/ShadowModeReview'));
 const Policies           = safeLazy(() => import('./pages/Policies'));
@@ -407,7 +408,9 @@ function App() {
               {/* Sprint 6 — Pricing/marketing pages out of the authenticated
                   app per PRODUCT_PLAN §12.3. External links land on dashboard. */}
               <Route path="/open-source" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/pricing"     element={<Navigate to="/dashboard" replace />} />
+              {/* U11 — Pricing is now a real public page (3 tiers + FAQ + sales
+                  CTA). First sales question every buyer asks. */}
+              <Route path="/pricing"     element={<Pricing />} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
 
               {/* Admin / surfaced via Settings hub (hidden from sidebar) */}
