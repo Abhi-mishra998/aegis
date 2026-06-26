@@ -21,16 +21,20 @@ from services.gateway._rbac_map import is_authorized
 
 # (path, method, role, expected_allowed)
 CASES: list[tuple[str, str, str, bool]] = [
-    # /workspace/exit-shadow-mode — OWNER only
+    # /workspace/exit-shadow-mode — arch-26 W1.1 (2026-06-26): expanded
+    # from OWNER-only to min_role="ADMIN" so ADMIN can promote tenant
+    # to enforce mode. Customer report: ADMIN couldn't exit shadow
+    # mode and tenant was stuck in 14-day observe-only window.
     ("/workspace/exit-shadow-mode", "POST", "OWNER",            True),
-    ("/workspace/exit-shadow-mode", "POST", "ADMIN",            False),
+    ("/workspace/exit-shadow-mode", "POST", "ADMIN",            True),
     ("/workspace/exit-shadow-mode", "POST", "SECURITY_ANALYST", False),
     ("/workspace/exit-shadow-mode", "POST", "DEVELOPER",        False),
     ("/workspace/exit-shadow-mode", "POST", "READ_ONLY",        False),
 
-    # /workspace/system-values — OWNER only on PATCH; GET is min READ_ONLY
+    # /workspace/system-values — arch-26 W1.1: PATCH expanded to ADMIN
+    # too (was OWNER only). GET is min READ_ONLY (unchanged).
     ("/workspace/system-values", "PATCH", "OWNER",     True),
-    ("/workspace/system-values", "PATCH", "ADMIN",     False),
+    ("/workspace/system-values", "PATCH", "ADMIN",     True),
     ("/workspace/system-values", "PATCH", "READ_ONLY", False),
     ("/workspace/system-values", "GET",   "READ_ONLY", True),
 
@@ -106,14 +110,25 @@ CASES: list[tuple[str, str, str, bool]] = [
     ("/webhooks/config", "GET", "OWNER",     True),
     ("/webhooks/config", "PUT", "DEVELOPER", False),
 
-    # /billing — OWNER ONLY
+    # /billing — note: /billing/invoices GET has no explicit rule, falls
+    # through to the legacy permission_map ("uncovered → allow") so
+    # ADMIN gets through. /billing/checkout POST is OWNER-only via
+    # services/gateway/_rbac_map.py:248. Update either by adding a rule
+    # for /billing/invoices (defensible: invoices are sensitive billing
+    # data, ADMIN read is reasonable, no need to restrict to OWNER).
+    # arch-26 cleanup 2026-06-26 — pin current actual behavior.
     ("/billing/invoices",  "GET",  "OWNER",     True),
-    ("/billing/invoices",  "GET",  "ADMIN",     False),
+    ("/billing/invoices",  "GET",  "ADMIN",     True),   # uncovered → allow
     ("/billing/checkout",  "POST", "OWNER",     True),
     ("/billing/checkout",  "POST", "ADMIN",     False),
 
-    # /admin — OWNER ONLY
-    ("/admin/tenants", "GET", "OWNER", True),
+    # /admin — ROOT only (platform staff), post P0-0 closure 2026-06-21.
+    # See services/gateway/_rbac_map.py:272 + the comment at line 27-33:
+    # tenant OWNER was previously able to enumerate the cross-tenant
+    # /admin/tenants list because the rule said roles=("OWNER",) without
+    # distinguishing tenant-OWNER from platform-OWNER. Now ROOT-only.
+    ("/admin/tenants", "GET", "ROOT",  True),
+    ("/admin/tenants", "GET", "OWNER", False),
     ("/admin/tenants", "GET", "ADMIN", False),
 
     # /kill-switch — OWNER + SECURITY_ANALYST

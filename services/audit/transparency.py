@@ -110,6 +110,55 @@ async def _persist_root(
         "leaf_range_end_id":       leaf_range_end_id,
         "signing_key_fingerprint": signing_key_fingerprint,
     }
+    # arch-26 V5 fix 2026-06-26 — chain-integrity guard. The
+    # on_conflict_do_update was a silent chain-break vector: rewriting
+    # an existing root_hash for date D corrupts every later root's
+    # prev_root_hash that still points at the OLD hash. Today's running
+    # root advances all day (fine — no later root exists yet). But if
+    # day N+1's root is already sealed and someone re-runs the scheduler
+    # for day N (manual backfill, /transparency/seal-root call, race),
+    # day N's hash flips and day N+1's prev_root_hash is now stale → V5
+    # FAIL on the next verifier run.
+    #
+    # Fix: only update root_hash if NO LATER root exists for this tenant.
+    # If a later root exists, log the attempted overwrite and abort the
+    # update. The intended root is preserved (today still advances; past
+    # days re-sealed without an existing later root still update).
+    existing_later = (
+        await db.execute(
+            select(TransparencyRoot.root_date).where(
+                TransparencyRoot.tenant_id == tenant_id,
+                TransparencyRoot.root_date > root_date,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing_later is not None:
+        # Fetch the row that's about to be overwritten to decide if this
+        # is a genuine no-op (same hash, idempotent re-run — safe to
+        # update timestamp) or a chain-break attempt (different hash).
+        current = (
+            await db.execute(
+                select(TransparencyRoot.root_hash).where(
+                    TransparencyRoot.tenant_id == tenant_id,
+                    TransparencyRoot.root_date == root_date,
+                )
+            )
+        ).scalar_one_or_none()
+        if current is not None and current != root_hash:
+            import logging
+            logging.getLogger(__name__).error(
+                "transparency_root_update_blocked_chain_protect",
+                extra={
+                    "tenant_id":          str(tenant_id),
+                    "root_date":          root_date.isoformat(),
+                    "existing_hash":      current,
+                    "attempted_new_hash": root_hash,
+                    "next_root_date":     existing_later.isoformat() if existing_later else None,
+                    "reason":             "later root exists; updating root_hash would invalidate its prev_root_hash",
+                },
+            )
+            return  # refuse silently — caller's commit still succeeds
+
     stmt = (
         pg_insert(TransparencyRoot)
         .values(**values)
