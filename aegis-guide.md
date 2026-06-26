@@ -521,17 +521,28 @@ asking everyone.
 
 ## 18. Pick compliance pack
 
-**Settings → Compliance** → choose one or more:
+**Settings → Compliance** → choose one or more.
 
-- **SOC 2** — CC8.1 change-control, audit-trail integrity, access reviews.
-- **PCI-DSS** — PAN/card-data egress patterns, scope segmentation.
-- **HIPAA** — PHI patterns, minimum-necessary access rules.
-- **Finance / SOX** — money movement, segregation of duties, four-eyes.
-- **DevOps** — production destruction, IaC apply, mass deletions.
+**Shipped today** (the API parameter name is shown in `code`):
+
+- `soc2` — CC6.1 logical access, CC7.2 system monitoring, CC8.1 change-control, audit-trail integrity, access reviews.
+- `eu-ai-act` — Article 12 record-keeping, Article 13 transparency, Article 61 post-market monitoring, Annex IV §3.
+- `nist-ai-rmf` — MEASURE 2.1 (system performance & operations), GOVERN 5.1 (incident response).
+
+**On the roadmap** (mapping exists in code, no UI picker yet):
+
+- `dpdp` (India DPDP Act) — Section 8(5)–8(8).
+- PCI-DSS, HIPAA, Finance/SOX, DevOps — separate signal packs ship
+  out-of-the-box and are *enforced* in the gateway today; the
+  evidence-bundle pivot per pack is the unshipped piece.
 
 Each pack maps every block / escalate decision to the specific control
 it covers (visible on every audit row + in the Compliance Posture report
 under Compliance → Generate evidence).
+
+> **API note** — `/compliance/verifiable-bundle/{framework}` framework
+> names are **case-sensitive, hyphenated**: `soc2`, `eu-ai-act`,
+> `nist-ai-rmf`. Passing `SOC2` returns 400.
 
 ---
 
@@ -877,10 +888,18 @@ Hand this to your security team. Every step is observable in Aegis.
    `process_env_read` or `system_file_read`.
 8. `query_database` with `SELECT * FROM users; DROP TABLE customers;` →
    **deny**, reason `sql_injection_pattern`.
-9. `kubectl_delete` with `target=production` → **deny**, reason
-   `prod_destruction`.
-10. `send_email` whose body contains `Bearer sk-ant-…` → **deny**,
-    reason `secret_exfil_pattern`.
+9. **Via `shell` wrapper** — `tool_name="shell"`,
+   `arguments={"command":"kubectl delete namespace prod"}` → **deny**
+   (`OPS-K8S-001`, risk 90). The bare `kubectl` / `terraform` tool
+   names are not yet in the canonical action mapping, so the firewall
+   today recognizes destructive Kubernetes / Terraform actions only
+   through the `shell` wrapper. Same for `tool_name="shell"` with
+   `command="terraform destroy ..."` → **escalate** (`OPS-IAC-002`).
+10. **Via `shell` wrapper** — secret/PII exfil patterns
+   (`curl --data-binary @/path/secret`, `aws s3 cp …`, `sendmail …`)
+   inside `tool_name="shell"` → **deny**. The bare `send_email`
+   tool name is not yet canonical, so body-content scanning fires
+   today only through `shell`.
 11. `send_wire` `amount_usd=10000000, recipient_kind=external` →
     **deny**, reason `money_movement_hard_cap`.
 
@@ -902,9 +921,16 @@ Hand this to your security team. Every step is observable in Aegis.
 ### F. Cryptographic verification
 
 18. Audit Logs → CSV export last 7 days.
-19. Compliance → Generate evidence (7 d) → download TAR.
+19. Compliance → Generate evidence (7 d) → download TAR. (API: hit
+    `/compliance/verifiable-bundle/soc2?days=7` — lowercase, hyphenated.)
 20. `pip install aegis-aevf && aegis-verify --bundle ./evidence.tar.gz`
-    → expect **"VERIFIED ✓"** with zero chain breaks.
+    → expect **"VERIFIED ✓"** with zero chain breaks. **Known limit:**
+    a tenant in the middle of a rapid-burst incident window (e.g. an
+    agent that just triggered `runaway_loop` auto-quarantine with
+    50+ writes in <2 s) may show 1–2 V3 `prev_hash` mismatches on a
+    single shard. We're hardening the per-shard write serialization
+    in the next release; flag it via §37 if you see it outside that
+    scenario.
 
 Hand the report to your auditor or CISO. If any step misbehaves, file
 via the in-product feedback widget — every report includes the
