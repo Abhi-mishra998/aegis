@@ -297,13 +297,17 @@ the UUID in the SDK constructor.
 
 ## 8. Install the SDK
 
-| Stack | Install |
+| Stack | Install (current PyPI as of 2026-06-26) |
 |---|---|
 | Anthropic Python SDK | `pip install 'aegis-anthropic==1.1.3'` |
-| OpenAI Python SDK | `pip install 'aegis-openai==1.1.3'` (also `pip install openai`) |
-| LangChain agent | `pip install 'aegis-langchain==1.1.4'` |
-| AWS Bedrock Agents | `pip install 'aegis-bedrock[bedrock]==1.1.4'` |
-| Offline verifier (audit-only) | `pip install aegis-aevf` → `aegis-verify --bundle <file>` |
+| OpenAI Python SDK | `pip install 'aegis-openai==1.1.4'` (also `pip install openai`) |
+| LangChain agent | `pip install 'aegis-langchain==1.1.5'` |
+| AWS Bedrock Agents | `pip install 'aegis-bedrock[bedrock]==1.1.5'` |
+| Offline verifier (audit-only) | `pip install 'aegis-aevf==1.1.1'` → `aegis-verify --bundle <file>` |
+
+> Unpin any of the runtime SDKs (`pip install aegis-anthropic`) and you'll get
+> the latest — the wire contract is stable, so any patch / minor that ships
+> after this date keeps working with the live gateway.
 
 All four runtime SDKs default to the consolidated `https://aegisagent.in`
 gateway via the `gateway_url=` constructor kwarg (deprecated alias
