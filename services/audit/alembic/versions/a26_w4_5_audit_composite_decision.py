@@ -22,7 +22,12 @@ from collections.abc import Sequence
 from alembic import op
 
 
-revision: str = "a26_w4_5_audit_composite_decision"
+# NB: alembic_version_audit.version_num is varchar(32) — keep this short.
+# Original "a26_w4_5_audit_composite_decision" was 34 chars and crashed
+# the audit container with StringDataRightTruncationError on the
+# `UPDATE alembic_version_audit SET version_num=...` step (first deploy
+# attempt of Wave 4b). Trimmed to "a26_w4_5_composite" = 18 chars.
+revision: str = "a26_w4_5_composite"
 down_revision: str | None = "a26_w4_4_metadata_gin"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
