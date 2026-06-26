@@ -261,3 +261,18 @@ async def export_incident_aevf_bundle(
         media_type="application/json",
         headers=headers,
     )
+
+
+# arch-26 W2.5 2026-06-26 — incident-consumer health probe proxy.
+# Backend lives at services/api/main.py /health/incident-consumer (added
+# in the same commit). The gateway proxies it here so ops + alertmanager
+# can hit a public URL without the mesh token. Returns:
+#   {status, queue_depth, last_processed_at_ts, lag_seconds}
+# status ∈ {"ok", "warming", "stuck", "backpressure"} — alert on != "ok".
+@router.get("/health/incident-consumer", tags=["health"], include_in_schema=False)
+async def health_incident_consumer(request: Request) -> Any:
+    resp = await request.app.state.client.get(
+        f"{_api_base()}/health/incident-consumer",
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
