@@ -393,16 +393,28 @@ async def delete_agent(
 
     await service.delete_agent(tenant_id, agent_id)
 
+    # arch-26 W1.3 2026-06-26 — audit emit cannot 500 a successful delete.
+    # The row is already gone (service.delete_agent committed). If the
+    # audit stream is unreachable / validation raises, log it and return
+    # 200 anyway — the customer should not see "internal server error"
+    # AND a ghost row both. The audit DLQ replay path picks this up.
     _redis = get_redis_client(settings.REDIS_URL)
     try:
-        await push_audit_event(
-            redis=_redis,
-            tenant_id=tenant_id,
-            agent_id=agent_id,
-            action="agent_delete",
-            request_id=request_id,
-            metadata={},
-        )
+        try:
+            await push_audit_event(
+                redis=_redis,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                action="agent_delete",
+                request_id=request_id,
+                metadata={},
+            )
+        except Exception as audit_exc:
+            bound_logger.warning(
+                "agent_delete_audit_emit_failed",
+                error_type=type(audit_exc).__name__,
+                error=str(audit_exc)[:200],
+            )
     finally:
         await _redis.aclose()
 
