@@ -121,6 +121,12 @@ _SKIP_PATHS = frozenset(
         "/transparency/roots",        # latest signed Merkle root
         "/transparency/consistency",  # consistency proof between two roots
         "/transparency/verify-root",  # POST: client supplies a root, server verifies sig
+        # Sprint U13 2026-06-26 — discovery metadata, no tenant data.
+        # A customer following aegis-guide.md §32-F-19 must be able to
+        # discover the valid framework names without already holding a
+        # token. The per-framework verifiable-bundle endpoint stays
+        # auth-gated (it returns tenant data) — only the index is open.
+        "/compliance/frameworks",
     ]
 )
 
