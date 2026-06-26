@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-06-26T04:58:15.705446+00:00",
+  "attacker_model": "gemini-2.5-flash",
+  "scenarios": 35,
+  "counts": {
+    "aegis_allowed": 3,
+    "aegis_blocked": 4,
+    "harness_error": 28
+  }
+}

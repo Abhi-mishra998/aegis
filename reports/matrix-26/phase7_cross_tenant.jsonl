@@ -1,0 +1,10 @@
+{"vector": "JWT_A + header_B", "path": "/agents/e25f6f1d-4b33-4fd6-b623-f18b8988b03f", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "tenant_b": "2d30134d-998d-4c3a-b312-f30d7890323b", "status": 403, "expected": "403_or_401", "passed": true}
+{"vector": "JWT_A only (no spoof)", "path": "/agents/e25f6f1d-4b33-4fd6-b623-f18b8988b03f", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "status": 404, "expected": "200_or_tenant_default", "passed": true}
+{"vector": "JWT_A + header_B", "path": "/audit/logs?limit=5", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "tenant_b": "2d30134d-998d-4c3a-b312-f30d7890323b", "status": 403, "expected": "403_or_401", "passed": true}
+{"vector": "JWT_A only (no spoof)", "path": "/audit/logs?limit=5", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "status": 200, "expected": "200_or_tenant_default", "passed": true}
+{"vector": "JWT_A + header_B", "path": "/incidents", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "tenant_b": "2d30134d-998d-4c3a-b312-f30d7890323b", "status": 403, "expected": "403_or_401", "passed": true}
+{"vector": "JWT_A only (no spoof)", "path": "/incidents", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "status": 200, "expected": "200_or_tenant_default", "passed": true}
+{"vector": "JWT_A + header_B", "path": "/iag/agents/e25f6f1d-4b33-4fd6-b623-f18b8988b03f", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "tenant_b": "2d30134d-998d-4c3a-b312-f30d7890323b", "status": 403, "expected": "403_or_401", "passed": true}
+{"vector": "JWT_A only (no spoof)", "path": "/iag/agents/e25f6f1d-4b33-4fd6-b623-f18b8988b03f", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "status": 200, "expected": "200_or_tenant_default", "passed": true}
+{"vector": "JWT_A + header_B", "path": "/workspace/me", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "tenant_b": "2d30134d-998d-4c3a-b312-f30d7890323b", "status": 403, "expected": "403_or_401", "passed": true}
+{"vector": "JWT_A only (no spoof)", "path": "/workspace/me", "tenant_a": "136b942f-2f4c-48ff-bc5e-4419436dab84", "status": 200, "expected": "200_or_tenant_default", "passed": true}
