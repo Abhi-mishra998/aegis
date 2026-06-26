@@ -74,7 +74,7 @@ server = [
     "bcrypt",
     "prometheus-client",
     "groq",
-    "reportlab>=4.0",
+    "reportlab>=5.0.0",
     "livekit-api>=0.8",
     # Sprint 9 — SSM/KMS signing-key provider (audit service prod-guard
     # refuses LocalFile when AEGIS_ENV=prod). Required for /receipts/key
