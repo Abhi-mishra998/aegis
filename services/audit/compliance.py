@@ -1045,8 +1045,9 @@ async def export_verifiable_bundle(
     framework: str,
     db: Annotated[AsyncSession, Depends(get_db)],
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
-    period_start: datetime = Query(..., description="ISO-8601 period start"),
-    period_end: datetime = Query(..., description="ISO-8601 period end"),
+    period_start: datetime | None = Query(None, description="ISO-8601 period start (or use ?days=N)"),
+    period_end: datetime | None = Query(None, description="ISO-8601 period end (or use ?days=N)"),
+    days: int | None = Query(None, ge=1, le=365, description="Convenience: last N days (auto-fills period_start + period_end)"),
 ) -> FileResponse:
     """
     R2 — Download a self-contained, offline-verifiable evidence bundle.
@@ -1058,6 +1059,12 @@ async def export_verifiable_bundle(
     `python -m aegis_verify --bundle <file>`.
 
     framework: eu-ai-act | nist-ai-rmf | soc2
+
+    Caller supplies EITHER `?days=N` (convenience — last N days) OR both
+    `?period_start=...&period_end=...` (explicit ISO-8601 range). The
+    `days` shortcut was added in matrix-26 P0-2 after the first-day
+    integration attempt failed with HTTP 422 on `?days=7` — buyers expect
+    that to Just Work and now it does.
     """
     from services.audit.verifiable_bundle import generate_verifiable_bundle
     _VALID = {"eu-ai-act", "nist-ai-rmf", "soc2"}
@@ -1065,6 +1072,16 @@ async def export_verifiable_bundle(
         raise HTTPException(
             status_code=400,
             detail=f"Unknown framework '{framework}'. Valid: {sorted(_VALID)}",
+        )
+
+    # matrix-26 P0-2 — resolve `days` convenience into explicit period.
+    if days is not None and (period_start is None and period_end is None):
+        period_end = datetime.now(UTC)
+        period_start = period_end - timedelta(days=days)
+    if period_start is None or period_end is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Must supply either ?days=N OR both ?period_start=...&period_end=... (ISO-8601).",
         )
     if period_end <= period_start:
         raise HTTPException(status_code=400, detail="period_end must be after period_start")
