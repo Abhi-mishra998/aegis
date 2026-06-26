@@ -5,7 +5,24 @@ import MainLayout from './MainLayout';
 import { clearSessionMetadata, authService } from '../../services/api';
 import { getSessionItem } from '../../lib/sessionStore';
 
-const ProtectedRoute = ({ children }) => {
+// arch-26 W3.6 2026-06-26 — role-ladder check (mirrors backend
+// services/gateway/_rbac_map.py ROLE_TIERS). When a route declares
+// requiredRole="ADMIN", a user whose JWT role is "READ_ONLY" gets a
+// clean 403 page instead of rendering the page with empty content
+// (which is what self-gated pages did before).
+const ROLE_LADDER = ['ROOT', 'OWNER', 'ADMIN', 'SECURITY_ANALYST', 'DEVELOPER', 'READ_ONLY'];
+
+function meetsRole(actual, required) {
+  if (!required) return true;
+  const a = (actual || '').toUpperCase();
+  const r = required.toUpperCase();
+  const ai = ROLE_LADDER.indexOf(a);
+  const ri = ROLE_LADDER.indexOf(r);
+  if (ai === -1 || ri === -1) return false;
+  return ai <= ri;
+}
+
+const ProtectedRoute = ({ children, requiredRole = null }) => {
   // Two truth sources during the Clerk migration:
   //   (1) Clerk session — authoritative for users that signed up via /signup.
   //   (2) Legacy session metadata — covers the existing /auth/login flow that
@@ -89,6 +106,29 @@ const ProtectedRoute = ({ children }) => {
   // it will fire IncidentOverlay and navigate to /login. In the meantime
   // we keep showing the page so the user doesn't lose state mid-flow.
   hasRenderedChildrenRef.current = true;
+
+  // arch-26 W3.6 — role gate. Render a clean 403 if user lacks the
+  // required role. Old behavior: render the page and let it self-gate
+  // (often showing empty content with no explanation).
+  const userRole = getSessionItem('role') || 'READ_ONLY';
+  if (requiredRole && !meetsRole(userRole, requiredRole)) {
+    return (
+      <MainLayout>
+        <div className="min-h-[60vh] flex items-center justify-center px-4" role="alert">
+          <div className="max-w-md text-center space-y-3">
+            <div className="text-xs uppercase tracking-widest text-neutral-500">403 — Access denied</div>
+            <h1 className="text-2xl font-bold text-white">You don't have access to this page</h1>
+            <p className="text-sm text-neutral-400 leading-relaxed">
+              This view requires <span className="font-semibold text-white">{requiredRole}</span> role or higher.
+              Your role is <span className="font-mono text-neutral-300">{userRole}</span>. Ask your
+              workspace OWNER to upgrade your role in Settings → User Management.
+            </p>
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
+
   return <MainLayout>{children}</MainLayout>;
 };
 
