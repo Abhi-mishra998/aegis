@@ -127,6 +127,10 @@ _SKIP_PATHS = frozenset(
         # token. The per-framework verifiable-bundle endpoint stays
         # auth-gated (it returns tenant data) — only the index is open.
         "/compliance/frameworks",
+        # arch-26 W2.5 2026-06-26 — incident-consumer liveness probe.
+        # Returns only queue-depth + last-processed timestamp (no
+        # tenant data). Ops + alertmanager poll this every 30s.
+        "/health/incident-consumer",
     ]
 )
 
