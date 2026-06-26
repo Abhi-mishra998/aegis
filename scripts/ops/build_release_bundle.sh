@@ -95,6 +95,8 @@ tar \
     --exclude='ui/playwright-report' \
     --exclude='ui/test-results' \
     --exclude='reports' \
+    --exclude='evidence' \
+    --exclude='.claude' \
     --exclude='**/htmlcov' \
     -czf "$OUT" \
     .
