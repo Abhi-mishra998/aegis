@@ -28,9 +28,19 @@ FAILURE_WINDOW_MINUTES = 5
 RUNAWAY_FAILURE_THRESHOLD = 50
 # GAP-4 2026-06-15 — tighter quarantine specifically for bulk-PII denies.
 # Generic shell-error retries can churn 50× / 5min on a flaky tool; bulk-PII
-# escalations cannot. 3 in 5min means the agent is mass-attempting a single
-# class of data exfil and has lost the trust budget.
-BULK_PII_QUARANTINE_THRESHOLD = 3
+# escalations cannot. The agent is mass-attempting a single class of data
+# exfil and has lost the trust budget.
+#
+# matrix-26 P1-3 (2026-06-26) — bumped from 3 → 15. Real evidence: the live
+# matrix-26 Phase 6 SQLi probes legitimately tripped this at 3 and then the
+# Phase 1 benign analytics queries on the same agent came back 403. A real
+# batch-analytics workload (e.g., a finance reconciliation agent running 5
+# unbounded SELECTs in normal operation) was hitting it too. 15 in 5min is
+# still a strong attack signal but no longer false-quarantines normal
+# analytical workloads. If a true mass-exfil pattern emerges, the cumulative
+# risk pipeline + per-finding behavior baseline will catch it earlier than
+# this counter does anyway.
+BULK_PII_QUARANTINE_THRESHOLD = 15
 
 _TABLE_RE = re.compile(r"\bfrom\s+([a-z_][a-z0-9_]*)\b", re.IGNORECASE)
 
