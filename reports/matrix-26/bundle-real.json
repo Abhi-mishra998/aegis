@@ -1,0 +1,892 @@
+{
+  "format_version": "aegis-evidence-bundle/2026-06",
+  "framework": "soc2",
+  "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+  "period": {
+    "start": "2026-06-24T05:01:23.020447+00:00",
+    "end": "2026-06-26T05:01:23.096592+00:00"
+  },
+  "generated_at": "2026-06-26T05:02:28.979759+00:00",
+  "public_keys": [
+    {
+      "kid": "1c65ff605b9fc6a682284dc51b37d389",
+      "algorithm": "ed25519",
+      "pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAl2nohqEeKdnt2/dAHAsXW/I8zkN4gjwFPBvtcdGX5PQ=\n-----END PUBLIC KEY-----\n",
+      "valid_from": "2026-06-25T19:45:44.480716+00:00",
+      "valid_to": null
+    }
+  ],
+  "merkle_roots": [],
+  "records": [
+    {
+      "audit_row": {
+        "id": "9a020065-388d-462c-98b8-a3a7f9a7187a",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "87e9a5b2-897b-41aa-a4d3-ac4f7c1fe617",
+        "action": "execute_tool",
+        "tool": "query_database",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 5,
+          "params_hint": "SELECT 1"
+        },
+        "request_id": "c2d1ba6c-7c30-41d1-85b3-cded0facd675",
+        "timestamp": "2026-06-25T00:34:20.915363+00:00",
+        "chain_shard": 0,
+        "prev_hash": "d2d9dcc5a8f54c7c6a1d035ca480bd3ce6e14d2d21849687ef90516d41260d61",
+        "event_hash": "1a405dd50d53c7f1a15237939f7825a9227cb588e1e5abe43267b665012feef4"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "3c1ef107-abf3-425c-89e4-bb3104a20515",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "87e9a5b2-897b-41aa-a4d3-ac4f7c1fe617",
+        "action": "execute_tool",
+        "tool": "web_search",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 3,
+          "params_hint": "AI governance market 2026"
+        },
+        "request_id": "7916c106-c3e5-40a8-9ac3-a7cb48dbdd54",
+        "timestamp": "2026-06-25T03:09:25.378191+00:00",
+        "chain_shard": 15,
+        "prev_hash": "8810855b3c930668ab48440de276528b30e4e42d708f8852c13dfaa4dd2eb8e9",
+        "event_hash": "5a924ba1635448f8173c0e195ff2f2a07ffded4392d1978d62168767897509a2"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "cb66de60-b841-4fe2-a58e-8d3e91619bfb",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "94f912ed-05ca-4889-bb5e-0c9246c1073b",
+        "action": "execute_tool",
+        "tool": "web_search",
+        "decision": "monitor",
+        "reason": "Security:CompetitiveIntelMassScrape",
+        "metadata_json": {
+          "findings": [
+            "Security:CompetitiveIntelMassScrape"
+          ],
+          "demo_seed": true,
+          "risk_score": 28,
+          "params_hint": "site:linkedin.com OR site:apollo.io competitor mass-scrape",
+          "monitor_reason": "policy_signal_below_block_threshold"
+        },
+        "request_id": "req-cb66de60b8414fe2",
+        "timestamp": "2026-06-25T03:09:25.378192+00:00",
+        "chain_shard": 15,
+        "prev_hash": "5a924ba1635448f8173c0e195ff2f2a07ffded4392d1978d62168767897509a2",
+        "event_hash": "4fd3fad224b66a3e9d99fd4997264f955b82d86ed9725883a409089041d0c094"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "408648e9-7843-4734-8955-d26b5342f43f",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "6109b01f-576f-4e62-a2f5-4130cf66f701",
+        "action": "execute_tool",
+        "tool": "http_request",
+        "decision": "monitor",
+        "reason": "Security:SecretsEnumerationReadOnly",
+        "metadata_json": {
+          "findings": [
+            "Security:SecretsEnumerationReadOnly"
+          ],
+          "demo_seed": true,
+          "risk_score": 45,
+          "params_hint": "GET /v1/secrets/list (read-only, namespace=staging)",
+          "monitor_reason": "policy_signal_below_block_threshold"
+        },
+        "request_id": "req-408648e978434734",
+        "timestamp": "2026-06-25T03:09:25.378193+00:00",
+        "chain_shard": 15,
+        "prev_hash": "4fd3fad224b66a3e9d99fd4997264f955b82d86ed9725883a409089041d0c094",
+        "event_hash": "6c5bb848f241304574b0943bb6815fd72497f990d71737fa4221d8bab729c57a"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "1ecdf630-5bd1-4859-907c-d708e43273ef",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "6109b01f-576f-4e62-a2f5-4130cf66f701",
+        "action": "execute_tool",
+        "tool": "query_database",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 5,
+          "params_hint": "SELECT 1"
+        },
+        "request_id": "167d6bc6-1dc3-40ad-a67f-fb15102bee4b",
+        "timestamp": "2026-06-25T04:52:07.586967+00:00",
+        "chain_shard": 14,
+        "prev_hash": "ad468e757b3c1197714b6a30c39809aaa70855800e61fa70b244eb3331eb8e44",
+        "event_hash": "7a4d031e6f2a3207c70200e3d443993fc7ef108cafe4cef8f5d576ce1ce2c5dc"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "1ee07381-fcef-4870-bcbb-26000927baa2",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "223e8061-e796-4ae0-9553-b6c005f0fb3e",
+        "action": "execute_tool",
+        "tool": "query_database",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 5,
+          "params_hint": "SELECT 1"
+        },
+        "request_id": "e77f7073-b704-467c-acd2-37b21bf1650c",
+        "timestamp": "2026-06-25T07:08:02.455727+00:00",
+        "chain_shard": 10,
+        "prev_hash": "92cc2df2cc5d11444dee7f7f272a59ad69cd0d093dc93a52221d4e0ff499b4fe",
+        "event_hash": "72578fec66d102f8972fe1e03bd4a05a39fc0d710e0dabcf7d138a4cdad52de6"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "6e0a904a-1b4a-45be-ba30-8ef539c75210",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "87e9a5b2-897b-41aa-a4d3-ac4f7c1fe617",
+        "action": "execute_tool",
+        "tool": "send_email",
+        "decision": "monitor",
+        "reason": "Privacy:AttachmentLooksLikePII",
+        "metadata_json": {
+          "findings": [
+            "Privacy:AttachmentLooksLikePII"
+          ],
+          "demo_seed": true,
+          "risk_score": 38,
+          "params_hint": "auto-reply to support@customer.example with attached invoice PDF",
+          "resolved_by": "demo+f7e310ef@aegisagent.in",
+          "resolver_role": "DPO",
+          "false_positive": true,
+          "resolution_note_preview": "False positive: the attached PDF is the customer's own monthly invoice that they explicitly requested in the ticket thre"
+        },
+        "request_id": "req-6e0a904a1b4a45be",
+        "timestamp": "2026-06-25T08:43:56.927002+00:00",
+        "chain_shard": 10,
+        "prev_hash": "72578fec66d102f8972fe1e03bd4a05a39fc0d710e0dabcf7d138a4cdad52de6",
+        "event_hash": "48f6a381e782e19c792a204c0abd2644549c3d34e40e454f6f875bbaf9740e09"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Article 10 (data governance)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)",
+          "CC6.7 (information transmission)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards",
+          "Section 11 \u2014 Data Principal rights (correction/erasure)",
+          "Rules Schedule II \u2014 restriction on unauthorised transfer"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "1b0a9bf5-7253-42f9-88fb-000a7d6f5eaa",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "223e8061-e796-4ae0-9553-b6c005f0fb3e",
+        "action": "execute_tool",
+        "tool": "write_file",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 5,
+          "params_hint": "/tmp/agent-cache/output.json"
+        },
+        "request_id": "1b11c1fd-146d-4b25-a038-a6bb7b74ef98",
+        "timestamp": "2026-06-25T10:30:13.857468+00:00",
+        "chain_shard": 8,
+        "prev_hash": "93b02c92b2a835200e433338a552d54b6f5bbd27c7c98e9452aa15e82a85ab29",
+        "event_hash": "8b9ca1ec08bffce7250999d0efb1f85efc8cce51c0e2a5fdf42c05b4c69a2992"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "792d1a93-779f-4f3a-a731-4f8cbb176054",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "223e8061-e796-4ae0-9553-b6c005f0fb3e",
+        "action": "override",
+        "tool": "query_database",
+        "decision": "allow",
+        "reason": "destructive_sql_false_match",
+        "metadata_json": {
+          "findings": [
+            "destructive_sql_false_match"
+          ],
+          "demo_seed": true,
+          "actor_role": "SOC_ANALYST",
+          "risk_score": 10,
+          "params_hint": "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL",
+          "new_decision": "allow",
+          "justification": "Reviewed by SOC analyst: query is read-only COUNT(*), the 'DELETE' substring inside column name 'deleted_at' triggered the rule by accident. Original deny overridden to allow; rule narrowed in shadow policy v2.",
+          "original_decision": "deny"
+        },
+        "request_id": "req-792d1a93779f4f3a",
+        "timestamp": "2026-06-25T11:49:56.927002+00:00",
+        "chain_shard": 11,
+        "prev_hash": "74260a0f424f60f21be42b0c90a1f8b952f0062f2d5f078381a1995ebc6f0a3f",
+        "event_hash": "07b2fa4585d30f9d1c437b382fb013b019f8276189ea610c4a5d7046d00193d5"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [],
+        "nist_ai_rmf": [],
+        "dpdp": []
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "6db2d35c-4aad-44e7-a9ac-ec9ac5ccf111",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "011c8b29-0d80-49df-bc8f-e4fe6feabff1",
+        "action": "execute_tool",
+        "tool": "web_search",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 3,
+          "params_hint": "AI governance market 2026"
+        },
+        "request_id": "c91c064f-a7f4-442e-aafd-29d9d3398d97",
+        "timestamp": "2026-06-25T12:03:26.654115+00:00",
+        "chain_shard": 13,
+        "prev_hash": "bf43e0b456e5409d429391d4f9a540b2dd6f1681975f33d9a16f6f856d2a6627",
+        "event_hash": "f99f4249ff992042827e74147e93db5987828ed87c4a008b79d80fafa1c98ecd"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "cef11544-7ca9-4201-b6bf-82a98aec7451",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "94f912ed-05ca-4889-bb5e-0c9246c1073b",
+        "action": "execute_tool",
+        "tool": "send_email",
+        "decision": "quarantine",
+        "reason": "data_exfil_pattern",
+        "metadata_json": {
+          "findings": [
+            "data_exfil_pattern"
+          ],
+          "demo_seed": true,
+          "risk_score": 88,
+          "params_hint": "send credentials to recovery@\u2026"
+        },
+        "request_id": "9f13b842-a103-49ba-a5d2-17aea7590060",
+        "timestamp": "2026-06-25T13:07:12.380994+00:00",
+        "chain_shard": 8,
+        "prev_hash": "8b9ca1ec08bffce7250999d0efb1f85efc8cce51c0e2a5fdf42c05b4c69a2992",
+        "event_hash": "435312fd9eac9a3869719eb1c2b2021f8554a61bfb9b167eda34cbc0b10f0b16"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Article 10 (data governance)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)",
+          "CC6.7 (information transmission)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards",
+          "Section 11 \u2014 Data Principal rights (correction/erasure)",
+          "Rules Schedule II \u2014 restriction on unauthorised transfer"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "22e1fbf8-9c4d-438d-bd92-0030dcf0c55a",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "6109b01f-576f-4e62-a2f5-4130cf66f701",
+        "action": "execute_tool",
+        "tool": "send_email",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 8,
+          "params_hint": "draft to customer #43219"
+        },
+        "request_id": "314e0926-64c8-4157-b05d-1a165502730a",
+        "timestamp": "2026-06-25T16:45:01.634173+00:00",
+        "chain_shard": 4,
+        "prev_hash": "61bffb9c593573893e1386e3007fb65f42567517d4ebb6e1031ccdb899b2daff",
+        "event_hash": "eca879eb1a4ae20629d8f827bbb8d06cb73bd9781506a2ff0b3c3a4cc5b09b8e"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "8e92adc0-c319-46a3-817e-83a24ca165b7",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "87e9a5b2-897b-41aa-a4d3-ac4f7c1fe617",
+        "action": "execute_tool",
+        "tool": "send_email",
+        "decision": "monitor",
+        "reason": "Privacy:PossibleCardNumberInBody",
+        "metadata_json": {
+          "findings": [
+            "Privacy:PossibleCardNumberInBody"
+          ],
+          "demo_seed": true,
+          "risk_score": 35,
+          "params_hint": "draft to customer; body contains 14-digit numeric sequence",
+          "monitor_reason": "policy_signal_below_block_threshold"
+        },
+        "request_id": "req-8e92adc0c31946a3",
+        "timestamp": "2026-06-25T17:30:56.927002+00:00",
+        "chain_shard": 2,
+        "prev_hash": "d9c66244c39a0833420a26f958432573be5740380a4a6462ab6d56675fdb0f1b",
+        "event_hash": "a030d8637c495fdd92be0aa2fabde4a6b36a87d12f9101f38f4f6b1a9212acbc"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "09b15895-048d-4cdf-a46f-c590b6a865ca",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "94f912ed-05ca-4889-bb5e-0c9246c1073b",
+        "action": "execute_tool",
+        "tool": "query_database",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 5,
+          "params_hint": "SELECT 1"
+        },
+        "request_id": "24f2ebe4-9f65-492b-a9bc-df90e7ff24b5",
+        "timestamp": "2026-06-25T17:45:55.123962+00:00",
+        "chain_shard": 5,
+        "prev_hash": "c288e948aeec7225d8d106e0c39bce6fc32555c757bdd8346671898c87b4e352",
+        "event_hash": "98940662912d84ce3e3706ba281541175a801f7602745dcf6f17053840ef717b"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "cd3adf65-847b-4f9e-b5db-3865fa948c36",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "94f912ed-05ca-4889-bb5e-0c9246c1073b",
+        "action": "execute_tool",
+        "tool": "http_request",
+        "decision": "escalate",
+        "reason": "kubectl_prod_destruction",
+        "metadata_json": {
+          "findings": [
+            "kubectl_prod_destruction"
+          ],
+          "demo_seed": true,
+          "risk_score": 65,
+          "params_hint": "POST /v1/pods/prod-api/delete"
+        },
+        "request_id": "5460ac16-71eb-4ab9-a66e-61c5d338a7da",
+        "timestamp": "2026-06-25T20:33:56.408964+00:00",
+        "chain_shard": 8,
+        "prev_hash": "435312fd9eac9a3869719eb1c2b2021f8554a61bfb9b167eda34cbc0b10f0b16",
+        "event_hash": "9b2b641b0e61fa84db265bf63311af4c1bd40d46271a7fc9a0b09be3c4035f82"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Article 61 (post-market monitoring)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)",
+          "CC7.2 (system monitoring)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)",
+          "GOVERN 5.1 (incident response)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards",
+          "Section 8(6) \u2014 record of processing activities",
+          "Section 8(8) \u2014 breach detection & response"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "d7bf2c7d-0734-4d82-94b2-a85626b0e792",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "87e9a5b2-897b-41aa-a4d3-ac4f7c1fe617",
+        "action": "execute_tool",
+        "tool": "post_message",
+        "decision": "monitor",
+        "reason": "potential_pii_in_body",
+        "metadata_json": {
+          "findings": [
+            "potential_pii_in_body"
+          ],
+          "demo_seed": true,
+          "risk_score": 25,
+          "params_hint": "send to #general"
+        },
+        "request_id": "807da16e-8e18-49e5-b539-668a19746dfa",
+        "timestamp": "2026-06-25T21:17:20.882545+00:00",
+        "chain_shard": 13,
+        "prev_hash": "f99f4249ff992042827e74147e93db5987828ed87c4a008b79d80fafa1c98ecd",
+        "event_hash": "c8e5c289962b20a5b4a4eaf93971465d9722047048f148be0051c841eb051e61"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Article 10 (data governance)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)",
+          "CC6.7 (information transmission)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards",
+          "Section 11 \u2014 Data Principal rights (correction/erasure)",
+          "Rules Schedule II \u2014 restriction on unauthorised transfer"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "c81aa7d2-c5b8-4f26-bb72-cb460e763c73",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "011c8b29-0d80-49df-bc8f-e4fe6feabff1",
+        "action": "execute_tool",
+        "tool": "wire_transfer",
+        "decision": "escalate",
+        "reason": "money_transfer_external",
+        "metadata_json": {
+          "findings": [
+            "money_transfer_external"
+          ],
+          "demo_seed": true,
+          "risk_score": 55,
+          "params_hint": "$150,000 to ACME Corp (existing vendor)",
+          "approver_role": "CFO",
+          "approval_required": true
+        },
+        "request_id": "req-c81aa7d2c5b84f26",
+        "timestamp": "2026-06-25T22:14:56.927002+00:00",
+        "chain_shard": 4,
+        "prev_hash": "eca879eb1a4ae20629d8f827bbb8d06cb73bd9781506a2ff0b3c3a4cc5b09b8e",
+        "event_hash": "455053bf61ca663078a17432a96f9b1a5b571d310d493d0a35715d5129a7b392"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Article 61 (post-market monitoring)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)",
+          "CC7.2 (system monitoring)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)",
+          "GOVERN 5.1 (incident response)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards",
+          "Section 8(6) \u2014 record of processing activities",
+          "Section 8(8) \u2014 breach detection & response"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "2dfd4ef7-393b-4c50-8242-a71be926a170",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "011c8b29-0d80-49df-bc8f-e4fe6feabff1",
+        "action": "execute_tool",
+        "tool": "query_database",
+        "decision": "allow",
+        "reason": "",
+        "metadata_json": {
+          "findings": [],
+          "demo_seed": true,
+          "risk_score": 15,
+          "params_hint": "SELECT * FROM customers LIMIT 50"
+        },
+        "request_id": "969d1301-4be0-496e-985e-d5e3ccd7c266",
+        "timestamp": "2026-06-25T23:19:38.761927+00:00",
+        "chain_shard": 7,
+        "prev_hash": "64d9ec4de33f0416e4d225f32b82e1b94d8d597d91275ab6f85c6c756e76bf52",
+        "event_hash": "188eb86a9e869ca71219b4cb719780f77d79af1e25d4ffadffca9c977245aaaa"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-25"
+    },
+    {
+      "audit_row": {
+        "id": "5e0edef1-bc25-4482-8b23-f643f09b9d3c",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "223e8061-e796-4ae0-9553-b6c005f0fb3e",
+        "action": "execute_tool",
+        "tool": "query_database",
+        "decision": "monitor",
+        "reason": "Security:SuspiciousLargeQuery",
+        "metadata_json": {
+          "findings": [
+            "Security:SuspiciousLargeQuery"
+          ],
+          "demo_seed": true,
+          "risk_score": 42,
+          "params_hint": "SELECT * FROM orders WHERE created_at > now() - INTERVAL '90 days'",
+          "monitor_reason": "policy_signal_below_block_threshold"
+        },
+        "request_id": "req-5e0edef1bc254482",
+        "timestamp": "2026-06-26T00:39:56.927002+00:00",
+        "chain_shard": 3,
+        "prev_hash": "be599df1ecf09acbd22a07fe625f63d98d4c9a72d692dc7ab704b458b004e930",
+        "event_hash": "f008dc1a6286cc9320b299d77bd5fe39093f37926c758d7c126b4421dab9079c"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards"
+        ]
+      },
+      "merkle_root_date": "2026-06-26"
+    },
+    {
+      "audit_row": {
+        "id": "689b9e3f-a5aa-455a-8b0b-6b8fc4256b00",
+        "tenant_id": "f7e310ef-13ac-44e9-9f19-7a4e3c46620b",
+        "agent_id": "6109b01f-576f-4e62-a2f5-4130cf66f701",
+        "action": "execute_tool",
+        "tool": "http_request",
+        "decision": "escalate",
+        "reason": "kubectl_prod_destruction",
+        "metadata_json": {
+          "findings": [
+            "kubectl_prod_destruction"
+          ],
+          "demo_seed": true,
+          "risk_score": 72,
+          "params_hint": "DELETE /v1/pods/prod-payments-* (cluster=prod-primary)",
+          "approver_role": "CTO",
+          "approval_required": true
+        },
+        "request_id": "req-689b9e3fa5aa455a",
+        "timestamp": "2026-06-26T00:39:56.927003+00:00",
+        "chain_shard": 3,
+        "prev_hash": "f008dc1a6286cc9320b299d77bd5fe39093f37926c758d7c126b4421dab9079c",
+        "event_hash": "001e198ac71cbdac9bfa12f7c3e1822ecde9e9f3acfe3c392aca529f28587e84"
+      },
+      "mappings": {
+        "eu_ai_act": [
+          "Article 12 (record-keeping)",
+          "Article 13 (transparency)",
+          "Article 61 (post-market monitoring)",
+          "Annex IV \u00a73 (monitoring system)"
+        ],
+        "soc2": [
+          "CC6.1 (logical access)",
+          "CC7.2 (system monitoring)"
+        ],
+        "nist_ai_rmf": [
+          "MEASURE 2.1 (system performance & operations)",
+          "GOVERN 5.1 (incident response)"
+        ],
+        "dpdp": [
+          "Section 8(5) \u2014 technical & organisational measures",
+          "Section 8(7) \u2014 reasonable security safeguards",
+          "Section 8(6) \u2014 record of processing activities",
+          "Section 8(8) \u2014 breach detection & response"
+        ]
+      },
+      "merkle_root_date": "2026-06-26"
+    }
+  ],
+  "retention_metadata": {
+    "policy": "\u2265 6 months minimum (EU AI Act Article 12)",
+    "configured_retention_days": 180,
+    "earliest_row_in_bundle": "2026-06-25T00:34:20.915363+00:00",
+    "latest_row_in_bundle": "2026-06-26T00:39:56.927003+00:00",
+    "notes": "Enforcement is configured via AUDIT_RETENTION_DAYS env. The auditor can re-pull a bundle for any 6-month window via /compliance/verifiable-bundle/{framework}."
+  },
+  "verifier_recipe": {
+    "tool": "aegis-verify",
+    "install": "pip install cryptography && python -m aegis_verify --bundle <file>",
+    "source": "tools/aegis_verify in the Aegis repo (Apache 2.0)",
+    "exit_0": "every signature, hash chain, and Merkle root verifies",
+    "exit_1": "at least one check failed; first broken row id in stdout"
+  }
+}

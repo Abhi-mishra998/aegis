@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-06-26T04:55:51.841497+00:00",
+  "tenant_id": "bc30f750-ebe8-4200-b00a-fc0eb78d5088",
+  "total": 20,
+  "claude_emitted_tool_call": 7,
+  "claude_refused": 13,
+  "aegis_allowed_200": 2,
+  "aegis_blocked_403": 5,
+  "aegis_rate_limited_429": 0
+}
