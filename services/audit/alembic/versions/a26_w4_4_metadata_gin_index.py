@@ -29,14 +29,44 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
-            "ix_audit_logs_metadata_json_gin "
-            "ON audit_logs USING gin (metadata_json jsonb_path_ops)"
-        )
+    # Skip-if-not-owner. In the prod-ha cluster the audit_logs table is
+    # owned by the RDS master, not the application user the audit service
+    # logs in as. `CREATE INDEX CONCURRENTLY` requires table ownership;
+    # an unprivileged attempt fails with `InsufficientPrivilegeError:
+    # must be owner of table audit_logs` and crashes the container loop
+    # at every restart (the audit-Wave-4 first deploy attempt). We log
+    # and continue; a DBA applies the index manually with elevated
+    # creds: psql -c '<the CREATE INDEX statement below>'.
+    sql = (
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+        "ix_audit_logs_metadata_json_gin "
+        "ON audit_logs USING gin (metadata_json jsonb_path_ops)"
+    )
+    try:
+        with op.get_context().autocommit_block():
+            op.execute(sql)
+    except Exception as exc:
+        # Only swallow privilege errors. Anything else (syntax, dialect
+        # mismatch, out-of-disk) should still crash so we notice.
+        if "must be owner" in str(exc).lower() or "permission denied" in str(exc).lower() or "insufficientprivilege" in type(exc).__name__.lower():
+            import logging
+            logging.getLogger(__name__).warning(
+                "a26_w4_4_metadata_gin: skipped CREATE INDEX (not table owner). "
+                "Apply manually with elevated creds: %s", sql
+            )
+        else:
+            raise
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_audit_logs_metadata_json_gin")
+    try:
+        with op.get_context().autocommit_block():
+            op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_audit_logs_metadata_json_gin")
+    except Exception as exc:
+        if "must be owner" in str(exc).lower() or "permission denied" in str(exc).lower():
+            import logging
+            logging.getLogger(__name__).warning(
+                "a26_w4_4_metadata_gin: skipped DROP INDEX (not table owner)"
+            )
+        else:
+            raise

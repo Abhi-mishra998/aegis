@@ -29,14 +29,38 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
-            "ix_audit_logs_tenant_agent_decision_ts "
-            "ON audit_logs (tenant_id, agent_id, decision, timestamp DESC)"
-        )
+    # Skip-if-not-owner — see sibling a26_w4_4_metadata_gin_index.py for
+    # the rationale. Same condition: audit service user is not the
+    # audit_logs owner in prod-ha, so CREATE INDEX must be deferred to
+    # a DBA with elevated creds.
+    sql = (
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+        "ix_audit_logs_tenant_agent_decision_ts "
+        "ON audit_logs (tenant_id, agent_id, decision, timestamp DESC)"
+    )
+    try:
+        with op.get_context().autocommit_block():
+            op.execute(sql)
+    except Exception as exc:
+        if "must be owner" in str(exc).lower() or "permission denied" in str(exc).lower() or "insufficientprivilege" in type(exc).__name__.lower():
+            import logging
+            logging.getLogger(__name__).warning(
+                "a26_w4_5_composite: skipped CREATE INDEX (not table owner). "
+                "Apply manually: %s", sql
+            )
+        else:
+            raise
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_audit_logs_tenant_agent_decision_ts")
+    try:
+        with op.get_context().autocommit_block():
+            op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_audit_logs_tenant_agent_decision_ts")
+    except Exception as exc:
+        if "must be owner" in str(exc).lower() or "permission denied" in str(exc).lower():
+            import logging
+            logging.getLogger(__name__).warning(
+                "a26_w4_5_composite: skipped DROP INDEX (not table owner)"
+            )
+        else:
+            raise
