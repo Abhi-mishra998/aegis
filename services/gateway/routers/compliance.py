@@ -36,6 +36,17 @@ def _base() -> str:
 
 # ── Compliance framework bundles ─────────────────────────────────────────
 
+@router.get("/compliance/frameworks", tags=["compliance"])
+async def compliance_frameworks(request: Request) -> Any:
+    """Sprint U13 2026-06-26 — proxy → audit service framework discovery.
+
+    The aegis-guide.md §32-F-19 walkthrough needed a way to discover the
+    valid framework names without already knowing them (the previous
+    UX was 'try one, read the 400 error'). Public — returns metadata
+    only, no tenant data. Exempted in middleware.py exempt-paths."""
+    return await trust_proxy(settings.AUDIT_SERVICE_URL, "/compliance/frameworks", request)
+
+
 @router.get("/compliance/eu-ai-act", tags=["compliance"])
 async def compliance_eu_ai_act(request: Request) -> Any:
     """Proxy → Audit service EU AI Act compliance bundle."""
