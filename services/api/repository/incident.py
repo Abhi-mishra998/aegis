@@ -99,9 +99,26 @@ class IncidentRepository:
         )
         return result.scalar_one_or_none()
 
-    async def bump_violation(self, incident_id: uuid.UUID) -> None:
-        """Increment violation_count and append a de-dup timeline event."""
-        result = await self.db.execute(select(Incident).where(Incident.id == incident_id))
+    async def bump_violation(
+        self, incident_id: uuid.UUID, tenant_id: uuid.UUID | None = None
+    ) -> None:
+        """Increment violation_count and append a de-dup timeline event.
+
+        arch-26 W2.6 2026-06-26 — defense-in-depth tenant_id filter.
+        Today the only caller (api/main.py:117) already validates the
+        incident's tenant via get_recent_by_dedup_key BEFORE invoking
+        this method, so cross-tenant exploitation is closed at the
+        call site. But if a future caller lands without that scoping,
+        the unfiltered lookup would let any incident_id bump any
+        tenant's incident. Belt-and-braces: accept optional tenant_id
+        and apply it as a hard filter when provided. Kept optional to
+        preserve the existing call signature; the caller in main.py is
+        updated in the same commit to pass it.
+        """
+        stmt = select(Incident).where(Incident.id == incident_id)
+        if tenant_id is not None:
+            stmt = stmt.where(Incident.tenant_id == tenant_id)
+        result = await self.db.execute(stmt)
         incident = result.scalar_one_or_none()
         if not incident:
             return

@@ -416,6 +416,27 @@ export default function Billing() {
   return (
     <div className="space-y-8 animate-fade-in max-w-[1400px] mx-auto">
 
+      {/* arch-26 W2.2 2026-06-26 — honesty banner. Invoice generation
+          is local-only — no stripe.Invoice.create() exists anywhere in
+          services/. INV-* rows live in Postgres and never sync to
+          Stripe. Customer reported "INV-202606-01 OPEN, not working"
+          and they were right. Until Stripe outbound ships, surface
+          this clearly instead of pretending. Keep the page (usage +
+          cost analytics ARE real and useful) but mark the invoice
+          section beta. */}
+      <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3 text-xs text-amber-300 flex items-start gap-2">
+        <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <div>
+          <div className="font-semibold text-amber-200">Invoices are usage-view only</div>
+          <div className="text-amber-300/80 mt-0.5">
+            Usage tracking + cost-per-agent rollup + ROI analytics on this page
+            are live. The Invoice table is a local ledger for visibility — Aegis
+            does <strong>not</strong> charge cards or sync to Stripe yet. Need
+            real invoicing? <a href="mailto:sales@aegisagent.in" className="underline hover:text-amber-100">Email sales@aegisagent.in</a> and we'll set up direct billing.
+          </div>
+        </div>
+      </div>
+
       {/* Sprint 9 — Plan & Upgrade card lives above the existing
           ROI analytics so the upgrade CTA is the first thing the
           buyer/owner sees on this page. */}
@@ -992,7 +1013,16 @@ export default function Billing() {
                   return (
                     <tr key={agent.agent_id} className="border-b border-[var(--border-subtle)] hover:bg-white/[0.02]">
                       <td className="py-2 pr-4">
-                        <span className="font-mono text-neutral-300">{agent.agent_id.slice(0, 8)}…</span>
+                        {/* arch-26 W2.4 — backend coalesces NULL / zero-UUID /
+                            literal "unknown" into one "system" bucket.
+                            Surface that as a clearer label than a UUID. */}
+                        {agent.agent_id === 'system' ? (
+                          <span className="font-mono text-amber-300/80" title="Calls where the gateway could not attribute an agent_id (anonymous / admin / pre-canonical) — bucketed together for clarity.">
+                            System / pre-canonical
+                          </span>
+                        ) : (
+                          <span className="font-mono text-neutral-300">{agent.agent_id.slice(0, 8)}…</span>
+                        )}
                         <div className="mt-1 h-1 rounded-full bg-white/[0.04] w-32">
                           <div
                             className="h-full rounded-full bg-indigo-500/60"

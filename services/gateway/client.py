@@ -172,7 +172,13 @@ class AgentMetadataCache:
 # TENANT METADATA CACHE
 # ---------------------------------------------------------------------------
 
-_TENANT_CACHE_TTL: int = 600  # 10 minutes
+# arch-26 W2.3 2026-06-26 — 600 → 60 s. Customer saw zero feedback from
+# the Enforce-mode button for up to 10 min because the exit-handler at
+# services/identity/router.py:225-234 deletes the Redis key but per-pod
+# in-process copies survive (the Redis delete doesn't push to other pods).
+# 60 s is the upper bound on how stale the shadow_mode_until flag can be
+# now. The real fix (write-through invalidation via pub/sub) is W4.7.
+_TENANT_CACHE_TTL: int = 60
 _TENANT_CACHE_PREFIX: str = "acp:tenant:meta:"
 
 
@@ -561,32 +567,65 @@ class ServiceClient:
         """
         Final unified decision engine call.
         Enforces Rule 4: Must fail closed if the decision engine is unavailable.
+
+        arch-26 W2.1 2026-06-26 — distinguish TRANSPORT failure from a real
+        policy DENY. Transport failures (timeout / connect refused / 503
+        from upstream / mesh issue) now return ``action="unavailable"`` so
+        the gateway middleware can map them to HTTP 503 + Retry-After
+        instead of a 403 ``policy_denied``. A real DENY from the decision
+        engine (200 OK with action="deny") still flows through unchanged.
+
+        The fail-closed contract holds: caller sees a verdict it must NOT
+        let the agent proceed past — but it can now distinguish "your call
+        was risky" (403) from "our backend is down" (503 retry).
         """
         client = await self.get_client()
         url = f"{settings.DECISION_SERVICE_URL.rstrip('/')}/evaluate"
         try:
-            # P4-1 FIX: Standardizing serialization (ensure strings for IDs)
             payload = {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in req_data.items()}
-
             headers = self._get_headers()
-            # P1-1 Phase 3 (2026-06-21): X-Mesh-Token only.
             headers["X-Mesh-Token"] = mint_service_token("gateway")
-
-            # NOTE: timeout is handled by ResilientClient via SLA/deadline logic.
-            # Passing it here leads to "multiple values for timeout" TypeError.
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             return resp.json()
-        except Exception as exc:
-            logger.error("decision_evaluation_failed",
-                         error=str(exc),
-                         error_type=type(exc).__name__,
-                         url=url)
-            # RULE 4: Fail closed. Do NOT return None.
+        except httpx.HTTPStatusError as exc:
+            # Upstream returned a non-2xx. 5xx is a transport-class failure
+            # (downstream service problem, not a policy verdict). 4xx (rare
+            # here — decision service shouldn't 4xx on a well-formed eval)
+            # is treated as deny-class so a malformed request is still safe.
+            is_transport = 500 <= exc.response.status_code < 600
+            logger.error("decision_evaluation_http_error",
+                         status=exc.response.status_code, url=url, is_transport=is_transport)
+            if is_transport:
+                return {
+                    "action": "unavailable",
+                    "risk": 1.0,
+                    "reasons": [f"Decision engine HTTP {exc.response.status_code}"],
+                    "_transport_failure": True,
+                }
+            return {"action": "deny", "risk": 1.0,
+                    "reasons": [f"Decision engine rejected request: HTTP {exc.response.status_code}"]}
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError,
+                httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError) as exc:
+            # Pure transport. Customer should retry; this is not a policy event.
+            logger.error("decision_evaluation_transport_failed",
+                         error_type=type(exc).__name__, url=url)
             return {
-                "action": "deny",
+                "action": "unavailable",
                 "risk": 1.0,
-                "reasons": [f"Decision engine unavailable: {type(exc).__name__}"]
+                "reasons": [f"Decision engine unreachable: {type(exc).__name__}"],
+                "_transport_failure": True,
+            }
+        except Exception as exc:
+            # Genuinely unknown failure — fail-closed to deny, but tag as
+            # transport so middleware can still surface 503 to the caller.
+            logger.error("decision_evaluation_unknown_error",
+                         error=str(exc), error_type=type(exc).__name__, url=url)
+            return {
+                "action": "unavailable",
+                "risk": 1.0,
+                "reasons": [f"Decision engine unavailable: {type(exc).__name__}"],
+                "_transport_failure": True,
             }
 
     # ------------------------------------------------------------------
