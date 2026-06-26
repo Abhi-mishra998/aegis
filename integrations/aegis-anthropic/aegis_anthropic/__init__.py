@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 __all__ = [
     "AegisAnthropic",
     "AegisAnthropicProxy",

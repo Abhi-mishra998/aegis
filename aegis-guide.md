@@ -297,12 +297,12 @@ the UUID in the SDK constructor.
 
 ## 8. Install the SDK
 
-| Stack | Install (current PyPI as of 2026-06-26) |
+| Stack | Install (current PyPI as of 2026-06-26 post-arch26) |
 |---|---|
-| Anthropic Python SDK | `pip install 'aegis-anthropic==1.1.3'` |
-| OpenAI Python SDK | `pip install 'aegis-openai==1.1.4'` (also `pip install openai`) |
-| LangChain agent | `pip install 'aegis-langchain==1.1.5'` |
-| AWS Bedrock Agents | `pip install 'aegis-bedrock[bedrock]==1.1.5'` |
+| Anthropic Python SDK | `pip install 'aegis-anthropic==1.1.4'` |
+| OpenAI Python SDK | `pip install 'aegis-openai==1.1.5'` (also `pip install openai`) |
+| LangChain agent | `pip install 'aegis-langchain==1.1.6'` |
+| AWS Bedrock Agents | `pip install 'aegis-bedrock[bedrock]==1.1.6'` |
 | Offline verifier (audit-only) | `pip install 'aegis-aevf==1.1.1'` → `aegis-verify --bundle <file>` |
 
 > Unpin any of the runtime SDKs (`pip install aegis-anthropic`) and you'll get
