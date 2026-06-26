@@ -359,6 +359,7 @@ export default function DecisionExplorer() {
               <input name="request_id"
                 type="text"
                 placeholder="request_id"
+                aria-label="Request ID — UUID of an /execute call to inspect"
                 value={requestId}
                 onChange={(e) => setRequestId(e.target.value)}
                 className="pl-8 pr-3 py-2 bg-neutral-900 border border-neutral-700 rounded-md text-sm w-full sm:w-64 focus:outline-none focus:border-neutral-500"
@@ -379,7 +380,17 @@ export default function DecisionExplorer() {
         <div className="mb-3 flex items-center justify-between gap-3 text-xs bg-emerald-950/40 border border-emerald-700/40 text-emerald-100 px-3 py-2 rounded">
           <span>
             New decision landed:{' '}
-            <code className="font-mono text-emerald-200">{liveBanner.request_id.slice(0, 28)}…</code>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(liveBanner.request_id)
+              }}
+              className="font-mono text-emerald-200 hover:text-emerald-100 underline-offset-2 hover:underline cursor-copy"
+              title={`Click to copy full request_id (${liveBanner.request_id})`}
+              aria-label={`Copy request_id ${liveBanner.request_id}`}
+            >
+              {liveBanner.request_id.slice(0, 28)}…
+            </button>
           </span>
           <div className="flex items-center gap-2">
             <button
