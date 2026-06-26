@@ -85,8 +85,13 @@ def _R(pattern: str, methods: Iterable[str], *, roles: Iterable[str] = (), min_r
 # Order matters: more-specific first.
 RULES: tuple[Rule, ...] = (
     # ── Workspace + identity ────────────────────────────────────────────
-    _R("/workspace/system-values",     ("PATCH",),       roles=("OWNER",)),
-    _R("/workspace/exit-shadow-mode",  ("POST",),        roles=("OWNER",)),
+    # arch-26 W1.1 2026-06-26 — was roles=("OWNER",) for both. The customer
+    # report ("I changed permission from OWNER to ADMIN — I am not able to
+    # see workspace where I put logo") was real: ADMIN couldn't brand the
+    # workspace or promote the tenant to enforce mode. Use min_role="ADMIN"
+    # which the ROLE_TIERS check at line 41 expands to OWNER+ADMIN+ROOT.
+    _R("/workspace/system-values",     ("PATCH",),       min_role="ADMIN"),
+    _R("/workspace/exit-shadow-mode",  ("POST",),        min_role="ADMIN"),
     _R("/workspace/apply-preset",      ("POST",),        roles=("OWNER",)),
     _R("/workspace/slack-config",      ("PUT",),         roles=("OWNER", "ADMIN")),
     _R("/workspace/slack-config",      ("GET",),         min_role="ADMIN"),

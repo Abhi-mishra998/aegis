@@ -52,6 +52,11 @@ class AgentRepository:
             select(Agent)
             .options(selectinload(Agent.permissions))
             .where(Agent.tenant_id == tenant_id)
+            # arch-26 W1.2 2026-06-26 — ghost-row fix. /summary already
+            # filters this; list() didn't. Customer reported "I delete the
+            # agent but still shows in UI." Soft-deleted rows are
+            # archive-only — never surface in the listing API.
+            .where(Agent.deleted_at.is_(None))
         )
         if owner_id:
             stmt = stmt.where(Agent.owner_id == owner_id)

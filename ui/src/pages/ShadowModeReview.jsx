@@ -15,6 +15,7 @@ import {
 import { auditService, workspaceService } from '../services/api';
 import { useSSE } from '../hooks/useSSE';
 import { useRole } from '../hooks/useRole';
+import { useAuth } from '../hooks/useAuth';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
 import ConfirmDialog from '../components/Common/ConfirmDialog';
@@ -73,6 +74,7 @@ function formatRelative(iso) {
 
 export default function ShadowModeReview() {
   const { isOwner, canExitShadowMode } = useRole();
+  const { addToast } = useAuth();
 
   const [workspace, setWorkspace] = useState(null);
   const [events, setEvents] = useState([]);
@@ -139,8 +141,25 @@ export default function ShadowModeReview() {
       await workspaceService.exitShadowMode();
       setShowExitDialog(false);
       setRefreshTick((t) => t + 1);
+      // arch-26 W1.4 2026-06-26 — customer saw no feedback after click and
+      // assumed the button was broken (the tenant cache TTL meant the
+      // status pill stayed "Shadow" for up to 10 min). Toast confirms the
+      // POST succeeded; the status pill follows when the cache refreshes
+      // (W2.3 cuts that TTL to 60s).
+      addToast?.({
+        type: 'success',
+        title: 'Enforce mode active',
+        body: 'Tenant exited shadow mode. New deny/escalate decisions now block at runtime. Status pill refreshes within 1 minute.',
+        ttl: 8000,
+      });
     } catch (err) {
       setError(err?.message || 'Exit shadow mode failed');
+      addToast?.({
+        type: 'error',
+        title: 'Exit shadow mode failed',
+        body: err?.message || 'Try again, or check the Settings → Workspace page for status.',
+        ttl: 8000,
+      });
     } finally {
       setExiting(false);
     }
