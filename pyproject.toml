@@ -106,8 +106,15 @@ packages = ["acp", "sdk", "sdk.acp_client"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# arch-26 W4.1 — repo root on pytest's sys.path so `from services.X import Y`
+# resolves in unit tests run from any CWD. The repo uses implicit namespace
+# packages (services/ has no __init__.py); --import-mode=importlib is the
+# pytest-recommended mode for that layout (the legacy "prepend" import mode
+# refuses namespace packages). Without this combo, even pre-existing tests
+# like tests/test_shadow_mode.py silently fail to collect on a clean checkout.
+pythonpath = ["."]
 testpaths = ["services", "sdk", "tests"]
-addopts = "-m 'not integration'"
+addopts = "-m 'not integration' --import-mode=importlib"
 markers = [
     "integration: requires a live Docker stack (deselected by default)",
 ]

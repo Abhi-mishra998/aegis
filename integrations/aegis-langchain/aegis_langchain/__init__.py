@@ -95,6 +95,23 @@ class _AegisGuard:
             "Content-Type": "application/json",
             "User-Agent": self._attach_user_agent_header(),
         }
+        # arch-26 W4.3 — reuse one httpx.Client for TCP/TLS pooling.
+        self._http: httpx.Client = httpx.Client(timeout=self._timeout)
+
+    def close(self) -> None:
+        h = getattr(self, "_http", None)
+        if h is not None:
+            try:
+                h.close()
+            except Exception:
+                pass
+            self._http = None  # type: ignore[assignment]
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _attach_user_agent_header(self) -> str:
         """Per-package User-Agent string sent on every /execute call."""
@@ -114,12 +131,12 @@ class _AegisGuard:
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                with httpx.Client(timeout=self._timeout) as c:
-                    resp = c.post(
-                        f"{self._url}/execute",
-                        headers=self._headers,
-                        json=payload,
-                    )
+                # arch-26 W4.3 — reuse self._http for connection pooling.
+                resp = self._http.post(
+                    f"{self._url}/execute",
+                    headers=self._headers,
+                    json=payload,
+                )
             except httpx.RequestError as exc:
                 # Connect / read / write / timeout — retry with linear
                 # backoff (0.1s, 0.2s, …). HTTP responses (4xx/5xx) are

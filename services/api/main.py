@@ -42,12 +42,55 @@ try:
         "Unix timestamp of the last successfully-processed incident event "
         "(alert if delta from now > 300s = consumer dead)",
     )
+    # arch-26 W4.8 / W4.9 — queue-depth + consumer-lag gauges for the
+    # other streams + groups this service consumes. Labeled metrics so
+    # one alertmanager rule covers every (stream, group) pair.
+    _STREAM_DEPTH = _Gauge(
+        "acp_redis_stream_depth",
+        "Current XLEN per Redis stream (per-service)",
+        ["stream"],
+    )
+    _CONSUMER_GROUP_LAG = _Gauge(
+        "acp_redis_consumer_group_lag",
+        "Pending entries per consumer group (xinfo_groups lag)",
+        ["stream", "group"],
+    )
 except Exception:  # prometheus unavailable in some test contexts
     _INCIDENT_QUEUE_DEPTH = None
     _INCIDENT_LAST_PROCESSED_TS = None
+    _STREAM_DEPTH = None
+    _CONSUMER_GROUP_LAG = None
 
 # In-process counter the /health endpoint reads even if Prometheus is off.
 _INCIDENT_LAST_PROCESSED: dict[str, float] = {"ts": 0.0, "depth": 0}
+
+
+async def _update_stream_metrics(redis, stream: str, *groups: str) -> None:
+    """arch-26 W4.8/W4.9 — pull XLEN + per-group lag from one stream and
+    push to Prometheus. Best-effort: any Redis error is swallowed so the
+    consumer loop is never disrupted by the observability side-channel.
+    """
+    if _STREAM_DEPTH is None:
+        return
+    try:
+        depth = int(await redis.xlen(stream) or 0)
+        _STREAM_DEPTH.labels(stream=stream).set(depth)
+    except Exception:
+        pass
+    if _CONSUMER_GROUP_LAG is None or not groups:
+        return
+    try:
+        gs = await redis.xinfo_groups(stream)
+        wanted = set(groups)
+        for g in gs:
+            name = g.get("name") if isinstance(g, dict) else g[1]
+            if isinstance(name, (bytes, bytearray)):
+                name = name.decode()
+            if name in wanted:
+                lag = g.get("lag") if isinstance(g, dict) else 0
+                _CONSUMER_GROUP_LAG.labels(stream=stream, group=name).set(int(lag or 0))
+    except Exception:
+        pass
 
 _INCIDENT_STREAM   = "acp:incidents:queue"
 _INCIDENT_GROUP    = "api-incident-worker"
@@ -89,6 +132,14 @@ async def _incident_consumer(redis, session_factory) -> None:
                     _INCIDENT_QUEUE_DEPTH.set(depth)
             except Exception:
                 pass
+
+            # arch-26 W4.8 / W4.9 — also export labeled stream/group
+            # metrics so the alertmanager rule pattern is uniform across
+            # streams. Includes both consumer groups on this stream
+            # (incident-worker + are-workers).
+            await _update_stream_metrics(
+                redis, _INCIDENT_STREAM, _INCIDENT_GROUP, _ARE_GROUP
+            )
 
             msgs = await redis.xreadgroup(
                 _INCIDENT_GROUP,
@@ -257,6 +308,10 @@ async def _audit_are_consumer(redis, session_factory) -> None:
             except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError):
                 await asyncio.sleep(1)
                 continue
+
+            # arch-26 W4.8 / W4.9 — labeled stream + group metrics
+            # (alertmanager rule fires on any stream/group lag > 100).
+            await _update_stream_metrics(redis, _AUDIT_STREAM, _AUDIT_ARE_GROUP)
 
             msgs = await redis.xreadgroup(
                 _AUDIT_ARE_GROUP, _AUDIT_ARE_CONSUMER,
