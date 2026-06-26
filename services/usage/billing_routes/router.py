@@ -221,15 +221,34 @@ async def get_cost_attribution(
     week_set: set[str] = set()
     agents_map: dict[str, dict] = {}
 
+    # arch-26 W2.4 2026-06-26 — coalesce "pre-canonical" bucket.
+    # Three failure modes used to produce three separate rows in the
+    # per-agent cost table that all rendered as "unknown..." in the UI:
+    #   1. NULL agent_id (gateway middleware initialized to UUID(int=0))
+    #   2. zero-UUID "00000000-0000-0000-0000-000000000000"
+    #   3. literal string "unknown" (DLQ replay path coerces NULL → this)
+    # Customer saw all three as confusing duplicates. Bucket them into
+    # one labeled row "system / pre-canonical" so the cost view is
+    # honest about what we don't yet attribute. Real fix is W3.3
+    # (canonicalize at write-time so this bucket goes to zero).
+    _SYSTEM_BUCKET = "system"  # surfaced to UI as "System / pre-canonical"
+    _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
     for row in rows:
-        aid  = str(row.agent_id) if row.agent_id else "unknown"
+        raw_aid = str(row.agent_id) if row.agent_id else None
+        if raw_aid is None or raw_aid in (_ZERO_UUID, "unknown", "None", ""):
+            aid = _SYSTEM_BUCKET
+        else:
+            aid = raw_aid
         week = row.iso_week or "unknown"
         week_set.add(week)
         if aid not in agents_map:
             agents_map[aid] = {"agent_id": aid, "total_cost": 0.0, "total_calls": 0, "by_week": {}}
         agents_map[aid]["total_cost"]  += float(row.cost or 0)
         agents_map[aid]["total_calls"] += int(row.calls or 0)
-        agents_map[aid]["by_week"][week] = float(row.cost or 0)
+        # Sum into existing week-bucket so multiple raw rows don't overwrite.
+        agents_map[aid]["by_week"][week] = round(
+            agents_map[aid]["by_week"].get(week, 0.0) + float(row.cost or 0), 6
+        )
 
     sorted_weeks = sorted(week_set)
     agents_list  = sorted(agents_map.values(), key=lambda a: a["total_cost"], reverse=True)

@@ -1732,6 +1732,31 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 "client_ip":      client_ip,
                 "metadata":       tool_metadata,
             })
+            # arch-26 W2.1 2026-06-26 — distinguish transport-503 from real
+            # policy-deny. evaluate_decision now sets _transport_failure=True
+            # on httpx errors / 5xx upstream / unknown exceptions. Return
+            # HTTP 503 with Retry-After so the SDK can back off, and don't
+            # pollute the incident log with a fake "policy_denied" event.
+            if isinstance(decision_data, dict) and decision_data.get("_transport_failure"):
+                logger.warning("decision_engine_transport_failure",
+                               tenant_id=t_id_str, agent_id=str(agent_id),
+                               reasons=decision_data.get("reasons", []))
+                detail = (decision_data.get("reasons") or ["Decision engine temporarily unavailable"])[0]
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "success": False,
+                        "error":   "decision_engine_unavailable",
+                        "detail":  detail,
+                        "meta": {
+                            "code":       503,
+                            "category":   "transport_failure",
+                            "request_id": request_id,
+                            "retry_after_seconds": 5,
+                        },
+                    },
+                    headers={"Retry-After": "5"},
+                )
             decision = Decision(**(decision_data or {"action": "allow", "risk": 0.0}))
             request.state.decision = decision
             action = decision.action.value if hasattr(decision.action, "value") else str(decision.action)

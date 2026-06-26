@@ -25,6 +25,30 @@ from services.api.schemas.incident import IncidentCreate
 
 logger = structlog.get_logger(__name__)
 
+# arch-26 W2.5 2026-06-26 — incident consumer liveness metric. The customer
+# experienced "no incidents shown" with no internal alert firing, because
+# we had ZERO observability on the incidents queue. _INCIDENT_LAST_PROCESSED_AT
+# is updated every time _process_one succeeds; _INCIDENT_QUEUE_DEPTH polls
+# XLEN once per loop. /health/incident-consumer surfaces both.
+import time as _time_for_metrics
+try:
+    from prometheus_client import Gauge as _Gauge
+    _INCIDENT_QUEUE_DEPTH = _Gauge(
+        "acp_incidents_queue_depth",
+        "Current XLEN of acp:incidents:queue (alert if > 100 for 5m)",
+    )
+    _INCIDENT_LAST_PROCESSED_TS = _Gauge(
+        "acp_incident_consumer_last_processed_ts_seconds",
+        "Unix timestamp of the last successfully-processed incident event "
+        "(alert if delta from now > 300s = consumer dead)",
+    )
+except Exception:  # prometheus unavailable in some test contexts
+    _INCIDENT_QUEUE_DEPTH = None
+    _INCIDENT_LAST_PROCESSED_TS = None
+
+# In-process counter the /health endpoint reads even if Prometheus is off.
+_INCIDENT_LAST_PROCESSED: dict[str, float] = {"ts": 0.0, "depth": 0}
+
 _INCIDENT_STREAM   = "acp:incidents:queue"
 _INCIDENT_GROUP    = "api-incident-worker"
 _INCIDENT_CONSUMER = "api-worker-1"
@@ -56,6 +80,16 @@ async def _incident_consumer(redis, session_factory) -> None:
 
     while True:
         try:
+            # arch-26 W2.5 — refresh queue-depth gauge on every loop tick
+            # (free piggyback on the existing xread cycle; no extra RTT).
+            try:
+                depth = int(await redis.xlen(_INCIDENT_STREAM) or 0)
+                _INCIDENT_LAST_PROCESSED["depth"] = depth
+                if _INCIDENT_QUEUE_DEPTH is not None:
+                    _INCIDENT_QUEUE_DEPTH.set(depth)
+            except Exception:
+                pass
+
             msgs = await redis.xreadgroup(
                 _INCIDENT_GROUP,
                 _INCIDENT_CONSUMER,
@@ -111,10 +145,13 @@ async def _process_one(redis, session_factory, msg_id, fields: dict) -> None:
             repo = IncidentRepository(db)
 
             if existing_id_bytes:
-                # Duplicate — bump violation counter on the existing open incident
+                # Duplicate — bump violation counter on the existing open incident.
+                # arch-26 W2.6 — pass tenant_id so the repo enforces the filter
+                # defensively even though the dedup_key is tenant-scoped.
                 existing_id = existing_id_bytes.decode() if isinstance(existing_id_bytes, bytes) else existing_id_bytes
                 try:
-                    await repo.bump_violation(uuid.UUID(existing_id))
+                    _tenant_id_for_bump = uuid.UUID(data["tenant_id"]) if data.get("tenant_id") else None
+                    await repo.bump_violation(uuid.UUID(existing_id), tenant_id=_tenant_id_for_bump)
                     logger.info("incident_dedup_bump", dedup_hash=dedup_hash, incident_id=existing_id)
                 except Exception as exc:
                     logger.warning("incident_dedup_bump_failed", error=str(exc))
@@ -137,6 +174,11 @@ async def _process_one(redis, session_factory, msg_id, fields: dict) -> None:
 
         # Acknowledge only on success
         await redis.xack(_INCIDENT_STREAM, _INCIDENT_GROUP, msg_id)
+        # arch-26 W2.5 — liveness signal
+        _now = _time_for_metrics.time()
+        _INCIDENT_LAST_PROCESSED["ts"] = _now
+        if _INCIDENT_LAST_PROCESSED_TS is not None:
+            _INCIDENT_LAST_PROCESSED_TS.set(_now)
 
     except Exception as exc:
         logger.error("incident_event_processing_failed", error=str(exc), msg_id=str(msg_id))
@@ -289,6 +331,37 @@ setup_app(app, "api-management")
 app.include_router(api_key_router, prefix="/api-keys", tags=["API Keys"])
 app.include_router(incident_router,                    tags=["Incidents"])
 app.include_router(are_router,                         tags=["ARE"])
+
+
+# arch-26 W2.5 2026-06-26 — incident consumer health probe. Ops + alertmanager
+# can poll this every 30s and page if status != "ok". Customer reported zero
+# incidents shown despite /execute deny events firing; root cause was a dead
+# consumer with no observability. Now any deviation surfaces here.
+@app.get("/health/incident-consumer", tags=["health"], include_in_schema=False)
+async def health_incident_consumer() -> dict:
+    now = _time_for_metrics.time()
+    last = _INCIDENT_LAST_PROCESSED.get("ts", 0.0) or 0.0
+    depth = int(_INCIDENT_LAST_PROCESSED.get("depth", 0) or 0)
+    lag_s = round(now - last, 1) if last > 0 else None
+
+    # Heuristic thresholds — keep aligned with alertmanager rule.
+    if last == 0.0 and depth == 0:
+        status = "warming"   # process just started, no events yet
+    elif lag_s is not None and lag_s > 300 and depth > 0:
+        status = "stuck"     # backlog + no recent processing → consumer dead
+    elif depth > 1000:
+        status = "backpressure"
+    else:
+        status = "ok"
+
+    return {
+        "status": status,
+        "queue_depth": depth,
+        "last_processed_at_ts": last,
+        "lag_seconds": lag_s,
+        "stream": _INCIDENT_STREAM,
+        "group": _INCIDENT_GROUP,
+    }
 
 
 # ── Internal throttle endpoint — called by autonomy-service playbook executor ──
