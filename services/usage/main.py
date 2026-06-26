@@ -194,12 +194,25 @@ async def billing_reconciliation_worker() -> None:
                 async with session_factory() as db:
                     try:
                         row_id = uuid.UUID(row["id"])
+                        # arch-26 W3.3 2026-06-26 — stop writing the literal
+                        # "unknown" string into usage_records. Use the same
+                        # "system" bucket label the cost-rollup query
+                        # already coalesces to (W2.4). At the data layer
+                        # this means the customer sees ONE "System /
+                        # pre-canonical" row instead of three confusing
+                        # ones. The proper fix (canonicalize at audit
+                        # write-time, persist canonical column) is
+                        # deferred — needs a schema migration + audit
+                        # writer touch and the rollup is now correct.
+                        _tool = (row.get("tool") or "").strip()
+                        if not _tool or _tool.lower() == "unknown":
+                            _tool = "system"
                         ins = (
                             pg_insert(UsageRecord)
                             .values(
                                 tenant_id=uuid.UUID(row["tenant_id"]),
                                 agent_id=uuid.UUID(row["agent_id"] or "00000000-0000-0000-0000-000000000000"),
-                                tool=row.get("tool", "unknown"),
+                                tool=_tool,
                                 units=1,
                                 cost=0.001,
                                 audit_id=row_id,

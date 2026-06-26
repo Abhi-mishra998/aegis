@@ -315,17 +315,27 @@ export default function ShadowModeReview() {
                       ) : (
                         <>
                           <ShieldOff size={28} className="text-red-400/60" aria-hidden="true" />
-                          <div className="text-sm text-amber-300">Shadow mode is off.</div>
+                          <div className="text-sm text-amber-300">Enforce mode active — shadow window is closed.</div>
                           <div className="text-xs max-w-md">
-                            Toggle shadow mode ON to see what your policies would have blocked
-                            without enforcing it. Reach out to your workspace owner to enable.
+                            {/* arch-26 W3.2 2026-06-26 — honest copy. The
+                                exit-shadow-mode action is one-shot in
+                                the current backend (no re-enter API).
+                                You can still author new policies under
+                                Policies → Staging and they run inline
+                                in enforce mode. To rehearse a draft
+                                policy before promoting, use the
+                                Simulator (replays against the last
+                                1,000 decisions). */}
+                            Your policies are blocking in real time. This page
+                            stays useful as the historical archive of every
+                            would-have-blocked event from your trial window.
                           </div>
                           <Link
-                            to="/policies?tab=staging"
+                            to="/policies?tab=simulator"
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/10 text-neutral-200 text-xs hover:bg-white/[0.04] mt-1"
                           >
                             <ArrowRight size={11} aria-hidden="true" />
-                            Configure shadow policies
+                            Open Policy Simulator
                           </Link>
                         </>
                       )}

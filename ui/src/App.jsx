@@ -355,7 +355,13 @@ function App() {
               <Route path="/security" element={<SecurityPage />} />
               <Route path="/security/policy" element={<SecurityPage />} />
               <Route path="/security/report" element={<SecurityPage />} />
-              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              {/* arch-26 W3.5 2026-06-26 — per-route ErrorBoundary on the
+                  two pages that mount the most third-party render code
+                  (charts, recharts, SkeletonLoader, SSE handlers). A
+                  single chart crash no longer white-screens the page;
+                  the boundary surfaces a recoverable error card with the
+                  incident_id for support. */}
+              <Route path="/dashboard" element={<ProtectedRoute><ErrorBoundary><Dashboard /></ErrorBoundary></ProtectedRoute>} />
               <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
 
               {/* Primary nav (5) */}
@@ -431,7 +437,7 @@ function App() {
               <Route path="/quota"            element={<ProtectedRoute><QuotaManagement /></ProtectedRoute>} />
               <Route path="/sso"              element={<ProtectedRoute><SsoSettings /></ProtectedRoute>} />
               <Route path="/notifications"    element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-              <Route path="/live-feed"        element={<ProtectedRoute><LiveFeed /></ProtectedRoute>} />
+              <Route path="/live-feed"        element={<ProtectedRoute><ErrorBoundary><LiveFeed /></ErrorBoundary></ProtectedRoute>} />
               <Route path="/users"            element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
               <Route path="/playbooks"        element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
               {/* Sprint 17 — Aegis for Teams: per-employee Claude usage + spend */}

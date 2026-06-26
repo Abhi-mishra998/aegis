@@ -33,6 +33,15 @@ from typing import Iterable
 # the /admin* rule now lists only ROOT.
 ROLE_TIERS = ("ROOT", "OWNER", "ADMIN", "SECURITY_ANALYST", "DEVELOPER", "READ_ONLY")
 
+# arch-26 W3.4 2026-06-26 — plan-tier ladder (highest → lowest). Mirrors
+# the Stripe price-id → tier mapping in services/gateway/routers/stripe_webhook.py.
+# enterprise inherits pro inherits starter inherits basic. A rule that
+# declares min_plan_tier="enterprise" requires the tenant be on enterprise
+# (no automatic upgrade). Today no rule uses this — the scaffold is in
+# place so when product decides what's gated (SSO, SCIM, custom Rego,
+# BAA features), it's a one-line add per rule.
+PLAN_TIERS = ("enterprise", "pro", "starter", "basic")
+
 
 def _meets(actual: str, minimum: str) -> bool:
     """True iff ``actual`` is at-least ``minimum`` in the tier hierarchy."""
@@ -41,12 +50,31 @@ def _meets(actual: str, minimum: str) -> bool:
     return ROLE_TIERS.index(actual) <= ROLE_TIERS.index(minimum)
 
 
+def _meets_plan_tier(actual: str, minimum: str | None) -> bool:
+    """True iff ``actual`` plan tier is at-least ``minimum``.
+
+    Returns True when minimum is None (no gating). When minimum is set
+    but actual is unknown (tenant metadata not yet loaded), fail-CLOSED
+    — refuse the route. The middleware reads the tenant plan from
+    request.state.plan_tier (populated by client.get_tenant_metadata)."""
+    if not minimum:
+        return True
+    a = (actual or "").lower()
+    m = minimum.lower()
+    if m not in PLAN_TIERS:
+        return False
+    if a not in PLAN_TIERS:
+        return False
+    return PLAN_TIERS.index(a) <= PLAN_TIERS.index(m)
+
+
 @dataclass(frozen=True)
 class Rule:
     pattern: str            # glob: `*` matches one path segment; trailing `*` matches any suffix
     methods: tuple[str, ...]  # ("GET",) or ("*",)
     roles: frozenset[str]   # explicit allow-set, OR
     min_role: str | None    # tier-based minimum (read-allows-all-above)
+    min_plan_tier: str | None = None  # arch-26 W3.4 — None means "no tier gate"
     _regex: "re.Pattern[str] | None" = None  # filled on first match()
 
     def matches(self, path: str, method: str) -> bool:
@@ -73,12 +101,20 @@ def _compile(pattern: str) -> "re.Pattern[str]":
     return re.compile(rf"^{regex}$")
 
 
-def _R(pattern: str, methods: Iterable[str], *, roles: Iterable[str] = (), min_role: str | None = None) -> Rule:
+def _R(
+    pattern: str,
+    methods: Iterable[str],
+    *,
+    roles: Iterable[str] = (),
+    min_role: str | None = None,
+    min_plan_tier: str | None = None,  # arch-26 W3.4 — None = no tier gate
+) -> Rule:
     return Rule(
         pattern=pattern,
         methods=tuple(m.upper() for m in methods),
         roles=frozenset(r.upper() for r in roles),
         min_role=min_role.upper() if min_role else None,
+        min_plan_tier=(min_plan_tier.lower() if min_plan_tier else None),
     )
 
 
@@ -262,25 +298,45 @@ def role_required(path: str, method: str) -> tuple[bool, str] | None:
     return None
 
 
-def is_authorized(path: str, method: str, actual_role: str) -> tuple[bool, str | None]:
+def is_authorized(
+    path: str,
+    method: str,
+    actual_role: str,
+    actual_plan_tier: str | None = None,  # arch-26 W3.4 — None = unknown tenant plan
+) -> tuple[bool, str | None]:
     """Decide if ``actual_role`` is allowed to call ``method path``.
 
     Returns (allowed, denial_reason_or_None).
 
     Routes not covered by any rule are permitted (fall-through to legacy
     permission_map). This keeps the change low-risk while we migrate.
+
+    arch-26 W3.4 — if the rule declares min_plan_tier, the tenant's
+    plan_tier must meet it. Unknown plan_tier (None) fails closed when
+    a rule requires one. No rule uses min_plan_tier today; scaffolding
+    only.
     """
     actual = (actual_role or "").upper()
     for r in RULES:
         if not r.matches(path, method):
             continue
+        # Role check first (existing behavior unchanged).
+        role_ok = False
         if r.roles and actual in r.roles:
-            return True, None
-        if r.min_role and _meets(actual, r.min_role):
-            return True, None
-        if not r.roles and not r.min_role:
-            return True, None
-        if r.roles:
-            return False, f"role {actual!r} not in {sorted(r.roles)} for {method} {path}"
-        return False, f"role {actual!r} below required min {r.min_role!r} for {method} {path}"
+            role_ok = True
+        elif r.min_role and _meets(actual, r.min_role):
+            role_ok = True
+        elif not r.roles and not r.min_role:
+            role_ok = True
+        if not role_ok:
+            if r.roles:
+                return False, f"role {actual!r} not in {sorted(r.roles)} for {method} {path}"
+            return False, f"role {actual!r} below required min {r.min_role!r} for {method} {path}"
+        # arch-26 W3.4 — plan-tier check (no-op when min_plan_tier is None).
+        if r.min_plan_tier and not _meets_plan_tier(actual_plan_tier or "", r.min_plan_tier):
+            return False, (
+                f"tenant plan {actual_plan_tier!r} below required min "
+                f"{r.min_plan_tier!r} for {method} {path}"
+            )
+        return True, None
     return True, None  # uncovered → allow (legacy fall-through)
