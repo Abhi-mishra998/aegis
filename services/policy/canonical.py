@@ -588,27 +588,45 @@ def _extract_k8s(params: dict[str, Any], blob_lower: str) -> dict[str, Any]:
     if "kubectl" not in cn and "helm " not in cn:
         return out
 
-    # k8s_verb
-    mv = re.search(r"\bkubectl\s+(\w+)", cn)
-    verb = mv.group(1).lower() if mv else ""
+    # k8s_verb — prefer structured single-word param if SDK shape is
+    # `tool_name=kubectl, arguments={"verb":"delete", ...}`. We require
+    # one word so a shell `command="kubectl delete namespace prod"`
+    # falls through to the regex extractor below (which sets verb=delete
+    # correctly, not the whole command line).
+    verb = ""
+    for k in ("verb", "action"):
+        v = params.get(k)
+        if isinstance(v, str) and v.strip() and " " not in v.strip():
+            verb = v.strip().lower()
+            break
+    if not verb:
+        mv = re.search(r"\bkubectl\s+(\w+)", cn)
+        if mv:
+            verb = mv.group(1).lower()
     if not verb and "helm" in cn:
         mvh = re.search(r"\bhelm\s+(\w+)", cn)
         if mvh:
             verb = mvh.group(1).lower()
     out["k8s_verb"] = verb
 
-    # namespace
+    # namespace — structured first, then fall back to the cmdline regexes.
     ns = ""
-    for pat in (
-        r"kubectl\s+(?:-n|--namespace=?)\s+(\S+)",
-        r"kubectl\s+delete\s+(?:ns|namespace)\s+(\S+)",
-        r"kubectl\s+delete\s+\S+\s+(?:-n|--namespace=?)\s+(\S+)",
-        r"helm\s+(?:uninstall|delete)\s+\S+(?:\s+-n|\s+--namespace=?)\s+(\S+)",
-    ):
-        m = re.search(pat, cn)
-        if m:
-            ns = m.group(1).strip("\"'")
+    for k in ("namespace", "ns", "target", "env", "environment"):
+        v = params.get(k)
+        if isinstance(v, str) and v.strip():
+            ns = v.strip()
             break
+    if not ns:
+        for pat in (
+            r"kubectl\s+(?:-n|--namespace=?)\s+(\S+)",
+            r"kubectl\s+delete\s+(?:ns|namespace)\s+(\S+)",
+            r"kubectl\s+delete\s+\S+\s+(?:-n|--namespace=?)\s+(\S+)",
+            r"helm\s+(?:uninstall|delete)\s+\S+(?:\s+-n|\s+--namespace=?)\s+(\S+)",
+        ):
+            m = re.search(pat, cn)
+            if m:
+                ns = m.group(1).strip("\"'")
+                break
     out["k8s_namespace"] = ns
 
     # targets_prod
@@ -632,15 +650,31 @@ def _extract_iac(params: dict[str, Any], blob_lower: str) -> dict[str, Any]:
     if not tool:
         return out
 
+    # action — structured param wins (SDK shape:
+    # `tool_name=terraform, arguments={"command":"destroy", ...}`).
     action = ""
-    for v in _IAC_DESTROY_VERBS:
-        if v in cn:
-            action = v
+    for k in ("command", "action", "verb"):
+        v = params.get(k)
+        if isinstance(v, str) and v.strip().lower() in _IAC_DESTROY_VERBS:
+            action = v.strip().lower()
+            break
+    if not action:
+        for v in _IAC_DESTROY_VERBS:
+            if v in cn:
+                action = v
+                break
+
+    # Also accept structured `target`/`env`/`environment` as a prod marker.
+    structured_prod = False
+    for k in ("target", "env", "environment", "workspace"):
+        v = params.get(k)
+        if isinstance(v, str) and v.strip().lower() in ("prod", "production", "live"):
+            structured_prod = True
             break
 
     out["iac_tool"] = tool
     out["iac_action"] = action
-    out["iac_targets_prod"] = any(m in cn for m in _IAC_PROD_MARKERS)
+    out["iac_targets_prod"] = structured_prod or any(m in cn for m in _IAC_PROD_MARKERS)
     return out
 
 
@@ -860,7 +894,15 @@ def normalize(tool_name: str, raw_args: dict[str, Any] | None) -> dict[str, Any]
     ) else dict(raw_args)
 
     # Build the lowercased blob for substring rules.
+    # Sprint U13 2026-06-26 — include the tool_name itself in the blob so
+    # extractors that look for `kubectl` / `terraform` / `send_email` as a
+    # trigger word also fire when the customer passes the tool name through
+    # the canonical `tool_name=` field (the SDK's preferred shape) instead
+    # of embedding it in a shell command string. Fixes the "tool=unknown
+    # → default allow" hole for §32-C-9 / §32-C-10.
     string_bag: list[str] = []
+    if tool_name:
+        string_bag.append(str(tool_name))
     _flatten_strings(params, string_bag)
     blob_lower = _normalize_for_match(" ".join(string_bag))
 
@@ -875,6 +917,10 @@ def normalize(tool_name: str, raw_args: dict[str, Any] | None) -> dict[str, Any]
     extracted.update(_extract_http(params, blob_lower))
 
     extracted["raw_norm"] = blob_lower[:2000]
+    # Sprint U13 — keep an original-case copy too so detectors that match
+    # vendor-prefixed secrets (AKIA…, ghp_…, eyJ… JWT) don't lose the case
+    # information that distinguishes a real key from a false positive.
+    extracted["raw_norm_original"] = " ".join(string_bag)[:2000]
     extracted["action_type"] = _classify_action_type(tool_name, params, extracted)
     findings, score = _signals_from_canonical(extracted)
     extracted["signal_findings"] = findings

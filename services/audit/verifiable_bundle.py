@@ -207,14 +207,26 @@ async def generate_verifiable_bundle(
     arguments still bound the transparency-root scan as an upper cap so
     a buggy caller can't pull years of roots by accident.
     """
-    # 1. Audit rows in the period, ordered by (chain_shard, timestamp) so
-    # the verifier's V3 (prev_hash chain) traversal hits them in chain order.
+    # 1. Audit rows in the period, ordered by (timestamp ASC, id ASC).
+    #
+    # Sprint U13 2026-06-26 — V3 chain-fix.
+    #
+    # Without the `id` tie-break, rows landing inside the same
+    # millisecond (the runaway_loop auto-quarantine fires 50+ rows in
+    # <2 s on the same shard) come back in whatever undefined order
+    # PostgreSQL picks for the equal-timestamp tie. The verifier walks
+    # bundle order, but the writer's prev_hash lookup uses
+    # `(timestamp DESC, id DESC)` — so the actual chain inside a
+    # same-timestamp burst is `id ASC`. If bundle order disagrees,
+    # V3_prev_hash_chain_per_shard reports false-positive breaks.
+    # Adding `id ASC` here makes bundle order EXACTLY the order the
+    # writer chained the rows.
     rows_q = (
         select(AuditLog)
         .where(AuditLog.tenant_id == tenant_id)
         .where(AuditLog.timestamp >= period_start)
         .where(AuditLog.timestamp <= period_end)
-        .order_by(AuditLog.timestamp.asc())
+        .order_by(AuditLog.timestamp.asc(), AuditLog.id.asc())
     )
     if audit_ids:
         # Empty list ≠ None — explicit empty means "no rows match".

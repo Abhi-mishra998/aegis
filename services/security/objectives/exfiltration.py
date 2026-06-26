@@ -23,6 +23,23 @@ will replace it with a pluggable ThreatIntelProvider.
 """
 from __future__ import annotations
 
+import re
+
+
+# Sprint U13 — high-confidence secret patterns. Each one is anchored on a
+# vendor prefix + minimum body length so we don't false-positive on
+# "Bearer foo" or short hex strings. Order doesn't matter (we union).
+_SECRET_PATTERNS = (
+    re.compile(r"\bsk-ant-(?:api|key)?[0-9a-z_-]{20,}", re.I),   # Anthropic
+    re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}"),            # OpenAI
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),                          # AWS access key id
+    re.compile(r"aws_secret_access_key[\"'\s:=]+[A-Za-z0-9/+]{30,}", re.I),
+    re.compile(r"\bxox[abprs]-[0-9A-Za-z-]{10,}"),               # Slack
+    re.compile(r"\bghp_[A-Za-z0-9]{30,}"),                        # GitHub PAT
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),  # JWT
+)
+
 
 _PII_MARKERS = (
     "customer", "customers", "patient", "patients",
@@ -84,5 +101,16 @@ def detect(c: dict, known_exfil_dests: tuple[str, ...] = ()) -> list[str]:
             and "external_pii_exfil" not in findings):
         if any(t in raw for t in _PII_MARKERS):
             findings.append("external_post_pii_unknown_dest")
+
+    # Sprint U13 2026-06-26 — credential-shaped pattern in any outbound
+    # message body. Covers send_email, http_request, slack post_message,
+    # webhook calls, etc. Catches §32-C-10 (Bearer sk-ant-... in an email
+    # body). raw_norm gets lowercased upstream so the case-insensitive
+    # patterns above stay correct; the AWS-key and JWT regexes that need
+    # original case are matched against the raw string before lowercase.
+    raw_orig = (c.get("raw_norm_original") or c.get("raw_norm") or "")
+    if any(p.search(raw_orig) for p in _SECRET_PATTERNS):
+        if "credential_in_message_body" not in findings:
+            findings.append("credential_in_message_body")
 
     return findings

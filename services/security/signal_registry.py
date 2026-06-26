@@ -493,6 +493,16 @@ _register(SignalDefinition(
     description="Wire ≥ $100K to external / offshore / unknown destination.",
 ))
 
+# Sprint U13 2026-06-26 — body-content secret detector. Closes §32-C-10.
+_register(SignalDefinition(
+    id="credential_in_message_body",
+    objective=SecurityObjective.EXFILTRATION,
+    severity=Severity.HIGH,
+    mitre_technique="T1567 Exfiltration Over Web Service",
+    default_score=75, default_response="deny",
+    description="Outbound message (email / webhook / chat post) body contains a high-confidence API-key, JWT, or AWS-secret pattern.",
+))
+
 
 # ---------------------------------------------------------------------------
 # Public API

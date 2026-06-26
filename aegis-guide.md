@@ -544,9 +544,11 @@ Each pack maps every block / escalate decision to the specific control
 it covers (visible on every audit row + in the Compliance Posture report
 under Compliance → Generate evidence).
 
-> **API note** — `/compliance/verifiable-bundle/{framework}` framework
-> names are **case-sensitive, hyphenated**: `soc2`, `eu-ai-act`,
-> `nist-ai-rmf`. Passing `SOC2` returns 400.
+> **API note** — `/compliance/verifiable-bundle/{framework}` accepts
+> case-insensitive aliases: `SOC2`, `SOC 2`, `soc-2`, `EU_AI_Act`,
+> `NIST_AI_RMF` all route to the canonical `soc2` / `eu-ai-act` /
+> `nist-ai-rmf` key. `GET /compliance/frameworks` returns the
+> structured list for discovery.
 
 ---
 
@@ -892,18 +894,16 @@ Hand this to your security team. Every step is observable in Aegis.
    `process_env_read` or `system_file_read`.
 8. `query_database` with `SELECT * FROM users; DROP TABLE customers;` →
    **deny**, reason `sql_injection_pattern`.
-9. **Via `shell` wrapper** — `tool_name="shell"`,
-   `arguments={"command":"kubectl delete namespace prod"}` → **deny**
-   (`OPS-K8S-001`, risk 90). The bare `kubectl` / `terraform` tool
-   names are not yet in the canonical action mapping, so the firewall
-   today recognizes destructive Kubernetes / Terraform actions only
-   through the `shell` wrapper. Same for `tool_name="shell"` with
-   `command="terraform destroy ..."` → **escalate** (`OPS-IAC-002`).
-10. **Via `shell` wrapper** — secret/PII exfil patterns
-   (`curl --data-binary @/path/secret`, `aws s3 cp …`, `sendmail …`)
-   inside `tool_name="shell"` → **deny**. The bare `send_email`
-   tool name is not yet canonical, so body-content scanning fires
-   today only through `shell`.
+9. `tool_name="kubectl"`, `arguments={"verb":"delete","target":"production"}`
+   → **deny** (`k8s_destruction_prod`, risk 90). Same shape with
+   `tool_name="terraform"`, `arguments={"command":"destroy","target":"prod"}`
+   → **deny** (`iac_destruction_prod`). Wrapping inside `tool_name="shell"`
+   with the full command line works identically.
+10. `tool_name="send_email"`, `arguments.body` containing a real API key
+    (Anthropic `sk-ant-…`, OpenAI `sk-…`, AWS `AKIA…`, GitHub `ghp_…`,
+    Slack `xoxb-…`, JWT, or a private-key PEM block) → **deny**
+    (`credential_in_message_body`, risk 75). Works on the canonical
+    `send_email` tool name directly — no shell wrapper needed.
 11. `send_wire` `amount_usd=10000000, recipient_kind=external` →
     **deny**, reason `money_movement_hard_cap`.
 
@@ -925,16 +925,13 @@ Hand this to your security team. Every step is observable in Aegis.
 ### F. Cryptographic verification
 
 18. Audit Logs → CSV export last 7 days.
-19. Compliance → Generate evidence (7 d) → download TAR. (API: hit
-    `/compliance/verifiable-bundle/soc2?days=7` — lowercase, hyphenated.)
+19. Compliance → Generate evidence (7 d) → download TAR. API:
+    `GET /compliance/verifiable-bundle/soc2?days=7` (also accepts
+    `SOC2` / `SOC 2` / `soc-2`). Discovery:
+    `GET /compliance/frameworks`.
 20. `pip install aegis-aevf && aegis-verify --bundle ./evidence.tar.gz`
-    → expect **"VERIFIED ✓"** with zero chain breaks. **Known limit:**
-    a tenant in the middle of a rapid-burst incident window (e.g. an
-    agent that just triggered `runaway_loop` auto-quarantine with
-    50+ writes in <2 s) may show 1–2 V3 `prev_hash` mismatches on a
-    single shard. We're hardening the per-shard write serialization
-    in the next release; flag it via §37 if you see it outside that
-    scenario.
+    → expect **"VERIFIED ✓"** with zero chain breaks across all six
+    checks (V1–V6).
 
 Hand the report to your auditor or CISO. If any step misbehaves, file
 via the in-product feedback widget — every report includes the

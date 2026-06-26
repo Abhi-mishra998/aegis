@@ -1040,6 +1040,46 @@ async def get_dpdp_evidence(
     return APIResponse(data=bundle)
 
 
+@compliance_router.get("/frameworks")
+async def list_frameworks() -> dict:
+    """Sprint U13 2026-06-26 — discovery endpoint.
+
+    A customer following aegis-guide.md §32-F-19 used to have to read
+    the 400 error to learn the valid framework names. Now they can
+    `GET /compliance/frameworks` and pick from a structured list.
+
+    Auth-free on purpose — this is metadata about what the server
+    supports, not tenant data.
+    """
+    return {
+        "success": True,
+        "data": {
+            "frameworks": [
+                {
+                    "id": "soc2",
+                    "name": "SOC 2 Type II",
+                    "controls": ["CC6.1", "CC7.2", "CC8.1"],
+                    "aliases": ["SOC2", "SOC 2", "soc-2", "soc_2"],
+                },
+                {
+                    "id": "eu-ai-act",
+                    "name": "EU AI Act",
+                    "controls": ["Article 12", "Article 13", "Article 61", "Annex IV §3"],
+                    "aliases": ["EU_AI_Act", "euaiact", "eu ai act"],
+                },
+                {
+                    "id": "nist-ai-rmf",
+                    "name": "NIST AI Risk Management Framework",
+                    "controls": ["GOVERN 5.1", "MEASURE 2.1"],
+                    "aliases": ["NIST_AI_RMF", "nistairmf", "nist ai rmf"],
+                },
+            ],
+            "bundle_endpoint": "/compliance/verifiable-bundle/{id}?days=N",
+            "offline_verifier": "pip install aegis-aevf  →  aegis-verify --bundle <file>",
+        },
+    }
+
+
 @compliance_router.get("/verifiable-bundle/{framework}")
 async def export_verifiable_bundle(
     framework: str,
@@ -1068,10 +1108,25 @@ async def export_verifiable_bundle(
     """
     from services.audit.verifiable_bundle import generate_verifiable_bundle
     _VALID = {"eu-ai-act", "nist-ai-rmf", "soc2"}
+    # Sprint U13 2026-06-26 — accept common casing/spacing/separator
+    # variants so 'SOC2', 'SOC 2', 'soc-2', 'eu_ai_act' all route to
+    # the canonical key. Closes the §32-F-19 'case-sensitive 400'.
+    _ALIAS = {
+        "soc2": "soc2", "soc 2": "soc2", "soc-2": "soc2", "soc_2": "soc2",
+        "eu-ai-act": "eu-ai-act", "eu_ai_act": "eu-ai-act", "euaiact": "eu-ai-act",
+        "eu ai act": "eu-ai-act",
+        "nist-ai-rmf": "nist-ai-rmf", "nist_ai_rmf": "nist-ai-rmf",
+        "nistairmf": "nist-ai-rmf", "nist ai rmf": "nist-ai-rmf",
+    }
+    framework = _ALIAS.get((framework or "").strip().lower(), framework)
     if framework not in _VALID:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown framework '{framework}'. Valid: {sorted(_VALID)}",
+            detail=(
+                f"Unknown framework '{framework}'. Valid (canonical): "
+                f"{sorted(_VALID)}. Aliases accepted: SOC2, SOC 2, "
+                f"soc-2, EU_AI_Act, NIST_AI_RMF (case-insensitive)."
+            ),
         )
 
     # matrix-26 P0-2 — resolve `days` convenience into explicit period.
