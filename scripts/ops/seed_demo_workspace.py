@@ -67,35 +67,41 @@ except ImportError:
     sys.exit(2)
 
 
+# matrix-26 P0-1 fix (2026-06-26) — added the tools each agent's
+# description implied but the allow-list omitted. Pre-fix the demo
+# 403'd on benign clicks like "kubectl get pods" (devops-agent had no
+# shell) or "GET https://example.com/health" (finance-bot had no
+# http_request), which made the buyer demo look broken when it was
+# actually correct RBAC enforcement against a too-narrow allow-list.
 DEMO_AGENTS = [
     {
         "name": "db-copilot",
         "description": "Natural-language SQL helper for the data team.",
-        "tools":       ["query_database", "read_file", "web_search"],
+        "tools":       ["query_database", "read_file", "web_search", "http_request"],
         "risk_level":  "medium",
     },
     {
         "name": "support-bot",
         "description": "Customer-support agent that drafts ticket replies.",
-        "tools":       ["send_email", "query_database", "web_search"],
+        "tools":       ["send_email", "query_database", "web_search", "http_request"],
         "risk_level":  "low",
     },
     {
         "name": "devops-agent",
         "description": "kubectl + terraform automation under approval gates.",
-        "tools":       ["http_request", "read_file", "write_file"],
+        "tools":       ["shell", "kubectl", "terraform", "http_request", "read_file", "write_file"],
         "risk_level":  "high",
     },
     {
         "name": "finance-bot",
         "description": "Treasury copilot — quotes, reconciliations, transfers.",
-        "tools":       ["query_database", "wire_transfer", "send_email"],
+        "tools":       ["query_database", "wire_transfer", "send_email", "http_request"],
         "risk_level":  "high",
     },
     {
         "name": "sales-research-agent",
         "description": "Outbound prospect researcher; reads CRM and web.",
-        "tools":       ["web_search", "query_database", "post_message"],
+        "tools":       ["web_search", "query_database", "post_message", "http_request"],
         "risk_level":  "low",
     },
 ]
