@@ -1427,10 +1427,16 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             )
                             _session_id_hdr = request.headers.get("X-Session-ID") or ""
                             if _session_id_hdr:
+                                # arch-26 W4.6 — pass tenant_id so the
+                                # Redis key is per-tenant scoped (two
+                                # tenants supplying the same X-Session-ID
+                                # no longer pollute each other's session
+                                # history).
                                 _seq = await record_session_action(
                                     self.redis,
                                     session_id=_session_id_hdr,
                                     action_class=_action_class,
+                                    tenant_id=t_id_str,
                                 )
                                 _chain = match_attack_chain(_seq)
                                 if _chain is not None:

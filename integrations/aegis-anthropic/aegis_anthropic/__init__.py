@@ -104,6 +104,36 @@ class _AegisGuard:
             "Content-Type": "application/json",
             "User-Agent": self._attach_user_agent_header(),
         }
+        # arch-26 W4.3 2026-06-26 — reuse one httpx.Client per SDK instance
+        # so we get TCP/TLS connection pooling. The previous per-call
+        # `with httpx.Client(...) as c:` pattern opened and closed a fresh
+        # connection on every /execute, adding ~50–150ms of TLS handshake
+        # latency on the hot path. The Client is closed in close()/__del__.
+        self._http: httpx.Client = httpx.Client(timeout=self._timeout)
+
+    def close(self) -> None:
+        """Release the underlying httpx connection pool.
+
+        Safe to call multiple times. Called automatically on __del__ as a
+        backstop, but explicit close() is preferred so the pool releases
+        deterministically (Python __del__ ordering is interpreter-dependent
+        and may run after the event loop is gone in async contexts).
+        """
+        h = getattr(self, "_http", None)
+        if h is not None:
+            try:
+                h.close()
+            except Exception:
+                pass
+            self._http = None  # type: ignore[assignment]
+
+    def __del__(self) -> None:  # noqa: D401 — destructor
+        # Best-effort cleanup; safe to no-op if attributes missing
+        # (e.g. __init__ raised partway through).
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _attach_user_agent_header(self) -> str:
         """Per-package User-Agent string sent on every /execute call."""
@@ -123,12 +153,14 @@ class _AegisGuard:
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                with httpx.Client(timeout=self._timeout) as c:
-                    resp = c.post(
-                        f"{self._url}/execute",
-                        headers=self._headers,
-                        json=payload,
-                    )
+                # arch-26 W4.3 — reuse self._http instead of opening a
+                # new Client per call. ~50-150ms saved on the hot path
+                # via TCP/TLS connection pooling.
+                resp = self._http.post(
+                    f"{self._url}/execute",
+                    headers=self._headers,
+                    json=payload,
+                )
             except httpx.RequestError as exc:
                 # Connect / read / write / timeout — retry with linear
                 # backoff (0.1s, 0.2s, …). HTTP responses (4xx/5xx) are

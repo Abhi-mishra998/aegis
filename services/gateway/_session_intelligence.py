@@ -239,14 +239,28 @@ async def record_session_action(
     *,
     session_id: str,
     action_class: str,
+    tenant_id: str | None = None,  # arch-26 W4.6 — per-tenant scoping
 ) -> list[str]:
     """Append the action class to the session list and return the trailing
     SESSION_WINDOW elements (most recent last). Best-effort; on Redis
     failure returns [action_class] so the caller can still classify the
-    single-step case."""
+    single-step case.
+
+    arch-26 W4.6 2026-06-26 — Redis key is now namespaced by tenant_id
+    when provided. The old key shape `acp:session:{session_id}:actions`
+    allowed two tenants with the same client-supplied X-Session-ID to
+    pollute each other's session history. The new shape
+    `acp:session:{tenant_id}:{session_id}:actions` is collision-safe
+    and migration-free (old keys expire naturally via SESSION_TTL_SECONDS).
+    Kept tenant_id optional so any caller that hasn't been updated
+    falls back to the old single-tenant shape — gradual rollout safe.
+    """
     if not session_id:
         return [action_class]
-    key = f"acp:session:{session_id}:actions"
+    if tenant_id:
+        key = f"acp:session:{tenant_id}:{session_id}:actions"
+    else:
+        key = f"acp:session:{session_id}:actions"
     try:
         pipe = redis.pipeline()
         pipe.rpush(key, action_class)
