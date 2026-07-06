@@ -14,7 +14,7 @@ data "aws_elb_service_account" "main" {}
 # ─── ALB access logs ───────────────────────────────────────────────────
 resource "aws_s3_bucket" "alb_logs" {
   bucket        = "${var.name_prefix}-alb-logs-${var.account_id}"
-  force_destroy = false
+  force_destroy = true # logs are ephemeral; TTL'd anyway — safe to purge versions on destroy
 
   tags = {
     Name = "${var.name_prefix}-alb-logs"

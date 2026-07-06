@@ -65,7 +65,7 @@ Response (only time the raw key is ever returned):
     "id":           "<key-uuid>",
     "tenant_id":    "<tenant-uuid>",
     "name":         "alice@acme.com — laptop SDK",
-    "api_key":      "acp_emp_8K3jH9xR2vN7pQ4mL1wB6tY5cF0sA8dE2",
+    "api_key":      "acp_emp_<32-char-random-secret>",
     "key_prefix":   "acp_emp_",
     "created_at":   "2026-06-17T11:02:14.521Z",
     "expires_at":   null
@@ -217,7 +217,7 @@ from aegis_sdk import AegisClient
 
 client = AegisClient(
     base_url="https://aegisagent.in",
-    api_key="acp_emp_8K3jH9xR2vN7pQ4mL1wB6tY5cF0sA8dE2",
+    api_key=os.environ["AEGIS_API_KEY"],   # or "acp_emp_<your-key-here>" — never inline in source
 )
 result = client.execute(agent_id="...", tool="...", payload={...})
 ```

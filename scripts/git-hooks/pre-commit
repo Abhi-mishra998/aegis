@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Aegis pre-commit hook — blocks a commit if staged content contains a
+# real-looking credential. Complements .gitignore (which stops obvious
+# files by name); this catches accidents like pasting a real key into a
+# .py, .md, .yaml, or .env.example.
+#
+# Enable once, per clone:
+#   git config core.hooksPath scripts/git-hooks
+#
+# Bypass in an emergency (a scrubbed fixture that legitimately matches):
+#   git commit --no-verify
+#
+# Exit codes:
+#   0 = clean
+#   1 = staged content contained a real-looking secret
+
+set -u
+
+RED=$'\033[1;31m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
+
+# Combined regex: one -E alternation. Vendor prefixes first (specific,
+# low false-positive), then generic patterns.
+regex='sk-ant-[a-zA-Z0-9_-]{20,}'
+regex="$regex"'|sk-proj-[a-zA-Z0-9_-]{20,}'
+regex="$regex"'|gsk_[a-zA-Z0-9]{40,}'
+regex="$regex"'|(pk|sk|whsec)_(live|test)_[a-zA-Z0-9]{20,}'
+regex="$regex"'|AKIA[0-9A-Z]{16}'
+regex="$regex"'|(gho|ghp|ghs|ghu|ghr)_[a-zA-Z0-9_-]{20,}'
+regex="$regex"'|glpat-[a-zA-Z0-9_-]{15,}'
+regex="$regex"'|xoxb-[0-9a-zA-Z-]{20,}'
+regex="$regex"'|xoxp-[0-9a-zA-Z-]{20,}'
+regex="$regex"'|hooks\.slack\.com/services/T[A-Z0-9]{5,}/B[A-Z0-9]{5,}/[a-zA-Z0-9]{20,}'
+regex="$regex"'|acp_(emp|api|svc)_[A-Za-z0-9]{20,}'
+regex="$regex"'|clerk_secret_[a-zA-Z0-9_]{20,}'
+regex="$regex"'|BEGIN (RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY'
+regex="$regex"'|eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{10,}'
+regex="$regex"'|(password|passwd|pwd)[[:space:]]*[:=][[:space:]]*"[^<"$][^"]{5,}"'
+# Common weak-default passwords — must be a VALUE, not prose. Match only
+# when quoted or after an assignment operator, to skip documentation.
+regex="$regex"'|"(admin1234|changeme|secretpassword|password123)"'
+regex="$regex"'|[:=][[:space:]]*(admin1234|changeme|secretpassword|password123)([[:space:]]|$)'
+regex="$regex"'|(postgres(ql)?|redis)://[a-zA-Z0-9_]+:[a-zA-Z0-9!#%*+_-]{6,}@[a-zA-Z0-9.-]+'
+
+# Files where matches are expected — this hook itself, docs that show the
+# shape of a token, sample fixtures.
+should_skip() {
+  case "$1" in
+    scripts/git-hooks/pre-commit) return 0 ;;
+    docs/security/api-keys.md) return 0 ;;
+    *.example|*.template) return 0 ;;
+    *.example.*|*.template.*) return 0 ;;
+  esac
+  return 1
+}
+
+# Get staged text files (added / modified / renamed / copied).
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+findings=$(mktemp -t aegis-pc.XXXXXX)
+trap 'rm -f "$findings"' EXIT
+
+hit=0
+IFS=$'\n'
+for f in $staged; do
+  [ -f "$f" ] || continue
+  should_skip "$f" && continue
+
+  # Skip binaries (grep -I). Use grep against staged blob content.
+  # `git show :FILE` prints the staged version.
+  if ! git show ":$f" 2>/dev/null | grep -Iq . 2>/dev/null; then
+    continue
+  fi
+
+  # Scan the staged blob. -n prefixes line number; -o prints match; head
+  # caps per-file spew.
+  matched=$(git show ":$f" 2>/dev/null | grep -nEo "$regex" 2>/dev/null | head -3)
+  if [ -n "$matched" ]; then
+    hit=1
+    while IFS= read -r m; do
+      printf '  %s:%s\n' "$f" "$m" >> "$findings"
+    done <<EOF
+$matched
+EOF
+  fi
+done
+unset IFS
+
+if [ $hit -eq 1 ]; then
+  printf "%spre-commit: credential-looking values found in staged content:%s\n" "$RED" "$NC"
+  cat "$findings"
+  printf "\n%sFix:%s scrub the value(s), re-stage, and commit again.\n" "$YELLOW" "$NC"
+  printf "%sBypass (for scrubbed fixtures that legitimately match):%s git commit --no-verify\n" "$YELLOW" "$NC"
+  exit 1
+fi
+
+exit 0

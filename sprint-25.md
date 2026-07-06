@@ -48,9 +48,9 @@ Ordered by dependency. Tickets marked **[BG]** run in the background (long-runni
 - **Evidence:** `reports/sprint-25/a2-ruff-f821.txt`
 
 **A3 — Purge hardcoded test credentials from shippable paths** *(2 hours)*
-- `services/gateway/tests/load/locustfile.py:46, 508-509` — replace `admin@acp.local` / `admin1234` / `postgres:postgres@localhost:5433` with env-var reads that bomb on missing values.
-- Search for any other `password = 'admin|test|changeme|devsecret'` patterns and fix.
-- Acceptance: grep for `password\s*=\s*['\"]admin|secret\s*=\s*['\"]changeme` across services/sdk returns empty.
+- `services/gateway/tests/load/locustfile.py:46, 508-509` — replace the hardcoded email / password / Postgres DSN with env-var reads that bomb on missing values.
+- Search for any other hardcoded default-password patterns (`admin`, `test`, `changeme`, `devsecret`) and fix.
+- Acceptance: `grep -RnE "password\s*=\s*['\"](admin|test|changeme|devsecret)" services/ sdk/` returns empty.
 - **Evidence:** `reports/sprint-25/a3-creds-purged.txt`
 
 **A4 — Replace `localhost:8000-8015` SDK defaults with fail-fast** *(2 hours)*

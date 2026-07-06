@@ -29,7 +29,10 @@ echo "GROQ_API_KEY=${GROQ_API_KEY}" >> infra/.env
 grep -q '^JWT_SECRET_KEY=' infra/.env || echo "JWT_SECRET_KEY=local-dev-secret-CHANGE-ME-CHANGE-ME-CHANGE-ME-CHANGE-ME" >> infra/.env
 grep -q '^INTERNAL_SECRET=' infra/.env || echo "INTERNAL_SECRET=local-dev-internal-secret-CHANGE-ME" >> infra/.env
 grep -q '^MESH_JWT_SECRET=' infra/.env || echo "MESH_JWT_SECRET=local-dev-mesh-secret-CHANGE-ME" >> infra/.env
-grep -q '^GRAFANA_ADMIN_PASSWORD=' infra/.env || echo "GRAFANA_ADMIN_PASSWORD=admin1234" >> infra/.env
+grep -q '^GRAFANA_ADMIN_PASSWORD=' infra/.env || {
+  read -s -p "Grafana admin password (local only, min 12 chars): " _p; echo
+  echo "GRAFANA_ADMIN_PASSWORD=$_p" >> infra/.env; unset _p
+}
 ```
 
 ## Boot the stack (~90 seconds)
@@ -48,12 +51,14 @@ When `docker compose ps` shows all containers `healthy`, you're ready.
 Open `http://localhost:5173/live-demo` (the UI's port is 5173 locally,
 NOT 80 — Vite's choice for dev consistency).
 
-Log in with the seed admin:
+Log in with the seed admin. Credentials come from what you set when running
+`scripts/utils/seed_admin.py` — the script prompts for them and never
+writes anything to disk:
 
 ```
 Tenant ID:  00000000-0000-0000-0000-000000000001
-Email:      admin@acp.local
-Password:   admin1234
+Email:      $AEGIS_ADMIN_EMAIL
+Password:   $AEGIS_ADMIN_PASSWORD
 ```
 
 Type the prompt. Click run. Same trace as prod.
@@ -64,7 +69,7 @@ Type the prompt. Click run. Same trace as prod.
 TOKEN=$(curl -s http://localhost:8000/auth/token \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
-  -d '{"email":"admin@acp.local","password":"admin1234"}' | jq -r .data.access_token)
+  -d "{\"email\":\"$AEGIS_ADMIN_EMAIL\",\"password\":\"$AEGIS_ADMIN_PASSWORD\"}" | jq -r .data.access_token)
 
 curl -s http://localhost:8000/demo/groq-agent \
   -H "Authorization: Bearer $TOKEN" \

@@ -196,7 +196,7 @@ This is **real security work.** Acknowledge it.
 | HIGH | `entries[-1]` without empty-check in compliance report. Empty period → IndexError → 500. | `services/audit/compliance.py:140` | Matrix tested populated tenants. |
 | HIGH | OIDC state split-and-unpack — `parts = state.split("|")` → `provider, tenant_id, ts, sig = parts` without checking len(parts) == 4. Malformed state → 500 instead of 401. | `services/identity/oidc.py:350-354` | Matrix sent valid state. |
 | HIGH | `services/gateway/routers/messages.py:740` — `tenant_uuid` assigned but never used. **Suggests a missing tenant-isolation check** in the `/v1/messages` LLM proxy. Needs human review. | `services/gateway/routers/messages.py:740` (F841) | No probe used the `/v1/messages` shape with cross-tenant body. |
-| HIGH | **Hardcoded test creds** `admin@acp.local` / `admin1234` in `services/gateway/tests/load/locustfile.py:46, 508-509`. If load-test artifacts ship in a container image (e.g., during a hasty deploy), these creds become provisionable production creds. | `services/gateway/tests/load/locustfile.py:46, 508-509` | Matrix didn't grep for hardcoded creds in test files. |
+| HIGH | **Hardcoded test creds** (default admin email + password literal) in `services/gateway/tests/load/locustfile.py:46, 508-509`. If load-test artifacts ship in a container image (e.g., during a hasty deploy), these creds become provisionable production creds. Exact values withheld from this doc — see the file. | `services/gateway/tests/load/locustfile.py:46, 508-509` | Matrix didn't grep for hardcoded creds in test files. |
 | HIGH | Bare `except` swallows SIEM forwarder errors in `audit/writer.py:202`. SIEM outage = no audit log forwarded + no alarm. Attacker can make SIEM unreachable and lose incident trail. | `services/audit/writer.py:202` | Matrix probed audit writes, not SIEM forward outage. |
 | HIGH | Bare `except: pass` on cache lookup in `audit/router.py:277` — cache corruption → silent fallback → no audit row of the fallback. | `services/audit/router.py:277` | Matrix doesn't test cache corruption. |
 
@@ -352,7 +352,7 @@ Doc-drift is moderate. Not catastrophic but not zero.
 | **OPS-HYGIENE-001:** Live Anthropic API key pasted in chat | HIGH | This conversation transcript |
 | **OPS-HYGIENE-002:** `MEMORY.md` exceeds its own 24KB ceiling | LOW | System warning |
 | **OPS-HYGIENE-003:** ~20 in-flight branches, half stale | LOW | `git branch -a` |
-| **OPS-HYGIENE-004:** Hardcoded test creds (`admin@acp.local` / `admin1234`) in load test files that could ship in container images | MEDIUM | `services/gateway/tests/load/locustfile.py:46, 508-509` |
+| **OPS-HYGIENE-004:** Hardcoded test creds in load test files that could ship in container images | MEDIUM | `services/gateway/tests/load/locustfile.py:46, 508-509` |
 | **OPS-HYGIENE-005:** Voice-agent code partially removed earlier this session; some Terraform secret still in repo pointing at decommissioned service | LOW | `infra/terraform/modules/secrets/main.tf:137` |
 | **OPS-HYGIENE-006:** Source of truth for `safe_deploy.sh` was S3 only until this week | MEDIUM (mitigated) | matrix-25 M.5 #1 |
 
