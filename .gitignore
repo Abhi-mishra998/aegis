@@ -50,6 +50,11 @@ infra/userlist.txt
 infra/kubernetes/base/acp-secret.yaml
 ui/.env.local
 **/secrets/**
+# The `secrets/` TF module is legitimate Terraform code (random_password +
+# aws_secretsmanager_secret resources — no cred VALUES). Whitelist it so
+# the broad **/secrets/** rule above doesn't hide it from CI.
+!infra/terraform/modules/secrets/
+!infra/terraform/modules/secrets/**
 **/*.pem
 **/*.key
 **/*.pub
@@ -76,6 +81,10 @@ CLIENT.md
 # OpenAPI dumps, probe results, hit counts, JWT lengths, demo passwords,
 # and account ids — fine for the operator's working tree, NOT for git.
 audit_*/
+# The `audit_kms/` TF module is legitimate infra code, not a session-audit
+# dir. Whitelist it so the audit_*/ rule above doesn't hide it from CI.
+!infra/terraform/modules/audit_kms/
+!infra/terraform/modules/audit_kms/**
 FIXES_APPLIED.md
 HONEST_STATUS_*.md
 DEPLOY_REPORT_*.md
