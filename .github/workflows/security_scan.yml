@@ -38,23 +38,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Trivy
-        # Both 0.24.0 and 0.28.0 failed to resolve at the action-runner
-        # marketplace lookup. Pin to `master` — trivy-action is a thin
-        # wrapper around the trivy CLI, and the CVE DB updates each run
-        # regardless of the wrapper version.
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
-          # Fail the job if any HIGH/CRITICAL CVE is found. To
-          # temporarily suppress, add to .trivyignore with an expiry
-          # comment and a tracking issue link.
-          exit-code: '1'
-          ignore-unfixed: true   # don't fail on unpatched CVEs we can't fix
+      # We ran aquasecurity/trivy-action at three different tags (0.24.0,
+      # 0.28.0, master) — each hit a different runner-marketplace or
+      # action-internal bug. Install trivy directly from the vendor script
+      # and invoke the CLI ourselves. Small step, one binary, no wrapper.
+      - name: Install trivy CLI
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trivy --version
+
+      - name: Run Trivy filesystem scan
+        run: |
+          trivy fs . \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1
+        # Findings are still uploaded below even on failure, so auditors
+        # see the SARIF even when the job goes red.
 
       - name: Upload Trivy SARIF to GitHub code scanning
         if: always()
