@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<!--
+  Sprint EI-14 (2026-06-20). Standalone status page mirror — published to
+  s3://aegis-public-roots-628478946931/status/index.html by the
+  release_bundle.yml workflow on every push to main. CNAME from
+  status.aegisagent.in points at the S3 website endpoint so this page
+  is reachable even if the main Aegis ALB is down (the WHOLE point of
+  a status page).
+
+  No JS framework, no build step, no third-party fetch except to the
+  same public S3 bucket the React /status page reads. If the bucket is
+  unreachable, we show a static error message and the bucket's CLI URL.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aegis — Status</title>
+  <meta name="description" content="Public uptime + nightly-check status page for the Aegis runtime AI governance platform." />
+  <link rel="icon" href="data:," />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { background: #000; color: #d4d4d4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+    header { padding: 64px 24px 32px; text-align: center; }
+    .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #6b6b6b; }
+    h1 { font-size: 30px; margin: 12px 0 16px; font-weight: 700; }
+    h1.green { color: #4ade80; }
+    h1.amber { color: #fbbf24; }
+    h1.neutral { color: #a3a3a3; }
+    .sub { color: #a3a3a3; font-size: 14px; max-width: 540px; margin: 0 auto; line-height: 1.6; }
+    section { padding: 24px 0; }
+    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #6b6b6b; margin: 0 0 12px; }
+    .checks { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 640px) { .checks { grid-template-columns: 1fr 1fr; } }
+    .check { padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    .check .label { font-size: 14px; color: #fff; font-weight: 500; }
+    .check .status { font-size: 11px; margin-top: 4px; }
+    .check.ok    { border-color: rgba(74,222,128,.30); background: rgba(74,222,128,.06); }
+    .check.fail  { border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.06); }
+    .check.ok    .status { color: #4ade80; }
+    .check.fail  .status { color: #f87171; }
+    .check.skip  .status { color: #737373; }
+    .uptime { padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+    .uptime .num { font-size: 32px; font-weight: 700; }
+    .num.green { color: #4ade80; }
+    .num.amber { color: #fbbf24; }
+    .num.red   { color: #f87171; }
+    pre { font-size: 11px; padding: 12px; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.06); border-radius: 6px; overflow-x: auto; color: #e5e5e5; line-height: 1.5; }
+    a { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { text-decoration: none; }
+    footer { padding: 64px 24px 96px; text-align: center; font-size: 11px; color: #737373; }
+    .err { color: #fbbf24; font-size: 12px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <div class="eyebrow" id="eyebrow">Status</div>
+    <h1 id="overall" class="neutral">Loading…</h1>
+    <p class="sub">
+      Every night three workflows run independent checks against our staging
+      environment + the public transparency bucket and publish the result
+      anonymously. This page reflects the most recent run.
+    </p>
+  </header>
+
+  <section class="wrap">
+    <h2 id="run-meta">Last nightly run</h2>
+    <div class="checks" id="checks">
+      <!-- populated by JS -->
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="uptime">
+      <div>
+        <h2 style="margin-bottom:4px;">30-day green-day rate</h2>
+        <div style="font-size:12px;color:#a3a3a3;" id="uptime-detail">—</div>
+      </div>
+      <div class="num neutral" id="uptime-pct">—</div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2>Raw artefacts (no credentials required)</h2>
+    <pre># Latest nightly run (status pill at the top of this page)
+aws s3 cp s3://aegis-public-roots-628478946931/nightly/latest.json - \
+  --no-sign-request
+
+# 30-day uptime rollup
+aws s3 cp s3://aegis-public-roots-628478946931/uptime/30day.json - \
+  --no-sign-request
+
+# Yesterday's SBOM CVE scan
+aws s3 cp s3://aegis-public-roots-628478946931/cve-history/yesterday.json - \
+  --no-sign-request</pre>
+  </section>
+
+  <footer class="wrap">
+    <p id="err" class="err" style="display:none;"></p>
+    <p>
+      <a href="https://aegisagent.in/trust">Back to Trust Center</a>
+      &nbsp;·&nbsp;
+      <a href="https://aegisagent.in">aegisagent.in</a>
+    </p>
+  </footer>
+
+<script>
+  // Reads the same artefacts the React /status page reads. The bucket is
+  // anonymously-readable; this page works without any Aegis-controlled
+  // service being up — that's the whole point.
+  const BUCKET = 'https://aegis-public-roots-628478946931.s3.amazonaws.com';
+  const CHECKS = [
+    { key: 'aevf_v1_v6',  label: 'Cryptographic audit chain (AEVF V1–V6)' },
+    { key: 'isolation',   label: 'Cross-tenant isolation (7-attack matrix)' },
+    { key: 'public_probe', label: 'Public surface (/health, /trust, security.txt)' },
+    { key: 'sbom_cve',    label: 'SBOM CVE diff (net-new HIGH+CRITICAL)' },
+    { key: 'chaos',       label: 'Chaos drill (docker kill OPA / Redis / DB-pool)' }
+  ];
+  const OK   = new Set(['pass','verified','success']);
+  const FAIL = new Set(['fail','new-cves','error']);
+  const SKIP = new Set(['no_roots','skip','','unknown',null,undefined]);
+
+  function pill(v) {
+    const s = String(v || '').toLowerCase();
+    if (OK.has(s))   return { cls: 'ok',   text: 'Operational' };
+    if (FAIL.has(s)) return { cls: 'fail', text: 'Incident' };
+    if (SKIP.has(s)) return { cls: 'skip', text: 'No data' };
+    return { cls: 'skip', text: String(v) };
+  }
+
+  function bust(url) { return url + '?t=' + Date.now(); }
+
+  async function load() {
+    try {
+      const [latest, uptime] = await Promise.all([
+        fetch(bust(BUCKET + '/nightly/latest.json')).then((r) => r.ok ? r.json() : null),
+        fetch(bust(BUCKET + '/uptime/30day.json')).then((r) => r.ok ? r.json() : null),
+      ]);
+      if (latest) render(latest);
+      if (uptime) renderUptime(uptime);
+      if (!latest) showError('latest.json not yet published');
+    } catch (e) {
+      showError(e && e.message ? e.message : 'public artefact unreachable');
+    }
+  }
+
+  function render(latest) {
+    document.getElementById('eyebrow').textContent = 'Status · ' + (latest.date || '—');
+    document.getElementById('run-meta').textContent = 'Last nightly run · ' + (latest.run_at_utc || '—');
+
+    const allGreen = CHECKS.every((c) => pill(latest[c.key]).cls === 'ok');
+    const head = document.getElementById('overall');
+    head.textContent = allGreen ? 'All systems operational' : 'See checks below';
+    head.className = allGreen ? 'green' : 'amber';
+
+    const host = document.getElementById('checks');
+    host.innerHTML = '';
+    for (const c of CHECKS) {
+      const p = pill(latest[c.key]);
+      const card = document.createElement('div');
+      card.className = 'check ' + p.cls;
+      card.innerHTML = '<div class="label"></div><div class="status"></div>';
+      card.querySelector('.label').textContent = c.label;
+      card.querySelector('.status').textContent = p.text;
+      host.appendChild(card);
+    }
+  }
+
+  function renderUptime(uptime) {
+    const pct = Number(uptime.green_pct || 0);
+    const el = document.getElementById('uptime-pct');
+    el.textContent = pct.toFixed(2) + '%';
+    el.className = 'num ' + (pct >= 99 ? 'green' : pct >= 95 ? 'amber' : 'red');
+    document.getElementById('uptime-detail').textContent =
+      'A day is "green" only when every nightly check passed AND no new HIGH+CRITICAL CVE appeared. ' +
+      (uptime.green_days || 0) + '/' + (uptime.total_days || 0) + ' days in the window.';
+  }
+
+  function showError(msg) {
+    const e = document.getElementById('err');
+    e.textContent = 'Could not load latest status from the public bucket: ' + msg;
+    e.style.display = 'block';
+  }
+
+  load();
+</script>
+</body>
+</html>
