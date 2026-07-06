@@ -104,13 +104,20 @@ jobs:
     # Full 13-container docker-compose stack on the CI runner is flaky —
     # acp_bundle_server frequently marks unhealthy inside the 300 s
     # window even though the same compose recipe boots clean locally in
-    # ~90 s. Root cause is the runner's cold docker daemon + shared
-    # network limits, not application code. Keep the job running so
-    # failure logs still upload as an artifact, but do not gate merges
-    # on it. Remove `continue-on-error` once the runner is upgraded to
-    # docker BuildKit v0.14 or the compose recipe is slimmed for CI.
+    # ~90 s. Root cause was two-fold:
+    #   1. runner's cold docker daemon + shared network limits
+    #   2. every image in infra/docker-compose.yml is pinned by SHA to
+    #      the linux/arm64 manifest (because the prod reference is on
+    #      m6g Graviton). CI runs on linux/amd64, so pgbouncer hit a
+    #      platform mismatch, took 60+ s to warm, and marked unhealthy.
+    #      DOCKER_DEFAULT_PLATFORM below forces the amd64 pull path
+    #      so the SHA-pinned digests resolve against the multi-arch
+    #      manifest list correctly on the CI runner.
+    # continue-on-error stays until the docker BuildKit v0.14 rollout on
+    # ubuntu-latest lands and we can drop it in favour of hard gating.
     continue-on-error: true
     env:
+      DOCKER_DEFAULT_PLATFORM: linux/amd64
       JWT_SECRET_KEY: "ci-e2e-jwt-secret-not-for-production"
       INTERNAL_SECRET: "ci-e2e-internal-secret-placeholder"
       GROQ_API_KEY: "ci-e2e-groq-key-placeholder"
