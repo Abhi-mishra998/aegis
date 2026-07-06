@@ -31,7 +31,10 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.0"
+          # infra/terraform/versions.tf requires ">= 1.10, < 2.0". Bump
+          # the CI runner to 1.10.x so `terraform init` doesn't error out
+          # with "Unsupported Terraform Core version".
+          terraform_version: "1.10.5"
 
       - name: Format check
         run: terraform fmt -check -recursive

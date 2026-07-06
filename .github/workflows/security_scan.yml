@@ -39,7 +39,11 @@ jobs:
           fetch-depth: 0
 
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        # Both 0.24.0 and 0.28.0 failed to resolve at the action-runner
+        # marketplace lookup. Pin to `master` — trivy-action is a thin
+        # wrapper around the trivy CLI, and the CVE DB updates each run
+        # regardless of the wrapper version.
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
