@@ -1,4 +1,4 @@
-# Aegis Documentation
+# Table of contents
 
 * [Home](README.md)
 
@@ -32,21 +32,21 @@
 ## Services
 
 * [Services Map](services/_index.md)
-* Hot path
+* [Hot path](services/hot-path/README.md)
   * [Gateway](services/gateway.md)
   * [Decision](services/decision.md)
   * [Audit](services/audit.md)
     * [Audit Signal Reference](services/audit-signal-reference.md)
   * [Identity](services/identity.md)
   * [Policy](services/policy.md)
-* Trust layer
+* [Trust layer](services/trust-layer/README.md)
   * [Registry](services/registry.md)
   * [Behavior](services/behavior.md)
   * [Identity Graph](services/identity-graph.md)
   * [Autonomy](services/autonomy.md)
   * [Flight Recorder](services/flight-recorder.md)
   * [Forensics](services/forensics.md)
-* Aggregation
+* [Aggregation](services/aggregation/README.md)
   * [Insight](services/insight.md)
   * [Learning](services/learning.md)
   * [Usage](services/usage.md)
@@ -55,14 +55,14 @@
 ## UI
 
 * [UI Map](ui/_index.md)
-* Primary nav
+* [Primary nav](ui/primary-nav/README.md)
   * [Live Demo](ui/primary/live-demo.md)
   * [Flight Recorder](ui/primary/flight-recorder.md)
   * [Policies](ui/primary/policies.md)
   * [Audit Trail](ui/primary/audit-trail.md)
   * [Incidents](ui/primary/incidents.md)
   * [Settings Hub](ui/primary/settings-hub.md)
-* Operations
+* [Operations](ui/operations/README.md)
   * [Agents](ui/operations/agents.md)
   * [Identity Graph](ui/operations/identity-graph.md)
   * [Threat Graph](ui/operations/threat-graph.md)
@@ -77,7 +77,7 @@
   * [Attack Sim](ui/operations/attack-sim.md)
   * [Kill Switch](ui/operations/kill-switch.md)
   * [Open Source](ui/operations/open-source.md)
-* Settings sub-pages
+* [Settings sub-pages](ui/settings-sub-pages/README.md)
   * [System Health](ui/settings/system-health.md)
   * [Observability](ui/settings/observability.md)
   * [Admin Console](ui/settings/admin-console.md)
@@ -128,7 +128,7 @@
 * [Soak Tests](operations/soak-tests.md)
 * [Tenant Data Requests](operations/tenant-data-requests.md)
 * [Observability](operations/observability.md)
-* Runbooks
+* [Runbooks](operations/runbooks/README.md)
   * [Audit Chain Violation](operations/runbooks/audit-chain-violation.md)
   * [Kill Switch Engaged](operations/runbooks/kill-switch-engaged.md)
   * [Rate Limit Spike](operations/runbooks/rate-limit-spike.md)
