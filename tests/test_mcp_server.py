@@ -13,7 +13,6 @@ traffic the MCP server generates.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import httpx
 import pytest

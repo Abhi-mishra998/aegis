@@ -37,12 +37,11 @@ provisioning history, so make those messages actionable.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.db import get_db

@@ -36,8 +36,6 @@ without deleting the row, so the audit trail of "this token did X on
 """
 from __future__ import annotations
 
-import sqlalchemy as sa
-from alembic import op
 
 
 revision = "l8m9n0o1p2q3"

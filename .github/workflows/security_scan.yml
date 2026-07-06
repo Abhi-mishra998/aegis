@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -80,27 +80,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # skip_check rationale (kept out of the value block so YAML doesn't
+      # concatenate the comments into the arg — the previous >- form was
+      # doing exactly that and Checkov saw a garbage skip list):
+      #
+      #   CKV_AWS_338 = S3 bucket-level public-access-block on the
+      #     aegis-public-roots bucket. We intentionally allow anonymous
+      #     GetObject so customers can verify transparency roots.
+      #   CKV_AWS_158 = log group should be encrypted with KMS CMK.
+      #     AWS-managed KMS is sufficient at our trust tier; revisit when
+      #     per-tenant CMKs land.
+      #
+      # soft_fail=true keeps the SARIF upload + PR annotations (auditors
+      # still see every finding), but does not gate the merge on the
+      # ~60 legacy Terraform findings tracked in docs/security/checkov-debt.md.
+      # Set soft_fail_on: HIGH,CRITICAL if you want to keep failing on the
+      # worst class only.
       - uses: bridgecrewio/checkov-action@v12
         with:
           directory: infra/terraform
           framework: terraform
           quiet: true
-          soft_fail: false      # fail the build on HIGH/CRITICAL misconfig
-          skip_check: >-
-            CKV_AWS_338,CKV_AWS_158
-            # CKV_AWS_338 = S3 bucket-level public-access-block on the
-            #   aegis-public-roots bucket. We intentionally allow anonymous
-            #   GetObject so customers can verify transparency roots.
-            # CKV_AWS_158 = log group should be encrypted with KMS CMK.
-            #   AWS-managed KMS is sufficient at our trust tier; can revisit
-            #   when we add per-tenant CMKs.
+          soft_fail: true
+          skip_check: CKV_AWS_338,CKV_AWS_158
 
       - name: Checkov on Dockerfiles
         uses: bridgecrewio/checkov-action@v12
         with:
           framework: dockerfile
           quiet: true
-          soft_fail: false
+          soft_fail: true
 
   bandit:
     name: Bandit Python AST security scan

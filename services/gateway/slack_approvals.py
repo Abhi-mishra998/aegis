@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import time
 from typing import Any
 
@@ -182,7 +181,7 @@ def render_result_html(decision: str, approval_id: str, ok: bool, reason: str = 
     after they click the Approve / Reject link. No JS, no external
     fonts — works on a phone with restricted data."""
     title = (
-        f"Approved" if decision == "approve" and ok
+        "Approved" if decision == "approve" and ok
         else "Rejected" if decision == "reject" and ok
         else "Link invalid"
     )

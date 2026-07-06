@@ -20,7 +20,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
-import pytest
 
 # Ensure the repo root resolves `services.audit.*` and `sdk.*`. pytest's
 # rootdir-detection happens to add `tests/` to sys.path because

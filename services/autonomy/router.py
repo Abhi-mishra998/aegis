@@ -409,7 +409,7 @@ async def add_override(
             ).limit(1)
         )
         ev = existing.scalar_one()
-        logger.info(
+        _logger.info(
             "override_duplicate_suppressed",
             tenant_id=str(tenant_id),
             request_id=payload.request_id,

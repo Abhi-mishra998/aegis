@@ -633,9 +633,9 @@ async def main() -> None:
         print("\n  --dry-run: planned insertions per surface ↓")
         print(f"    would insert {len(DEMO_AGENTS)} rows into agents (acp_registry)")
         print(f"    would insert {args.rows} rows into audit_logs (acp_audit)")
-        print(f"    would insert 2 rows into incidents (acp_api)")
-        print(f"    would insert 2 rows into shadow_policies (acp_audit)")
-        print(f"    would insert 10 nodes / 8 edges into graph_nodes+graph_edges (acp_identity_graph)")
+        print("    would insert 2 rows into incidents (acp_api)")
+        print("    would insert 2 rows into shadow_policies (acp_audit)")
+        print("    would insert 10 nodes / 8 edges into graph_nodes+graph_edges (acp_identity_graph)")
         print(f"    would insert {len(ESCALATION_PATTERN_SPECS)} rows into autonomy_contracts (acp_autonomy)")
         print(f"    would insert {len(PENDING_APPROVAL_SPECS)} rows into approvals via human_override_events (acp_autonomy)")
         print(f"    would insert {len(THREAT_INTEL_SPECS)} rows into threat_intel via Redis (acp:ti:iocs*)")
@@ -1642,7 +1642,7 @@ async def main() -> None:
 
     await id_conn.close(); await reg_conn.close(); await aud_conn.close(); await api_conn.close()
 
-    print(f"\n=== DONE ===")
+    print("\n=== DONE ===")
     print(f"  Workspace now has {len(inserted_agents)} agents, {written} demo audit rows, "
           f"{incidents_inserted} open incidents, {shadow_inserted} shadow policies, "
           f"{iag_inserted_nodes} graph nodes, {iag_inserted_edges} graph edges,")

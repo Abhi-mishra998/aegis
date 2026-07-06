@@ -14,7 +14,7 @@ from sdk.common.db import engine, get_session_factory
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
-from services.identity.models import Organization, Tenant, User
+from services.identity.models import Tenant, User
 from services.identity.router import router
 from services.identity.tenant_reconciler import run_forever as run_tenant_reconciler
 from services.identity.webhooks_clerk import router as clerk_webhooks_router

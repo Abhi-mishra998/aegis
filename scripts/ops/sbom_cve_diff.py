@@ -117,8 +117,8 @@ def render_markdown(diff_result: dict) -> str:
     floor = diff_result["severity_floor"]
     out.append(f"### Nightly SBOM CVE diff (severity ≥ {floor})")
     out.append("")
-    out.append(f"| New | Resolved | Chronic |")
-    out.append(f"|----:|---------:|--------:|")
+    out.append("| New | Resolved | Chronic |")
+    out.append("|----:|---------:|--------:|")
     out.append(f"| **{c['new']}** | {c['resolved']} | {c['chronic']} |")
     if diff_result["new"]:
         out.append("")

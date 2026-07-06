@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 from datetime import date
 
-import pytest
 
 from services.audit.transparency import (
     empty_epoch_root_hash,

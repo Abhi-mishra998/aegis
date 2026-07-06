@@ -23,7 +23,6 @@ import pytest
 import urllib.request
 import urllib.error
 import json
-import ssl
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

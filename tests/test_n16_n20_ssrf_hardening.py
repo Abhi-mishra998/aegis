@@ -27,7 +27,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 # Make the project importable so source-file paths resolve from anywhere.
 _REPO_ROOT = Path(__file__).resolve().parent.parent

@@ -85,7 +85,7 @@ def test_corpus_pass_rate():
     for cat, (p, t) in sorted(by_cat.items()):
         print(f"  {cat:<20} {p}/{t}  ({p/t:.0%})")
     if fail_examples:
-        print(f"\n  Up to 12 failing examples:")
+        print("\n  Up to 12 failing examples:")
         for r in fail_examples:
             print(f"    {r['id']:<12} expect={r['expected_tier']:<8} got={r['got_tier']:<8} pid={r['policy_id']:<22} findings={r['findings'][:3]}")
 

@@ -16,11 +16,11 @@ when forwarding customer-Bearer-authenticated requests.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret

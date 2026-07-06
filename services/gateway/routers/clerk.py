@@ -22,7 +22,6 @@ middleware would otherwise 401 every request before our proxy runs.
 from __future__ import annotations
 
 import json as _json
-from typing import Any
 
 import httpx
 import structlog

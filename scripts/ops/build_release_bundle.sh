@@ -128,7 +128,10 @@ if [[ -n "$LEAKED_ENV" ]]; then
 fi
 # Defensive: also confirm no Stripe/Clerk secret-key string leaked into
 # any text file (other than docs that intentionally illustrate them).
-SECRET_LEAK=$(tar -xOzf "$OUT" 2>/dev/null | grep -E '(sk_live_[A-Za-z0-9_-]{20,}|sk_test_[A-Za-z0-9_-]{20,}|whsec_[A-Za-z0-9+/]{20,})' | head -3 || true)
+# grep -m 3 caps matches at 3 without a downstream `head` pipe — the
+# previous `... | head -3` closed grep's stdout early and killed tar with
+# SIGPIPE 141, which `pipefail` then propagated as a job failure.
+SECRET_LEAK=$(tar -xOzf "$OUT" 2>/dev/null | grep -aEm 3 '(sk_live_[A-Za-z0-9_-]{20,}|sk_test_[A-Za-z0-9_-]{20,}|whsec_[A-Za-z0-9+/]{20,})' || true)
 if [[ -n "$SECRET_LEAK" ]]; then
     echo "FAIL — bundle contains live-looking Stripe/Clerk secret strings; aborting upload" >&2
     # Echoes a redacted hint, not the full secret.

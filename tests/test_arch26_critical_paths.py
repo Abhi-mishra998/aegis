@@ -23,8 +23,6 @@ What's pinned here:
 from __future__ import annotations
 
 import sys
-import uuid
-from types import SimpleNamespace
 
 import pytest
 

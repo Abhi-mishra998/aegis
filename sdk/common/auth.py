@@ -10,7 +10,6 @@ from fastapi.security import APIKeyHeader
 from jose import ExpiredSignatureError, JWTError, jwt
 from prometheus_client import Counter
 
-from sdk.common.config import settings
 
 logger = structlog.get_logger(__name__)
 

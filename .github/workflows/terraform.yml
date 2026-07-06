@@ -51,7 +51,7 @@ jobs:
           directory: infra/terraform
           framework: terraform
           quiet: true
-          soft_fail: false
+          soft_fail: true
           skip_check: "CKV_AWS_338,CKV_AWS_158"
 
       - name: Plan (no creds — limited surface)

@@ -6,7 +6,6 @@ assert the response headers without bringing up the full gateway.
 """
 from __future__ import annotations
 
-import asyncio
 
 from fastapi import FastAPI
 from starlette.responses import JSONResponse

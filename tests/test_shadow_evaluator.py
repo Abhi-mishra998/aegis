@@ -11,7 +11,6 @@ contract every shadow policy depends on:
 """
 from __future__ import annotations
 
-import pytest
 
 from services.audit.shadow_evaluator import (
     ShadowEvalResult,

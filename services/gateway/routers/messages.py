@@ -862,7 +862,7 @@ async def team_overview(request: Request) -> APIResponse[dict]:
     # as SQL injection — and the GET variant supports the same filters
     # via query params. Hard cap is 1000 rows (audit-svc query limit);
     # at ~30 r/employee/day this comfortably covers 30 employees.
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     start_iso = (
         datetime.now(tz=timezone.utc) - timedelta(days=30)
@@ -1089,7 +1089,7 @@ async def team_employee_profile(email: str, request: Request) -> APIResponse[dic
     # 2.  Pull every llm_proxy_call row for the tenant in the last 30
     # days, then narrow by email in-process. Same GET-/logs contract as
     # /team/overview so WAFv2 doesn't trip.
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     start_iso = (
         datetime.now(tz=timezone.utc) - timedelta(days=30)
     ).isoformat()
@@ -1293,7 +1293,7 @@ async def dashboard_overview(request: Request) -> APIResponse[dict]:
             detail="Tenant context missing — please sign in again.",
         )
 
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     start_iso = (
         datetime.now(tz=timezone.utc) - timedelta(days=30)
     ).isoformat()

@@ -1587,10 +1587,6 @@ from services.identity.clerk_backend_api import (  # noqa: E402
     get_organization,
     list_user_organizations,
 )
-from services.identity.webhooks_clerk import (  # noqa: E402
-    _handle_membership_created_or_updated,
-    _handle_organization_created,
-)
 
 
 @router.post(

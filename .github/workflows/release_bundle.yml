@@ -24,16 +24,14 @@ name: release-bundle
 # kick a refresh in the same run.
 
 on:
-  push:
-    branches: [main]
-    # Skip pushes that only touch markdown / images / runbooks — those
-    # don't change the runtime and the operator doesn't want to roll
-    # the ASG for docs commits.
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'ui/public/.well-known/**'
-      - '.github/workflows/nightly_*.yml'
+  # Auto-push disabled while prod stack is torn down (2026-07-06). The
+  # aws-actions/configure-aws-credentials step needs the IAM role
+  # aegis-gha-release, which was removed by terraform destroy. Restore
+  # the push trigger once terraform apply recreates the role + SSM
+  # /aegis/prod/current_bundle_sha + ASG. Recipe kept in a comment below.
+  # push:
+  #   branches: [main]
+  #   paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
     inputs:
       auto_rollout:

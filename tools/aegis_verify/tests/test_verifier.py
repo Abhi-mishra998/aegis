@@ -8,13 +8,10 @@ tests on their own laptop.
 from __future__ import annotations
 
 import base64
-import copy
 import hashlib
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import (
     Encoding, PublicFormat,

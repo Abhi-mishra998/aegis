@@ -14,7 +14,6 @@ both streaming responses and bodies > 256 KB. This test set pins:
 """
 from __future__ import annotations
 
-import re
 
 from services.gateway.inference_proxy import OutputFilter, inference_proxy
 

@@ -7,7 +7,6 @@ JWKS endpoint, and the private key signs the test fixtures.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 

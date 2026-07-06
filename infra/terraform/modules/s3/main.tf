@@ -113,7 +113,7 @@ resource "aws_s3_bucket_object_lock_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
   rule {
     default_retention {
-      mode = "GOVERNANCE"   # operator can override with bypass perm; COMPLIANCE locks even root
+      mode = "GOVERNANCE" # operator can override with bypass perm; COMPLIANCE locks even root
       days = 30
     }
   }
@@ -182,7 +182,7 @@ resource "aws_s3_bucket_object_lock_configuration" "cloudtrail" {
   bucket = aws_s3_bucket.cloudtrail.id
   rule {
     default_retention {
-      mode = "COMPLIANCE"   # cannot be lowered, even by root
+      mode = "COMPLIANCE" # cannot be lowered, even by root
       days = 180
     }
   }

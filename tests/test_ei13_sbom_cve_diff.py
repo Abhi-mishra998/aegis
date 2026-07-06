@@ -6,12 +6,10 @@ missing yesterday handling, deterministic ordering, markdown rendering.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 from pathlib import Path
 
-import pytest
 
 # scripts/ops/ is not a package — add to sys.path so we can import.
 _REPO = Path(__file__).resolve().parents[1]

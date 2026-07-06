@@ -36,7 +36,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.db import get_db
 from sdk.common.config import settings
 from services.autonomy.webhook_executor import fire_jira, fire_servicenow
 

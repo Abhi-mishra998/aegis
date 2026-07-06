@@ -14,7 +14,6 @@ import hashlib
 import hmac
 import os
 import sys
-from pathlib import Path
 
 import pytest
 

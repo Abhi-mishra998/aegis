@@ -20,7 +20,6 @@ We verify that contract three ways:
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Any
 

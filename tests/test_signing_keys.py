@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import base64
 import os
-from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -22,7 +21,6 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from sdk.common.signing_keys import (
     AwsKmsSigningKeyProvider,
     LocalFileSigningKeyProvider,
-    SigningKeyProvider,
     provider_from_env,
 )
 

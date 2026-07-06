@@ -24,7 +24,6 @@ from typing import Any
 import httpx
 import structlog
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
 
 logger = structlog.get_logger(__name__)

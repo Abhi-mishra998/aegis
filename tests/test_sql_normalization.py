@@ -21,7 +21,6 @@ exactly what the gate catches.
 """
 from __future__ import annotations
 
-import re
 
 from sdk.common.sql_normalize import normalize_for_detection
 

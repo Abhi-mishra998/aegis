@@ -42,11 +42,22 @@ regex="$regex"'|[:=][[:space:]]*(admin1234|changeme|secretpassword|password123)(
 regex="$regex"'|(postgres(ql)?|redis)://[a-zA-Z0-9_]+:[a-zA-Z0-9!#%*+_-]{6,}@[a-zA-Z0-9.-]+'
 
 # Files where matches are expected — this hook itself, docs that show the
-# shape of a token, sample fixtures.
+# shape of a token, sample fixtures, and tests whose entire purpose is
+# to prove our runtime scanners catch fake tokens.
 should_skip() {
   case "$1" in
     scripts/git-hooks/pre-commit) return 0 ;;
     docs/security/api-keys.md) return 0 ;;
+    # Test fixtures — these files intentionally contain synthetic tokens
+    # (AKIAIOSFODNN7EXAMPLE, sk-ant-api03-_aBcDe..., etc.) so the PII
+    # filter, output redactor, and SBOM/CVE scanners have realistic inputs.
+    tests/test_output_filter_pii.py) return 0 ;;
+    tests/test_arch26_critical_paths.py) return 0 ;;
+    tests/test_siem_extended.py) return 0 ;;
+    # SCIM router sentinel — provisioned users get hashed_password=
+    # "scim-provisioned" as a non-null constraint marker; they auth via
+    # Clerk/SSO, never with this string.
+    services/gateway/routers/scim.py) return 0 ;;
     *.example|*.template) return 0 ;;
     *.example.*|*.template.*) return 0 ;;
   esac

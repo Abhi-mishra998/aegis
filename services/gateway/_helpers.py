@@ -78,7 +78,6 @@ import httpx
 import structlog
 from fastapi import HTTPException, Request, Response
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
 
 logger = structlog.get_logger(__name__)

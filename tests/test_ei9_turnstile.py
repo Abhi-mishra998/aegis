@@ -15,7 +15,6 @@ import os
 import sys
 from typing import Any
 
-import pytest
 
 os.environ.setdefault("INTERNAL_SECRET", "ei9-unit-test")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

@@ -101,7 +101,7 @@ def _spawn_demo() -> tuple[str, str, str]:
     jwt = data["jwt"]
     tenant_id = data["tenant_id"]
     # Async seed takes ~6-10s before /agents returns the 5 demo agents.
-    print(f"[e2]   waiting 10s for async demo-seed (5 agents)...", flush=True)
+    print("[e2]   waiting 10s for async demo-seed (5 agents)...", flush=True)
     time.sleep(10)
     agents_r = requests.get(
         f"{AEGIS_BASE}/agents",

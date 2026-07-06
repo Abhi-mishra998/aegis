@@ -25,7 +25,6 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("JWT_SECRET_KEY", "a" * 64)
 os.environ.setdefault("INTERNAL_SECRET", "test-internal-secret")
 
-import pytest  # noqa: E402
 
 from fastapi.responses import JSONResponse  # noqa: E402
 

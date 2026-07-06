@@ -16,7 +16,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-import pytest
 
 from sdk.common.roles import Role
 from services.gateway.middleware import SHADOW_DOWNGRADES_TOTAL, _shadow_mode_active

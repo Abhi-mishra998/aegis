@@ -130,10 +130,10 @@ def main() -> int:
         print()
         print(f"  # {svc}")
         print(f"  {svc}:")
-        print(f"    environment:")
+        print("    environment:")
         print(f"      ACP_MESH_SERVICE_NAME: '{svc}'")
         print(f"      ACP_MESH_PRIVATE_KEY_PEM:  ${{MESH_{svc.upper()}_PRIVATE_KEY}}")
-        print(f"      ACP_MESH_TRUSTED_KEYS:     ${{MESH_TRUSTED_KEYS}}")
+        print("      ACP_MESH_TRUSTED_KEYS:     ${MESH_TRUSTED_KEYS}")
 
     print()
     print("# The container's entrypoint must populate the two MESH_* env vars")

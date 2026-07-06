@@ -11,7 +11,7 @@ Mocks httpx so the tests don't need network access. Verifies:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
