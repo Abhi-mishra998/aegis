@@ -10,7 +10,7 @@ verifiable audit trail.
 - **Status:** production (single-tenant prod-ha + multi-tenant ready)
 - **Live site:** [aegisagent.in](https://aegisagent.in)
 - **Deep dive:** [projectsphere.hashnode.dev — I built a runtime firewall for AI agents](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
-
+- **GitBook Docs:** [https://docs.aegisagent.in](https://docs.aegisagent.in) 
 ---
 
 ## Table of contents
