@@ -127,6 +127,16 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q29 — Revoked-agents auth-boundary fail-open path emitted a `logger.warning` but no metric — a Redis-blip storm was invisible to Prometheus.**
+
+`services/gateway/_mw_auth.py` around the `is_agent_revoked` call has an intentional fail-open (comment: "if Redis blips we shouldn't take down auth for every request") but caught the exception with plain `logger.warning("revoked_agents_check_failed", error=...)`. The S5 sprint pattern is that every fail-open catch site must go through `swallow_log`, which increments `EXCEPTION_SWALLOWED_TOTAL{event=...}` — so ops can alert on the fail-open rate. `swallow_log` was already imported at the top of `_mw_auth.py` (four other sites use it). This site was the last outlier.
+
+Fix: swap the `logger.warning(...)` for `swallow_log(logger, "revoked_agents_check_failed", _rex, tenant_id=..., agent_id=...)`. Same warning-with-context surface, plus the counter increment. Fail-open behavior unchanged (the outer handler still doesn't re-raise), only observability improved.
+
+**2 new tests** in `tests/test_revoked_agents_check_metric.py`: whitebox regression that the catch uses `swallow_log` and the old `logger.warning("revoked_agents_check_failed"...)` line is gone; sanity check that `swallow_log` really does increment `EXCEPTION_SWALLOWED_TOTAL{event=...}` (locks in the invariant every fix in this class depends on).
+
+**Suite: 2083 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q28 — Exfiltration detector's `credential_in_message_body` silently missed case-sensitive secret patterns (AKIA-, JWT-eyJ-, ghp_-) when only lowercased `raw_norm` reached it.**
 
 `services/security/objectives/exfiltration.py` did `raw_orig = c.get("raw_norm_original") or c.get("raw_norm") or ""` then ran every `_SECRET_PATTERNS` regex against that single string. If a caller passed only `raw_norm` (test paths, stale cached canonical results from pre-U13 rollout), the AWS `AKIA[0-9A-Z]{16}\b`, JWT `\beyJ...`, and GitHub `ghp_[A-Za-z0-9]{30,}` case-sensitive patterns silently missed on lowercased input — a security-relevant under-detection on the primary credential-exfil surface.

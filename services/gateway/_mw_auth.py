@@ -513,8 +513,15 @@ class _AuthMixin:
                 raise
             except Exception as _rex:
                 # Fail open on the revoked-set check — if Redis blips we
-                # shouldn't take down auth for every request.
-                logger.warning("revoked_agents_check_failed", error=str(_rex))
+                # shouldn't take down auth for every request. Q29 —
+                # switched from `logger.warning` to `swallow_log` so
+                # `EXCEPTION_SWALLOWED_TOTAL{event="revoked_agents_check_failed"}`
+                # increments; ops can alert on the fail-open rate
+                # instead of relying on grep of warning logs.
+                swallow_log(
+                    logger, "revoked_agents_check_failed", _rex,
+                    tenant_id=tenant_id_str, agent_id=agent_id_str,
+                )
 
         # S8 (audit P1-7): org enforcement is server-side and unconditional.
         # The X-Org-ID header used to be the trigger; omitting it silently
