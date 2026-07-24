@@ -34,7 +34,7 @@ import structlog
 from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.audit.database import SessionLocal
+from sdk.common.db import SessionLocal
 from services.audit.evaluation_scoring import per_rule_efficacy
 from services.audit.models import (
     EvaluatorScoreSnapshot,

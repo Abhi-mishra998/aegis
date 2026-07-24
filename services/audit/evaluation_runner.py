@@ -50,7 +50,7 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.audit.database import SessionLocal
+from sdk.common.db import SessionLocal
 from services.audit.evaluation_scoring import SCORERS, ScoreResult
 from services.audit.models import (
     EvalDatasetCase,

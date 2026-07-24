@@ -46,7 +46,7 @@ import uuid
 import structlog
 from sqlalchemy import or_, select
 
-from services.audit.database import SessionLocal
+from sdk.common.db import SessionLocal
 from services.audit.models import ShadowDecision, ShadowPolicy
 from services.audit.shadow_evaluator import evaluate_rules
 

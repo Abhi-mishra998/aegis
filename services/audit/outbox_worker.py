@@ -39,13 +39,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.config import settings
+from sdk.common.db import SessionLocal
 from sdk.utils import (
     OUTBOX_PENDING_GAUGE,
     OUTBOX_POISON_TOTAL,
     OUTBOX_PROCESSED_TOTAL,
     OUTBOX_RETRY_TOTAL,
 )
-from services.audit.database import SessionLocal
 from services.audit.models import PendingUsageEvent
 
 logger = structlog.get_logger(__name__)

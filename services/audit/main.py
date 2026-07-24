@@ -30,11 +30,17 @@ from fastapi import Depends, FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.db import engine, get_db, get_session_factory, get_tenant_id
+from sdk.common.config import settings
+from sdk.common.db import (
+    SessionLocal,
+    engine,
+    get_db,
+    get_session_factory,
+    get_tenant_id,
+)
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client
 from sdk.utils import SLO_AUDIT_DURABILITY_TOTAL, setup_app
-from services.audit.database import SessionLocal, settings
 from services.audit.dlq_replay import run_dlq_replay_loop
 from services.audit.outbox_worker import run_outbox_worker
 from services.audit.router import pending_router, router
