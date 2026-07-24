@@ -173,14 +173,6 @@ async def _publish_event(
             )
 
 
-def _clamp_int(value: str | None, default: int, lo: int, hi: int) -> int:
-    """Parse and clamp a numeric query param to a safe range."""
-    try:
-        return max(lo, min(hi, int(value))) if value is not None else default
-    except (ValueError, TypeError):
-        return default
-
-
 def _internal_headers(request: Request | None = None) -> dict[str, str]:
     """Build internal service-to-service headers, forwarding tenant/auth context.
     X-ACP-Role is injected from the JWT-validated request.state.role — never from
@@ -760,34 +752,10 @@ app.include_router(_lifecycle_router)
 # All /threat-intel/* (3 routes) extracted to routers/risk.py.
 
 
-def _is_nontrivial_policy_decision(decision_data: Any) -> bool:
-    """True when a policy result is worth notifying the LiveFeed about.
-
-    Allowed decisions are noisy and not actionable — only surface deny /
-    escalate / approval_required style outcomes.
-    """
-    if not isinstance(decision_data, dict):
-        return False
-    if decision_data.get("allowed") is False:
-        return True
-    action = str(decision_data.get("action", "")).lower()
-    if action in {"deny", "escalate", "approval_required", "block"}:
-        return True
-    return False
-
-
-def _extract_policy_reasons(decision_data: Any) -> list[str]:
-    """Normalise the heterogeneous policy reason shapes into list[str]."""
-    if not isinstance(decision_data, dict):
-        return []
-    reasons = decision_data.get("reasons")
-    if isinstance(reasons, list) and reasons:
-        return [str(r) for r in reasons[:3]]
-    reason = decision_data.get("reason")
-    return [str(reason)] if reason else []
-
-
-# All /policy/* (3 routes) extracted to routers/policy.py.
+# All /policy/* (3 routes) extracted to routers/policy.py — the two
+# helpers `_is_nontrivial_policy_decision` and `_extract_policy_reasons`
+# moved with them into routers/policy.py; nothing in main.py referenced
+# these orphan copies.
 
 
 # /audit/logs/verify, /audit/logs/{audit_id}/explain, /audit/logs/{audit_id}/notes

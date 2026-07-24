@@ -159,11 +159,13 @@ class TestJsonbFloatCast:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestClampInt:
-    """Validates _clamp_int bounds logic extracted from gateway/main.py."""
+    """Validates _clamp_int bounds logic. Helper now lives in
+    services/gateway/routers/decision.py (its only production caller);
+    the identical orphan copy in gateway/main.py was removed."""
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from services.gateway.main import _clamp_int
+        from services.gateway.routers.decision import _clamp_int
         self.clamp = _clamp_int
 
     def test_valid_value_within_range(self):
