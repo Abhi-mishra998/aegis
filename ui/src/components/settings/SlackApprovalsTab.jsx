@@ -95,7 +95,7 @@ export default function SlackApprovalsTab() {
           paste the URL below.
           <a
             href="https://api.slack.com/messaging/webhooks"
-            target="_blank" rel="noreferrer"
+            target="_blank" rel="noopener noreferrer"
             className="ml-1 inline-flex items-center gap-1 text-neutral-400 hover:text-white underline-offset-2 underline"
           >
             Slack docs <ExternalLink size={9} />
