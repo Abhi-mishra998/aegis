@@ -74,6 +74,56 @@ def _tally(rows: list[AuditLog]) -> tuple[Counter[str], Counter[str]]:
     return by_tool, by_decision
 
 
+async def _tally_execute_tool_calls_sql(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    period_start: datetime,
+    period_end: datetime,
+) -> tuple[int, dict[str, int], dict[str, int], str | None, str | None]:
+    """SQL-side aggregation of `execute_tool` calls in the period.
+
+    Replaces the pattern of `list(scalars().all())` + Python `_tally`,
+    which OOMs on a busy tenant's year-long compliance window. Returns
+    (total_calls, by_tool, by_decision_lowercase, first_id, last_id).
+    """
+    base_filter = [
+        AuditLog.tenant_id == tenant_id,
+        AuditLog.timestamp >= period_start,
+        AuditLog.timestamp <= period_end,
+        AuditLog.action == "execute_tool",
+    ]
+    total = int(
+        (await db.execute(
+            select(func.count()).select_from(AuditLog).where(*base_filter),
+        )).scalar_one() or 0
+    )
+    by_tool_rows = (await db.execute(
+        select(func.coalesce(AuditLog.tool, "unknown"), func.count())
+        .where(*base_filter)
+        .group_by(func.coalesce(AuditLog.tool, "unknown")),
+    )).all()
+    by_tool = {str(t): int(c) for t, c in by_tool_rows}
+    by_decision_rows = (await db.execute(
+        select(func.lower(func.coalesce(AuditLog.decision, "unknown")), func.count())
+        .where(*base_filter)
+        .group_by(func.lower(func.coalesce(AuditLog.decision, "unknown"))),
+    )).all()
+    by_decision = {str(d): int(c) for d, c in by_decision_rows}
+    first_id = (await db.execute(
+        select(AuditLog.id).where(*base_filter)
+        .order_by(AuditLog.timestamp.asc()).limit(1),
+    )).scalar_one_or_none()
+    last_id = (await db.execute(
+        select(AuditLog.id).where(*base_filter)
+        .order_by(AuditLog.timestamp.desc()).limit(1),
+    )).scalar_one_or_none()
+    return (
+        total, by_tool, by_decision,
+        str(first_id) if first_id else None,
+        str(last_id) if last_id else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Core report generators
 # ---------------------------------------------------------------------------
@@ -174,21 +224,19 @@ async def generate_eu_ai_act_bundle(
     )
 
     # ── Article 13: Transparency — tool usage summary ──────────────────────
-    tool_q = base_q.where(AuditLog.action == "execute_tool")
-    tool_result = await db.execute(tool_q.order_by(AuditLog.timestamp.asc()))
-    tool_rows: list[AuditLog] = list(tool_result.scalars().all())
-
-    by_tool, by_decision = _tally(tool_rows)
+    # SQL-side aggregation; the previous pattern loaded every matching row
+    # into python and OOMed on year-long windows for busy tenants.
+    (
+        total_calls, by_tool, by_decision, first_id, last_id,
+    ) = await _tally_execute_tool_calls_sql(db, tenant_id, period_start, period_end)
     tool_summary: dict[str, Any] = {
-        "total_calls": len(tool_rows),
-        "by_tool": dict(by_tool),
-        "by_decision": dict(by_decision),
+        "total_calls": total_calls,
+        "by_tool":     by_tool,
+        "by_decision": by_decision,
     }
 
     # ── Article 16: Record-keeping — chain integrity reference ─────────────
     integrity_result = await verify_audit_chain(db, tenant_id)
-    first_id = str(tool_rows[0].id) if tool_rows else None
-    last_id = str(tool_rows[-1].id) if tool_rows else None
 
     integrity_proof = {
         "chain_valid": integrity_result.get("is_integrous", False),

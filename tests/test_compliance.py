@@ -167,23 +167,47 @@ async def test_eu_ai_act_bundle_structure():
         _make_row(decision="deny",  tool="write_file"),
     ]
 
-    # DB mock: first call returns tool rows, subsequent calls return empty
-    result_tool = MagicMock()
-    result_tool.scalars.return_value.all.return_value = tool_rows
+    # Post-refactor (Q26): Article 13 tool-summary now aggregates in
+    # SQL via `_tally_execute_tool_calls_sql`, which issues 5 queries
+    # (COUNT, GROUP BY tool, GROUP BY decision, first-id, last-id).
+    # The full-row load moved out; the mock has to serve those 5
+    # results before the remaining Article 16 + 61 queries.
+    def _mk_total(n: int):
+        r = MagicMock()
+        r.scalar_one.return_value = n
+        return r
+
+    def _mk_group(pairs):
+        r = MagicMock()
+        r.all.return_value = pairs
+        return r
+
+    def _mk_scalar_or_none(val):
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = val
+        return r
 
     result_empty = MagicMock()
     result_empty.scalars.return_value.all.return_value = []
 
-    scalar_count = MagicMock()
-    scalar_count.scalar_one_or_none.return_value = 1
+    result_decision_sample = MagicMock()
+    result_decision_sample.scalars.return_value.all.return_value = tool_rows
 
     db = AsyncMock()
     db.execute = AsyncMock(
         side_effect=[
-            result_tool,   # tool call query (Article 13)
-            scalar_count,  # escalation count (Article 61)
-            result_empty,  # anomaly log query (Article 61)
-            result_tool,   # decision audit sample
+            # Article 13 SQL aggregation — 5 calls in this order.
+            _mk_total(2),
+            _mk_group([("read_file", 1), ("write_file", 1)]),
+            _mk_group([("allow", 1), ("deny", 1)]),
+            _mk_scalar_or_none("first-id"),
+            _mk_scalar_or_none("last-id"),
+            # Article 16 decision-audit sample (bounded by .limit(500)).
+            result_decision_sample,
+            # Article 61 escalation count.
+            _mk_scalar_or_none(1),
+            # Article 61 anomaly log query.
+            result_empty,
         ]
     )
 

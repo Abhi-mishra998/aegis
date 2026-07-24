@@ -127,6 +127,16 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q26 — `generate_eu_ai_act_bundle` loaded every matching audit row into Python — OOM on a busy tenant's year-long compliance window.**
+
+`services/audit/compliance.py::generate_eu_ai_act_bundle` did `list(tool_result.scalars().all())` on `tool_q = base_q.where(action=="execute_tool")` with no LIMIT. On the §12.1 reference workload (1M actions/day) a 1-year regulator request = 365M rows, an OOM waiting to happen the first time a customer's auditor asked for a real compliance bundle.
+
+Fix: extracted `_tally_execute_tool_calls_sql(db, tenant_id, start, end) -> (total, by_tool, by_decision, first_id, last_id)` that aggregates entirely in SQL — 5 indexed queries (COUNT, GROUP BY tool, GROUP BY lower(decision), first/last ID via LIMIT 1). Python memory is O(unique tools × unique decisions) — a small constant — regardless of row volume in the period.
+
+**3 new tests** in `tests/test_compliance_bundle_aggregation.py`: whitebox check that the caller uses the SQL path (regression prevents reverting), mocked-db assertion that the aggregator packs the return tuple correctly + issues exactly 5 queries (any extra means a row-fetching query snuck in), empty-period edge case (total=0, empty dicts, None ids). Updated `tests/test_compliance.py::test_eu_ai_act_bundle_structure` to match the new db.execute call sequence (5 aggregation calls + 3 remaining).
+
+**Suite: 2072 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q25 — ATF §14.5 ROTATE cross-signing of the retiring key's final batch.**
 
 Spec text (§14.5 ROTATE): *"old key's final batch cross-signed by new key so chain verification survives rotation."* Fingerprint-dispatched historical keys (B3) closed the LOOKUP side, but the transition batch itself had no signature under the new key — creating a "gap batch" verifiers couldn't cover without waiting for the first fresh post-rotation batch.
