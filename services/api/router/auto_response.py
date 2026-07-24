@@ -232,13 +232,25 @@ async def approve_pending(
     r   = _redis(request)
     tid = str(tenant_id)
     key = f"acp:{tid}:are:pending:{approval_key}"
-    raw = await r.get(key)
+    # Q40 — atomic get-and-delete via GETDEL (Redis 6.2+). Prior
+    # `get → delete` allowed two concurrent approvers to both read the
+    # payload before either delete landed, then both re-queue the
+    # incident → double action execution. GETDEL guarantees exactly one
+    # caller gets the value; the loser sees None → 404.
+    try:
+        raw = await r.getdel(key)
+    except AttributeError:
+        # Older Redis client without .getdel() — fall back to non-atomic
+        # get+delete. Still functional (one race window remains) but
+        # the primary defense is the GETDEL branch above.
+        raw = await r.get(key)
+        if raw is not None:
+            await r.delete(key)
     if not raw:
         raise HTTPException(status_code=404, detail="Pending approval not found or expired")
 
     import json
     pending = json.loads(raw if isinstance(raw, str) else raw.decode())
-    await r.delete(key)
 
     if payload.approved:
         # Re-queue the incident so the ARE worker processes it in auto mode.
@@ -410,8 +422,17 @@ async def replay(
     from services.api.are_replay import replay_rules
 
     rule_id_strs: list[str] = payload.get("rule_ids") or []
-    hours:  int = min(int(payload.get("hours", 24)), 168)
-    limit:  int = min(int(payload.get("limit", 500)), 2000)
+    # Q41 — bare int() raised ValueError on non-numeric client input
+    # (e.g. hours="all") → uncaught 500. Match the sibling `Invalid
+    # rule_id: 422` contract on this endpoint.
+    try:
+        hours: int = min(int(payload.get("hours", 24) or 24), 168)
+        limit: int = min(int(payload.get("limit", 500) or 500), 2000)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"hours and limit must be integers: {exc}",
+        ) from exc
 
     rule_ids: list[uuid.UUID] | None = None
     if rule_id_strs:

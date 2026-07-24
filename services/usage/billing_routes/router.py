@@ -6,7 +6,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -281,7 +281,12 @@ class BillingEvent(BaseModel):
     action: str
     agent_id: uuid.UUID | None = None
     audit_id: str | None = None
-    tokens: int = 1
+    # Q39 — cap `tokens` at trust boundary. Prior bare `int = 1` accepted
+    # any 64-bit int a client sent; downstream cost math on tokens=10^12
+    # produced absurd revenue-dashboard numbers. 10M/event is generous
+    # headroom (a Claude 200K-context prompt is ~200K tokens; the
+    # billing event is for ONE call).
+    tokens: int = Field(default=1, ge=0, le=10_000_000)
     # C-1 FIX (2026-05-13): Accept idempotency_key from gateway so
     # record_protection_event can dedupe Redis HINCRBYFLOAT on retry.
     idempotency_key: str | None = None

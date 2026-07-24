@@ -187,9 +187,21 @@ async def _process_one(redis, session_factory, msg_id, fields: dict) -> None:
         raw   = fields.get(b"data") or fields.get("data") or b"{}"
         data  = json.loads(raw if isinstance(raw, str) else raw.decode())
 
-        # Fix 2: Deduplication — same agent + tool + trigger within 5-minute window
+        # Fix 2: Deduplication — same agent + tool + trigger within 5-minute window.
+        # Q42 — the prior f"{a}:{b}:{c}:{d}:{bucket}" join was collision-
+        # prone: a tool name containing `:` (e.g. an MCP tool
+        # `mcp:server:tool`) could collapse with an entirely different
+        # (tenant, agent, trigger) tuple and false-suppress unrelated
+        # incidents. Encode as a JSON list so field boundaries are
+        # unambiguous regardless of what characters the components carry.
         time_bucket = int(time.time() // 300)
-        dedup_raw   = f"{data.get('tenant_id')}:{data.get('agent_id')}:{data.get('tool', '')}:{data.get('trigger')}:{time_bucket}"
+        dedup_raw   = json.dumps([
+            data.get("tenant_id"),
+            data.get("agent_id"),
+            data.get("tool", ""),
+            data.get("trigger"),
+            time_bucket,
+        ])
         dedup_hash  = hashlib.sha256(dedup_raw.encode()).hexdigest()[:16]
         dedup_key   = f"acp:incident:dedup:{dedup_hash}"
 

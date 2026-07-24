@@ -89,20 +89,38 @@ class UsageRepository:
 
     async def get_revenue_dashboard(self, tenant_id: uuid.UUID) -> dict:
         # ── usage_records queries (correct DB: acp_usage) ──────────────────
-        agent_stmt = select(
-            UsageRecord.agent_id,
-            func.sum(UsageRecord.cost).label("cost"),
-        ).where(UsageRecord.tenant_id == tenant_id).group_by(UsageRecord.agent_id)
+        # Q38 — dashboard is display-only. A tenant with millions of unique
+        # agents/tools materialised every group into python + list-of-dicts
+        # = memory DoS. Cap at top-5000 by cost DESC — the UI renders top-N
+        # anyway, and downstream totals still sum against the truncated
+        # list (best-effort dashboard, not an accounting endpoint).
+        _DASH_TOP_N = 5000
+        agent_stmt = (
+            select(
+                UsageRecord.agent_id,
+                func.sum(UsageRecord.cost).label("cost"),
+            )
+            .where(UsageRecord.tenant_id == tenant_id)
+            .group_by(UsageRecord.agent_id)
+            .order_by(func.sum(UsageRecord.cost).desc())
+            .limit(_DASH_TOP_N)
+        )
         agent_res = await self.db.execute(agent_stmt)
         cost_per_agent = [
             {"agent_id": str(r[0]), "cost": round(float(r[1]), 4)}
             for r in agent_res.all()
         ]
 
-        tool_stmt = select(
-            UsageRecord.tool,
-            func.sum(UsageRecord.cost).label("cost"),
-        ).where(UsageRecord.tenant_id == tenant_id).group_by(UsageRecord.tool)
+        tool_stmt = (
+            select(
+                UsageRecord.tool,
+                func.sum(UsageRecord.cost).label("cost"),
+            )
+            .where(UsageRecord.tenant_id == tenant_id)
+            .group_by(UsageRecord.tool)
+            .order_by(func.sum(UsageRecord.cost).desc())
+            .limit(_DASH_TOP_N)
+        )
         tool_res = await self.db.execute(tool_stmt)
         cost_per_tool = [
             {"tool": r[0], "cost": round(float(r[1]), 4)}
