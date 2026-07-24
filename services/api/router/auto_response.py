@@ -241,9 +241,19 @@ async def approve_pending(
     await r.delete(key)
 
     if payload.approved:
-        # Re-queue the incident so the ARE worker processes it in auto mode
+        # Re-queue the incident so the ARE worker processes it in auto mode.
+        # Q37 — carry the ORIGINAL rule_id forward on the re-queued
+        # payload. The pending record was created for one specific rule;
+        # without pinning that rule id, the worker's re-evaluation loop
+        # would fire EVERY matching rule under _manual_approved semantics
+        # — including rules the operator never saw or approved. This is
+        # the §5.7 single-action-binding invariant: one approval →
+        # one rule.
         incident = pending["incident"]
         incident["_manual_approved"] = True
+        approved_rule_id = pending.get("rule_id")
+        if approved_rule_id:
+            incident["_approved_rule_id"] = approved_rule_id
         await r.xadd("acp:incidents:queue", {"data": json.dumps(incident)}, maxlen=50_000, approximate=True)
         return APIResponse(data={"status": "approved", "re_queued": True})
 

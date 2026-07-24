@@ -385,10 +385,30 @@ async def process_incident(redis, session_factory, incident: dict) -> None:
     executor = AREExecutor(redis)
     float(incident.get("risk_score", 0))
 
+    # Q37 — approval scope guard. When approve_pending re-queues an
+    # incident, it stamps `_approved_rule_id` = the rule that produced
+    # the pending record. §5.7 single-action-binding: the approval
+    # authorizes exactly that rule's actions, not every rule that
+    # happens to match. Skip any candidate whose id doesn't match.
+    _approved_rule_id = incident.get("_approved_rule_id") if incident.get("_manual_approved") else None
+
     for rule in index.candidates(incident):
         rule_id   = str(rule.id)
         rule_name = rule.name
         t0        = time.perf_counter()
+
+        if _approved_rule_id and rule_id != _approved_rule_id:
+            # This candidate matched the incident but was NOT the rule
+            # the human approved. Skip. Audit the skip so the trail
+            # explicitly records what was NOT fired.
+            await _audit_decision(
+                incident, rule_id, rule_name, tenant_id,
+                "approval_scope_skip", [],
+                {"decision": "approval_scope_skip",
+                 "reason": "approved_rule_id_mismatch",
+                 "approved_rule_id": _approved_rule_id},
+            )
+            continue
 
         # --- Suppression check ---
         if await _is_suppressed(rule, now):

@@ -104,8 +104,15 @@ class BillingValueEngine:
 
             pipe = self.redis.pipeline()
 
-            pipe.hincrbyfloat(daily_key, "money_saved", saved)
-            pipe.hincrbyfloat(daily_key, "cost_prevented", saved)
+            # Q36 — store money as integer CENTS via HINCRBY, not floats
+            # via HINCRBYFLOAT. Redis HINCRBYFLOAT accumulates IEEE-754
+            # drift over many small increments; integer cents give exact
+            # arithmetic. Read path (get_tenant_billing_summary) divides
+            # by 100 before returning USD. Backward-compat: old float
+            # values are still readable via `float(...)` below.
+            saved_cents = int(round(saved * 100))
+            pipe.hincrby(daily_key, "money_saved_cents", saved_cents)
+            pipe.hincrby(daily_key, "cost_prevented_cents", saved_cents)
 
             if action in _THREAT_ACTIONS:
                 pipe.hincrby(daily_key, "threats_blocked", 1)
@@ -119,7 +126,7 @@ class BillingValueEngine:
 
             pipe.expire(daily_key, 86400 * 30)
 
-            pipe.hincrbyfloat(monthly_key, "money_saved", saved)
+            pipe.hincrby(monthly_key, "money_saved_cents", saved_cents)
 
             if action in _THREAT_ACTIONS:
                 pipe.hincrby(monthly_key, "threats_blocked", 1)
@@ -181,21 +188,30 @@ class BillingValueEngine:
             daily = decode(daily_raw)
             monthly = decode(monthly_raw)
 
+            # Q36 — sum the (now-canonical) integer-cents field plus any
+            # residual float-USD field from pre-fix rows so historical
+            # data isn't dropped on the version boundary. `int(round(...))`
+            # tolerates a legacy float value like "12.34".
+            def _usd(d: dict, key_cents: str, key_legacy_usd: str) -> float:
+                cents = int(d.get(key_cents, 0) or 0)
+                legacy_cents = int(round(float(d.get(key_legacy_usd, 0) or 0) * 100))
+                return round((cents + legacy_cents) / 100.0, 2)
+
             return {
                 "tenant_id": tenant_id,
                 "today": {
-                    "money_saved": float(daily.get("money_saved", 0)),
+                    "money_saved": _usd(daily, "money_saved_cents", "money_saved"),
                     "threats_blocked": int(daily.get("threats_blocked", 0)),
                     "cost_spikes_prevented": int(daily.get("cost_spikes_prevented", 0)),
                     "high_risk_agents_count": len(risk or []),
                 },
                 "month": {
-                    "money_saved": float(monthly.get("money_saved", 0)),
+                    "money_saved": _usd(monthly, "money_saved_cents", "money_saved"),
                     "threats_blocked": int(monthly.get("threats_blocked", 0)),
                 },
-                "total_money_saved": float(daily.get("money_saved", 0)),
+                "total_money_saved": _usd(daily, "money_saved_cents", "money_saved"),
                 "attacks_blocked": int(daily.get("attacks_blocked", 0)),
-                "cost_prevented": float(daily.get("cost_prevented", 0)),
+                "cost_prevented": _usd(daily, "cost_prevented_cents", "cost_prevented"),
                 "high_risk_agents": [
                     r.decode() if isinstance(r, bytes) else r for r in (risk or [])
                 ],

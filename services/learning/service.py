@@ -329,10 +329,15 @@ class LearningService:
     ) -> None:
         """
         Adjust behavioral baseline based on human feedback (Closed-Loop).
-        Stores atomic counters for adaptive weighting: acp:feedback:{agent_id}
+        Stores atomic counters for adaptive weighting via the shared
+        `_get_key(tenant, agent, "feedback")` helper — same tenant scoping
+        every other key in this service uses. Q35 fix: the prior key
+        `f"acp:feedback:{agent_id}"` omitted tenant_id, so feedback from
+        tenant A on agent-id X updated the same Redis hash as tenant B's
+        agent-id X, blending adaptive-weight signals across tenants.
         """
         profile_key = self._get_key(tenant_id, agent_id, "profile")
-        feedback_key = f"acp:feedback:{str(agent_id)}"
+        feedback_key = self._get_key(tenant_id, agent_id, "feedback")
 
         try:
             pipe = self.redis.pipeline()
