@@ -127,6 +127,22 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q31-Q34 — parallel-agent hunt in fresh terrain (registry / behavior / autonomy) found 4 real bugs + 1 false-positive; all shipped.**
+
+Dispatched 3 Explore agents in parallel to audit `services/registry/{wizard,workspace,service}.py`, `services/behavior/{service,_baseline,main}.py`, and `services/autonomy/{webhook_executor,incident_watcher,router}.py`. Each returned file:line + patch outline. I verified in the actual code before implementing.
+
+**Q31 — `/workspace/inventory` loaded every agent row into python to compute counts by status/risk/provider/wizard. A 100k-agent tenant → 100k row tuples with jsonb metadata payloads = OOM.** Same class as Q26/Q27. Fix: swap the triple-column `.all()` for four SQL GROUP BY / COUNT queries (status, risk, provider, wizard). Python memory is O(unique groups) regardless of row count. 1 new regression test locks in the SQL-aggregation contract; 7 existing tests rewritten to feed the new pre-aggregated mock shape.
+
+**Q32 — `POST /analyze` did bare `tokens = payload.get("tokens", 0)` without int coercion; a non-numeric client value (e.g. `"abc"`) reached `record_action`'s `if tokens > 0:` and raised uncaught TypeError → 500.** Fix: `try: int(...) or 0 except (ValueError, TypeError): return 400-shape` — matches the sibling `invalid uuid` error contract. 4 new tests (non-numeric rejected, int-string coerced, absent defaults to 0, null defaults to 0).
+
+**Q33 — `fire_servicenow` did `int(urgency or 2)` and `int(impact or 2)` unwrapped; a non-numeric urgency was caught by the outer `except Exception` and masked as "ServiceNow unavailable" (misleading — the failure was client-side input, not network).** Fix: wrap the two int coercions in try/except returning a clear `"urgency and impact must be integers 1-3"` error.
+
+**Q34 — Jira + ServiceNow POST-and-parse-JSON sites had no response body cap; a broken/hostile downstream could stream gigabytes and OOM the autonomy worker.** Same class as Q17/Q21/Q30. Fix: new `_post_capped(url, json_body, headers)` helper streams the response with `client.stream("POST", ...)` + `aiter_bytes` + byte counter, aborts at `_WEBHOOK_MAX_RESP_BYTES = 1 MiB` (env-tunable via `WEBHOOK_MAX_RESP_BYTES`). Fallback path for test doubles without `.stream()` uses `.post()` + post-hoc `len(text.encode(...))` check. Both `fire_jira` + `fire_snow` call sites migrated. Also fixed a shadowing `import json as _json` inside `fire_jira` that would have caused UnboundLocalError once the new code path referenced the module-level import. 5 new tests (small body passes, over-cap raises, declared content-length short-circuits, fallback-path allow + reject, cap-size sanity).
+
+**One agent false-positive (documented, not shipped):** `autonomy/router.py::add_override` IntegrityError-recovery SELECT was flagged as TOCTOU-vulnerable. Verified NOT reachable — there's no delete path for `HumanOverrideEvent`, and the unique constraint `(tenant_id, event_type, request_id)` guarantees the SELECT returns exactly one row (or fails cleanly). Exactly-once publish preserved by `_is_first_winner` flag.
+
+**Suite: 2100 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q30 — `HttpFeedProvider._fetch_with_retry` had no body-size cap; a broken or hostile threatintel feed URL could OOM the orchestrator worker.**
 
 Same class as Q17 (OIDC IdP body cap) and Q21 (SCIM directory body cap), applied to `services/security/threatintel/providers.py`. Prior code did `resp = await self._client.get(url, timeout=T)` then `resp.text` — httpx buffers the entire body into RAM before returning. Threatintel feeds ARE usually curated + limited-size (few KB to MB), but the provider is designed to be tenant-configurable and no ship-side defense stood between an operator-supplied URL and an OOM.

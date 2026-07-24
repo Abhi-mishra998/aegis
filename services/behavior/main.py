@@ -42,7 +42,14 @@ async def analyze_behavior(payload: dict, _: str = Depends(verify_internal_secre
     except (ValueError, AttributeError) as exc:
         return {"success": False, "error": f"invalid uuid: {exc}"}
     tool = payload.get("tool")
-    tokens = payload.get("tokens", 0)
+    # Q32 — record_action does `if tokens > 0` + hincrby(tokens). A
+    # non-numeric client value (e.g. "abc") used to reach that line and
+    # raise TypeError → uncaught 500. Validate here for a clean 400-shape
+    # error dict matching the sibling `invalid uuid` case.
+    try:
+        tokens = int(payload.get("tokens", 0) or 0)
+    except (ValueError, TypeError) as exc:
+        return {"success": False, "error": f"invalid tokens (must be an integer): {exc}"}
 
     result = await behavior_engine.record_action(
         tenant_id=tenant_id,

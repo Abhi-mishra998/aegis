@@ -20,7 +20,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
@@ -72,54 +72,78 @@ async def workspace_inventory(
           "wizard_provisioned": int,   // how many were created via Sprint 2 wizard
         }
     """
-    rows = (
-        await db.execute(
-            select(Agent.status, Agent.risk_level, Agent.metadata_data)
-            .where(Agent.tenant_id == tenant_id)
-            .where(Agent.deleted_at.is_(None))
+    # SQL-side aggregation: prior version loaded every agent row
+    # (status + risk_level + full metadata JSONB) into python to count.
+    # A 100k-agent tenant → 100k row tuples with jsonb payloads = OOM.
+    # Postgres does the counting in O(index scan) with constant python
+    # memory.
+    base_where = [
+        Agent.tenant_id == tenant_id,
+        Agent.deleted_at.is_(None),
+    ]
+
+    status_rows = (await db.execute(
+        select(Agent.status, func.count())
+        .where(*base_where)
+        .group_by(Agent.status),
+    )).all()
+    risk_rows = (await db.execute(
+        select(func.coalesce(Agent.risk_level, "low"), func.count())
+        .where(*base_where)
+        .group_by(func.coalesce(Agent.risk_level, "low")),
+    )).all()
+    # `metadata->>'provider'` extracts the JSONB string at that key;
+    # NULL when absent, empty when set to "". Group + count in SQL.
+    provider_rows = (await db.execute(
+        select(
+            func.lower(func.coalesce(
+                Agent.metadata_data["provider"].astext, "",
+            )),
+            func.count(),
         )
-    ).all()
+        .where(*base_where)
+        .group_by(func.lower(func.coalesce(
+            Agent.metadata_data["provider"].astext, "",
+        ))),
+    )).all()
+    # `metadata->'wizard'` present + not JSON-null + not JSON-false ≈
+    # python's `bool(meta.get("wizard"))` for the shapes we actually write.
+    wizard_count = int((await db.execute(
+        select(func.count())
+        .where(*base_where)
+        .where(Agent.metadata_data["wizard"].isnot(None))
+        .where(Agent.metadata_data["wizard"].astext != "false")
+        .where(Agent.metadata_data["wizard"].astext != ""),
+    )).scalar_one() or 0)
+
+    by_status: dict[str, int] = {}
+    active = quarantined = terminated = 0
+    for status_val, cnt in status_rows:
+        s = str(status_val).upper()
+        by_status[s] = int(cnt)
+        if s == "ACTIVE":
+            active = int(cnt)
+        elif s == "QUARANTINED":
+            quarantined = int(cnt)
+        elif s == "TERMINATED":
+            terminated = int(cnt)
+    total = sum(by_status.values())
+
+    by_risk: dict[str, int] = dict.fromkeys(_KNOWN_RISK_LEVELS, 0)
+    high_risk = 0
+    for risk_val, cnt in risk_rows:
+        r = str(risk_val).lower()
+        if r in by_risk:
+            by_risk[r] = int(cnt)
+        if r in ("high", "critical"):
+            high_risk += int(cnt)
 
     by_provider: dict[str, int] = dict.fromkeys(_KNOWN_PROVIDERS, 0)
     by_provider["unknown"] = 0
-    by_risk: dict[str, int] = dict.fromkeys(_KNOWN_RISK_LEVELS, 0)
-    by_status: dict[str, int] = {}
-    wizard_count = 0
-
-    total = 0
-    high_risk = 0
-    active = 0
-    quarantined = 0
-    terminated = 0
-
-    for status_val, risk_level, metadata_data in rows:
-        total += 1
-        status_str = str(status_val).upper()
-        by_status[status_str] = by_status.get(status_str, 0) + 1
-        if status_str == "ACTIVE":
-            active += 1
-        elif status_str == "QUARANTINED":
-            quarantined += 1
-        elif status_str == "TERMINATED":
-            terminated += 1
-
-        risk_str = str(risk_level or "low").lower()
-        if risk_str in by_risk:
-            by_risk[risk_str] += 1
-        if risk_str in ("high", "critical"):
-            high_risk += 1
-
-        meta = metadata_data or {}
-        if isinstance(meta, dict):
-            prov = str(meta.get("provider") or "").lower().strip()
-            if prov in by_provider:
-                by_provider[prov] += 1
-            else:
-                by_provider["unknown"] += 1
-            if meta.get("wizard"):
-                wizard_count += 1
-        else:
-            by_provider["unknown"] += 1
+    for prov_val, cnt in provider_rows:
+        p = str(prov_val or "").strip()
+        bucket = p if p in by_provider else "unknown"
+        by_provider[bucket] = by_provider.get(bucket, 0) + int(cnt)
 
     return APIResponse(
         data={

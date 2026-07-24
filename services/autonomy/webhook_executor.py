@@ -26,7 +26,9 @@ account password). See fire_servicenow().
 from __future__ import annotations
 
 import base64
+import json as _json
 import os
+from typing import Any
 
 import httpx
 import structlog
@@ -102,6 +104,67 @@ _INTERNAL_SECRET  = os.environ["INTERNAL_SECRET"]  # fail-fast: no placeholder d
 # self-host Jira / ServiceNow behind a TLS-terminating load balancer
 # that presents http internally — that intention is preserved here.
 _ALLOWED_WEBHOOK_SCHEMES: tuple[str, ...] = ("http", "https")
+
+# Q34 — body-size cap for outbound webhook POSTs where we parse the
+# response as JSON. Real Jira / ServiceNow success responses are
+# ~1-10 KB; anything past 1 MiB is either a broken vendor or a hostile
+# response streaming to OOM the worker. Env-tunable so an unusual
+# response can be admitted per deployment. Same class of defense as
+# Q17 (OIDC), Q21 (SCIM), Q30 (threatintel feeds).
+_WEBHOOK_MAX_RESP_BYTES = int(
+    os.getenv("WEBHOOK_MAX_RESP_BYTES", str(1 * 1024 * 1024)),
+)
+
+
+class _WebhookResponseTooLarge(Exception):
+    """Downstream returned a body larger than ``_WEBHOOK_MAX_RESP_BYTES``.
+    Caller surfaces as a normal downstream-error result, not a stack trace."""
+
+
+async def _post_capped(
+    url: str, *, json_body: Any, headers: dict[str, str],
+    timeout: float = WEBHOOK_TIMEOUT,
+) -> tuple[int, bytes]:
+    """POST with a streamed body-size cap on the response. Returns
+    ``(status_code, body_bytes)``. Aborts with
+    ``_WebhookResponseTooLarge`` at the ceiling — a hostile or broken
+    downstream cannot OOM the worker.
+
+    Test doubles that don't implement ``.stream()`` fall back to
+    ``.post()`` + post-hoc len check (imperfect — body already in RAM
+    at that point — but real httpx.AsyncClient always uses the
+    streaming path). Same fallback pattern as threatintel providers.
+    """
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=_FOLLOW_REDIRECTS,
+    ) as c:
+        stream_fn = getattr(c, "stream", None)
+        if stream_fn is not None:
+            async with stream_fn(
+                "POST", url, json=json_body, headers=headers,
+            ) as resp:
+                declared = resp.headers.get("content-length")
+                if declared and declared.isdigit() and int(declared) > _WEBHOOK_MAX_RESP_BYTES:
+                    raise _WebhookResponseTooLarge(
+                        f"downstream declared {declared} > cap {_WEBHOOK_MAX_RESP_BYTES}",
+                    )
+                buf = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    buf.extend(chunk)
+                    if len(buf) > _WEBHOOK_MAX_RESP_BYTES:
+                        raise _WebhookResponseTooLarge(
+                            f"downstream streamed > cap {_WEBHOOK_MAX_RESP_BYTES}",
+                        )
+                return resp.status_code, bytes(buf)
+        # Fallback for tests that pass an AsyncClient without .stream().
+        r = await c.post(url, json=json_body, headers=headers)
+        body_text = getattr(r, "text", "") or ""
+        body_bytes = body_text.encode("utf-8", errors="ignore")
+        if len(body_bytes) > _WEBHOOK_MAX_RESP_BYTES:
+            raise _WebhookResponseTooLarge(
+                f"downstream body {len(body_bytes)}B > cap {_WEBHOOK_MAX_RESP_BYTES}",
+            )
+        return r.status_code, body_bytes
 
 
 async def fire_slack(message: str, webhook_url: str = "", context: dict | None = None) -> dict:
@@ -304,7 +367,6 @@ async def fire_jira(
     # passes a JSON string (begins with '{').
     desc_text = description or summary
     if desc_text.lstrip().startswith("{"):
-        import json as _json
         try:
             adf_body = _json.loads(desc_text)
         except Exception:
@@ -332,32 +394,42 @@ async def fire_jira(
     url = f"{base_url.rstrip('/')}/rest/api/3/issue"
 
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
-            r = await c.post(url, json={"fields": fields}, headers=headers)
-        if r.status_code == 201:
-            body = r.json()
+        status_code, body_bytes = await _post_capped(
+            url, json_body={"fields": fields}, headers=headers,
+        )
+        if status_code == 201:
+            try:
+                body = _json.loads(body_bytes) if body_bytes else {}
+            except _json.JSONDecodeError:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
             issue_key = body.get("key", "")
             issue_id  = body.get("id", "")
             logger.info(
                 "jira_issue_created",
-                issue_key=issue_key, project=project_key, http=r.status_code,
+                issue_key=issue_key, project=project_key, http=status_code,
             )
             return {
                 "status":     "created",
                 "issue_key":  issue_key,
                 "issue_id":   issue_id,
                 "issue_url":  f"{base_url.rstrip('/')}/browse/{issue_key}" if issue_key else "",
-                "http_status": r.status_code,
+                "http_status": status_code,
             }
+        body_snippet = body_bytes[:200].decode("utf-8", errors="replace")
         logger.warning(
             "jira_issue_create_failed",
-            http=r.status_code, body=r.text[:200], project=project_key,
+            http=status_code, body=body_snippet, project=project_key,
         )
         return {
             "status": "error",
-            "http_status": r.status_code,
-            "reason": r.text[:200] if r.text else f"HTTP {r.status_code}",
+            "http_status": status_code,
+            "reason": body_snippet if body_snippet else f"HTTP {status_code}",
         }
+    except _WebhookResponseTooLarge as exc:
+        logger.warning("jira_response_too_large", error=str(exc))
+        return {"status": "error", "reason": "jira response exceeded size cap"}
     except Exception as exc:
         logger.warning("jira_issue_create_exception", error=str(exc))
         return {"status": "error", "reason": str(exc)}
@@ -446,8 +518,18 @@ async def fire_servicenow(
         return {"status": "error", "reason": f"servicenow instance_url blocked: {exc}"}
 
     # Clamp urgency/impact to 1-3 — SNOW rejects anything else.
-    urgency = max(1, min(3, int(urgency or 2)))
-    impact  = max(1, min(3, int(impact  or 2)))
+    # Q33 — the prior bare int() raised ValueError on non-numeric input
+    # (e.g. urgency="high") and was caught by the outer except Exception,
+    # masking the parse failure as "ServiceNow unavailable". Distinguish
+    # bad-input (client error) from network unavailability.
+    try:
+        urgency = max(1, min(3, int(urgency or 2)))
+        impact  = max(1, min(3, int(impact  or 2)))
+    except (ValueError, TypeError) as exc:
+        return {
+            "status": "error",
+            "reason": f"urgency and impact must be integers 1-3: {exc}",
+        }
 
     desc_text = description or short_description
     if context:
@@ -478,15 +560,24 @@ async def fire_servicenow(
     url = f"{instance_url.rstrip('/')}/api/now/table/incident"
 
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
-            r = await c.post(url, json=body, headers=headers)
-        if r.status_code == 201:
-            data = r.json().get("result", {}) or {}
+        status_code, body_bytes = await _post_capped(
+            url, json_body=body, headers=headers,
+        )
+        if status_code == 201:
+            try:
+                parsed = _json.loads(body_bytes) if body_bytes else {}
+            except _json.JSONDecodeError:
+                parsed = {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+            data = parsed.get("result") or {}
+            if not isinstance(data, dict):
+                data = {}
             sys_id = data.get("sys_id", "")
             number = data.get("number", "")
             logger.info(
                 "snow_incident_created",
-                number=number, sys_id=sys_id[:8], http=r.status_code,
+                number=number, sys_id=sys_id[:8], http=status_code,
             )
             return {
                 "status":       "created",
@@ -496,7 +587,7 @@ async def fire_servicenow(
                     f"{instance_url.rstrip('/')}/nav_to.do?uri=incident.do?sys_id={sys_id}"
                     if sys_id else ""
                 ),
-                "http_status":  r.status_code,
+                "http_status":  status_code,
             }
         # N26 (2026-06-21): full SNOW response body stays in the internal log,
         # but the caller-visible `reason` is a generic class so we don't echo
@@ -504,13 +595,17 @@ async def fire_servicenow(
         # into the operator's HTTP response.
         logger.warning(
             "snow_incident_create_failed",
-            http=r.status_code, body=r.text[:500],
+            http=status_code,
+            body=body_bytes[:500].decode("utf-8", errors="replace"),
         )
         return {
             "status":      "error",
-            "http_status": r.status_code,
-            "reason":      _safe_snow_error(r.status_code),
+            "http_status": status_code,
+            "reason":      _safe_snow_error(status_code),
         }
+    except _WebhookResponseTooLarge as exc:
+        logger.warning("snow_response_too_large", error=str(exc))
+        return {"status": "error", "reason": "ServiceNow response exceeded size cap"}
     except Exception as exc:
         # N26: same scrub on the network-level exception path. The full
         # exception string (which could include the URL + credentials of a
