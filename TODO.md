@@ -127,6 +127,32 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q25 — ATF §14.5 ROTATE cross-signing of the retiring key's final batch.**
+
+Spec text (§14.5 ROTATE): *"old key's final batch cross-signed by new key so chain verification survives rotation."* Fingerprint-dispatched historical keys (B3) closed the LOOKUP side, but the transition batch itself had no signature under the new key — creating a "gap batch" verifiers couldn't cover without waiting for the first fresh post-rotation batch.
+
+Shipped:
+- Migration `s14_5_rotate_cross_signature_2026_07_24` — three nullable columns on `transparency_historical_keys`: `transition_root_hash`, `transition_new_key_signature`, `transition_new_key_fingerprint`.
+- `scripts/maintenance/rotate_transparency_key.py` — new `_fetch_last_root_for_key` + `_cross_sign_payload` helpers; before writing the historical row, script fetches the retiring key's latest TransparencyRoot, signs its canonical `signed_root_payload` with the NEW key, and INSERTs the historical row with all three transition fields populated in one atomic op. First rotation on a fresh deployment (no roots yet) leaves the transition fields NULL — that's the well-defined "no cross-signature possible" state.
+- `services/audit/signer.py::verify_rotation_cross_signature(historical_row, new_key_pem, old_signed_root_payload) -> bool` — offline verifier. Returns False (never raises) on missing transition fields (legacy pre-2026-07-24 rows), fingerprint mismatch, root_hash mismatch, or signature-invalid. Post-2026-07-24 rotations MUST evaluate True; a False on a fresh rotation is an ops-page-worthy anomaly.
+- `services/audit/models.py::TransparencyHistoricalKey` — three new nullable columns declared on the model.
+
+**6 new tests** in `tests/test_rotation_cross_signature.py`: happy-path verify, legacy no-fields → False, wrong-new-key rejected, mismatched root_hash rejected (belt+suspenders check), tampered signature rejected, partial transition fields rejected (no half-verified states).
+
+**Q24 — ATF §14.5 DESTROY certificate.**
+
+Spec text (§14.5 DESTROY): *"destruction produces a signed certificate referencing the final anchor — the customer can forever prove what existed and when it was destroyed."* The lifecycle transition endpoint already recorded the state change; the certificate ARTIFACT itself was missing.
+
+Shipped:
+- `sdk/common/destruction_certificate.py` — pure module. `build_destruction_certificate(...)` composes the cert dict + signs canonical body via a caller-supplied `sign` callable. `verify_destruction_certificate(cert, public_key_pem)` for offline verification. Refuses (`RetentionFloorNotMet`) if actual retention < required floor — the cert NEVER understates retention, which is its whole point. Retention floor default is 180d per §7.3.
+- `POST /logs/destruction-certificate` on the audit service (`services/audit/router.py`) — fetches the tenant's most recent TransparencyRoot + first/last audit_logs timestamps, calls the pure builder, returns the signed cert. Refuses 409 on retention violation, 404 when no anchors/entries exist.
+- Gateway proxy `POST /audit/logs/destruction-certificate` (`services/gateway/routers/audit.py`).
+- Lifecycle hook (`services/gateway/routers/lifecycle.py`) — when a transition sets state = DESTROY, the endpoint automatically fetches the certificate from the audit service and returns it in the transition response body under `destruction_certificate` (or `destruction_certificate_error` if generation failed). The certificate can be re-issued via the direct endpoint for as long as audit rows remain on disk — failure to attach in the transition response does NOT roll the transition back.
+
+**15 new tests** in `tests/test_destruction_certificate.py`: happy-path verify, retention floor honored (actual == floor → OK, actual < floor → refused, negative floor rejected, final-before-first rejected), tamper detection (retention days / tenant_id / final_anchor.root_hash mutations → False; swapped signature bytes → False; wrong public key → False), missing-field discrimination (signature / final_anchor / algorithm), canonicalization invariant (published `canonical_body_sha256` equals `sha256(canonical_json(body))`).
+
+**Suite: 2069 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q23 — POST /auth/tenants had four numeric fields + a tier enum coercion that still 500'd on bad input despite the endpoint docstring promising 4xx.**
 
 `services/identity/router.py::upsert_tenant` was hardened in the 2026-06-24 QA-VALIDATION-FIX sprint to catch every invalid-shape input and return 422. But when Sprint 3.2 quota fields (`requests_per_second`, `burst`, `daily_request_cap`, `monthly_request_cap`, `daily_inference_cost_cap_usd`) landed later, they were added as bare `int(body.get(...))` and `float(body.get(...))` — an operator sending `{"requests_per_second": "abc"}` would 500 the endpoint instead of getting a clean 400. Same silent regression for tier: `TenantTier(tier_val)` was not wrapped, so a typo'd tier (`"basik"`) would 500 at the SQL insert path.

@@ -198,6 +198,61 @@ def verify_receipt(payload: dict[str, Any], public_key_pem: str) -> bool:
         return False
 
 
+# ── ATF §14.5 ROTATE cross-signature verification ─────────────────────
+def verify_rotation_cross_signature(
+    historical_row: Any,
+    new_key_pem: str,
+    old_signed_root_payload: dict[str, Any],
+) -> bool:
+    """Verify that the retiring key's final root was countersigned by the
+    NEW key at rotation time. Returns True iff:
+
+      * the historical row has all three transition_* fields populated,
+      * `new_key_pem` matches the recorded transition_new_key_fingerprint,
+      * `old_signed_root_payload["root_hash"]` matches transition_root_hash,
+      * the signature verifies against the canonical form of the payload.
+
+    Returns False on ANY of those checks failing — including the
+    row-missing-transition-fields case, so a legacy pre-2026-07-24
+    historical row deterministically returns False rather than raising.
+    Post-2026-07-24 rotations MUST have this evaluate to True; a False
+    on a fresh rotation is an anomaly that ops should page on.
+    """
+    getter = (
+        (lambda k: historical_row.get(k))
+        if isinstance(historical_row, dict)
+        else (lambda k: getattr(historical_row, k, None))
+    )
+    root_hash = getter("transition_root_hash")
+    sig_b64 = getter("transition_new_key_signature")
+    new_fp = getter("transition_new_key_fingerprint")
+    if not root_hash or not sig_b64 or not new_fp:
+        return False
+
+    # The new key's PEM the caller supplied must match the recorded
+    # fingerprint — otherwise verification is against the wrong key.
+    presented_fp = fingerprint_public_key(new_key_pem.encode("ascii"))
+    if presented_fp != new_fp:
+        return False
+
+    # The payload's root_hash must match the recorded transition boundary
+    # — belt + suspenders so a swapped payload doesn't verify by accident.
+    if str(old_signed_root_payload.get("root_hash", "")) != root_hash:
+        return False
+
+    try:
+        pub = serialization.load_pem_public_key(new_key_pem.encode("ascii"))
+    except ValueError:
+        return False
+    if not isinstance(pub, ed25519.Ed25519PublicKey):
+        return False
+    try:
+        pub.verify(_b64d(sig_b64), canonical_json(old_signed_root_payload))
+        return True
+    except Exception:
+        return False
+
+
 # ── Singleton bootstrap ─────────────────────────────────────────────────
 def _load_from_env() -> ed25519.Ed25519PrivateKey | None:
     raw = os.environ.get("RECEIPT_SIGNING_PRIVATE_KEY")

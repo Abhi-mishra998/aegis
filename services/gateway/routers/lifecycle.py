@@ -130,4 +130,38 @@ async def transition_state(request: Request) -> APIResponse[dict[str, Any]]:
 
     logger.info("lifecycle_transition",
                 tenant_id=tenant_id, from_state=current, to_state=new_state)
-    return APIResponse(data={"state": new_state, "from": current})
+
+    # ATF §14.5 DESTROY line: "destruction produces a signed certificate
+    # referencing the final anchor — the customer can forever prove what
+    # existed and when it was destroyed." Fetch the cert now, while the
+    # ledger still exists, and hand it back to the caller. Certificate
+    # generation failure does NOT roll back the transition — the customer
+    # can re-issue via POST /audit/logs/destruction-certificate for as
+    # long as the audit rows are still on disk.
+    cert: dict[str, Any] | None = None
+    cert_error: str | None = None
+    if new_state == "DESTROY":
+        import httpx as _httpx
+        try:
+            client = request.app.state.client
+            r = await client.post(
+                f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/destruction-certificate",
+                json={},
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=10.0,
+            )
+            if r.status_code == 200:
+                cert = (r.json() or {}).get("data")
+            else:
+                cert_error = f"audit_svc_status_{r.status_code}"
+        except _httpx.HTTPError as exc:
+            cert_error = f"audit_svc_unreachable: {type(exc).__name__}"
+            logger.warning("destroy_cert_fetch_failed",
+                           tenant_id=tenant_id, error=str(exc))
+
+    response: dict[str, Any] = {"state": new_state, "from": current}
+    if cert is not None:
+        response["destruction_certificate"] = cert
+    if cert_error is not None:
+        response["destruction_certificate_error"] = cert_error
+    return APIResponse(data=response)

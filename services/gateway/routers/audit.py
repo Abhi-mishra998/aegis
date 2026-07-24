@@ -818,3 +818,20 @@ async def playground_publish(request: Request) -> Any:
         f"{_base()}/playground/publish", json=body, headers=internal_headers(request),
     )
     return passthrough(resp)
+
+
+# ATF §14.5 DESTROY certificate — customer-retainable proof.
+@router.post("/audit/logs/destruction-certificate", tags=["audit"])
+async def issue_destruction_certificate(request: Request) -> Any:
+    body: dict = {}
+    if request.headers.get("content-length") not in (None, "0"):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+    resp = await request.app.state.client.post(
+        f"{_base()}/logs/destruction-certificate",
+        json=body if isinstance(body, dict) else {},
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)

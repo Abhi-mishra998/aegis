@@ -190,6 +190,16 @@ class TransparencyHistoricalKey(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     retired_reason: Mapped[str | None] = mapped_column(Text,              nullable=True)
+    # ATF §14.5 ROTATE cross-signing: the retiring key's final Merkle
+    # root, countersigned by the new key at rotation time. Together with
+    # the historical PEM this closes the "gap batch" — a verifier can
+    # confirm the chain continues under the new key without waiting for
+    # the first fresh post-rotation batch. All three are nullable so
+    # pre-2026-07-24 historical rows continue to load; presence together
+    # means "this rotation was cross-signed".
+    transition_root_hash:            Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transition_new_key_signature:    Mapped[str | None] = mapped_column(Text,       nullable=True)
+    transition_new_key_fingerprint:  Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 # ---------------------------------------------------------------------------

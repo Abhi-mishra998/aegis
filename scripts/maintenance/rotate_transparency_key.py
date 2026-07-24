@@ -5,13 +5,20 @@ Mechanics:
 
   1. Read the currently-active key from disk (default
      ``/data/keys/root-signing.pem``, override with --key-path).
-  2. Compute its fingerprint + PEM and INSERT into
-     ``transparency_historical_keys`` so old roots / receipts continue to
-     verify after the rotation.
+  2. Compute its fingerprint + PEM.
   3. Generate a new Ed25519 keypair.
-  4. Atomically replace the on-disk key with the new private PEM (and
+  4. **ATF §14.5 cross-signing** — fetch the retiring key's most recent
+     TransparencyRoot (if any) and countersign its canonical
+     signed_root_payload with the NEW key. Persist the signature +
+     new-key fingerprint on the historical row so a post-rotation
+     verifier can prove chain continuity across the boundary without
+     waiting for the first fresh batch under the new key.
+  5. INSERT into ``transparency_historical_keys`` with the cross-signature
+     fields populated (or NULL for the very first rotation, before any
+     root has been signed).
+  6. Atomically replace the on-disk key with the new private PEM (and
      leave a timestamped backup of the previous file next to it).
-  5. Print the new fingerprint + the operator instruction to restart the
+  7. Print the new fingerprint + the operator instruction to restart the
      audit service so it reloads the singleton.
 
 `--dry-run` performs steps 1+2's *read* and shows what would happen without
@@ -42,6 +49,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import contextlib
 import os
 import sys
 import uuid
@@ -51,6 +60,7 @@ from pathlib import Path
 import structlog
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -59,10 +69,11 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-import contextlib
-
-from services.audit.models import TransparencyHistoricalKey  # noqa: E402
-from services.audit.signer import fingerprint_public_key  # noqa: E402
+from services.audit.models import (  # noqa: E402
+    TransparencyHistoricalKey,
+    TransparencyRoot,
+)
+from services.audit.signer import canonical_json, fingerprint_public_key  # noqa: E402
 
 logger = structlog.get_logger(__name__)
 
@@ -92,15 +103,54 @@ def _private_pem(priv: ed25519.Ed25519PrivateKey) -> bytes:
     )
 
 
+async def _fetch_last_root_for_key(
+    db: AsyncSession, *, signing_fp: str,
+) -> TransparencyRoot | None:
+    """Return the most recent TransparencyRoot signed by ``signing_fp``,
+    or None if this key has not signed a root yet (first rotation on a
+    fresh deployment). Ordered by root_date desc — ties are broken by
+    the primary key composite ordering which is deterministic per
+    tenant, root_date."""
+    return (
+        await db.execute(
+            select(TransparencyRoot)
+            .where(TransparencyRoot.signing_key_fingerprint == signing_fp)
+            .order_by(TransparencyRoot.root_date.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def _cross_sign_payload(
+    new_priv: ed25519.Ed25519PrivateKey,
+    signed_root_payload: dict,
+) -> str:
+    """Return base64(urlsafe, no pad) Ed25519 signature of the
+    canonical-JSON form of the OLD key's signed_root_payload, minted
+    by the NEW key. The payload is treated as an opaque canonical
+    document — this is why the historical row also stores the exact
+    root_hash it corresponds to (belt + suspenders for the verifier)."""
+    sig = new_priv.sign(canonical_json(signed_root_payload))
+    return base64.urlsafe_b64encode(sig).rstrip(b"=").decode("ascii")
+
+
 async def _record_historical_key(
     db: AsyncSession,
     *,
     fingerprint: str,
     public_key_pem: bytes,
     retired_reason: str | None,
+    transition_root_hash: str | None = None,
+    transition_new_key_signature: str | None = None,
+    transition_new_key_fingerprint: str | None = None,
 ) -> bool:
     """Insert into transparency_historical_keys. Returns True if a row was
     inserted, False on idempotent re-run (fingerprint already present).
+
+    The three ``transition_*`` fields together capture the ATF §14.5
+    cross-signature; they're populated when the retiring key has
+    already signed at least one TransparencyRoot, and NULL on the very
+    first rotation of a fresh deployment.
     """
     stmt = (
         pg_insert(TransparencyHistoricalKey)
@@ -111,6 +161,9 @@ async def _record_historical_key(
             algorithm="ed25519",
             rotated_at=datetime.now(tz=UTC),
             retired_reason=retired_reason,
+            transition_root_hash=transition_root_hash,
+            transition_new_key_signature=transition_new_key_signature,
+            transition_new_key_fingerprint=transition_new_key_fingerprint,
         )
         .on_conflict_do_nothing(index_elements=["fingerprint"])
     )
@@ -165,13 +218,31 @@ async def rotate(
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     try:
         async with session_factory() as db:
+            # ATF §14.5 cross-signing — countersign the retiring key's
+            # last root with the new key BEFORE inserting the historical
+            # row, so the row is written with the transition fields
+            # populated in one atomic INSERT.
+            last_root = await _fetch_last_root_for_key(db, signing_fp=old_fp)
+            transition_root_hash = None
+            transition_sig_b64 = None
+            transition_new_fp = None
+            if last_root is not None:
+                transition_root_hash = last_root.root_hash
+                transition_sig_b64 = _cross_sign_payload(
+                    new_priv, last_root.signed_root_payload,
+                )
+                transition_new_fp = new_fp
             inserted = await _record_historical_key(
                 db,
                 fingerprint=old_fp,
                 public_key_pem=old_pub_pem,
                 retired_reason=retired_reason,
+                transition_root_hash=transition_root_hash,
+                transition_new_key_signature=transition_sig_b64,
+                transition_new_key_fingerprint=transition_new_fp,
             )
         summary["historical_row_inserted"] = inserted
+        summary["cross_signed_root_hash"] = transition_root_hash
     finally:
         await engine.dispose()
 

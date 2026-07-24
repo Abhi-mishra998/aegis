@@ -36,6 +36,7 @@ from services.audit.models import (
     AuditLog,
     AuditNote,
     PendingUsageEvent,
+    TransparencyRoot,
 )
 from services.audit.schemas import (
     AuditLogCreate,
@@ -1925,3 +1926,109 @@ async def mark_pending_events_complete(
     await db.commit()
 
     return APIResponse(data={"updated": result.rowcount or 0})
+
+
+# ---------------------------------------------------------------------------
+# ATF v3.2 §14.5 DESTROY — destruction certificate.
+# ---------------------------------------------------------------------------
+
+
+class DestructionCertificateRequest(BaseModel):
+    """Optional retention_floor_days override — otherwise uses the
+    ATF-canonical default (180d per §7.3)."""
+    retention_floor_days: int | None = None
+
+
+@router.post("/destruction-certificate", response_model=APIResponse[dict])
+async def issue_destruction_certificate(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    payload: DestructionCertificateRequest | None = None,
+) -> APIResponse[dict]:
+    """ATF §14.5 — issue a signed certificate that a customer keeps
+    forever, proving what existed and when it was destroyed.
+
+    Refuses (409 RetentionFloorNotMet) if actual retention < floor.
+    Refuses (404 no_anchors) if no transparency roots exist for the tenant.
+    """
+    from sdk.common.destruction_certificate import (
+        DEFAULT_RETENTION_FLOOR_DAYS,
+        FinalAnchor,
+        RetentionFloorNotMet,
+        build_destruction_certificate,
+    )
+    from services.audit.signer import get_root_signer
+
+    floor = int(
+        (payload.retention_floor_days if payload else None)
+        or DEFAULT_RETENTION_FLOOR_DAYS
+    )
+    if floor < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="retention_floor_days must be positive",
+        )
+
+    # Final anchor: the most recent transparency_roots row for this tenant.
+    final_root: TransparencyRoot | None = (
+        await db.execute(
+            select(TransparencyRoot)
+            .where(TransparencyRoot.tenant_id == tenant_id)
+            .order_by(TransparencyRoot.root_date.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if final_root is None:
+        raise HTTPException(
+            status_code=404,
+            detail="no transparency anchors for tenant — cannot issue certificate",
+        )
+
+    # First + final ledger entry timestamps bound the actual retention window.
+    first_ts_val = (
+        await db.execute(
+            select(func.min(AuditLog.timestamp))
+            .where(AuditLog.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    final_ts_val = (
+        await db.execute(
+            select(func.max(AuditLog.timestamp))
+            .where(AuditLog.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if first_ts_val is None or final_ts_val is None:
+        raise HTTPException(
+            status_code=404,
+            detail="no audit_logs entries for tenant — cannot issue certificate",
+        )
+
+    signer = get_root_signer()
+    anchor = FinalAnchor(
+        root_hash=final_root.root_hash,
+        root_date_iso=final_root.root_date.isoformat(),
+        leaf_count=int(final_root.leaf_count),
+        signing_key_fingerprint=final_root.signing_key_fingerprint,
+        prev_root_hash=final_root.prev_root_hash,
+    )
+    try:
+        cert = build_destruction_certificate(
+            tenant_id=str(tenant_id),
+            first_entry_ts=first_ts_val,
+            final_entry_ts=final_ts_val,
+            final_anchor=anchor,
+            retention_floor_days=floor,
+            signer_fingerprint=signer._fingerprint,
+            sign=signer._priv.sign,
+        )
+    except RetentionFloorNotMet as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    logger.info(
+        "destruction_certificate_issued",
+        tenant_id=str(tenant_id),
+        actual_retention_days=cert["actual_retention_days"],
+        floor=floor,
+        signer_fp=signer._fingerprint,
+    )
+    return APIResponse(data=cert)
