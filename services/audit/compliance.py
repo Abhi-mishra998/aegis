@@ -917,15 +917,17 @@ async def generate_dpdp_bundle(
     )
 
     # ── §8(5) + §8(7) — every execute_tool row is technical/organisational
-    # safeguard evidence. We tally rather than dump every row.
-    tool_q = base_q.where(AuditLog.action == "execute_tool")
-    tool_rows: list[AuditLog] = list((await db.execute(tool_q)).scalars().all())
-    by_tool, by_decision = _tally(tool_rows)
+    # safeguard evidence. SQL-side aggregation: the previous pattern
+    # loaded every matching row into python, OOMing on year-long
+    # windows for busy tenants (same class as Q26 EU-AI-Act fix).
+    (
+        total_signed_records, by_tool, by_decision, _first_id, _last_id,
+    ) = await _tally_execute_tool_calls_sql(db, tenant_id, period_start, period_end)
 
     safeguards_summary: dict[str, Any] = {
-        "total_signed_records":  len(tool_rows),
-        "by_tool":               dict(by_tool),
-        "by_decision":           dict(by_decision),
+        "total_signed_records":  total_signed_records,
+        "by_tool":               by_tool,
+        "by_decision":           by_decision,
         "explanation": (
             "Every tool-call decision is recorded in the tamper-evident audit "
             "chain. The presence of a signed record for each call is DPDP "

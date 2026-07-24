@@ -127,6 +127,14 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q27 — `generate_dpdp_bundle` had the same unbounded-row-load pattern as Q26 (EU AI Act).**
+
+`services/audit/compliance.py::generate_dpdp_bundle::§8(5)+§8(7)` did `tool_rows: list[AuditLog] = list((await db.execute(tool_q)).scalars().all())` on the tenant's `execute_tool` audit rows in the period with no LIMIT — same OOM shape as EU AI Act, same regulator-facing endpoint (India DPDP compliance bundle). Fix: swap in the same `_tally_execute_tool_calls_sql` aggregator introduced for Q26; total_signed_records + by_tool + by_decision all come from SQL now.
+
+**1 new test**: whitebox regression that DPDP's source references the SQL aggregator + the old unbounded pattern is gone (mirrors the EU AI Act regression from Q26). No end-to-end test for DPDP existed to break; the sweep grepped every other `list(...scalars().all())` in `compliance.py` and confirmed the remaining sites carry `.limit(N)` in the query.
+
+**Suite: 2073 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q26 — `generate_eu_ai_act_bundle` loaded every matching audit row into Python — OOM on a busy tenant's year-long compliance window.**
 
 `services/audit/compliance.py::generate_eu_ai_act_bundle` did `list(tool_result.scalars().all())` on `tool_q = base_q.where(action=="execute_tool")` with no LIMIT. On the §12.1 reference workload (1M actions/day) a 1-year regulator request = 365M rows, an OOM waiting to happen the first time a customer's auditor asked for a real compliance bundle.

@@ -37,6 +37,18 @@ def test_generate_eu_ai_act_bundle_uses_sql_aggregator():
     assert "tool_rows: list[AuditLog] = list(tool_result.scalars().all())" not in src
 
 
+def test_generate_dpdp_bundle_uses_sql_aggregator():
+    """Same class as EU AI Act — DPDP §8(5)/§8(7) safeguards summary
+    had the identical unbounded tool_rows load. Regression on revert."""
+    from services.audit import compliance as _cmod
+    src = inspect.getsource(_cmod.generate_dpdp_bundle)
+    assert "_tally_execute_tool_calls_sql" in src, (
+        "generate_dpdp_bundle no longer calls the SQL aggregator "
+        "— the unbounded-row DoS is back on the DPDP endpoint"
+    )
+    assert "tool_rows: list[AuditLog] = list((await db.execute(tool_q)).scalars().all())" not in src
+
+
 @pytest.mark.asyncio
 async def test_sql_aggregator_processes_mocked_results():
     """Feed the aggregator canned db.execute results in the exact shape
