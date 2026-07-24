@@ -13,7 +13,10 @@ Three concrete providers ship in Sprint 7:
   * `HttpFeedProvider` — pulls a URL on the orchestrator's schedule.
     Parses `text/plain` (one IOC per line, `#` comments) or
     `application/json` (array of {kind, value, severity} objects).
-    Bounded retry on 5xx; 4xx fails fast.
+    Bounded retry on 5xx; 4xx fails fast. Response body is capped
+    (streamed + aborted at `_HTTP_MAX_BYTES`) so a broken feed URL
+    can't OOM the orchestrator worker — same defense as the OIDC and
+    SCIM streamed-cap patterns.
   * `GlobalDefaultsProvider` — wraps the curated defaults that ship
     with the platform. Written to the `_global` tenant overlay so every
     tenant sees them without per-tenant seeding.
@@ -27,6 +30,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
+import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -135,6 +139,12 @@ def global_defaults_providers() -> list[BaseProvider]:
 # HTTP feed provider — pulls a remote URL.
 # ---------------------------------------------------------------------------
 _HTTP_BACKOFF = (0.0, 0.5, 1.0, 2.0)
+# Threatintel feeds are typically tens of KB to a few MB. 8 MiB gives
+# ~100x headroom for the largest curated commercial feeds; anything
+# past that is either a misconfigured URL, a broken feed vendor, or
+# hostile content. Env-tunable so an unusually large legitimate feed
+# can be admitted per deployment.
+_HTTP_MAX_BYTES = int(os.getenv("THREATINTEL_MAX_FEED_BYTES", str(8 * 1024 * 1024)))
 
 
 @dataclass(frozen=True)
@@ -182,10 +192,51 @@ class HttpFeedProvider(BaseProvider):
         ]
 
     async def _fetch_with_retry(self) -> str | None:
+        """Fetch the feed body with retry + streamed byte cap.
+
+        Streaming (instead of plain .get()) lets us abort at
+        _HTTP_MAX_BYTES before an oversize body ever fully materialises
+        in RAM — a broken or hostile feed URL can't OOM the worker.
+        Feed clients without .stream() (e.g. a MagicMock in tests) fall
+        back to the plain .get() path.
+        """
         attempts = self._cfg.retries + 1
         for i in range(attempts):
             if i > 0 and i < len(_HTTP_BACKOFF):
                 await asyncio.sleep(_HTTP_BACKOFF[i])
+
+            # Prefer streaming so we can enforce the byte cap.
+            stream_fn = getattr(self._client, "stream", None)
+            if stream_fn is not None:
+                try:
+                    async with stream_fn(
+                        "GET", self._cfg.url,
+                        timeout=self._cfg.timeout_seconds,
+                    ) as resp:
+                        code = getattr(resp, "status_code", 0)
+                        if 400 <= code < 500:
+                            return None
+                        if not (200 <= code < 300):
+                            continue
+                        buf = bytearray()
+                        async for chunk in resp.aiter_bytes():
+                            buf.extend(chunk)
+                            if len(buf) > _HTTP_MAX_BYTES:
+                                logger.warning(
+                                    "threatintel_feed_body_too_large",
+                                    url=self._cfg.url,
+                                    cap=_HTTP_MAX_BYTES,
+                                )
+                                return None
+                        return bytes(buf).decode("utf-8", errors="replace")
+                except Exception as exc:
+                    swallow_log(
+                        logger, "threatintel_http_fetch_failed", exc,
+                        url=self._cfg.url,
+                    )
+                    continue
+
+            # Fallback: no .stream() attribute — happens with test doubles.
             try:
                 resp = await self._client.get(
                     self._cfg.url, timeout=self._cfg.timeout_seconds,
@@ -195,9 +246,15 @@ class HttpFeedProvider(BaseProvider):
                 continue
             code = getattr(resp, "status_code", 0)
             if 200 <= code < 300:
-                return getattr(resp, "text", "") or ""
+                text = getattr(resp, "text", "") or ""
+                if len(text.encode("utf-8", errors="ignore")) > _HTTP_MAX_BYTES:
+                    logger.warning(
+                        "threatintel_feed_body_too_large",
+                        url=self._cfg.url, cap=_HTTP_MAX_BYTES,
+                    )
+                    return None
+                return text
             if 400 <= code < 500:
-                # Operator misconfiguration; retrying is pointless.
                 return None
         return None
 

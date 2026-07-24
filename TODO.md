@@ -127,6 +127,16 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q30 — `HttpFeedProvider._fetch_with_retry` had no body-size cap; a broken or hostile threatintel feed URL could OOM the orchestrator worker.**
+
+Same class as Q17 (OIDC IdP body cap) and Q21 (SCIM directory body cap), applied to `services/security/threatintel/providers.py`. Prior code did `resp = await self._client.get(url, timeout=T)` then `resp.text` — httpx buffers the entire body into RAM before returning. Threatintel feeds ARE usually curated + limited-size (few KB to MB), but the provider is designed to be tenant-configurable and no ship-side defense stood between an operator-supplied URL and an OOM.
+
+Fix: prefer `client.stream("GET", url)` + `aiter_bytes` + running byte counter, abort at `_HTTP_MAX_BYTES = 8 MiB` (env-tunable via `THREATINTEL_MAX_FEED_BYTES`). Fallback path (used by test doubles without `.stream()`) does a post-hoc `len(text.encode(...))` check — imperfect (body already in memory) but the streaming path is the primary defense against real httpx-shaped clients.
+
+**7 new tests** in `tests/test_threatintel_feed_body_cap.py`: small body passes through, over-cap body aborted, at-cap boundary works, 4xx fails fast (no retry), fallback path both allows small + rejects oversize, cap-size sanity bounds.
+
+**Suite: 2090 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q29 — Revoked-agents auth-boundary fail-open path emitted a `logger.warning` but no metric — a Redis-blip storm was invisible to Prometheus.**
 
 `services/gateway/_mw_auth.py` around the `is_agent_revoked` call has an intentional fail-open (comment: "if Redis blips we shouldn't take down auth for every request") but caught the exception with plain `logger.warning("revoked_agents_check_failed", error=...)`. The S5 sprint pattern is that every fail-open catch site must go through `swallow_log`, which increments `EXCEPTION_SWALLOWED_TOTAL{event=...}` — so ops can alert on the fail-open rate. `swallow_log` was already imported at the top of `_mw_auth.py` (four other sites use it). This site was the last outlier.
