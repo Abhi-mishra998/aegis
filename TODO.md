@@ -127,6 +127,16 @@ knocks off the hygiene batch sprint-by-sprint.
 - **Dead-code trap**: `services/identity/scim_reconciler.py::run_once` was `async` but called `asyncio.run()` inside → `RuntimeError` if ever invoked from a running loop. Deleted; `run_once_async` (the wired one) works.
 - **Missing role gate**: `POST /lifecycle/transition` — any authenticated tenant user could transition state, but transitions are C3 events per §14.5. Added `Depends(verify_role(Role.OWNER))` matching the workspace shadow-mode-exit pattern.
 
+**Q28 — Exfiltration detector's `credential_in_message_body` silently missed case-sensitive secret patterns (AKIA-, JWT-eyJ-, ghp_-) when only lowercased `raw_norm` reached it.**
+
+`services/security/objectives/exfiltration.py` did `raw_orig = c.get("raw_norm_original") or c.get("raw_norm") or ""` then ran every `_SECRET_PATTERNS` regex against that single string. If a caller passed only `raw_norm` (test paths, stale cached canonical results from pre-U13 rollout), the AWS `AKIA[0-9A-Z]{16}\b`, JWT `\beyJ...`, and GitHub `ghp_[A-Za-z0-9]{30,}` case-sensitive patterns silently missed on lowercased input — a security-relevant under-detection on the primary credential-exfil surface.
+
+Fix: build a `haystacks` tuple of every non-empty raw source (`raw_norm_original`, `raw_norm`) and run each pattern against every haystack when both are present. Strict improvement in true-positive rate; no false-positive change (each pattern's own case sensitivity still governs whether it matches — lowercase input can't match `AKIA[0-9A-Z]{16}` and doesn't try).
+
+**8 new tests** in `tests/test_credential_detector_case_sensitivity.py`: AKIA + JWT original-case detected (sanity), pattern-in-only-original still detected (both haystacks searched), pattern-in-only-lowercase still detected, single-source fallbacks work, empty-input no false-positive, canary that documents the old fallback was really broken (regex behavior verified).
+
+**Suite: 2081 pass / same 2 unrelated env-only failures / ruff clean.**
+
 **Q27 — `generate_dpdp_bundle` had the same unbounded-row-load pattern as Q26 (EU AI Act).**
 
 `services/audit/compliance.py::generate_dpdp_bundle::§8(5)+§8(7)` did `tool_rows: list[AuditLog] = list((await db.execute(tool_q)).scalars().all())` on the tenant's `execute_tool` audit rows in the period with no LIMIT — same OOM shape as EU AI Act, same regulator-facing endpoint (India DPDP compliance bundle). Fix: swap in the same `_tally_execute_tool_calls_sql` aggregator introduced for Q26; total_signed_records + by_tool + by_decision all come from SQL now.

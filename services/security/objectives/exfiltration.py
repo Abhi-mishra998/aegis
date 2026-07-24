@@ -106,9 +106,21 @@ def detect(c: dict, known_exfil_dests: tuple[str, ...] = ()) -> list[str]:
     # webhook calls, etc. Catches §32-C-10 (Bearer sk-ant-... in an email
     # body). raw_norm gets lowercased upstream so the case-insensitive
     # patterns above stay correct; the AWS-key and JWT regexes that need
-    # original case are matched against the raw string before lowercase.
-    raw_orig = (c.get("raw_norm_original") or c.get("raw_norm") or "")
-    if any(p.search(raw_orig) for p in _SECRET_PATTERNS):
+    # original case are matched against raw_norm_original.
+    #
+    # Q28 — the prior `raw_orig = orig or lower or ""` fallback silently
+    # missed case-sensitive patterns (`AKIA[0-9A-Z]{16}`, JWT `eyJ...`,
+    # `ghp_...`) when a caller passed only `raw_norm` (test paths, stale
+    # cached canonical results from pre-U13 rollout). Run every pattern
+    # against BOTH haystacks when both are present — strict improvement
+    # in detection coverage with no false-positive change (each pattern's
+    # own case sensitivity still governs whether it matches).
+    raw_orig = c.get("raw_norm_original") or ""
+    raw_low  = c.get("raw_norm") or ""
+    haystacks = tuple(h for h in (raw_orig, raw_low) if h)
+    if haystacks and any(
+        p.search(h) for p in _SECRET_PATTERNS for h in haystacks
+    ):
         if "credential_in_message_body" not in findings:
             findings.append("credential_in_message_body")
 
