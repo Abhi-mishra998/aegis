@@ -128,88 +128,20 @@ class PubSubManager:
 pubsub_manager = PubSubManager(redis)
 
 
-async def _publish_event(
-    r: Any, tenant_id: str, event_type: str, data: dict, *, agent_id: str | None = None
-) -> None:
-    """Publish a single SSE event to the per-tenant Redis Pub/Sub channel.
-
-    Sprint 2 — helper around the previous `redis.publish(f"acp:events:{tid}", json.dumps(...))`
-    pattern at 4 emit sites. Best-effort; never raises. SSE is a side channel and a
-    publish failure must NOT bring down the originating handler.
-
-    If `agent_id` is provided, the event is ALSO published on the per-agent channel
-    `acp:events:{tenant_id}:{agent_id}` so EventSource clients scoped to one agent
-    receive a filtered stream alongside the tenant-wide subscription.
-
-    N2 (2026-06-21) — the JSON body MUST carry a top-level ``tenant_id`` so the
-    SSE generator can independently verify the message was intended for the
-    authenticated client. Trusting the channel name alone is not enough — any
-    internal service with Redis access could publish to
-    ``acp:events:<otherTenant>`` and the generator used to relay it blind.
-    """
-    if not tenant_id:
-        return
-    try:
-        payload = json.dumps({
-            "tenant_id": tenant_id,
-            "type": event_type,
-            "data": data,
-            "ts": int(time.time()),
-        })
-    except Exception as exc:
-        logger.warning("sse_publish_serialise_failed", event_type=event_type, error=str(exc))
-        return
-    try:
-        await r.publish(f"acp:events:{tenant_id}", payload)
-    except Exception as exc:
-        logger.warning("sse_publish_failed", event_type=event_type, error=str(exc))
-    if agent_id:
-        try:
-            await r.publish(f"acp:events:{tenant_id}:{agent_id}", payload)
-        except Exception as exc:
-            logger.warning(
-                "sse_publish_agent_channel_failed",
-                event_type=event_type, agent_id=agent_id, error=str(exc),
-            )
-
-
-def _internal_headers(request: Request | None = None) -> dict[str, str]:
-    """Build internal service-to-service headers, forwarding tenant/auth context.
-    X-ACP-Role is injected from the JWT-validated request.state.role — never from
-    the client header — to prevent privilege escalation via forged role claims.
-    """
-    headers: dict[str, str] = {**mesh_headers("gateway"),}
-    if request is not None:
-        for h in ("X-Tenant-ID", "X-Agent-ID", "Authorization", "X-Request-ID", "X-Trace-ID"):
-            val = request.headers.get(h)
-            if val:
-                headers[h] = val
-
-        # P5 FIX: Ensure X-Tenant-ID and X-Agent-ID are forwarded from the authenticated state if missing in headers
-        if "X-Tenant-ID" not in headers and hasattr(request.state, "tenant_id") and request.state.tenant_id is not None:
-            headers["X-Tenant-ID"] = str(request.state.tenant_id)
-
-        if "X-Agent-ID" not in headers and hasattr(request.state, "agent_id") and request.state.agent_id is not None:
-            headers["X-Agent-ID"] = str(request.state.agent_id)
-
-        # Cookie-to-header bridge: promote acp_token cookie → Authorization when
-        # no explicit Authorization header was sent (browser/SSE clients use cookies).
-        if "Authorization" not in headers:
-            cookie_token = request.cookies.get("acp_token")
-            if cookie_token:
-                headers["Authorization"] = f"Bearer {cookie_token}"
-        role = getattr(request.state, "role", None)
-        if role:
-            headers["X-ACP-Role"] = str(role)
-        actor = getattr(request.state, "actor", None)
-        if actor:
-            headers["X-ACP-Actor"] = str(actor)
-    return headers
-
+# _publish_event removed — use services.gateway._helpers.publish_event
+# (byte-identical prior body).
+# _internal_headers removed — use services.gateway._helpers.internal_headers.
+# The local copy was a stale fork that missed the 2026-06-17 audit
+# hardening (X-Tenant-ID sourced from request.state on skip-listed
+# paths, Content-Type forwarding, mesh-mint failure warning).
+from services.gateway._helpers import (
+    internal_headers as _internal_headers,  # noqa: E402
+)
 
 # _passthrough removed — use services.gateway._helpers.passthrough
 # (identical wire-shape, single source of truth).
 from services.gateway._helpers import passthrough as _passthrough  # noqa: E402
+from services.gateway._helpers import publish_event as _publish_event  # noqa: E402
 
 
 async def _process_billing_queue(redis_client, s_client) -> None:
@@ -1441,66 +1373,11 @@ async def ingest_reconciliation_report(
 # /autonomy/* → autonomy service
 # ─────────────────────────────────────────────────────────────
 
-async def _trust_proxy(base_url: str, path: str, request: Request) -> Any:
-    """Generic forwarder for runtime-trust services. Preserves method, body,
-    query string, and tenant + auth context. Returns JSON or upstream status code.
-
-    BUGFIX 2026-05-13: `_internal_headers()` does NOT include `Content-Type`,
-    so passing the raw body via `content=` caused FastAPI on the upstream side
-    to see bytes instead of JSON ("Object of type bytes is not JSON serializable").
-    Parse JSON on the gateway and forward via `json=` so httpx sets the right
-    headers automatically.
-    """
-    client: httpx.AsyncClient = request.app.state.client
-    method = request.method.upper()
-    url = f"{base_url.rstrip('/')}{path}"
-    headers = _internal_headers(request)
-    json_body: Any | None = None
-    raw_body: bytes | None = None
-    if method in ("POST", "PATCH", "PUT"):
-        try:
-            raw_body = await request.body()
-            if raw_body:
-                try:
-                    json_body = json.loads(raw_body)
-                except Exception:
-                    json_body = None  # not JSON — forward raw + Content-Type
-        except Exception:
-            raw_body = None
-    try:
-        if json_body is not None:
-            resp = await client.request(
-                method, url,
-                headers=headers, params=request.query_params, json=json_body,
-                timeout=10.0,
-            )
-        else:
-            # Non-JSON body or no body — forward raw with original Content-Type if any.
-            ct = request.headers.get("content-type")
-            fwd_headers = dict(headers)
-            if ct:
-                fwd_headers["Content-Type"] = ct
-            resp = await client.request(
-                method, url,
-                headers=fwd_headers, params=request.query_params, content=raw_body,
-                timeout=10.0,
-            )
-        try:
-            return JSONResponse(content=resp.json(), status_code=resp.status_code)
-        except Exception:
-            return Response(content=resp.content, status_code=resp.status_code,
-                            media_type=resp.headers.get("content-type", "application/json"))
-    except Exception as exc:
-        logger.error("trust_proxy_error", base_url=base_url, path=path, error=str(exc))
-        return JSONResponse(
-            status_code=502,
-            content={"success": False, "error": f"Upstream unreachable: {type(exc).__name__}"},
-        )
-
-
 # Runtime-trust passthrough proxies (/graph, /flight, /autonomy), playbooks,
 # webhooks, and notifications proxy routes moved to
-# services/gateway/routers/proxies.py in sprint-5.1.
+# services/gateway/routers/proxies.py in sprint-5.1 — the shared forwarder
+# lives in services/gateway/_helpers.trust_proxy; the local main.py copy
+# was an orphan and was removed.
 
 
 # SSO config proxy routes moved to services/gateway/routers/sso.py in sprint-6.2.
