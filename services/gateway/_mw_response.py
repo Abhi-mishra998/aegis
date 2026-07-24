@@ -15,8 +15,8 @@ from fastapi import Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from sdk.common.background import safe_bg as _safe_bg
-from services.gateway.inference_proxy import OutputFilter, inference_proxy
 from services.gateway._helpers import publish_event
+from services.gateway.inference_proxy import OutputFilter, inference_proxy
 
 logger = structlog.get_logger(__name__)
 
@@ -258,9 +258,12 @@ class _ResponseMixin:
         """
         try:
             from services.gateway._behavior_aggregator import (
-                record_failure, quarantine_agent, is_quarantined,
+                BULK_PII_QUARANTINE_THRESHOLD,
+                RUNAWAY_FAILURE_THRESHOLD,
+                is_quarantined,
+                quarantine_agent,
                 record_bulk_pii_attempt,
-                RUNAWAY_FAILURE_THRESHOLD, BULK_PII_QUARANTINE_THRESHOLD,
+                record_failure,
             )
             cumulative = await record_failure(self.redis, tenant_id, agent_id, tool)
             if cumulative > RUNAWAY_FAILURE_THRESHOLD:

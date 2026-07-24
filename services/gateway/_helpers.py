@@ -381,8 +381,19 @@ async def trust_proxy(base_url: str, path: str, request: Request) -> Response:
     the Content-Type header upstream. Non-JSON bodies forward raw with the
     original Content-Type. Fixes a 2026-05-13 bug where _internal_headers
     didn't include Content-Type and the upstream saw bytes-not-JSON.
+
+    Path safety: httpx normalizes `..` segments at URL build time (verified
+    2026-07-22). Without this guard, /graph/../autonomy/admin on the
+    gateway would forward to {GRAPH}/autonomy/admin — crossing the
+    per-service scope boundary. Refuse `..`, CR, LF, and NUL in the path.
     """
     import json as _json
+    if ".." in path or any(c in path for c in ("\r", "\n", "\x00")):
+        logger.warning("trust_proxy_unsafe_path", path=path)
+        return Response(
+            content=_json.dumps({"success": False, "error": "invalid path"}),
+            status_code=400, media_type="application/json",
+        )
     client = request.app.state.client  # httpx.AsyncClient
     method = request.method.upper()
     url = f"{base_url.rstrip('/')}{path}"

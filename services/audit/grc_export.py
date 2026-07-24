@@ -47,8 +47,9 @@ import csv
 import hashlib
 import io
 import os
+from collections.abc import Iterable
 from datetime import timedelta
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import urlencode
 
 from services.audit.models import AuditLog
@@ -83,7 +84,7 @@ def _aevf_bundle_url(framework_slug: str, day_start) -> str:
 def _evidence_id(control_id: str, event_hash: str | None) -> str:
     """Stable evidence-row id: sha256(control_id || event_hash)[:32]."""
     h = hashlib.sha256(
-        f"{control_id}|{event_hash or ''}".encode("utf-8")
+        f"{control_id}|{event_hash or ''}".encode()
     ).hexdigest()
     return h[:32]
 

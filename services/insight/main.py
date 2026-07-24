@@ -4,8 +4,7 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException
 
-from sdk.common.auth import verify_internal_secret
-from sdk.common.auth import mesh_headers
+from sdk.common.auth import mesh_headers, verify_internal_secret
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
@@ -127,29 +126,12 @@ async def list_recent_insights(
         if insights:
             return {"success": True, "data": insights}
 
-    # Fallback: SCAN (no ordering guarantee, used only before first worker run)
-    cursor = 0
-    while len(insights) < limit:
-        cursor, keys = await redis.scan(cursor, match="acp:groq:insight:*", count=50)
-        for k in keys:
-            raw = await redis.get(k)
-            if raw:
-                try:
-                    parsed = json.loads(raw)
-                    event_id = (k.decode() if isinstance(k, bytes) else k).split(":")[-1]
-                    parsed.setdefault("event_id", event_id)
-                    insights.append(parsed)
-                    if len(insights) >= limit:
-                        break
-                except Exception as exc:
-                    # Malformed insight blob discovered in SCAN fallback.
-                    # Skip but log so the responsible writer can be tracked.
-                    logger.warning(
-                        "insight_parse_failed_scan",
-                        key=str(k), error=str(exc),
-                    )
-        if cursor == 0:
-            break
+    # audit S11j (P1-16): the old SCAN fallback matched
+    # `acp:groq:insight:*` — an unbounded, cross-tenant read. Writer keys
+    # don't encode tenant, so post-filtering would still require GETting
+    # every key. The synthetic path below already covers "empty tenant"
+    # (fresh tenant, worker warming up), so the SCAN block is deleted
+    # outright to close the leak.
 
     # Run-3 (2026-05-13): if neither the sorted set nor SCAN produced anything,
     # synthesize from recent high-risk audit decisions so the UI panel renders

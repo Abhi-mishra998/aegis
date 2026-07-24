@@ -11,6 +11,6 @@ Three submodules:
 
 The router lives at services/gateway/routers/iag.py.
 """
-from . import graph, store, ingestion  # noqa: F401
+from . import graph, ingestion, store  # noqa: F401
 
 __all__ = ["graph", "store", "ingestion"]

@@ -22,7 +22,22 @@ def canonical_json(obj: dict[str, Any]) -> bytes:
 
 
 def fingerprint_public_key(pub_pem: bytes) -> str:
-    return hashlib.sha256(pub_pem).hexdigest()[:32]
+    """Full SHA-256 fingerprint of the PEM. audit S18 (P2-6): pre-S18
+    receipts stored the first-16-byte truncation; the verifier below
+    accepts both forms so a customer SDK upgrade doesn't break historical
+    receipts.
+    """
+    return hashlib.sha256(pub_pem).hexdigest()
+
+
+def _fingerprint_matches(pub_pem: bytes, stored: str) -> bool:
+    """True iff ``stored`` matches the PEM's fingerprint in either the
+    pre-S18 truncated form (32 hex chars) or the full form (64 hex chars).
+    """
+    full = fingerprint_public_key(pub_pem)
+    if stored == full:
+        return True
+    return bool(len(stored) == 32 and stored == full[:32])
 
 
 def _b64d(s: str) -> bytes:
@@ -44,7 +59,7 @@ def verify_receipt(payload: dict[str, Any], public_key_pem: str) -> bool:
         raise ValueError(f"unsupported algorithm: {payload['algorithm']}")
 
     pub_pem = public_key_pem.encode("ascii")
-    if fingerprint_public_key(pub_pem) != payload["public_key_fingerprint"]:
+    if not _fingerprint_matches(pub_pem, payload["public_key_fingerprint"]):
         return False
 
     try:

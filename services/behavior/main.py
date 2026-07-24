@@ -56,13 +56,18 @@ async def analyze_behavior(payload: dict, _: str = Depends(verify_internal_secre
 async def check_behavior(payload: dict, _: str = Depends(verify_internal_secret)):
     """
     Check behavioral sequence for anomalies without recording (pre-flight).
+
+    audit S11i (P1-15): matches the sibling /analyze error shape — an
+    invalid UUID returns a 400-style error dict instead of silently
+    None-scoping and reading a tenant-less Redis bucket. The tenant-less
+    fallback in service.py:_key was the reachable-via-header-forgery
+    cross-tenant read this closes.
     """
     try:
         agent_uuid = uuid.UUID(payload.get("agent_id") or "")
         tenant_uuid = uuid.UUID(payload.get("tenant_id") or "")
-    except (ValueError, AttributeError):
-        agent_uuid = None
-        tenant_uuid = None
+    except (ValueError, AttributeError) as exc:
+        return {"success": False, "error": f"invalid uuid: {exc}"}
     result = await behavior_engine.check_behavior(
         agent_id=agent_uuid,
         tool_name=payload.get("tool_name"),

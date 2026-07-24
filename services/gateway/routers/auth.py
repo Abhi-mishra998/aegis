@@ -16,11 +16,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, field_validator
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from services.gateway._helpers import internal_headers, passthrough
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -41,7 +45,10 @@ class AuthRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def _check_email(cls, v: str) -> str:
-        if not _EMAIL_RE.match(v):
+        # fullmatch: plain .match on ^...$ accepts a trailing newline
+        # (SMTP-header-injection surface if the address is later embedded
+        # in outbound mail headers).
+        if not _EMAIL_RE.fullmatch(v):
             raise ValueError("not a valid email address")
         return v
 
@@ -176,6 +183,7 @@ async def logout(request: Request, response: Response) -> dict[str, Any]:
     if token:
         try:
             import hashlib
+
             from sdk.common.redis import get_redis_client
             from services.gateway.auth import (
                 REDIS_REVOKE_PREFIX,
@@ -190,8 +198,8 @@ async def logout(request: Request, response: Response) -> dict[str, Any]:
             # Best-effort fan-out so peer workers drop their LRU entries.
             try:
                 await redis_client.publish(TOKEN_REVOCATIONS_CHANNEL, token_hash)
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "token_revocation_fanout_failed", exc)
             invalidate_local_token(token)
         except Exception as exc:  # noqa: BLE001
             # Logout must never 5xx on the user — log and move on.
@@ -292,6 +300,6 @@ async def upsert_tenant(request: Request) -> Any:
         try:
             redis_client = request.app.state.redis
             await redis_client.delete(f"acp:tenant_meta:{body['tenant_id']}")
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "tenant_meta_cache_delete_failed", exc)
     return passthrough(resp)

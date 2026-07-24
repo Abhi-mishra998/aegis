@@ -32,8 +32,9 @@ than raising.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from typing import Any
 
 try:
     from opentelemetry import trace
@@ -213,7 +214,5 @@ def annotate_stage(
         ATTR_COST_USD:   cost_usd,
     })
     if error and _HAS_OTEL:
-        try:
+        with suppress(Exception):
             span.set_status(Status(StatusCode.ERROR, error))
-        except Exception:
-            pass

@@ -56,8 +56,13 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 # at boot from SSM SecureString — see user_data).
 import functools as _functools  # noqa: E402
 import re as _re  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker as _async_sessionmaker  # noqa: E402
-from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine  # noqa: E402
+
+from sqlalchemy.ext.asyncio import (
+    async_sessionmaker as _async_sessionmaker,  # noqa: E402
+)
+from sqlalchemy.ext.asyncio import (
+    create_async_engine as _create_async_engine,  # noqa: E402
+)
 
 
 def _identity_db_url() -> str:
@@ -193,7 +198,10 @@ async def upsert_jira_config(
 
     # Sprint 25 B1 — outbound SSRF protection. Block tenant-supplied
     # base_url that resolves to AWS metadata, localhost, or private CIDR.
-    from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
+    from sdk.common.outbound_url_allowlist import (
+        OutboundUrlBlocked,
+        validate_outbound_url,
+    )
     try:
         validate_outbound_url(payload.base_url)
     except OutboundUrlBlocked as exc:
@@ -375,7 +383,10 @@ async def upsert_snow_config(
         raise HTTPException(status_code=400, detail="instance_url must include scheme")
 
     # Sprint 25 B1 — outbound SSRF protection (same guard as Jira upsert above).
-    from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
+    from sdk.common.outbound_url_allowlist import (
+        OutboundUrlBlocked,
+        validate_outbound_url,
+    )
     try:
         validate_outbound_url(payload.instance_url)
     except OutboundUrlBlocked as exc:

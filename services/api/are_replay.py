@@ -14,8 +14,9 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.background import swallow_log
+from sdk.common.config import settings
 from services.api.are_worker import _build_trace
 
 logger = structlog.get_logger(__name__)
@@ -91,8 +92,8 @@ async def replay_rules(
                             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                             if ts < since:
                                 continue
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            swallow_log(logger, "are_replay_timestamp_parse_failed", exc)
                     logs.append(item)
     except Exception as exc:
         logger.warning("replay_audit_fetch_failed", error=str(exc))

@@ -1,4 +1,3 @@
-import contextlib
 import uuid
 
 import structlog
@@ -7,6 +6,7 @@ from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from sqlalchemy.exc import IntegrityError
 
+from sdk.common.background import swallow_log
 from services.registry.repository import AgentRepository, PermissionRepository
 from services.registry.schemas import (
     AgentCreate,
@@ -46,7 +46,11 @@ async def _invalidate_agent_caches(agent_id: uuid.UUID) -> None:
         async for key in _registry_redis.scan_iter(match=policy_pattern, count=100):
             await _registry_redis.delete(key)
     except Exception as exc:
-        _log.error("cache_invalidation_failed", agent_id=str(agent_id), error=str(exc))
+        # audit S11a (P1-11): surface via the shared swallow counter so a
+        # Redis brownout that used to be invisible ("permission grant
+        # applied but gateway keeps stale perms for TTL") now shows up
+        # as `acp_exception_swallowed_total{event="cache_invalidation_failed"}`.
+        swallow_log(_log, "cache_invalidation_failed", exc, agent_id=str(agent_id))
 
 
 class AgentService:
@@ -120,8 +124,7 @@ class AgentService:
             )
 
         updated_agent = await self.repo.update(agent, payload)
-        with contextlib.suppress(Exception):
-            await _invalidate_agent_caches(agent_id)
+        await _invalidate_agent_caches(agent_id)
         return AgentResponse.model_validate(updated_agent)
 
     async def delete_agent(self, tenant_id: uuid.UUID, agent_id: uuid.UUID) -> None:
@@ -132,8 +135,7 @@ class AgentService:
                 detail="Agent not found",
             )
         await self.repo.soft_delete(agent)
-        with contextlib.suppress(Exception):
-            await _invalidate_agent_caches(agent_id)
+        await _invalidate_agent_caches(agent_id)
 
     async def add_permission(
         self, tenant_id: uuid.UUID, agent_id: uuid.UUID, payload: PermissionCreate
@@ -147,8 +149,7 @@ class AgentService:
 
         try:
             permission = await self.perm_repo.create(tenant_id, agent_id, payload)
-            with contextlib.suppress(Exception):
-                await _invalidate_agent_caches(agent_id)
+            await _invalidate_agent_caches(agent_id)
             return PermissionResponse.model_validate(permission)
         except IntegrityError as exc:
             # Composite unique key violation
@@ -177,8 +178,7 @@ class AgentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Permission not found",
             )
-        with contextlib.suppress(Exception):
-            await _invalidate_agent_caches(agent_id)
+        await _invalidate_agent_caches(agent_id)
 
     async def get_agent_permissions(
         self, tenant_id: uuid.UUID, agent_id: uuid.UUID

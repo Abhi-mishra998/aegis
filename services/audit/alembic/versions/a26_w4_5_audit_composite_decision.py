@@ -21,7 +21,6 @@ from collections.abc import Sequence
 
 from alembic import op
 
-
 # NB: alembic_version_audit.version_num is varchar(32) — keep this short.
 # Original "a26_w4_5_audit_composite_decision" was 34 chars and crashed
 # the audit container with StringDataRightTruncationError on the

@@ -76,8 +76,18 @@ def canonical_json(obj: dict[str, Any]) -> bytes:
 
 
 def fingerprint_public_key(pub_pem: bytes) -> str:
-    """Public-key fingerprint = first 16 bytes of sha256(PEM), hex."""
-    return hashlib.sha256(pub_pem).hexdigest()[:32]
+    """Public-key fingerprint = full sha256(PEM), hex.
+
+    audit S18 (P2-6): the previous implementation truncated the digest
+    to the first 16 bytes (32 hex chars = 128 bits). 128 bits of SHA-256
+    is still enterprise-grade for key IDs, but there is no cost saving
+    — the full 256-bit hex sits in the same DB text column — and the
+    truncation reduces the collision margin needlessly. The backfill
+    migration ``s18_full_signer_fingerprint_2026_07_21`` recomputes
+    every historical row from its stored public_key_pem so existing
+    signatures still verify.
+    """
+    return hashlib.sha256(pub_pem).hexdigest()
 
 
 class ReceiptSigner:
@@ -166,7 +176,12 @@ def verify_receipt(payload: dict[str, Any], public_key_pem: str) -> bool:
         raise ValueError(f"unsupported algorithm: {payload['algorithm']}")
 
     pub_pem = public_key_pem.encode("ascii")
-    if fingerprint_public_key(pub_pem) != payload["public_key_fingerprint"]:
+    _stored_fp = payload["public_key_fingerprint"]
+    _full_fp = fingerprint_public_key(pub_pem)
+    # audit S18: accept the pre-S18 truncated form (32 hex chars) too
+    # so a mid-rollout SDK — or an anchored receipt from before the
+    # backfill migration — still verifies against a modern signer.
+    if _stored_fp != _full_fp and not (len(_stored_fp) == 32 and _stored_fp == _full_fp[:32]):
         return False
 
     try:

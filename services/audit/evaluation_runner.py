@@ -191,7 +191,7 @@ async def _replay_case(
             headers=headers,
             timeout=REQ_TIMEOUT,
         )
-    except (httpx.RequestError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, httpx.RequestError) as exc:
         elapsed = (time.perf_counter() - t0) * 1000.0
         return "error", [], {}, elapsed, f"network: {exc!s}"
 
@@ -396,7 +396,7 @@ async def _run_job(job: EvalJob) -> None:
             batch = pending[batch_start : batch_start + BATCH_SIZE]
             sem = asyncio.Semaphore(BATCH_SIZE)
 
-            async def _bound(case: EvalDatasetCase):
+            async def _bound(case: EvalDatasetCase, sem: asyncio.Semaphore = sem):
                 async with sem:
                     return case, await _replay_case(
                         client, token, job.tenant_id, case

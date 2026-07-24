@@ -24,7 +24,7 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update, delete
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.db import get_db
@@ -93,8 +93,9 @@ async def list_teams(
     return an empty list so the page renders cleanly. Fresh tenants
     legitimately have no teams.
     """
-    from services.identity.models import Team
     from sqlalchemy.exc import ProgrammingError
+
+    from services.identity.models import Team
     tenant_id = _tenant_id_from_request(request)
     try:
         res = await db.execute(

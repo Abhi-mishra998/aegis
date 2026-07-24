@@ -132,7 +132,7 @@ async def start_tenant_export(
     cmd = [
         sys.executable,
         str(_EXPORT_SCRIPT),
-        "--tenant-id", str(tid),
+        "--tenant", str(tid),
         "--output", str(archive_path),
     ]
     await _set_job(job_id, {
@@ -174,6 +174,7 @@ async def start_tenant_redact(
 
     # Require explicit confirm-token body to prevent accidental erasure.
     # The token is the literal string "I-CONSENT-TO-REDACT-<tenant_id>".
+    # `reason` is required by the redact script (GDPR audit trail).
     body = await request.json() if request.headers.get("content-length") not in (None, "0") else {}
     expected = f"I-CONSENT-TO-REDACT-{tid}"
     if not isinstance(body, dict) or body.get("confirm") != expected:
@@ -181,7 +182,16 @@ async def start_tenant_redact(
             status_code=400,
             detail={
                 "error": "missing or wrong confirm token",
-                "expected_body": {"confirm": expected},
+                "expected_body": {"confirm": expected, "reason": "<legal reference>"},
+            },
+        )
+    reason = str(body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "missing reason (legal request reference for the audit trail)",
+                "expected_body": {"confirm": expected, "reason": "<legal reference>"},
             },
         )
 
@@ -189,8 +199,10 @@ async def start_tenant_redact(
     cmd = [
         sys.executable,
         str(_REDACT_SCRIPT),
-        "--tenant-id", str(tid),
+        "--tenant", str(tid),
+        "--reason", reason,
         "--actor", getattr(request.state, "actor", "unknown"),
+        "--execute",
     ]
     await _set_job(job_id, {
         "status": "queued",

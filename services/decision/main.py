@@ -224,7 +224,9 @@ def _compute_inference_signals(req: OrchestrationRequest) -> tuple[list[str], fl
                 or req.metadata.get("query") or ""
             )
         if sql_query:
-            from sdk.common.sql_normalize import normalize_for_detection  # noqa: PLC0415
+            from sdk.common.sql_normalize import (
+                normalize_for_detection,  # noqa: PLC0415
+            )
             sql_norm = normalize_for_detection(sql_query)
             if any(p in sql_norm for p in _DDL_HARD):
                 inference_flags.append("SQL_DDL_DESTRUCTION")

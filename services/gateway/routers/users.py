@@ -13,15 +13,19 @@ the "users" tag.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Request
 from redis.asyncio import Redis
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from services.gateway._helpers import internal_headers, passthrough, publish_event
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -202,11 +206,11 @@ async def revoke_api_key(key_id: str, request: Request) -> Any:
                         "key_id": key_id,
                         "revoker_email": revoker,
                         "subject_kind": "employee",
-                        "revoked_at": datetime.now(timezone.utc).isoformat(),
+                        "revoked_at": datetime.now(UTC).isoformat(),
                     },
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "user_revocation_audit_failed", exc)
         # 2. Cache-invalidation index for the api-key auth path.
         try:
             redis = getattr(request.app.state, "redis", None)

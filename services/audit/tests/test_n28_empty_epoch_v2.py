@@ -22,12 +22,10 @@ from __future__ import annotations
 import hashlib
 from datetime import date
 
-
 from services.audit.transparency import (
     empty_epoch_root_hash,
     empty_epoch_root_hash_v1,
 )
-
 
 # --------------------------------------------------------------------------- #
 # v2 — the actual N28 fix                                                      #

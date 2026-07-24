@@ -14,17 +14,17 @@ sprints, ~150 lines of duplicated body) — see SPRINT.md ledger.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 import structlog
 from fastapi import Request
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from services.gateway import slack_approvals
 from services.gateway._helpers import internal_headers
-
 
 logger = structlog.get_logger(__name__)
 
@@ -48,7 +48,7 @@ def spend_key_month(tenant_id: str, email: str, month: str) -> str:
 
 async def current_spend(redis: Any, tenant_id: str, email: str) -> tuple[float, float]:
     """Return ``(today_usd, month_usd)`` for one employee. NEVER throws."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     day_str   = now.strftime("%Y-%m-%d")
     month_str = now.strftime("%Y-%m")
     try:
@@ -61,10 +61,12 @@ async def current_spend(redis: Any, tenant_id: str, email: str) -> tuple[float, 
 
 
 async def record_spend(redis: Any, tenant_id: str, email: str, cost: float) -> None:
-    """Increment both day + month counters. NEVER throws."""
-    if cost <= 0:
+    """Add ``cost`` to both day + month counters. ``cost`` may be negative
+    (used for reserve → actual reconciliation, S7 2026-07-21). NEVER throws.
+    """
+    if cost == 0:
         return
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     day_str   = now.strftime("%Y-%m-%d")
     month_str = now.strftime("%Y-%m")
     try:
@@ -76,6 +78,75 @@ async def record_spend(redis: Any, tenant_id: str, email: str, cost: float) -> N
         await pipe.execute()
     except Exception as exc:  # noqa: BLE001
         logger.warning("llm_proxy_spend_record_failed", error=str(exc), cost=cost)
+
+
+# S7 (audit P1-6) — atomic reserve-and-reconcile closes the TOCTOU race
+# between the pre-call budget check and the post-call INCRBYFLOAT. Old
+# code read the counter, compared against the cap, then charged the
+# actual cost hundreds of ms later — two concurrent calls at $95/$100
+# both passed and both charged $10, blowing past the cap. The Lua below
+# does compare + charge in one atomic step: callers reserve the maximum
+# possible cost per call, run the LLM, then reconcile with (actual -
+# reserved) via ``record_spend`` (which now accepts negatives).
+_RESERVE_LUA = """
+local cur_d = tonumber(redis.call('GET', KEYS[1])) or 0
+local cur_m = tonumber(redis.call('GET', KEYS[2])) or 0
+local reserve = tonumber(ARGV[1])
+local daily_cap = tonumber(ARGV[2])
+local monthly_cap = tonumber(ARGV[3])
+if daily_cap > 0 and cur_d + reserve > daily_cap then
+    return {'d', tostring(cur_d), tostring(daily_cap)}
+end
+if monthly_cap > 0 and cur_m + reserve > monthly_cap then
+    return {'m', tostring(cur_m), tostring(monthly_cap)}
+end
+redis.call('INCRBYFLOAT', KEYS[1], reserve)
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+redis.call('INCRBYFLOAT', KEYS[2], reserve)
+redis.call('EXPIRE', KEYS[2], ARGV[5])
+return {'ok', tostring(cur_d + reserve), tostring(cur_m + reserve)}
+"""
+
+
+async def reserve_or_reject(
+    redis: Any,
+    tenant_id: str,
+    email: str,
+    reserved_usd: float,
+    daily_cap: float | None,
+    monthly_cap: float | None,
+) -> tuple[str, float, float]:
+    """Atomically reserve ``reserved_usd`` against day + month caps.
+
+    Returns ``(status, a, b)``:
+      * ``('ok',  new_day_usd,     new_month_usd)``  — reservation applied
+      * ``('d',   current_day_usd, daily_cap)``      — would exceed daily cap
+      * ``('m',   current_month_usd, monthly_cap)``  — would exceed monthly cap
+      * ``('err', 0.0, 0.0)``                         — Redis unreachable
+
+    A ``daily_cap`` or ``monthly_cap`` of ``None`` is treated as no cap.
+    """
+    if reserved_usd <= 0:
+        d, m = await current_spend(redis, tenant_id, email)
+        return "ok", d, m
+    now = datetime.now(tz=UTC)
+    day_key = spend_key_day(tenant_id, email, now.strftime("%Y-%m-%d"))
+    month_key = spend_key_month(tenant_id, email, now.strftime("%Y-%m"))
+    d_cap = float(daily_cap) if daily_cap is not None else -1.0
+    m_cap = float(monthly_cap) if monthly_cap is not None else -1.0
+    try:
+        raw = await redis.execute_command(
+            "EVAL", _RESERVE_LUA, 2, day_key, month_key,
+            reserved_usd, d_cap, m_cap,
+            7 * 24 * 3600, 70 * 24 * 3600,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llm_proxy_reserve_failed", error=str(exc), tenant_id=tenant_id, email=email)
+        return "err", 0.0, 0.0
+    code = raw[0].decode() if isinstance(raw[0], bytes) else raw[0]
+    a = float(raw[1].decode() if isinstance(raw[1], bytes) else raw[1])
+    b = float(raw[2].decode() if isinstance(raw[2], bytes) else raw[2])
+    return code, a, b
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -138,9 +209,13 @@ async def get_current_policy_version(tenant_id: str) -> str | None:
         finally:
             try:
                 await r.aclose()
-            except Exception:  # noqa: BLE001
-                pass
-    except Exception:  # noqa: BLE001
+            except Exception as exc:
+                swallow_log(logger, "policy_version_redis_close_failed", exc, tenant_id=tenant_id)
+    except Exception as exc:
+        # U6 gate 2 fail-closed: returning None forces the caller into the
+        # full deny + escalate scan instead of the shortcut. Surface the
+        # cause so a Redis brownout doesn't hide as "no policy version".
+        swallow_log(logger, "policy_version_lookup_failed", exc, tenant_id=tenant_id)
         return None
 
 
@@ -252,8 +327,8 @@ async def lookup_approval(
             finally:
                 try:
                     await _r.aclose()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "approval_replay_redis_close_failed", exc, tenant_id=tenant_id)
             approval_ver = meta.get("policy_version")
             if current_ver is not None and approval_ver is not None and str(current_ver) != str(approval_ver):
                 logger.info(
@@ -334,7 +409,7 @@ async def post_slack_card(
             matched_pattern=matched_pattern,
             employee_email=employee_email,
             prompt_excerpt=prompt_excerpt,
-            requested_at_iso=datetime.now(tz=timezone.utc).isoformat(),
+            requested_at_iso=datetime.now(tz=UTC).isoformat(),
         )
         async with httpx.AsyncClient(timeout=4.0) as client:
             await client.post(webhook_url, json=card)

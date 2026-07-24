@@ -78,6 +78,7 @@ def _make_request(client, tenant_id: str = "") -> SimpleNamespace:
         headers=SimpleNamespace(get=_hget),
         cookies=cookies,
         state=SimpleNamespace(tenant_id=None, agent_id=None),
+        url=SimpleNamespace(path="/dashboard/state"),
     )
 
 

@@ -61,6 +61,7 @@ from sdk.common.config import settings
 from sdk.common.db import get_db
 from sdk.common.redis import get_redis_client
 from sdk.common.roles import canonical_role
+from services.identity import CLERK_PLACEHOLDER_HASH
 from services.identity.clerk_backend_api import (
     ClerkBackendAPIError,
     update_organization_public_metadata,
@@ -171,7 +172,7 @@ def _verify_svix_signature(
             detail=str(exc),
         ) from exc
 
-    signed_payload = f"{svix_id}.{svix_timestamp}.".encode("utf-8") + body
+    signed_payload = f"{svix_id}.{svix_timestamp}.".encode() + body
     expected_sig_bytes = hmac.new(
         key_bytes, signed_payload, hashlib.sha256,
     ).digest()
@@ -505,10 +506,6 @@ async def _handle_membership_created_or_updated(
                 # winning side has the canonical row already.
                 await db.rollback()
 
-    # Clerk owns the password; we store a placeholder hash so the
-    # NOT-NULL constraint is satisfied. The user cannot log in via the
-    # legacy /auth/login path with this row.
-    placeholder_hash = "$2b$12$ClerkOwnsThisPasswordPlaceholderHashXXXX"
     # `users.org_id == users.tenant_id` is enforced by the
     # ck_users_org_tenant_match check constraint (SaaS strict
     # invariant). The legacy login path always sets both columns to
@@ -518,7 +515,7 @@ async def _handle_membership_created_or_updated(
     # /auth/clerk/provision from ever completing.
     insert_values = {
         "email": email or f"{clerk_user_id}@clerk.invalid",
-        "hashed_password": placeholder_hash,
+        "hashed_password": CLERK_PLACEHOLDER_HASH,
         "tenant_id": tenant.tenant_id,
         "org_id": tenant.tenant_id,
         "role": role_enum,

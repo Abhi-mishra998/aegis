@@ -20,6 +20,7 @@ from typing import Any
 
 import structlog
 
+from sdk.common.background import safe_bg
 from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
@@ -126,8 +127,8 @@ async def _maybe_auto_create_jira(
     from sqlalchemy import select  # noqa: PLC0415
 
     try:
-        from services.identity.models import JiraIntegration  # noqa: PLC0415
         from services.autonomy.webhook_executor import fire_jira  # noqa: PLC0415
+        from services.identity.models import JiraIntegration  # noqa: PLC0415
     except Exception as exc:
         logger.warning("jira_auto_import_failed", error=str(exc))
         return
@@ -208,8 +209,8 @@ async def _maybe_auto_create_snow(
     from sqlalchemy import select  # noqa: PLC0415
 
     try:
-        from services.identity.models import ServicenowIntegration  # noqa: PLC0415
         from services.autonomy.webhook_executor import fire_servicenow  # noqa: PLC0415
+        from services.identity.models import ServicenowIntegration  # noqa: PLC0415
     except Exception as exc:
         logger.warning("snow_auto_import_failed", error=str(exc))
         return
@@ -292,8 +293,9 @@ async def _patch_incident_external_link(
     inbound webhook can't later close the Aegis incident. Logged loudly
     so an operator notices the gap.
     """
-    import httpx  # noqa: PLC0415
     import os  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
 
     api_url = os.environ.get("API_SERVICE_URL", "http://api:8005").rstrip("/")
     internal_secret = os.environ.get("INTERNAL_SECRET", "")
@@ -347,10 +349,10 @@ async def _handle_incident(incident: dict[str, Any], session_factory) -> None:
 
     # Sprint EI-2 — best-effort Jira ticket creation. Runs in parallel with
     # playbook evaluation so a slow Jira API never blocks playbook firing.
-    asyncio.create_task(_maybe_auto_create_jira(incident, tenant_id, session_factory))
+    asyncio.create_task(safe_bg(_maybe_auto_create_jira(incident, tenant_id, session_factory)))
     # Sprint EI-6 — same pattern for ServiceNow. Independent task so a slow
     # SNOW instance can't slow down Jira either.
-    asyncio.create_task(_maybe_auto_create_snow(incident, tenant_id, session_factory))
+    asyncio.create_task(safe_bg(_maybe_auto_create_snow(incident, tenant_id, session_factory)))
 
     async with session_factory() as db:
         stmt = (
@@ -399,7 +401,7 @@ async def _handle_incident(incident: dict[str, Any], session_factory) -> None:
                     logger.error("playbook_auto_execute_failed",
                                  playbook_id=str(pb_id)[:8], error=str(exc))
 
-        asyncio.create_task(_run())
+        asyncio.create_task(safe_bg(_run()))
 
 
 # ── Background consumer loop ──────────────────────────────────────────────────

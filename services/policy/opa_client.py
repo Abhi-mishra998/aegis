@@ -70,10 +70,17 @@ class OPAClient:
 
         return False
 
-    async def check_policy(self, input_data: dict) -> tuple[bool, str, float]:
+    async def check_policy(self, input_data: dict) -> tuple[bool, str, float, dict]:
         """
         Evaluate policy against OPA.
-        Returns (allow: bool, reason: str, risk_adjustment: float).
+        Returns ``(allow, reason, risk_adjustment, slice)`` where ``slice``
+        carries ``{tier, findings[], policy_id, explanation}`` — the
+        explainability payload the fast path already produces via
+        ``evaluate_full()``. audit S15 (P2-5): the slow path used to
+        derive tier + findings + policy_id from the reason-string suffix;
+        the rego bundle is now the source of truth on both sides. Missing
+        fields fall back to safe defaults so pre-S15 OPA bundles keep
+        working during a rolling upgrade.
 
         Failure Handling:
         If OPA is unreachable or returns non-200 -> DENY (system_unavailable)
@@ -82,6 +89,10 @@ class OPAClient:
         body = {"input": input_data}
 
         start_time = time.perf_counter()
+
+        def _empty_slice() -> dict:
+            return {"tier": "deny", "findings": [], "policy_id": "", "explanation": ""}
+
         try:
             response = await client.post(_OPA_URL, json=body)
             duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -89,22 +100,40 @@ class OPAClient:
             if response.status_code != 200:
                 logger.error("opa_error", status_code=response.status_code, reason="system_unavailable")
                 if settings.OPA_FAIL_MODE == "open":
-                    return True, "Policy engine error: fail_open", 0.0
-                return False, "Policy engine error: system_unavailable", 0.0
+                    return True, "Policy engine error: fail_open", 0.0, {"tier": "allow", "findings": [], "policy_id": "", "explanation": "OPA fail-open"}
+                return False, "Policy engine error: system_unavailable", 0.0, _empty_slice()
 
             result = response.json().get("result", {})
 
             if result is None:
                 logger.error("opa_policy_missing", url=_OPA_URL, reason="system_unavailable")
                 if settings.OPA_FAIL_MODE == "open":
-                    return True, "Policy not found: fail_open", 0.0
-                return False, "Policy not found: system_unavailable", 0.0
+                    return True, "Policy not found: fail_open", 0.0, {"tier": "allow", "findings": [], "policy_id": "", "explanation": "OPA fail-open"}
+                return False, "Policy not found: system_unavailable", 0.0, _empty_slice()
 
             # Support new 'main' structure and backward-compatible root fields
             main = result.get("main", {})
             allowed = bool(main.get("allow", result.get("allow", False)))
             reason = str(main.get("reason", result.get("reason", "No reason provided by OPA")))
             adjustment = float(main.get("risk_adjustment", result.get("risk_adjustment", 0.0)))
+            # audit S15: the new rego shape. Fall back to derived values
+            # when the OPA bundle predates the S15 rules so we don't blow
+            # up mid rolling-upgrade.
+            _tier = main.get("tier")
+            if _tier is None:
+                _tier = "allow" if allowed else (
+                    "escalate" if reason.endswith("__escalate") else "deny"
+                )
+            _policy_id_stripped = reason[:-len("__escalate")] if reason.endswith("__escalate") else reason
+            _findings = main.get("findings")
+            if _findings is None:
+                _findings = [] if allowed else [_policy_id_stripped]
+            slice_ = {
+                "tier":        str(_tier),
+                "findings":    list(_findings),
+                "policy_id":   str(main.get("policy_id") or (_policy_id_stripped if not allowed else "")),
+                "explanation": str(main.get("explanation") or reason),
+            }
 
             logger.info(
                 "policy_decision",
@@ -156,21 +185,25 @@ class OPAClient:
                             error=str(exc),
                         )
 
-            return allowed, reason, adjustment
+            return allowed, reason, adjustment, slice_
 
         except Exception as exc:
             logger.error("opa_unreachable", error=str(exc), reason="system_unavailable")
             if settings.OPA_FAIL_MODE == "open":
                 logger.warning("opa_fail_open_mode_active")
-                return True, "Policy engine unreachable: fail_open", 0.0
-            return False, "Policy engine unreachable: system_unavailable", 0.0
+                return True, "Policy engine unreachable: fail_open", 0.0, {
+                    "tier": "allow", "findings": [], "policy_id": "", "explanation": "OPA fail-open",
+                }
+            return False, "Policy engine unreachable: system_unavailable", 0.0, {
+                "tier": "deny", "findings": [], "policy_id": "", "explanation": "OPA unreachable",
+            }
 
     async def health(self) -> bool:
         return await self.wait_for_ready()
 
     async def evaluate(self, input_data: dict, version: str = "v1") -> tuple[bool, str]:
         """Legacy wrapper for backward compatibility."""
-        allowed, reason, _ = await self.check_policy(input_data)
+        allowed, reason, _adj, _slice = await self.check_policy(input_data)
         return allowed, reason
 
 

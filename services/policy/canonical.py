@@ -28,7 +28,6 @@ import re
 import urllib.parse
 from typing import Any, Literal, TypedDict
 
-
 # ---------------------------------------------------------------------------
 # Canonical action type vocabulary.
 # Closed enum — rules switch on these.
@@ -265,8 +264,11 @@ _PRIVILEGE_URL_PATTERNS = (
 # import (`from services.policy.canonical import _KNOWN_EXFIL_DESTS`).
 from services.policy.pattern_catalog import (  # noqa: E402
     EXFIL_HOSTS as _KNOWN_EXFIL_DESTS,
+)
+from services.policy.pattern_catalog import (
     OFFSHORE_TOKENS as _OFFSHORE_TOKENS,
 )
+
 _INTERNAL_TOKENS = (
     "internal", "acme-ops", "@apexbank.internal",
 )

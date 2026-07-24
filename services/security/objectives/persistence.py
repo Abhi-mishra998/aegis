@@ -8,7 +8,6 @@ just translate the flag into the registered signal name.
 """
 from __future__ import annotations
 
-
 _SHELL_CRED_PATTERNS = (
     "/tmp/.creds", "/tmp/.aws/credentials",
     ".bash_history", "/home/.aws", "/home/.ssh",

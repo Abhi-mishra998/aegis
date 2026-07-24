@@ -28,7 +28,6 @@ from typing import Any
 
 import pytest
 
-
 # --------------------------------------------------------------------------- #
 # Fake Redis (in-memory; matches the redis.asyncio surface used by            #
 # ``_baseline.record_and_score``).                                            #
@@ -38,15 +37,15 @@ import pytest
 class _FakePipeline:
     """Synchronous queue, async execute — mirrors redis.asyncio.client.Pipeline."""
 
-    def __init__(self, redis: "_FakeRedis") -> None:
+    def __init__(self, redis: _FakeRedis) -> None:
         self._redis = redis
         self._ops: list[tuple[str, tuple]] = []
 
-    def hincrby(self, key: str, field: str, amount: int) -> "_FakePipeline":
+    def hincrby(self, key: str, field: str, amount: int) -> _FakePipeline:
         self._ops.append(("hincrby", (key, field, amount)))
         return self
 
-    def expire(self, key: str, ttl: int) -> "_FakePipeline":
+    def expire(self, key: str, ttl: int) -> _FakePipeline:
         self._ops.append(("expire", (key, ttl)))
         return self
 

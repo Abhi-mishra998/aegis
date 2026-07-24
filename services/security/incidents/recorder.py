@@ -40,6 +40,8 @@ from typing import Any
 
 import structlog
 
+from sdk.common.background import safe_bg
+
 logger = structlog.get_logger(__name__)
 
 
@@ -268,12 +270,12 @@ async def record_step(
             if new_status == "quarantined":
                 try:
                     from services.security.remediation import executor as _rem_exec
-                    asyncio.create_task(_rem_exec.execute(
+                    asyncio.create_task(safe_bg(_rem_exec.execute(
                         redis,
                         incident_id=inc_id,
                         tenant_id=tenant_id,
                         agent_id=agent_id,
-                    ))
+                    )))
                 except Exception as exc:
                     logger.warning("remediation_dispatch_failed", incident_id=inc_id, error=str(exc))
 

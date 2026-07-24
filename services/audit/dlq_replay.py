@@ -45,6 +45,7 @@ from typing import Any
 import structlog
 from redis.asyncio import Redis
 
+from sdk.common.background import swallow_log
 from sdk.utils import AUDIT_DLQ_REPLAY_TOTAL
 
 logger = structlog.get_logger(__name__)
@@ -103,8 +104,8 @@ def _parse_payload(decoded: dict[str, str]) -> dict[str, Any]:
         result = json.loads(raw)
         if isinstance(result, dict):
             return result
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "dlq_payload_json_parse_failed", exc)
     return {}
 
 

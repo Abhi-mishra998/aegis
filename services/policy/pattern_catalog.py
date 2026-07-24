@@ -22,7 +22,6 @@ Conventions:
 """
 from __future__ import annotations
 
-
 # Hosts/paths known to be used for data exfiltration in real incidents.
 # Substring match — if `transfer.sh` appears anywhere in the candidate
 # URL the rule fires. Keep in sync with the SOC's curated default IOC

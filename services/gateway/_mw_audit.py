@@ -15,8 +15,8 @@ from typing import Any
 import structlog
 from fastapi import Request, Response
 
-from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.auth import mesh_headers
+from sdk.common.background import safe_bg as _safe_bg
 from services.decision.schemas import Decision
 from services.gateway.client import service_client
 from services.gateway.trust_emitter import emit_graph_event, map_decision_to_outcome

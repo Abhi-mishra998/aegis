@@ -81,8 +81,11 @@ _COMPRESSION_PATTERNS = (
 # does host-match across email + web destinations.
 from services.policy.pattern_catalog import (
     EXTERNAL_EGRESS_HOSTS as _EGRESS_HOSTS,
+)
+from services.policy.pattern_catalog import (
     PERSONAL_EMAIL_DOMAINS as _PERSONAL_EMAIL,
 )
+
 _EXTERNAL_HOSTS = tuple(_PERSONAL_EMAIL) + tuple(_EGRESS_HOSTS)
 _IAC_DESTROY = (
     "terraform destroy", "pulumi destroy", "cdk destroy",
@@ -235,7 +238,7 @@ def match_attack_chain(actions: list[str]) -> tuple[str, str] | None:
 # 3. Session accumulator (Redis-backed)
 # ---------------------------------------------------------------------------
 async def record_session_action(
-    redis: "_Redis",
+    redis: _Redis,
     *,
     session_id: str,
     action_class: str,

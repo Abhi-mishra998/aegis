@@ -32,9 +32,11 @@ from fastapi import APIRouter, HTTPException, Request
 from redis.asyncio import Redis
 
 from sdk.common.config import settings
+from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
 from sdk.common.redis import get_redis_client
 from services.security.incidents import store as incident_store
-from services.security.remediation import executor, policy as policy_mod
+from services.security.remediation import executor
+from services.security.remediation import policy as policy_mod
 
 router = APIRouter()
 
@@ -116,12 +118,22 @@ async def put_remediation_policy(request: Request) -> Any:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     default = policy_mod.DEFAULT_POLICY
+    # S10 (audit P1-10): reject unsafe webhook_url at PUT time so a bad
+    # URL never lands in Redis. Operator self-hosted receivers may sit
+    # behind an http LB, so both schemes are permitted (same policy as
+    # the autonomy dispatcher — see webhook_executor._ALLOWED_WEBHOOK_SCHEMES).
+    webhook_url = str(body.get("webhook_url", default.webhook_url) or "")
+    if webhook_url:
+        try:
+            validate_outbound_url(webhook_url, allowed_schemes=("http", "https"))
+        except OutboundUrlBlocked as exc:
+            raise HTTPException(status_code=400, detail=f"webhook_url blocked: {exc}")
     new_policy = policy_mod.RemediationPolicy(
         revoke_api_keys=bool(body.get("revoke_api_keys", default.revoke_api_keys)),
         kill_active_tokens=bool(body.get("kill_active_tokens", default.kill_active_tokens)),
         page_oncall=bool(body.get("page_oncall", default.page_oncall)),
         audit_log=bool(body.get("audit_log", default.audit_log)),
-        webhook_url=str(body.get("webhook_url", default.webhook_url) or ""),
+        webhook_url=webhook_url,
     )
     await policy_mod.upsert_policy(_redis, tenant_id, new_policy)
     return new_policy.to_dict()

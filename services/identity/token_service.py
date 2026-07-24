@@ -149,7 +149,7 @@ class TokenService:
     async def revoke(self, token: str) -> bool:
         """Mark token as revoked. Returns True if token was active."""
         try:
-            jwt.decode(
+            payload = jwt.decode(
                 token, self._secret, algorithms=[self._algorithm],
                 options={"verify_exp": False},
             )
@@ -165,7 +165,18 @@ class TokenService:
             subject_key = f"{REDIS_AGENT_PREFIX}{subject_id.decode()}:tokens"
             await self._redis.srem(subject_key, token_hash)  # type: ignore[misc]
 
-        await self._redis.setex(revoke_key, 86400, "1")  # type: ignore[misc]
+        # Revoke TTL must cover the token's remaining lifetime. A hardcoded
+        # 24h expiry would let a revoked token resurrect if
+        # JWT_EXPIRY_MINUTES is ever set past 1440 (long-lived service
+        # tokens). Floor at 60s so a clock skew or already-expired token
+        # still gets a non-trivial deny window.
+        exp = payload.get("exp")
+        if isinstance(exp, (int, float)):
+            remaining = int(exp - datetime.now(tz=UTC).timestamp()) + 60
+            revoke_ttl = max(remaining, 60)
+        else:
+            revoke_ttl = 86400  # fallback for tokens without exp
+        await self._redis.setex(revoke_key, revoke_ttl, "1")  # type: ignore[misc]
         await self._redis.delete(active_key)
         await self._publish_revocation(token_hash)
         return True
@@ -181,8 +192,15 @@ class TokenService:
         count = 0
         for h in token_hashes:
             token_hash = h.decode()
-            await self._redis.setex(f"{REDIS_REVOKE_PREFIX}{token_hash}", 86400, "1")
-            await self._redis.delete(f"{REDIS_TOKEN_PREFIX}{token_hash}")
+            active_key = f"{REDIS_TOKEN_PREFIX}{token_hash}"
+            # Match revoke TTL to the token's remaining lifetime — see
+            # `revoke()` for the resurrection-window rationale. The active
+            # key's own TTL was set to `expiry_seconds + 60` at issuance,
+            # so its remaining TTL is the token's remaining lifetime.
+            remaining = await self._redis.ttl(active_key)  # type: ignore[misc]
+            revoke_ttl = max(int(remaining) if remaining and remaining > 0 else 86400, 60)
+            await self._redis.setex(f"{REDIS_REVOKE_PREFIX}{token_hash}", revoke_ttl, "1")
+            await self._redis.delete(active_key)
             await self._publish_revocation(token_hash)
             count += 1
 

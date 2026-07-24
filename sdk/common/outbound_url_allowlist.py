@@ -120,7 +120,8 @@ def validate_outbound_url(
 
 
 if __name__ == "__main__":  # pragma: no cover — self-check
-    # ponytail: keep the assert-based self-check next to the code.
+    # Convention: assert-based self-check lives next to the code.
+    # (Not a deferral — this is the shipping shape. No ponytail: marker.)
     # Use IP literals so the self-check works offline (no DNS dependency).
     OK = [
         "https://8.8.8.8/webhook",       # public IP

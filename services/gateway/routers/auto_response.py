@@ -15,10 +15,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from redis.asyncio import Redis
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from services.gateway._helpers import (
@@ -33,6 +35,7 @@ router = APIRouter()
 # routers/policy.py + routers/agents.py. decode_responses=False because
 # publish_event passes a json.dumps() string straight to PUBLISH.
 _redis: Redis = get_redis_client(settings.REDIS_URL, decode_responses=False)
+logger = structlog.get_logger(__name__)
 
 
 def _base() -> str:
@@ -227,8 +230,8 @@ async def are_approve_pending(approval_key: str, request: Request) -> Any:
                 await publish_event(
                     _redis, tenant_id, "approval_resolved", payload,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "approval_resolved_publish_failed", exc)
 
     return passthrough(resp)
 

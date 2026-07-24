@@ -62,6 +62,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from sdk.common.background import swallow_log
+
 if TYPE_CHECKING:
     from redis.asyncio import Redis as _Redis
 
@@ -134,7 +136,7 @@ def _key(agent_id: str, kind: str) -> str:
 
 
 async def record_risk_score(
-    redis: "_Redis",
+    redis: _Redis,
     *,
     agent_id: str,
     risk_score: int,
@@ -170,7 +172,8 @@ async def record_risk_score(
             parts = r.split(":", 1)
             if len(parts) == 2:
                 scores.append(int(parts[1]))
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "baseline_score_parse_failed", exc)
             continue
     if len(scores) < 30:
         return findings
@@ -189,7 +192,7 @@ async def record_risk_score(
 
 
 async def record_and_score(
-    redis: "_Redis",
+    redis: _Redis,
     *,
     tenant_id: str,
     agent_id: str,
@@ -280,8 +283,8 @@ async def record_and_score(
                     call_count=call_count,
                     threshold=_BASELINE_LOCK_AFTER_CALLS,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "baseline_lock_log_failed", exc, agent_id=agent_id)
 
     # ------------------------------------------------------------------
     # Step 2 — score against the (now possibly frozen) baseline.

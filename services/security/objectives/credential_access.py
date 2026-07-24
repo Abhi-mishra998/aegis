@@ -19,7 +19,6 @@ split `cred_path` into the two flavours by inspecting the filename.
 """
 from __future__ import annotations
 
-
 _CLOUD_TOKENS = ("aws", "docker", "kube", "gcloud", "azure")
 
 

@@ -33,7 +33,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-
 _NUMERIC_FIELDS = {
     "risk_score",
     "inference_risk",

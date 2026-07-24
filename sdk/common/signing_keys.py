@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import abc
 import base64
+import contextlib
 import os
 from pathlib import Path
 from typing import Any
@@ -132,10 +133,8 @@ class LocalFileSigningKeyProvider(SigningKeyProvider):
                     encryption_algorithm=serialization.NoEncryption(),
                 )
             )
-            try:
+            with contextlib.suppress(OSError):
                 self._disk_path.chmod(0o600)
-            except OSError:
-                pass
             return priv, f"generated:{self._disk_path}"
         except OSError:
             log.warning("signing_key_ephemeral", reason="cannot_persist", path=str(self._disk_path))

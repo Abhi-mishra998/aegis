@@ -21,7 +21,6 @@ from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = "a26_w4_4_metadata_gin"
 down_revision: str | None = "p2_11_scim_audit_2026_06_22"
 branch_labels: str | Sequence[str] | None = None

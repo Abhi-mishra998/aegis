@@ -30,6 +30,8 @@ from typing import Any
 
 import structlog
 
+from sdk.common.background import swallow_log
+
 log = structlog.get_logger(__name__)
 
 # Default to the prod-ha public bucket. Override via env for self-hosted
@@ -185,8 +187,10 @@ def publish_signing_key(kid: str, public_pem: str) -> bool:
     try:
         s3.head_object(Bucket=_PUBLIC_BUCKET, Key=key)
         return False  # already published
-    except Exception:
-        pass
+    except Exception as exc:
+        # NoSuchKey is expected (means "not yet published"); real S3 errors
+        # (perms, network) are still surfaced via metric + warn.
+        swallow_log(log, "public_key_head_check_failed", exc, kid=kid)
     try:
         s3.put_object(
             Bucket=_PUBLIC_BUCKET, Key=key, Body=public_pem.encode(),

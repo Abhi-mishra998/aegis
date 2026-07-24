@@ -6,8 +6,8 @@ from typing import Any
 import httpx
 import structlog
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.config import settings
 from services.identity.exceptions import AgentNotFoundError
 
 # =========================

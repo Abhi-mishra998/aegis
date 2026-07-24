@@ -33,8 +33,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.config import settings
 from sdk.common.db import get_db
 
 logger = structlog.get_logger(__name__)
@@ -183,7 +183,8 @@ async def jira_webhook(
         }
       }
     """
-    from sqlalchemy.exc import ProgrammingError, OperationalError  # noqa: PLC0415
+    from sqlalchemy.exc import OperationalError, ProgrammingError  # noqa: PLC0415
+
     from services.identity.models import JiraIntegration  # noqa: PLC0415
 
     raw = await request.body()
@@ -292,7 +293,8 @@ async def servicenow_webhook(
         "number": "INC0010001",
         "state":  "6" }
     """
-    from sqlalchemy.exc import ProgrammingError, OperationalError  # noqa: PLC0415
+    from sqlalchemy.exc import OperationalError, ProgrammingError  # noqa: PLC0415
+
     from services.identity.models import ServicenowIntegration  # noqa: PLC0415
 
     raw = await request.body()

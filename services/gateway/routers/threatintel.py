@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from redis.asyncio import Redis
 
 from sdk.common.config import settings
+from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
 from sdk.common.redis import get_redis_client
 from services.security.threatintel import ioc as ti_ioc
 from services.security.threatintel import providers as ti_providers
@@ -131,6 +132,14 @@ async def put_feed(name: str, request: Request) -> Any:
     enabled = bool(body.get("enabled", True))
     if not url:
         raise HTTPException(status_code=400, detail="url required")
+    # S10 (audit P1-10): the feed URL is fetched by the server on a
+    # schedule; reject unsafe destinations at PUT time so nothing bad
+    # lands in Redis. HTTPS-only for feed integrity — an operator
+    # forcing HTTP for a local feed must set a public HTTPS proxy.
+    try:
+        validate_outbound_url(url)
+    except OutboundUrlBlocked as exc:
+        raise HTTPException(status_code=400, detail=f"url blocked: {exc}")
     if fmt not in ("text", "json"):
         raise HTTPException(status_code=400, detail="format must be text or json")
     if refresh_seconds < 60:

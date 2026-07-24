@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -110,7 +110,7 @@ async def reconcile_all(
     db: AsyncSession, redis: Redis,
 ) -> dict[str, Any]:
     """One full reconciliation pass. Returns a summary dict."""
-    started_at = datetime.now(tz=timezone.utc)
+    started_at = datetime.now(tz=UTC)
 
     # Pull (clerk_org_id, tenant_id) tuples from the canonical join.
     rows = (await db.execute(
@@ -155,7 +155,7 @@ async def reconcile_all(
                      "tenant_id": str(u[2])} for u in orphan_users[:5]],
         )
 
-    finished_at = datetime.now(tz=timezone.utc)
+    finished_at = datetime.now(tz=UTC)
     summary = {
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),

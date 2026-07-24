@@ -12,14 +12,15 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from sdk.common.auth import verify_internal_secret
-from sdk.common.auth import mesh_headers
+from sdk.common.auth import mesh_headers, verify_internal_secret
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.background import swallow_log
 from sdk.common.config import settings as policy_settings
 from sdk.common.db import get_tenant_id
 from sdk.common.deadline import check_deadline
 from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
+from services.policy.manifest import POLICY_MANIFEST_HASH
 from services.policy.opa_client import opa_client
 from services.policy.schemas import (
     EvaluationRequest,
@@ -249,6 +250,7 @@ async def _log_audit(
             "risk_score": risk_score,
             "risk_adjustment": risk_adjustment,
             "policy_version": "v1",
+            "policy_manifest_hash": POLICY_MANIFEST_HASH,  # ATF §7.1
             "source": "policy_service"
         }
     }
@@ -297,10 +299,12 @@ async def evaluate(
     sec_slice: dict[str, Any] = {"tier": "allow", "findings": [], "policy_id": "", "risk_score": 0}
     gov_slice: dict[str, Any] = {"tier": "allow", "findings": [], "policy_id": "", "risk_score": 0}
     if payload.agent_claims:
-        from services.policy.local_eval import evaluate
-        from services.policy.local_action_semantics import evaluate_full as eval_action_semantics_full
-        from services.policy.security_engine import evaluate_security
         from services.policy.governance_engine import evaluate_governance
+        from services.policy.local_action_semantics import (
+            evaluate_full as eval_action_semantics_full,
+        )
+        from services.policy.local_eval import evaluate
+        from services.policy.security_engine import evaluate_security
         agent_claims = payload.agent_claims
         risk_level = agent_claims.get("risk_level", "low")
         allowed, reason, risk_adjustment = evaluate(
@@ -341,8 +345,14 @@ async def evaluate(
                     "policy_id":  gov_full.get("policy_id") or "",
                     "risk_score": int(gov_full.get("risk_score") or 0),
                 }
-            except Exception:
-                pass
+            except Exception as exc:
+                # SEC/GOV engine fan-out failure. The main decision above
+                # is already computed; the slice fields carry the default
+                # "allow" placeholders. Surface the failure so a broken
+                # security_engine or governance_engine does not silently
+                # ship empty attribution to every response.
+                swallow_log(logger, "engine_slice_fanout_failed", exc,
+                            tenant_id=str(payload.tenant_id), agent_id=str(payload.agent_id))
             if tier in ("deny", "quarantine"):
                 allowed = False
                 reason = policy_id or full.get("reason") or "policy_deny"
@@ -357,13 +367,16 @@ async def evaluate(
     else:
         agent_dict = await _fetch_agent(payload.tenant_id, payload.agent_id)
         opa_input = _build_opa_input(agent_dict, payload)
-        allowed, reason, risk_adjustment = await opa_client.check_policy(opa_input)
-        # Slow path doesn't yet surface findings/tier — OPA returns just
-        # (allowed, reason, risk). Derive a coarse tier from the suffix.
+        # audit S15 (P2-5): OPA now returns the same explainability slice
+        # the fast path produces. No more suffix-string derivation.
+        allowed, reason, risk_adjustment, opa_slice = await opa_client.check_policy(opa_input)
         if not allowed:
-            tier = "escalate" if reason.endswith("__escalate") else "deny"
-            findings = [reason.replace("__escalate", "")]
-            policy_id = reason.replace("__escalate", "")
+            tier = opa_slice.get("tier") or (
+                "escalate" if reason.endswith("__escalate") else "deny"
+            )
+            findings = list(opa_slice.get("findings") or [reason.replace("__escalate", "")])
+            policy_id = opa_slice.get("policy_id") or reason.replace("__escalate", "")
+            explanation = opa_slice.get("explanation") or reason
             risk_score_inherent = 90 if tier == "deny" else 50
 
     asyncio.create_task(_safe_bg(_log_audit(
@@ -638,7 +651,7 @@ async def test_policy(payload: PolicyTestRequest) -> APIResponse[PolicyTestRespo
         }
 
         try:
-            allowed, _reason, risk_adjustment = await opa_client.check_policy(opa_input)
+            allowed, _reason, risk_adjustment, _slice = await opa_client.check_policy(opa_input)
         except Exception as exc:
             logger.warning("policy_test_opa_error", error=str(exc), tool=case.tool_name)
             allowed, risk_adjustment = False, 0.0
@@ -708,7 +721,9 @@ async def upload_policy(
         f"acp:ratelimit:policy:upload:{tenant_id}",
         limit=60,
     )
-    if not _NAME_RE.match(payload.name):
+    # fullmatch: plain .match accepts a trailing newline, which would
+    # produce a filename with `\n` and inject into structured logs.
+    if not _NAME_RE.fullmatch(payload.name):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Policy name must match ^[a-zA-Z0-9_]{1,64}$",

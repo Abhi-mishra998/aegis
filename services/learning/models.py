@@ -13,8 +13,14 @@ from sdk.common.db import Base, IdMixin, TenantMixin
 class BehaviorProfileModel(Base, IdMixin, TenantMixin):
     __tablename__ = "behavior_profiles"
 
+    # audit S11h (P1-14): uniqueness is composite (tenant_id, agent_id) —
+    # the DB constraint is created in migration
+    # ``s11h_composite_tenant_agent_2026_07_21``. The column stays indexed
+    # for the common ``WHERE tenant_id = ? AND agent_id = ?`` query shape;
+    # the ``unique=True`` at column level is replaced by the __table_args__
+    # UniqueConstraint below so the two match.
     agent_id: Mapped[uuid.UUID] = mapped_column(
-        postgresql.UUID(as_uuid=True), nullable=False, unique=True, index=True
+        postgresql.UUID(as_uuid=True), nullable=False, index=True
     )
 
     # Distributions and Matrices stored as JSONB
@@ -35,4 +41,11 @@ class BehaviorProfileModel(Base, IdMixin, TenantMixin):
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
         nullable=False,
+    )
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "tenant_id", "agent_id",
+            name="uq_behavior_profiles_tenant_agent",
+        ),
     )

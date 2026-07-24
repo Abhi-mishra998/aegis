@@ -26,14 +26,13 @@ account password). See fire_servicenow().
 from __future__ import annotations
 
 import base64
-import ipaddress
 import os
-import socket
-from urllib.parse import urlparse
 
 import httpx
 import structlog
+
 from sdk.common.auth import mesh_headers
+from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
 
 logger = structlog.get_logger(__name__)
 
@@ -81,7 +80,7 @@ WEBHOOK_TIMEOUT       = 10.0
 
 # N16 (2026-06-21) — every outbound httpx.AsyncClient in this module is
 # constructed with ``follow_redirects=False``. The SSRF guard
-# (``_assert_safe_webhook_url``) only validates the INITIAL URL. An attacker
+# (``validate_outbound_url``) only validates the INITIAL URL. An attacker
 # who controls a registered webhook host can return a 301 to
 # ``http://127.0.0.1:8181`` (OPA admin) or ``http://169.254.169.254/...``
 # (cloud-metadata) and exfiltrate IAM creds / pivot through internal
@@ -97,44 +96,12 @@ _API_URL          = os.environ.get("API_SERVICE_URL", "http://api:8005")
 _INTERNAL_SECRET  = os.environ["INTERNAL_SECRET"]  # fail-fast: no placeholder default
 
 
-class _SSRFBlocked(Exception):
-    """Raised when a webhook URL targets a forbidden IP range."""
-
-
-_FORBIDDEN_HOSTS = frozenset({
-    "localhost",
-    "metadata.google.internal",
-    "metadata.aws.internal",
-})
-
-
-def _assert_safe_webhook_url(url: str) -> None:
-    """Reject URLs that target loopback, RFC1918, link-local, or cloud-metadata IPs.
-
-    Resolves the hostname and validates every returned address. Prevents an
-    authenticated user from supplying e.g. http://169.254.169.254/... and
-    exfiltrating EC2 IAM credentials through the autonomy webhook surface.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise _SSRFBlocked(f"forbidden scheme: {parsed.scheme!r}")
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise _SSRFBlocked("missing host")
-    if host in _FORBIDDEN_HOSTS:
-        raise _SSRFBlocked(f"forbidden host: {host}")
-    try:
-        addrinfo = socket.getaddrinfo(host, None)
-    except socket.gaierror as exc:
-        raise _SSRFBlocked(f"hostname resolution failed: {exc}") from exc
-    for _family, _type, _proto, _canon, sockaddr in addrinfo:
-        ip_str = sockaddr[0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
-            raise _SSRFBlocked(f"forbidden IP {ip} for host {host}")
+# S9 (audit P1-9): SSRF validation delegated to the canonical shared
+# implementation in sdk.common.outbound_url_allowlist. The autonomy
+# copy used to accept http as well as https because operators may
+# self-host Jira / ServiceNow behind a TLS-terminating load balancer
+# that presents http internally — that intention is preserved here.
+_ALLOWED_WEBHOOK_SCHEMES: tuple[str, ...] = ("http", "https")
 
 
 async def fire_slack(message: str, webhook_url: str = "", context: dict | None = None) -> dict:
@@ -150,8 +117,8 @@ async def fire_slack(message: str, webhook_url: str = "", context: dict | None =
         return {"status": "skipped", "reason": "no Slack webhook configured"}
 
     try:
-        _assert_safe_webhook_url(url)
-    except _SSRFBlocked as exc:
+        validate_outbound_url(url, allowed_schemes=_ALLOWED_WEBHOOK_SCHEMES)
+    except OutboundUrlBlocked as exc:
         logger.warning("slack_alert_blocked_ssrf", url=url, reason=str(exc))
         return {"status": "error", "reason": f"webhook url blocked: {exc}"}
 
@@ -177,6 +144,83 @@ async def fire_slack(message: str, webhook_url: str = "", context: dict | None =
         return {"status": status, "http_status": r.status_code}
     except Exception as exc:
         logger.warning("slack_alert_failed", error=str(exc))
+        return {"status": "error", "reason": str(exc)}
+
+
+async def fire_teams(message: str, webhook_url: str, context: dict | None = None) -> dict:
+    """Post an Adaptive Card to a Microsoft Teams channel via
+    incoming-webhook URL. Same SSRF guard + redirect rules as Slack.
+
+    Returns a result dict with ``status`` ∈ {"posted","skipped","error"}.
+    Never raises.
+    """
+    if not webhook_url:
+        logger.info("teams_alert_skipped", reason="no_webhook_url_configured")
+        return {"status": "skipped", "reason": "no Teams webhook URL configured"}
+    try:
+        validate_outbound_url(webhook_url, allowed_schemes=_ALLOWED_WEBHOOK_SCHEMES)
+    except OutboundUrlBlocked as exc:
+        logger.warning("teams_alert_blocked_ssrf", url=webhook_url, reason=str(exc))
+        return {"status": "error", "reason": f"webhook url blocked: {exc}"}
+
+    payload = {
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.4",
+                "body": [
+                    {"type": "TextBlock", "size": "Large", "weight": "Bolder",
+                     "text": "Aegis alert"},
+                    {"type": "TextBlock", "wrap": True, "text": message},
+                ],
+            },
+        }],
+    }
+    if context:
+        payload["attachments"][0]["content"]["body"].append(
+            {"type": "FactSet", "facts": [
+                {"title": k, "value": str(v)} for k, v in list(context.items())[:10]
+            ]}
+        )
+    try:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
+            r = await c.post(webhook_url, json=payload)
+        status = "posted" if r.status_code in (200, 202) else "error"
+        logger.info("teams_alert_fired", status=status, http_status=r.status_code)
+        return {"status": status, "http_status": r.status_code}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("teams_alert_failed", error=str(exc))
+        return {"status": "error", "reason": str(exc)}
+
+
+async def fire_webhook(url: str, body: dict, context: dict | None = None) -> dict:
+    """Post an arbitrary canonical-webhook JSON body to a customer-
+    configured URL. Used for tenants who wire their own ITSM adapter.
+
+    Same SSRF guard, same redirect discipline. Body is caller-supplied.
+    """
+    if not url:
+        logger.info("webhook_alert_skipped", reason="no_url")
+        return {"status": "skipped", "reason": "no webhook URL configured"}
+    try:
+        validate_outbound_url(url, allowed_schemes=_ALLOWED_WEBHOOK_SCHEMES)
+    except OutboundUrlBlocked as exc:
+        logger.warning("webhook_blocked_ssrf", url=url, reason=str(exc))
+        return {"status": "error", "reason": f"webhook url blocked: {exc}"}
+    payload = dict(body)
+    if context:
+        payload.setdefault("context", context)
+    try:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=_FOLLOW_REDIRECTS) as c:
+            r = await c.post(url, json=payload)
+        status = "posted" if 200 <= r.status_code < 300 else "error"
+        logger.info("webhook_fired", status=status, http_status=r.status_code)
+        return {"status": status, "http_status": r.status_code}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("webhook_failed", error=str(exc))
         return {"status": "error", "reason": str(exc)}
 
 
@@ -251,8 +295,8 @@ async def fire_jira(
         return {"status": "skipped", "reason": "Jira config incomplete"}
 
     try:
-        _assert_safe_webhook_url(base_url)
-    except _SSRFBlocked as exc:
+        validate_outbound_url(base_url, allowed_schemes=_ALLOWED_WEBHOOK_SCHEMES)
+    except OutboundUrlBlocked as exc:
         logger.warning("jira_blocked_ssrf", base_url=base_url, reason=str(exc))
         return {"status": "error", "reason": f"jira base_url blocked: {exc}"}
 
@@ -396,8 +440,8 @@ async def fire_servicenow(
         return {"status": "skipped", "reason": "ServiceNow config incomplete"}
 
     try:
-        _assert_safe_webhook_url(instance_url)
-    except _SSRFBlocked as exc:
+        validate_outbound_url(instance_url, allowed_schemes=_ALLOWED_WEBHOOK_SCHEMES)
+    except OutboundUrlBlocked as exc:
         logger.warning("snow_blocked_ssrf", instance_url=instance_url, reason=str(exc))
         return {"status": "error", "reason": f"servicenow instance_url blocked: {exc}"}
 
@@ -512,8 +556,8 @@ async def fire_generic_webhook(
         return {"status": "skipped", "reason": "no webhook URL"}
 
     try:
-        _assert_safe_webhook_url(url)
-    except _SSRFBlocked as exc:
+        validate_outbound_url(url, allowed_schemes=_ALLOWED_WEBHOOK_SCHEMES)
+    except OutboundUrlBlocked as exc:
         logger.warning("generic_webhook_blocked_ssrf", url=url, reason=str(exc))
         return {"status": "error", "reason": f"webhook url blocked: {exc}"}
 

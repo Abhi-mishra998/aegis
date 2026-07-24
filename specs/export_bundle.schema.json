@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegis.spec/export_bundle/3.0",
+  "title": "ATF v3.2 §7.3 + §7.4 Export Bundle",
+  "description": "The artifact a regulator or auditor receives. Self-declares its MAJOR; verifiers refuse unknown MAJORs (§7.4). Every entry inside is validated against ledger_entry.schema.json.",
+  "type": "object",
+  "required": ["bundle_version", "summary", "entries", "merkle_proofs", "anchor_refs", "policy_manifests"],
+  "additionalProperties": true,
+  "properties": {
+    "bundle_version": {
+      "type": "string",
+      "pattern": "^3\\.[0-9]+$"
+    },
+    "summary": {
+      "type": "object",
+      "required": ["period_start", "period_end", "entry_count"],
+      "properties": {
+        "period_start":       {"type": "string", "format": "date-time"},
+        "period_end":         {"type": "string", "format": "date-time"},
+        "agent_count":        {"type": "integer", "minimum": 0},
+        "entry_count":        {"type": "integer", "minimum": 0},
+        "action_class_counts": {
+          "type": "object",
+          "properties": {
+            "C0": {"type": "integer", "minimum": 0},
+            "C1": {"type": "integer", "minimum": 0},
+            "C2": {"type": "integer", "minimum": 0},
+            "C3": {"type": "integer", "minimum": 0}
+          }
+        },
+        "verdict_counts": {
+          "type": "object",
+          "properties": {
+            "CORROBORATED": {"type": "integer", "minimum": 0},
+            "CONTRADICTED": {"type": "integer", "minimum": 0},
+            "UNOBSERVED":   {"type": "integer", "minimum": 0}
+          }
+        },
+        "escalations":     {"type": "integer", "minimum": 0},
+        "contradictions":  {"type": "integer", "minimum": 0}
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {"$ref": "https://aegis.spec/ledger_entry/3.0"}
+    },
+    "merkle_proofs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "leaf": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["hash", "side"],
+              "properties": {
+                "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                "side": {"type": "string", "enum": ["L", "R"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    "anchor_refs": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "External anchor URIs (S3 object-lock, RFC 3161 TSA, public transparency log)."
+    },
+    "policy_manifests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["hash"],
+        "properties": {
+          "hash":    {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "content": {"type": "string", "description": "The rego bundle text, or a URI reference."}
+        }
+      }
+    }
+  }
+}

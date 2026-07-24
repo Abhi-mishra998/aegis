@@ -10,8 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.auth import verify_internal_secret
-from sdk.common.auth import mesh_headers
+from sdk.common.auth import mesh_headers, verify_internal_secret
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.redis import get_redis_client

@@ -39,6 +39,7 @@ from redis.asyncio import Redis
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.ratelimit import RateLimiter
 from services.decision.schemas import Decision, ExecutionAction
@@ -1385,7 +1386,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # window per (tenant, agent, table). L2 only saw
                         # `row_limit` per call; this is the cumulative.
                         from services.gateway._behavior_aggregator import (
-                            extract_table_norm, record_and_sum_rows,
+                            extract_table_norm,
+                            record_and_sum_rows,
                         )
                         _table_norm = extract_table_norm(_qry_norm)
                         _cumulative_rows_1h = 0
@@ -1411,7 +1413,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         _action_class = "benign"
                         try:
                             from services.gateway._session_intelligence import (
-                                classify_action, match_attack_chain,
+                                classify_action,
+                                match_attack_chain,
                                 record_session_action,
                             )
                             _action_class = classify_action(
@@ -1523,7 +1526,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             # when the agent's behaviour deviates from its
                             # 100-call rolling baseline by >3σ.
                             try:
-                                from services.policy.canonical import normalize as _cn_for_drift
+                                from services.policy.canonical import (
+                                    normalize as _cn_for_drift,
+                                )
                                 _c_for_drift = _cn_for_drift(tool_name, _all_params)
                                 _inh = int(_c_for_drift.get("risk_score_inherent") or 0)
                                 _drift = await record_risk_score(
@@ -1575,7 +1580,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # raw arg paths. Closes the entire class of
                         # "rule reads x.y, gateway puts at x.z" bugs.
                         try:
-                            from services.policy.canonical import normalize as _canonical_normalize
+                            from services.policy.canonical import (
+                                normalize as _canonical_normalize,
+                            )
                             _canonical = _canonical_normalize(tool_name, _all_params)
                             # Carry the session-intel chain + baseline into
                             # the canonical view so all signals live in one
@@ -1619,11 +1626,19 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # into the canonical so the policy engine quarantines.
                         try:
                             from services.policy.cross_agent_correlation import (
-                                record_action as _xa_record,
-                                detect_chain as _xa_detect,
                                 derive_target_key as _xa_target,
+                            )
+                            from services.policy.cross_agent_correlation import (
+                                detect_chain as _xa_detect,
+                            )
+                            from services.policy.cross_agent_correlation import (
                                 flag_agents as _xa_flag,
+                            )
+                            from services.policy.cross_agent_correlation import (
                                 is_flagged as _xa_is_flagged,
+                            )
+                            from services.policy.cross_agent_correlation import (
+                                record_action as _xa_record,
                             )
                             _xa_already = await _xa_is_flagged(
                                 self.redis, t_id_str, str(agent_id),
@@ -1684,11 +1699,19 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         # and folds it into the tier decision.
                         try:
                             from services.policy.risk_pipeline import (
-                                record_signals as _rp_record,
-                                cumulative_scores as _rp_scores,
                                 combine_scores as _rp_combine,
-                                tier_from_score as _rp_tier,
+                            )
+                            from services.policy.risk_pipeline import (
+                                cumulative_scores as _rp_scores,
+                            )
+                            from services.policy.risk_pipeline import (
                                 explain_cumulative as _rp_explain,
+                            )
+                            from services.policy.risk_pipeline import (
+                                record_signals as _rp_record,
+                            )
+                            from services.policy.risk_pipeline import (
+                                tier_from_score as _rp_tier,
                             )
                             _per_call_findings = list(_canonical.get("signal_findings") or [])
                             if _attack_chain:
@@ -1791,7 +1814,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             # to enforce. Disabled in environments without the audit DB by
             # design — the schedule() helper returns None and we move on.
             try:
-                from services.gateway.shadow_eval_hook import schedule as _schedule_shadow
+                from services.gateway.shadow_eval_hook import (
+                    schedule as _schedule_shadow,
+                )
                 _payload_for_shadow = None
                 try:
                     _payload_for_shadow = (
@@ -1844,8 +1869,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                     SHADOW_DOWNGRADES_TOTAL.labels(
                         tenant_id=t_id_str, original_action=_shadow_orig,
                     ).inc()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "shadow_downgrade_metric_failed", exc)
                 _decision_findings = list(getattr(decision, "findings", []) or [])
                 _decision_reasons  = list(reasons or [])
                 _decision_meta_for_shadow = (
@@ -1952,8 +1977,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         if _m:
                             _resp_mitre = _m
                             break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "mitre_lookup_failed", exc)
                 if decision.action == ExecutionAction.ESCALATE:
                     resp = self._escalate(
                         f"Action escalated. Reasons: {', '.join(reasons)}",
@@ -2019,11 +2044,13 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 # middleware via request.state.session_id (set when the JWT
                 # carries one, empty otherwise).
                 try:
-                    from services.security.incidents import recorder as _storyline_recorder
                     from services.security import signal_registry as _sigreg
+                    from services.security.incidents import (
+                        recorder as _storyline_recorder,
+                    )
 
                     _findings_for_story = list(
-                        (decision.findings or _canonical.get("signal_findings") or [])
+                        decision.findings or _canonical.get("signal_findings") or []
                     )
                     # Primary finding = first non-attack-chain finding; falls
                     # back to the attack_chain wrapper itself if that's all
@@ -2094,8 +2121,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                         },
                         agent_id=str(agent_id),
                     )))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "audit_side_effect_failed", exc)
 
                 _flight_final["decision"] = action
                 _flight_final["risk"]     = float(getattr(decision, "risk", 0.0) or 0.0)
@@ -2233,8 +2260,9 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             if response.status_code >= 400:
                 try:
                     from services.gateway._behavior_aggregator import (
-                        record_failure, quarantine_agent,
                         RUNAWAY_FAILURE_THRESHOLD,
+                        quarantine_agent,
+                        record_failure,
                     )
                     cumulative_failures = await record_failure(
                         self.redis, t_id_str, str(agent_id), tool_name,
@@ -2443,8 +2471,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             try:
                 _af_ip = self._real_client_ip(request)
                 await self._record_auth_failure(_af_ip)
-            except Exception:
-                pass  # fail-open — never let a counter blip 500 the request
+            except Exception as exc:
+                swallow_log(logger, "auth_failure_record_failed", exc)
 
         # 1. Flight terminal step + snapshot
         try:
@@ -2523,8 +2551,10 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         try:
             if e.status_code >= 400 and t_id_str != "unknown" and tool_name and tool_name != "unknown_tool":
                 from services.gateway._behavior_aggregator import (
-                    record_failure, quarantine_agent, is_quarantined,
                     RUNAWAY_FAILURE_THRESHOLD,
+                    is_quarantined,
+                    quarantine_agent,
+                    record_failure,
                 )
                 cumulative = await record_failure(
                     self.redis, t_id_str, str(agent_id), tool_name,
@@ -2876,8 +2906,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
         try:
             _ok_ip = self._real_client_ip(request)
             await self._clear_auth_failure_counter(_ok_ip)
-        except Exception:
-            pass  # fail-open
+        except Exception as exc:
+            swallow_log(logger, "auth_failure_counter_clear_failed", exc)
 
         return tenant_id, agent_id, t_id_str, tier
 
@@ -2978,8 +3008,8 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                 body = await request.json()
                 if isinstance(body, dict):
                     tool_name = body.get("tool_name") or body.get("tool")
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "tool_name_body_parse_failed", exc)
         if not tool_name:
             raise HTTPException(status_code=400, detail="Tool name is required (provide via X-ACP-Tool header, path, or request body)")
         return tool_name

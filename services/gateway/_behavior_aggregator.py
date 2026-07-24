@@ -58,7 +58,7 @@ def _now_minute() -> int:
 
 
 async def record_and_sum_rows(
-    redis: "_Redis",
+    redis: _Redis,
     tenant_id: uuid.UUID | str,
     agent_id: uuid.UUID | str,
     table: str,
@@ -92,7 +92,7 @@ async def record_and_sum_rows(
 
 
 async def record_bulk_pii_attempt(
-    redis: "_Redis",
+    redis: _Redis,
     tenant_id: uuid.UUID | str,
     agent_id: uuid.UUID | str,
 ) -> int:
@@ -115,7 +115,7 @@ async def record_bulk_pii_attempt(
 
 
 async def record_failure(
-    redis: "_Redis",
+    redis: _Redis,
     tenant_id: uuid.UUID | str,
     agent_id: uuid.UUID | str,
     tool: str,
@@ -145,7 +145,7 @@ async def record_failure(
 
 
 async def is_quarantined(
-    redis: "_Redis",
+    redis: _Redis,
     tenant_id: uuid.UUID | str,
     agent_id: uuid.UUID | str,
 ) -> tuple[bool, str]:
@@ -158,7 +158,7 @@ async def is_quarantined(
 
 
 async def quarantine_agent(
-    redis: "_Redis",
+    redis: _Redis,
     tenant_id: uuid.UUID | str,
     agent_id: uuid.UUID | str,
     reason: str,
@@ -171,7 +171,7 @@ async def quarantine_agent(
 
 
 async def release_quarantine(
-    redis: "_Redis",
+    redis: _Redis,
     tenant_id: uuid.UUID | str,
     agent_id: uuid.UUID | str,
 ) -> None:

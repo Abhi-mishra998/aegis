@@ -15,13 +15,13 @@ from contextlib import asynccontextmanager
 import httpx
 import structlog
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.config import settings
 
 logger = structlog.get_logger(__name__)
 
 _LOCK_TTL = 30          # seconds — lock expires if executor crashes mid-action
-_DESTRUCTIVE = frozenset({"KILL_AGENT", "ISOLATE_AGENT"})
+_DESTRUCTIVE = frozenset({"KILL_AGENT", "ISOLATE_AGENT", "REVOKE_KEY"})
 
 _AUTONOMY_URL = os.environ.get("AUTONOMY_SERVICE_URL", "http://autonomy:8007")
 
@@ -56,11 +56,18 @@ async def _execution_lock(redis, tenant_id: str, agent_id: str, rule_id: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _policy_gate(tenant_id: str, agent_id: str, tool: str,
-                        risk_score: float, action_type: str) -> tuple[bool, str]:
+                        risk_score: float, action_type: str,
+                        approval_id: str = "") -> tuple[bool, str]:
     """
     Call OPA before executing any action.
     Returns (allowed, reason). Fail-closed — denies when OPA is unreachable.
     Destructive actions (KILL/ISOLATE) require an explicit OPA allow.
+
+    S(P1-17) 2026-07-21: ``approval_id`` is threaded into
+    ``metadata.approval_id`` so the destructive-remediation rule in
+    ``agent_policy.rego`` (``are_destructive_deny``) can distinguish
+    operator-approved actions from auto-fired incident-watcher actions.
+    Empty string means "no approval on record" → rego denies.
     """
     try:
         async with httpx.AsyncClient(timeout=2.0) as c:
@@ -73,7 +80,11 @@ async def _policy_gate(tenant_id: str, agent_id: str, tool: str,
                     "risk_score": risk_score,
                     "behavior_history": [],
                     "policy_version": "v1",
-                    "metadata": {"source": "are_executor", "action": action_type},
+                    "metadata": {
+                        "source": "are_executor",
+                        "action": action_type,
+                        "approval_id": approval_id,
+                    },
                 },
                 headers={**mesh_headers("api"),
                          "X-Tenant-ID": tenant_id},
@@ -227,7 +238,13 @@ class AREExecutor:
         # not agent execution. High incident risk_score would cause OPA to deny
         # agent execution, which must not block the ARE from killing the agent.
         gate_risk = 0.0 if atype in _DESTRUCTIVE else risk
-        allowed, reason = await _policy_gate(tenant_id, agent_id, tool, gate_risk, atype)
+        # audit P1-17: forward any approval_id present on the incident or
+        # the action envelope so the destructive-remediation rego rule can
+        # distinguish operator-approved from auto-fired.
+        approval_id = str(action.get("approval_id") or incident.get("approval_id") or "")
+        allowed, reason = await _policy_gate(
+            tenant_id, agent_id, tool, gate_risk, atype, approval_id=approval_id,
+        )
         if not allowed:
             logger.warning("are_action_policy_blocked",
                            action=atype, reason=reason, agent=agent_id[:8])

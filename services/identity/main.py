@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import structlog
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import FastAPI
 from sqlalchemy import delete, select
 
@@ -16,6 +16,7 @@ from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.identity.models import Tenant, User
 from services.identity.router import router
+from services.identity.scim_router import router as scim_router
 from services.identity.tenant_reconciler import run_forever as run_tenant_reconciler
 from services.identity.webhooks_clerk import router as clerk_webhooks_router
 
@@ -121,3 +122,4 @@ setup_app(app, "identity")
 
 app.include_router(router)
 app.include_router(clerk_webhooks_router)
+app.include_router(scim_router)

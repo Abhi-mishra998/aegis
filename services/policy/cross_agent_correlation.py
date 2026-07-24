@@ -22,6 +22,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import structlog
+
+from sdk.common.background import swallow_log
+
+logger = structlog.get_logger(__name__)
+
 # Window we look back across the tenant.
 WINDOW_SECONDS = 15 * 60
 
@@ -68,8 +74,8 @@ async def record_action(
         # Trim opportunistically — keep last 1000 entries.
         await redis.zremrangebyrank(_key(tenant_id), 0, -1001)
         await redis.expire(_key(tenant_id), WINDOW_SECONDS * 4)
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "cross_agent_zadd_failed", exc, tenant_id=tenant_id)
 
 
 async def detect_chain(
@@ -127,7 +133,8 @@ async def detect_chain(
                 "target_key":  parts[3],
                 "pii":         parts[4] == "1",
             })
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "cross_agent_event_parse_failed", exc)
             continue
     if not events:
         return None
@@ -190,8 +197,8 @@ async def flag_agents(redis: Any, tenant_id: str, agent_ids: list[str]) -> None:
     for ag in agent_ids:
         try:
             await redis.setex(_flag_key(tenant_id, ag), 24 * 3600, "cross_agent_chain")
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "cross_agent_flag_set_failed", exc, agent_id=ag)
 
 
 async def is_flagged(redis: Any, tenant_id: str, agent_id: str) -> bool:

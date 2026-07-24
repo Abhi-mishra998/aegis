@@ -25,7 +25,6 @@ os.environ.setdefault("JWT_SECRET_KEY", "a" * 64)
 os.environ.setdefault("INTERNAL_SECRET", "test-internal-secret")
 
 import pytest  # noqa: E402
-
 from fastapi import HTTPException  # noqa: E402
 
 from services.gateway.routers import decision as dec  # noqa: E402

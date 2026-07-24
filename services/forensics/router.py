@@ -20,8 +20,8 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from sdk.common.auth import verify_internal_secret
-from sdk.common.auth import mesh_headers
+from sdk.common.auth import mesh_headers, verify_internal_secret
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 
@@ -35,6 +35,37 @@ router = APIRouter(prefix="/forensics", tags=["Forensics"])
 
 _HTTP_TIMEOUT = 5.0  # seconds per downstream call
 _EXPORT_TTL = 3600   # 1 hour Redis TTL for forensics exports
+
+
+async def _assert_agent_in_tenant(agent_id: uuid.UUID, tenant_id: str) -> None:
+    """audit S11m (P2-15): verify the ``{agent_id}`` in the path belongs
+    to the ``X-Tenant-ID`` header before returning any forensic data.
+
+    Without this, a compromised mesh caller (or a gateway bug that
+    forwards a client-supplied X-Tenant-ID) could pair any tenant with
+    any agent_id and pull cross-tenant replay data. Registry is the
+    source of truth for the agent→tenant mapping; the query is cheap
+    (single row lookup) and the failure mode is a clean 404.
+    """
+    url = f"{settings.REGISTRY_SERVICE_URL.rstrip('/')}/agents/{agent_id}"
+    headers = {**mesh_headers("forensics"), "X-Tenant-ID": tenant_id}
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.warning("forensics_agent_verify_failed", agent_id=str(agent_id), error=str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot verify agent membership — registry unreachable",
+        ) from exc
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found in tenant {tenant_id}")
+    if resp.status_code != 200:
+        logger.error(
+            "forensics_agent_verify_unexpected",
+            status=resp.status_code, agent_id=str(agent_id),
+        )
+        raise HTTPException(status_code=502, detail="Unexpected registry response")
 
 # ---------------------------------------------------------------------------
 # Pydantic Response Models
@@ -512,6 +543,7 @@ async def replay_agent_behavior(
     step by step. Risk scores are never re-evaluated — this is a stable
     forensic replay independent of current model versions.
     """
+    await _assert_agent_in_tenant(agent_id, tenant_id)  # audit S11m
     source_errors: list[str] = []
     replay_events: list[ReplayEvent] = []
 
@@ -607,8 +639,8 @@ async def replay_agent_behavior(
     all_events = replay_events + flight_steps
     try:
         all_events.sort(key=lambda e: e.timestamp)
-    except Exception:
-        pass  # non-comparable timestamps — return as-is
+    except Exception as exc:
+        swallow_log(logger, "forensics_event_sort_failed", exc)
 
     if not all_events and not source_errors:
         raise HTTPException(status_code=404, detail="No events found for this agent.")
@@ -640,6 +672,7 @@ async def get_investigation_profile(
     Aggregates event stats, risk distribution, decision breakdown, top
     triggered findings, and recent high-risk events over the specified window.
     """
+    await _assert_agent_in_tenant(agent_id, tenant_id)  # audit S11m
     source_errors: list[str] = []
     agent_str = str(agent_id)
 
@@ -754,6 +787,7 @@ async def get_blast_radius(
     enriches results with criticality scores and the worst-case traversal path.
     Returns partial data with source_errors if the graph service is unavailable.
     """
+    await _assert_agent_in_tenant(agent_id, tenant_id)  # audit S11m
     agent_str = str(agent_id)
     source_errors: list[str] = []
     nodes: list[BlastRadiusNode] = []
@@ -823,6 +857,7 @@ async def get_timeline(
     event stream, tagged with source. Flight steps carry execution step
     names/statuses; audit events carry decision outcomes and risk scores.
     """
+    await _assert_agent_in_tenant(agent_id, tenant_id)  # audit S11m
     import asyncio
 
     agent_str = str(agent_id)
@@ -968,6 +1003,7 @@ async def export_investigation(
     as structured JSON. The export_key can be used to retrieve the cached
     export without re-fetching all sources.
     """
+    await _assert_agent_in_tenant(agent_id, tenant_id)  # audit S11m
     import asyncio
 
     agent_str = str(agent_id)

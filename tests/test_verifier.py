@@ -162,7 +162,10 @@ def test_fingerprint_key_deterministic() -> None:
     fp1 = fingerprint_key(pub_pem)
     fp2 = fingerprint_key(pub_pem.encode())
     assert fp1 == fp2
-    assert len(fp1) == 32
+    # audit S18 (P2-6): the helper now returns the full 64-char SHA-256
+    # hex (was truncated to 32). Both forms are accepted at verify time
+    # for backward compatibility.
+    assert len(fp1) == 64
 
 
 def test_fingerprint_key_different_keys() -> None:

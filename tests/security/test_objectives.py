@@ -222,6 +222,11 @@ _NON_CANONICAL_SIGNALS = {
     # (legacy path), not on canonical flags. Sprint 8 will move them into
     # the impact objective once the rego/Python convergence lands.
     "iac_destruction_command",
+    # audit S16 test-debt: registered in the signal registry but no
+    # objective emits it yet. Documented in docs/dev/test-debt.md. The
+    # follow-up sprint will either wire an emitter or de-register the
+    # signal; until then this allow-list keeps the drift test honest.
+    "credential_in_message_body",
     "k8s_prod_namespace_destruction",
 }
 

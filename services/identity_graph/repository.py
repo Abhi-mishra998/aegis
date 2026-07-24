@@ -141,11 +141,19 @@ class GraphRepository:
         the edges traversed. Uses bounded BFS — no recursive SQL — so it
         terminates in O(depth × fan-out) and is bounded by SQL LIMIT 200.
         """
+        # audit S11k (P2-13): cap total visited nodes so a wide graph
+        # doesn't turn simulate() into a per-request pool-starver. The
+        # existing depth (≤ 6) × limit (2000/level) bound was 12k rows,
+        # theoretically fine but expensive when a tenant graph has a hub
+        # node with high fan-out. Aborting at 5k visited nodes gives a
+        # meaningful blast-radius picture without letting one request
+        # dominate the DB pool.
+        _VISITED_CAP = 5000
         frontier: set[uuid.UUID] = {root_id}
         visited: set[uuid.UUID] = {root_id}
         all_edges: list[GraphEdge] = []
         for _ in range(max(1, min(depth, 6))):
-            if not frontier:
+            if not frontier or len(visited) >= _VISITED_CAP:
                 break
             stmt = (
                 select(GraphEdge)
@@ -162,6 +170,8 @@ class GraphRepository:
                 if e.dst_node_id not in visited:
                     next_frontier.add(e.dst_node_id)
                     visited.add(e.dst_node_id)
+                    if len(visited) >= _VISITED_CAP:
+                        break
             frontier = next_frontier
         return visited, all_edges
 

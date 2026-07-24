@@ -4,7 +4,15 @@ import uuid
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -68,8 +76,11 @@ class UserRole(StrEnum):
 
 # Canonical role vocabulary lives in sdk.common.roles so the gateway's
 # verify_role middleware and the identity writer share one source of truth.
-from sdk.common.roles import LEGACY_ROLE_TO_CANONICAL, Role, canonical_role  # noqa: E402,F401
-
+from sdk.common.roles import (  # noqa: E402,F401
+    LEGACY_ROLE_TO_CANONICAL,
+    Role,
+    canonical_role,
+)
 
 # Sprint 1 shadow-mode default: every new workspace runs in observe-only
 # mode for 14 days before its first deny/escalate actually blocks the

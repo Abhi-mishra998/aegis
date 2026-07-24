@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, Request
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.roles import Role
 from services.gateway._helpers import internal_headers, passthrough
@@ -98,8 +99,8 @@ async def workspace_slack_config_get(request: Request) -> Any:
                 body["data"].pop("signing_secret", None)
             from fastapi.responses import JSONResponse as _JSON
             return _JSON(content=body, status_code=upstream.status_code)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            swallow_log(logger, "workspace_slack_redact_failed", exc)
     return upstream
 
 

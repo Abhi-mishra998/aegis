@@ -19,6 +19,7 @@ from fastapi import HTTPException, Request
 from starlette.responses import Response
 
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.background import swallow_log
 from sdk.common.exceptions import ACPAuthError
 from sdk.utils import IDEMPOTENCY_HITS_TOTAL
 from services.gateway.auth import REDIS_REVOKE_PREFIX
@@ -50,16 +51,16 @@ class _AuthMixin:
             cached = await self.redis.get(cache_key)
             if cached:
                 key_data = json.loads(cached)
-        except Exception:
-            pass  # cache miss is fine; fall through to live call
+        except Exception as exc:
+            swallow_log(logger, "api_key_cache_read_failed", exc)
 
         if key_data is None:
             key_data = await service_client.validate_api_key(raw_key)
             if key_data:
                 try:
                     await self.redis.setex(cache_key, _API_KEY_CACHE_TTL, json.dumps(key_data, default=str))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "api_key_cache_write_failed", exc)
 
         if not key_data:
             return None
@@ -69,8 +70,8 @@ class _AuthMixin:
         if key_data.get("is_active") is False:
             try:
                 await self.redis.delete(cache_key)
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "api_key_cache_delete_failed", exc)
             return None
 
         # Cross-check the revocation index: even if a cached payload still claims
@@ -82,11 +83,14 @@ class _AuthMixin:
                 if await self.redis.sismember(_API_KEY_REVOKED_SET, str(key_id)):
                     try:
                         await self.redis.delete(cache_key)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        swallow_log(logger, "api_key_cache_delete_failed", exc)
                     return None
-            except Exception:
-                pass  # If the revocation-index check itself errors, do not fail open silently — but Redis outage is logged elsewhere; keep behavior consistent with revocation check on JWT path which is fail-closed only on detected timeouts.
+            except Exception as exc:
+                # If the revocation-index check itself errors, do not fail open silently — but
+                # Redis outage is logged elsewhere; keep behavior consistent with revocation check
+                # on JWT path which is fail-closed only on detected timeouts.
+                swallow_log(logger, "api_key_revoke_check_failed", exc)
 
         return key_data
 
@@ -132,8 +136,8 @@ class _AuthMixin:
                         try:
                             await self.redis.incr(auth_fail_key)
                             await self.redis.expire(auth_fail_key, 300)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            swallow_log(logger, "auth_fail_counter_incr_failed", exc)
                         # P3-1 + N17 + FU-1 — body unified to "Unauthorized" + realm "aegis".
                         # The "API key" wording previously leaked the auth method
                         # an attacker had probed; the unified body collapses that
@@ -262,8 +266,8 @@ class _AuthMixin:
                             failures = await self.redis.get(auth_fail_key)
                             # EH-3 security counter
                             from services.gateway.middleware import (
-                                REVOKED_TOKEN_ATTEMPTS_TOTAL,
                                 AUTH_FAILURES_TOTAL,
+                                REVOKED_TOKEN_ATTEMPTS_TOTAL,
                             )  # noqa: PLC0415
                             REVOKED_TOKEN_ATTEMPTS_TOTAL.inc()
                             AUTH_FAILURES_TOTAL.labels(reason="revoked_token").inc()
@@ -302,7 +306,9 @@ class _AuthMixin:
                         # EH-3 security counter — keeps the per-reason label internally
                         # for our own dashboards even though we no longer leak the reason
                         # in the WWW-Authenticate header.
-                        from services.gateway.middleware import AUTH_FAILURES_TOTAL  # noqa: PLC0415
+                        from services.gateway.middleware import (
+                            AUTH_FAILURES_TOTAL,  # noqa: PLC0415
+                        )
                         AUTH_FAILURES_TOTAL.labels(reason=reason).inc()
                         # P3-1 + N17 (2026-06-21): body unified to "Unauthorized" AND
                         # WWW-Authenticate realm unified to "aegis". Both are oracles
@@ -477,7 +483,9 @@ class _AuthMixin:
         # supplies a short prefix gets a non-match in the same time as a
         # near-match), closing the timing oracle.
         if not secrets.compare_digest(x_tenant, tenant_id_str):
-            from services.gateway.middleware import TENANT_ISOLATION_VIOLATIONS_TOTAL  # noqa: PLC0415
+            from services.gateway.middleware import (
+                TENANT_ISOLATION_VIOLATIONS_TOTAL,  # noqa: PLC0415
+            )
             TENANT_ISOLATION_VIOLATIONS_TOTAL.inc()
             logger.critical("tenant_isolation_violation", token_tenant=tenant_id_str, header_tenant=x_tenant)
             raise HTTPException(status_code=403, detail="Tenant mismatch detected")
@@ -508,36 +516,36 @@ class _AuthMixin:
                 # shouldn't take down auth for every request.
                 logger.warning("revoked_agents_check_failed", error=str(_rex))
 
-        # Org-level isolation: if the client sends X-Org-ID it MUST match the token's org_id.
-        # The header is optional — older clients without org_id support are still served.
-        x_org_id = request.headers.get("X-Org-ID")
-        if x_org_id and auth_header:
-            token_org_id = (
-                (request.state.jwt_claims if hasattr(request.state, "jwt_claims") else {})
-                .get("org_id", tenant_id_str)
-            )
+        # S8 (audit P1-7): org enforcement is server-side and unconditional.
+        # The X-Org-ID header used to be the trigger; omitting it silently
+        # skipped the whole check on read paths. Now the org is derived
+        # from the JWT and enforced on EVERY authenticated request. The
+        # client header (if sent) is a match-check on top, not an opt-in.
+        if auth_header:
+            jwt_claims = getattr(request.state, "jwt_claims", None) or {}
+            token_org_id = jwt_claims.get("org_id", tenant_id_str)
+            x_org_id = request.headers.get("X-Org-ID")
             # N1: constant-time compare (see tenant compare above for rationale).
-            if not secrets.compare_digest(str(x_org_id), str(token_org_id)):
+            if x_org_id and not secrets.compare_digest(str(x_org_id), str(token_org_id)):
                 logger.critical(
                     "org_isolation_violation",
                     token_org=token_org_id,
                     header_org=x_org_id,
                 )
                 raise HTTPException(status_code=403, detail="Org mismatch detected")
-
-        # Enforce strict SaaS invariant: org_id == tenant_id on ALL write paths
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
-            org_to_check = x_org_id or ((request.state.jwt_claims if hasattr(request.state, "jwt_claims") else {}).get("org_id"))
-            if org_to_check:
-                from sdk.common.invariants import (
-                    InvariantViolation,
-                    assert_org_consistency,
+            # Strict SaaS invariant: org_id == tenant_id, enforced on all
+            # methods (not just writes — see audit P1-7).
+            from sdk.common.invariants import (
+                InvariantViolation,
+                assert_org_consistency,
+            )
+            try:
+                assert_org_consistency(
+                    uuid.UUID(str(token_org_id)), tenant_id, "gateway org enforcement",
                 )
-                try:
-                    assert_org_consistency(uuid.UUID(org_to_check), tenant_id, "gateway write path")
-                except InvariantViolation as e:
-                    logger.critical("strict_invariant_violation", detail=str(e))
-                    raise HTTPException(status_code=403, detail=str(e))
+            except (ValueError, InvariantViolation) as e:
+                logger.critical("strict_invariant_violation", detail=str(e))
+                raise HTTPException(status_code=403, detail=str(e))
 
         return tenant_id, agent_id or uuid.UUID(int=0), tenant_id_str, agent_id_str, jti
 

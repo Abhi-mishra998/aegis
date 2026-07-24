@@ -15,11 +15,11 @@ today — but we also can't take a tenant down because Redis blipped.
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from . import store
 from .ioc import KIND_DESTRUCTIVE_SHELL
-
 
 # In-process regex cache so we don't recompile on every request. Bounded
 # at 256 patterns per kind — that's far more than any tenant will

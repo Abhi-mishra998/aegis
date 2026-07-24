@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import re
 
-
 # Sprint U13 — high-confidence secret patterns. Each one is anchored on a
 # vendor prefix + minimum body length so we don't false-positive on
 # "Bearer foo" or short hex strings. Order doesn't matter (we union).

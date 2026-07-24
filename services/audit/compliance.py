@@ -44,7 +44,7 @@ from sdk.common.auth import verify_internal_secret
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.response import APIResponse
 from services.audit.integrity import verify_audit_chain
-from services.audit.models import AuditLog
+from services.audit.models import AuditBillingStatus, AuditLog
 
 logger = structlog.get_logger(__name__)
 
@@ -662,8 +662,12 @@ async def export_audit_logs(
     period_start = _parse_dt(payload.start_date, now_utc - timedelta(days=30))
     period_end = _parse_dt(payload.end_date, now_utc)
 
+    # S3 (2026-07-21): join audit_billing_status for the current lifecycle
+    # value; the audit_logs column is preserved for backfill but no longer
+    # updated post-split.
     q = (
-        select(AuditLog)
+        select(AuditLog, AuditBillingStatus.status)
+        .outerjoin(AuditBillingStatus, AuditBillingStatus.audit_id == AuditLog.id)
         .where(AuditLog.tenant_id == tenant_id)
         .where(AuditLog.timestamp >= period_start)
         .where(AuditLog.timestamp <= period_end)
@@ -678,7 +682,7 @@ async def export_audit_logs(
         q = q.where(AuditLog.action == payload.action)
 
     q = q.order_by(AuditLog.timestamp.desc()).limit(limit)
-    rows = list((await db.execute(q)).scalars().all())
+    rows = list((await db.execute(q)).all())  # tuples: (AuditLog, current_status)
 
     date_slug = now_utc.strftime("%Y%m%d")
     tid_short = str(tenant_id).replace("-", "")[:12]
@@ -697,7 +701,7 @@ async def export_audit_logs(
             writer = csv.DictWriter(buf, fieldnames=_CSV_FIELDS, extrasaction="ignore")
             writer.writeheader()
             yield buf.getvalue()
-            for r in rows:
+            for r, current_status in rows:
                 buf = io.StringIO()
                 writer = csv.DictWriter(buf, fieldnames=_CSV_FIELDS, extrasaction="ignore")
                 writer.writerow({
@@ -711,7 +715,7 @@ async def export_audit_logs(
                     "reason":         r.reason or "",
                     "request_id":     r.request_id or "",
                     "event_hash":     r.event_hash or "",
-                    "billing_status": r.billing_status or "",
+                    "billing_status": current_status or r.billing_status or "",
                     "risk_score":     str((r.metadata_json or {}).get("risk_score", "")),
                 })
                 yield buf.getvalue()
@@ -739,10 +743,10 @@ async def export_audit_logs(
             "reason":         r.reason,
             "request_id":     r.request_id,
             "event_hash":     r.event_hash,
-            "billing_status": r.billing_status,
+            "billing_status": current_status or r.billing_status,
             "metadata_json":  r.metadata_json or {},
         }
-        for r in rows
+        for r, current_status in rows
     ]
 
     json_bytes = json.dumps(

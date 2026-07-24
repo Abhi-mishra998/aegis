@@ -25,6 +25,7 @@ import httpx
 import structlog
 
 from sdk.common.auth import mesh_headers
+from sdk.common.background import swallow_log
 
 logger = structlog.get_logger(__name__)
 
@@ -243,8 +244,8 @@ async def check_autonomy_contract(
                 if cached == "ok":
                     return {"allowed": True, "requires_approval": False,
                             "violated_rules": [], "reason": "cached_no_contract"}
-        except Exception:
-            pass  # cache lookup failed → fall through to HTTP
+        except Exception as exc:
+            swallow_log(logger, "trust_cache_lookup_failed", exc)
 
     try:
         client = await _autonomy_get_client()

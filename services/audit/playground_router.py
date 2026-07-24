@@ -49,7 +49,6 @@ from services.audit.playground_engine import (
 )
 from services.audit.rego_compiler import compile_and_validate
 
-
 playground_router = APIRouter(
     prefix="/playground",
     tags=["playground"],

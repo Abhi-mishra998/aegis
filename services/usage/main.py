@@ -9,8 +9,8 @@ import httpx
 import structlog
 from fastapi import FastAPI
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.config import settings
 from sdk.common.db import engine, get_session_factory
 from sdk.common.migrate import check_schema
 from sdk.common.redis import get_redis_client

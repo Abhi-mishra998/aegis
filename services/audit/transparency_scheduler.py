@@ -211,7 +211,11 @@ async def _commit_one(db: AsyncSession, tenant_id, day: date) -> None:
     try:
         from services.audit.public_transparency import (
             is_enabled as _pub_enabled,
+        )
+        from services.audit.public_transparency import (
             publish_root as _pub_root,
+        )
+        from services.audit.public_transparency import (
             publish_signing_key as _pub_key,
         )
         if _pub_enabled():

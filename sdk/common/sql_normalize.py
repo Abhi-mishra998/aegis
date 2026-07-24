@@ -28,7 +28,6 @@ import re
 import unicodedata
 from urllib.parse import unquote, unquote_plus
 
-
 # ---------------------------------------------------------------------------
 # Homoglyph fold table
 # ---------------------------------------------------------------------------

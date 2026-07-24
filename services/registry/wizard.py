@@ -37,6 +37,7 @@ from sdk.common.deadline import check_deadline
 from sdk.common.enums import PermissionAction
 from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
+from services.registry import capabilities as _cap
 from services.registry.repository import AgentRepository, PermissionRepository
 from services.registry.schemas import (
     AgentCreate,
@@ -44,7 +45,6 @@ from services.registry.schemas import (
     PermissionCreate,
 )
 from services.registry.service import AgentService
-from services.registry import capabilities as _cap
 
 logger = structlog.get_logger(__name__)
 
@@ -166,6 +166,10 @@ class WizardCreatedResponse(BaseModel):
     # back exactly what runtime gates Aegis just turned on.
     capabilities: list[str] = Field(default_factory=list)
     policies_enabled: list[str] = Field(default_factory=list)
+    # audit S11d (P2-10): surface transient-failure partial whitelists so
+    # the UI can offer a "retry these" affordance instead of an agent
+    # that 403s on its first tool call with no explanation.
+    tools_whitelist_failed: list[str] = Field(default_factory=list)
     shadow_mode_until_hint: str | None = Field(
         default=None,
         description=(
@@ -232,11 +236,18 @@ async def _whitelist_default_tools(
     tenant_id: uuid.UUID,
     agent_id: uuid.UUID,
     owner_id: str,
-) -> int:
-    """Grant the 8 default tool permissions. Returns the count actually
-    added. Idempotent — IntegrityError on the (agent_id, tool_name) unique
-    constraint is treated as already-present and skipped."""
+) -> tuple[int, list[str]]:
+    """Grant the 8 default tool permissions.
+
+    Returns ``(added, failed_tools)`` — ``failed_tools`` lists the tool
+    names that raised something other than an IntegrityError (transient
+    DB errors, connection blips) so the wizard can surface them to the
+    UI instead of returning a silent partial whitelist (audit S11d,
+    P2-10). IntegrityError is still treated as idempotent-already-there.
+    """
+    from sqlalchemy.exc import IntegrityError
     added = 0
+    failed_tools: list[str] = []
     for tool_name in _DEFAULT_TOOL_WHITELIST:
         payload = PermissionCreate(
             tool_name=tool_name,
@@ -246,17 +257,21 @@ async def _whitelist_default_tools(
         try:
             await perm_repo.create(tenant_id, agent_id, payload)
             added += 1
-        except Exception as exc:
-            # Either an IntegrityError (perm already exists — fine) or a
-            # transient DB error (caller will see the partial whitelist).
-            # We don't fail the whole wizard for a single perm row.
-            logger.warning(
-                "wizard_perm_insert_skipped",
-                agent_id=str(agent_id),
-                tool=tool_name,
-                error=str(exc),
+        except IntegrityError:
+            # Perm already exists — expected and idempotent.
+            logger.info(
+                "wizard_perm_already_present",
+                agent_id=str(agent_id), tool=tool_name,
             )
-    return added
+        except Exception as exc:  # noqa: BLE001
+            # Transient DB / connection error. Record so the wizard
+            # response can carry the list to the UI.
+            failed_tools.append(tool_name)
+            logger.warning(
+                "wizard_perm_insert_failed",
+                agent_id=str(agent_id), tool=tool_name, error=str(exc),
+            )
+    return added, failed_tools
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -341,7 +356,7 @@ async def wizard_create_agent(
         await db.refresh(agent_row)
 
     # ── Step 2: whitelist default tools (best-effort) ──────────────────
-    added = await _whitelist_default_tools(
+    added, failed_tools = await _whitelist_default_tools(
         perm_repo,
         tenant_id=tenant_id,
         agent_id=agent_response.id,
@@ -351,6 +366,7 @@ async def wizard_create_agent(
         "wizard_tools_whitelisted",
         agent_id=str(agent_response.id),
         added=added,
+        failed=failed_tools,
         target=len(_DEFAULT_TOOL_WHITELIST),
     )
 
@@ -390,6 +406,7 @@ async def wizard_create_agent(
             risk_level=derived_risk,
             capabilities=capabilities,
             policies_enabled=policies_enabled,
+            tools_whitelist_failed=failed_tools,
             shadow_mode_until_hint=(
                 "Your workspace is in 14-day shadow mode by default — every "
                 "decision is logged but no real block fires until you exit "

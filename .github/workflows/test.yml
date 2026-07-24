@@ -35,29 +35,9 @@ jobs:
           pip install -e ".[dev,server]"
 
       - name: Run unit tests
-        # Test debt from the prod-stack teardown + prior refactors:
-        #
-        #  - SQLAlchemy MetaData double-registration in 4+ suites (audit_logs,
-        #    organizations tables re-declared without extend_existing=True)
-        #  - httpx 405 against https://aegisagent.in/demo/spawn-workspace
-        #    (the domain now serves GitHub Pages after terraform destroy,
-        #    so tests expecting the demo endpoint return the wrong status)
-        #  - _StubRedis missing .set() — fake needs a few more methods
-        #  - ExecutiveDashboard.jsx removed but a test still references the path
-        #  - the credential_in_message_body signal is registered but no
-        #    objective emits it yet
-        #
-        # continue-on-error surfaces the count in the GH UI without gating
-        # merges. Full backlog + owner for each item: docs/dev/test-debt.md.
-        # Restore hard-fail once the four categories above are cleaned up.
-        continue-on-error: true
         run: |
           python -m pytest tests/ \
             -m "not integration" \
-            --ignore=tests/test_fleet_endpoints.py \
-            --ignore=tests/test_playground_engine.py \
-            --ignore=tests/test_production_readiness.py \
-            --ignore=tests/test_shadow_hook.py \
             -v \
             --tb=short \
             --no-header \

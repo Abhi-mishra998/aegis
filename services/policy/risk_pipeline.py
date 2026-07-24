@@ -33,6 +33,10 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import structlog
+
+from sdk.common.background import swallow_log
+
 # Per-signal score — Sprint 1 2026-06-15.
 # Scores live in services/security/signal_registry.py. The pipeline used to
 # carry its own copy of this dict; the duplication caused drift (canonical
@@ -40,6 +44,8 @@ from typing import Any
 # but pipeline missed `external_post_pii_unknown_dest`, `cross_agent_kill_chain`,
 # `credential_artifact_write`, etc.). Now both sides read the registry.
 from services.security.signal_registry import score_for_finding as _registry_score
+
+logger = structlog.get_logger(__name__)
 
 _SESSION_WINDOW_SECONDS = 15 * 60         # 15 minutes
 _AGENT_WINDOW_SECONDS   = 60 * 60         # 60 minutes
@@ -107,8 +113,12 @@ async def record_signals(
         alk = _agent_long_key(tenant_id, agent_id)
         await redis.zadd(alk, {m: s for s, m in members})
         await redis.expire(alk, _AGENT_LONG_TTL_SECONDS)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Best-effort bookkeeping — a Redis blip here must never fail the
+        # deny / escalate path. The counter surfaces the blip so it is not
+        # invisible.
+        swallow_log(logger, "risk_pipeline_record_failed", exc,
+                    tenant_id=tenant_id, agent_id=agent_id, session_id=session_id)
 
 
 async def cumulative_scores(
@@ -182,7 +192,8 @@ async def cumulative_scores(
                 session_score += s
                 if finding not in recent:
                     recent.append(finding)
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "risk_pipeline_score_parse_failed", exc)
             continue
 
     for m in agent_members:
@@ -192,7 +203,8 @@ async def cumulative_scores(
             parts = m.split(":", 2)
             if len(parts) == 3:
                 agent_score += int(parts[2])
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "risk_pipeline_score_parse_failed", exc)
             continue
 
     for m in long_members:
@@ -202,7 +214,8 @@ async def cumulative_scores(
             parts = m.split(":", 2)
             if len(parts) == 3:
                 agent_long_score += int(parts[2])
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "risk_pipeline_score_parse_failed", exc)
             continue
 
     return session_score, agent_score, agent_long_score, recent[-10:]

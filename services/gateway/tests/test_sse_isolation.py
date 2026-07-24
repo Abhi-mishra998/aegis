@@ -128,6 +128,8 @@ def _make_request(
         query_params=qp,
         app=SimpleNamespace(state=SimpleNamespace(client=registry_client)),
         is_disconnected=_DisconnectAfter(false_disconnect_calls),
+        state=SimpleNamespace(tenant_id=None, agent_id=None),
+        url=SimpleNamespace(path="/events/stream"),
     )
 
 

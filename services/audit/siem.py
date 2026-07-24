@@ -38,10 +38,9 @@ never block the audit write path.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
-
-import os
 from urllib.parse import urlencode
 
 import httpx
@@ -533,6 +532,7 @@ class ChronicleForwarder:
         """Sign a Google-OAuth-compatible JWT with the service-account RSA key."""
         import base64
         import time as _time
+
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import padding
 

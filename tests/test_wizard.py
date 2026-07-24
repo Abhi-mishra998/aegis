@@ -57,9 +57,14 @@ def test_wizard_request_rejects_unknown_provider():
         WizardCreateRequest(name="finance-bot", provider="rogue-provider")
 
 
-def test_wizard_request_defaults_risk_to_medium():
+def test_wizard_request_defaults_risk_to_none():
+    # Sprint 13 moved risk_level derivation to wizard execution time —
+    # the schema itself defaults to None and the executor derives the
+    # actual risk from capabilities (falling back to "medium" when the
+    # capability list is empty). See services/registry/wizard.py line
+    # 307-309 for the derivation.
     req = WizardCreateRequest(name="finance-bot", provider="anthropic")
-    assert req.risk_level == "medium"
+    assert req.risk_level is None
 
 
 def test_wizard_request_accepts_low_medium_high_only():

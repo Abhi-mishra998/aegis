@@ -229,12 +229,24 @@ class ClerkTokenValidator:
             raise ACPAuthError(f"No matching JWK for kid {kid!r}")
 
         try:
+            # audit S18b (P2-8): verify_aud=True with an explicit expected
+            # audience closes the same-org, cross-audience replay window.
+            # When CLERK_AUDIENCE is empty (fresh dev deploy with default
+            # Clerk template) we fall back to verify_aud=False so nothing
+            # breaks on install; ops set CLERK_AUDIENCE once the JWT
+            # template is configured with the aegis audience.
+            from sdk.common.config import settings as _cfg  # noqa: PLC0415
+            expected_aud = (_cfg.CLERK_AUDIENCE or "").strip()
             payload = jwt.decode(
                 token,
                 jwk,
                 algorithms=[jwk.get("alg") or "RS256"],
                 issuer=self._issuer,
-                options={"verify_aud": False, "require_iat": False},
+                audience=expected_aud or None,
+                options={
+                    "verify_aud": bool(expected_aud),
+                    "require_iat": False,
+                },
             )
         except ExpiredSignatureError as exc:
             raise ACPAuthError("Clerk token has expired") from exc
@@ -332,7 +344,7 @@ class ClerkTokenValidator:
         # Synthesize a stable jti the downstream cache + revocation paths can
         # key on. SHA256(sub + iat) gives us per-token uniqueness without
         # forcing Clerk to mint a `jti` claim (which it doesn't by default).
-        jti_seed = f"{clerk_user_id}:{iat}".encode("utf-8")
+        jti_seed = f"{clerk_user_id}:{iat}".encode()
         jti = f"clerk-{hashlib.sha256(jti_seed).hexdigest()[:32]}"
 
         canonical: dict[str, Any] = {

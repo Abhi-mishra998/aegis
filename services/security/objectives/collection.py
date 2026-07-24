@@ -20,7 +20,6 @@ fields in lockstep — Sprint 1 unit tests catch the divergence.
 """
 from __future__ import annotations
 
-
 _PII_DUMP_THRESHOLD     = 10_000
 _PII_ESCALATE_THRESHOLD = 200
 

@@ -28,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.audit.models import AuditLog
 
-
 # The actions we count as "decision events" for the Fleet KPIs. The audit
 # log also stores meta-events (user_login, behavior_firewall_decision,
 # etc.) that we don't want polluting the Decisions counter — those land

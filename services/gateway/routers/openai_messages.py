@@ -24,6 +24,7 @@ it to the upstream request inside this handler.
 """
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from typing import Any
@@ -32,15 +33,16 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
+from sdk.common.atf_class import classify as _atf_classify
 from sdk.common.audit_stream import push_audit_event
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
-from services.gateway.openai_pricing import cost_usd
+from services.gateway import escalation_patterns, proxy_helpers
+from services.gateway._helpers import publish_event
 from services.gateway.client import service_client
 from services.gateway.inference_proxy import InjectionDetector
-from services.gateway import escalation_patterns
-from services.gateway import proxy_helpers
-from services.gateway._helpers import publish_event
+from services.gateway.openai_pricing import cost_usd
 from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
@@ -117,34 +119,20 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
             detail="API key role READ_ONLY cannot invoke /v1/chat/completions",
         )
 
-    try:
-        request.state.tenant_id = tenant_id_str
-        request.state.role = key_role
-        request.state.actor = f"apikey:{key_data.get('key_prefix', auth_key[:8])}"
-    except Exception:  # noqa: BLE001
-        pass
+    # S5 (2026-07-21 audit P1-8): DO NOT wrap this in try/except. The three
+    # lines below propagate auth state into downstream handlers (rate limit,
+    # quota, audit emission). If any raises, the request must 500 — silently
+    # continuing here means the request runs without tenant context, which
+    # is a fail-open at the auth boundary.
+    request.state.tenant_id = tenant_id_str
+    request.state.role = key_role
+    request.state.actor = f"apikey:{key_data.get('key_prefix', auth_key[:8])}"
 
-    # 3. budget pre-check
+    # 3. establish redis client. The budget check moved AFTER body parse
+    # (step 5) because atomic reserve-and-reconcile needs the model + max
+    # tokens to size the reservation — see S7 (audit P1-6).
     redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
     try:
-        today_usd, month_usd = await proxy_helpers.current_spend(redis, tenant_id_str, employee_email)
-        if daily_budget_usd is not None and today_usd >= float(daily_budget_usd):
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=(
-                    f"Daily LLM budget reached for {employee_email}: "
-                    f"${today_usd:.2f} / ${float(daily_budget_usd):.2f}"
-                ),
-            )
-        if monthly_budget_usd is not None and month_usd >= float(monthly_budget_usd):
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=(
-                    f"Monthly LLM budget reached for {employee_email}: "
-                    f"${month_usd:.2f} / ${float(monthly_budget_usd):.2f}"
-                ),
-            )
-
         # 4. upstream OpenAI key — fetched here but the missing-key
         # 503 fires LATER, only on the forward path. Deny + escalate
         # decisions still run so a customer testing prompts before
@@ -159,6 +147,43 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
         except Exception:
             req_json = {}
         model = (req_json or {}).get("model") or "gpt-4o-mini"
+
+        # 5a. budget reserve — atomic compare-and-charge (S7, audit P1-6).
+        # We reserve the MAXIMUM POSSIBLE cost for this call so two
+        # concurrent requests at $95/$100 daily can't both pass and both
+        # charge $10; the actual cost is reconciled after the LLM call
+        # by adding (actual - reserved) via record_spend, which now
+        # accepts negatives.
+        max_out = int((req_json or {}).get("max_tokens") or 4096)
+        msg_text = str((req_json or {}).get("messages") or "")
+        reserved_usd = cost_usd(model, max(1, len(msg_text) // 4), max_out)
+        _reserve_status, day_val, month_val = await proxy_helpers.reserve_or_reject(
+            redis, tenant_id_str, employee_email, reserved_usd,
+            daily_budget_usd, monthly_budget_usd,
+        )
+        if _reserve_status == "d":
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=(
+                    f"Daily LLM budget reached for {employee_email}: "
+                    f"${day_val:.2f} / ${month_val:.2f}"
+                ),
+            )
+        if _reserve_status == "m":
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=(
+                    f"Monthly LLM budget reached for {employee_email}: "
+                    f"${day_val:.2f} / ${month_val:.2f}"
+                ),
+            )
+        if _reserve_status == "err":
+            # Fail closed on Redis error — never allow spend without
+            # accounting, or the TOCTOU comes back.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="LLM budget accounting temporarily unavailable",
+            )
 
         # 5b. prompt-injection deny scan — concatenate every user /
         # assistant / system message text.
@@ -429,12 +454,21 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                 # OpenAI's field names: prompt_tokens + completion_tokens
                 usage_input  = int(u.get("prompt_tokens")     or 0)
                 usage_output = int(u.get("completion_tokens") or 0)
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "llm_usage_parse_failed", exc)
         call_cost = cost_usd(model, usage_input, usage_output)
-        await proxy_helpers.record_spend(redis, tenant_id_str, employee_email, call_cost)
+        # S7 (audit P1-6): reconcile the reservation with the actual cost.
+        # Delta is usually negative (actual < reserved) since we reserved
+        # max_tokens worth of output up-front; record_spend now handles
+        # negatives to release the unused portion of the reservation.
+        await proxy_helpers.record_spend(
+            redis, tenant_id_str, employee_email, call_cost - reserved_usd,
+        )
 
         # 8. audit trail
+        # ATF §7.1 outcome.response_hash — binds authorization to the
+        # returned payload the auditor can independently re-hash.
+        response_hash = "sha256:" + hashlib.sha256(upstream_resp.content).hexdigest()
         try:
             await push_audit_event(
                 redis=redis,
@@ -453,6 +487,14 @@ async def proxy_openai_chat_completions(request: Request) -> Response:
                     "status_code":      upstream_resp.status_code,
                     "latency_ms":       int(latency_ms),
                     "upstream_provider": "openai",
+                    "response_hash":    response_hash,
+                    # ATF §3.3 classify — see messages.py for rationale.
+                    "action_class":     _atf_classify({
+                        "mutation": True,
+                        "external_communication": True,
+                        "reversibility": "REVERSIBLE",
+                        "resource_classification": "INTERNAL",
+                    }),
                 },
                 request_id=request.headers.get("X-Request-ID"),
             )

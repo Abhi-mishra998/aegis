@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import time
@@ -9,7 +10,6 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import APIKeyHeader
 from jose import ExpiredSignatureError, JWTError, jwt
 from prometheus_client import Counter
-
 
 logger = structlog.get_logger(__name__)
 
@@ -315,10 +315,8 @@ def _verify_mesh_jwt(token: str) -> dict[str, Any] | None:
             issuer = str(unverified.get("iss", kid) or kid or "unknown")
         except Exception:
             issuer = kid or "unknown"
-        try:
+        with contextlib.suppress(Exception):  # pragma: no cover — metric backend down
             MESH_JWT_EXPIRED_TOTAL.labels(issuer=issuer).inc()
-        except Exception:  # pragma: no cover — metric backend down
-            pass
         return {"_expired": True, "iss": issuer}
     except JWTError as exc:
         logger.warning("mesh_jwt_es256_invalid kid=%r error=%s", kid, exc)

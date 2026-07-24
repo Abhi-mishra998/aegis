@@ -9,8 +9,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
 import structlog
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from sdk.common.auth import verify_internal_secret
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.db import engine, get_session_factory
 from sdk.common.migrate import check_schema
@@ -31,6 +33,7 @@ logger = structlog.get_logger(__name__)
 # is updated every time _process_one succeeds; _INCIDENT_QUEUE_DEPTH polls
 # XLEN once per loop. /health/incident-consumer surfaces both.
 import time as _time_for_metrics
+
 try:
     from prometheus_client import Gauge as _Gauge
     _INCIDENT_QUEUE_DEPTH = _Gauge(
@@ -75,8 +78,8 @@ async def _update_stream_metrics(redis, stream: str, *groups: str) -> None:
     try:
         depth = int(await redis.xlen(stream) or 0)
         _STREAM_DEPTH.labels(stream=stream).set(depth)
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "stream_depth_gauge_update_failed", exc, stream=stream)
     if _CONSUMER_GROUP_LAG is None or not groups:
         return
     try:
@@ -89,8 +92,8 @@ async def _update_stream_metrics(redis, stream: str, *groups: str) -> None:
             if name in wanted:
                 lag = g.get("lag") if isinstance(g, dict) else 0
                 _CONSUMER_GROUP_LAG.labels(stream=stream, group=name).set(int(lag or 0))
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "consumer_group_lag_gauge_update_failed", exc, stream=stream)
 
 _INCIDENT_STREAM   = "acp:incidents:queue"
 _INCIDENT_GROUP    = "api-incident-worker"
@@ -130,8 +133,8 @@ async def _incident_consumer(redis, session_factory) -> None:
                 _INCIDENT_LAST_PROCESSED["depth"] = depth
                 if _INCIDENT_QUEUE_DEPTH is not None:
                     _INCIDENT_QUEUE_DEPTH.set(depth)
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "incident_queue_depth_gauge_failed", exc)
 
             # arch-26 W4.8 / W4.9 — also export labeled stream/group
             # metrics so the alertmanager rule pattern is uniform across
@@ -421,7 +424,10 @@ async def health_incident_consumer() -> dict:
 
 # ── Internal throttle endpoint — called by autonomy-service playbook executor ──
 @app.post("/internal/throttle", tags=["internal"], include_in_schema=False)
-async def internal_set_throttle(payload: dict) -> dict:
+async def internal_set_throttle(
+    payload: dict,
+    _: str = Depends(verify_internal_secret),
+) -> dict:
     """Write a per-agent throttle key to Redis.
 
     Called by the autonomy-service playbook THROTTLE action so it can apply

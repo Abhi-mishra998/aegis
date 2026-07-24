@@ -11,12 +11,6 @@ reach in here).
 
 from __future__ import annotations
 
-from sdk.common.clerk_auth import (
-    ClerkTokenValidator,
-    get_clerk_validator,
-    looks_like_clerk_token,
-    normalize_clerk_role,
-)
 # Re-exported state symbols so tests that reach in for
 # `auth_clerk._jwks_cache = None` keep working. The symbols here are
 # bound to the source module's attributes at import time; tests that
@@ -24,7 +18,11 @@ from sdk.common.clerk_auth import (
 # directly (which the new tests/test_clerk_validator.py does).
 from sdk.common.clerk_auth import (  # noqa: F401
     REDIS_JWKS_CACHE_KEY,
+    ClerkTokenValidator,
     _get_jwks_cache,
+    get_clerk_validator,
+    looks_like_clerk_token,
+    normalize_clerk_role,
 )
 
 __all__ = [

@@ -264,7 +264,7 @@ async def get_decision_graph(
 
     # Connect consecutive present stages; the signal label is the upstream's
     # outcome or summary.
-    for prev_stage, next_stage in zip(ordered_present, ordered_present[1:]):
+    for prev_stage, next_stage in zip(ordered_present, ordered_present[1:], strict=False):
         prev_node = by_stage[prev_stage]
         edges.append(DecisionGraphEdge(
             source=f"stage:{prev_stage}",

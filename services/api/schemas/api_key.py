@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-
 _KEY_ROLES = Literal["OWNER", "ADMIN", "SECURITY_ANALYST", "DEVELOPER", "READ_ONLY"]
 
 

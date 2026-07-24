@@ -1,7 +1,6 @@
 """Sprint 4 — Pydantic schemas for the Fleet dashboard surface."""
 from __future__ import annotations
 
-
 from pydantic import BaseModel
 
 

@@ -25,9 +25,9 @@ removing them is a contract break.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Any, Iterable
-
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Tier vocabulary — mirrors local_action_semantics.py constants.

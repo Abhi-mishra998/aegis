@@ -309,7 +309,7 @@ async def _probe_event_triggers(db: Any) -> dict[str, str]:
       * ``D`` — disabled (THE break-glass state)
     """
     from sqlalchemy import text
-    states: dict[str, str] = {name: "MISSING" for name in _EVENT_TRIGGER_NAMES}
+    states: dict[str, str] = dict.fromkeys(_EVENT_TRIGGER_NAMES, "MISSING")
     try:
         result = await db.execute(
             text(
@@ -470,7 +470,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Always-on (no creds required) since it only reads DB rows the gateway
     # has already written. If no tenant has an online_eval_configs row it
     # exits the inner loop in microseconds and goes back to sleep.
-    from services.audit.online_eval_worker import run_forever as _online_eval_run_forever
+    from services.audit.online_eval_worker import (
+        run_forever as _online_eval_run_forever,
+    )
     online_eval_task = asyncio.create_task(_online_eval_run_forever())
 
     logger.info("audit_service_started")

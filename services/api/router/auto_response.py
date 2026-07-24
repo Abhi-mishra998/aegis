@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
+from sdk.common.background import swallow_log
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.response import APIResponse
 from services.api.are_worker import _check_condition
@@ -271,8 +272,8 @@ async def list_pending(
                     key_str = k.decode() if isinstance(k, bytes) else k
                     data["approval_key"] = key_str[len(prefix):]
                 items.append(data)
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow_log(logger, "approval_cache_entry_parse_failed", exc)
     return APIResponse(data=items)
 
 

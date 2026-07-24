@@ -208,10 +208,19 @@ class BehaviorService:
 
             if risk >= 0.6:
                 raise SecurityException("High-risk destructive intent detected")
-        history_key = (
-            self._key(tenant_id, agent_id, "history") if tenant_id
-            else f"acp:behavior:a:{agent_id}:history"
-        )
+        # audit S11i (P1-15): tenant_id must be present. The old
+        # tenant-less fallback (`acp:behavior:a:{agent_id}:history`) was a
+        # cross-tenant read window if any writer ever populated it — the
+        # /check handler now 400s upstream if tenant_id is invalid, so this
+        # code path never sees None.
+        if tenant_id is None:
+            return type("BehaviorRes", (), {
+                "risk_score": 0.5,
+                "risk_score_modifier": 0.5,
+                "flags": ["invalid_tenant_id"],
+                "history": [],
+            })
+        history_key = self._key(tenant_id, agent_id, "history")
         history = [t.decode() for t in await self.redis.lrange(history_key, 0, 5)]
 
         risk, flags = await self._compute_sequence_risk(history, tool_name)
@@ -292,14 +301,37 @@ class BehaviorService:
             learn_flags = ["intelligence_degraded"]
 
         # --- Cross-Agent Correlation ---
+        # ATF v3.2 §9.2 + ADR-002 — LEARNED cross-agent correlation is a
+        # BEHAVIOURAL FINGERPRINTING signal, so it's gated by the tenant
+        # opt-in flag. `gate_score_consumption(..., "gate_input")` ALWAYS
+        # refuses per the ADR (learned models are never authoritative),
+        # so we honor the invariant by consuming the score as a DISPLAY
+        # signal — recorded in the audit trail + surfaced on the SOC
+        # dashboard, never contributing to the Gate's authoritative
+        # decision when the tenant is opted-out.
+        from sdk.common.behavior_opt_in import gate_score_consumption
+        _learned_allowed = gate_score_consumption(str(tenant_id), "display")
         cross_agent_risk = 0.0
-        if anomaly_score > 0.3:
+        if anomaly_score > 0.3 and _learned_allowed:
             try:
                 cross_agent_risk = await intelligence_engine.report_anomaly(
                     tenant_id, agent_id, history[:5], learn_flags
                 )
             except Exception as exc:
+                # audit S11n (P2-16): the primary signal (behavior_risk =
+                # max(sequence, velocity)) is independent of this, so the
+                # decision path still fires; but the campaign correlation
+                # signal used to silently degrade to 0.0. Set a floor +
+                # emit a flag so the downstream engine can distinguish
+                # "no evidence" from "no signal".
+                cross_agent_risk = 0.3
+                learn_flags.append("cross_agent_correlation_unavailable")
                 logger.warning("cross_agent_correlation_failed", error=str(exc))
+        elif anomaly_score > 0.3 and not _learned_allowed:
+            # Tenant opted out of learned fingerprinting → the deterministic
+            # signals still fire (sequence, velocity, cost); we ONLY skip the
+            # ML-derived cross-agent term.
+            learn_flags.append("learned_fingerprinting_disabled_for_tenant")
 
         # --- Merge: composite behavior risk ---
         # The primary behavior signal is the max of sequence + velocity

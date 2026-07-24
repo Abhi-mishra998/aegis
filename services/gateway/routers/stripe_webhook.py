@@ -35,8 +35,8 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)

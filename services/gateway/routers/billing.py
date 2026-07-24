@@ -19,7 +19,6 @@ from typing import Any
 import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-
 from redis.asyncio import Redis
 
 from sdk.common.config import settings

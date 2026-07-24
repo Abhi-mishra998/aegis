@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.audit_stream import push_audit_event
-from sdk.common.auth import mesh_headers
-from sdk.common.auth import verify_internal_secret
+from sdk.common.auth import mesh_headers, verify_internal_secret
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.deadline import check_deadline
@@ -44,6 +44,29 @@ def get_agent_service(db: Annotated[AsyncSession, Depends(get_db)]) -> AgentServ
     return AgentService(repo, perm_repo)
 
 
+# audit S11b (P1-12): defense-in-depth role gate for state-mutating
+# registry endpoints. The gateway injects `X-Caller-Role` from the
+# caller's JWT when proxying; a missing header means either a
+# direct-on-mesh caller (out-of-band) or a stale gateway that hasn't
+# forwarded the header yet. We log a `critical` on the missing case so
+# ops can catch the rollout gap; present-and-wrong is a hard 403.
+_REGISTRY_WRITE_ROLES = frozenset({"OWNER", "ADMIN", "SECURITY_ANALYST", "ROOT"})
+
+
+def require_admin_role(
+    x_caller_role: str | None = Header(default=None, alias="X-Caller-Role"),
+) -> None:
+    if x_caller_role is None:
+        logger.critical("registry_write_missing_caller_role")
+        return
+    if x_caller_role.upper() not in _REGISTRY_WRITE_ROLES:
+        logger.warning("registry_write_role_rejected", got=x_caller_role)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Write requires one of {sorted(_REGISTRY_WRITE_ROLES)}; got {x_caller_role!r}",
+        )
+
+
 # =========================
 # AGENTS
 # =========================
@@ -58,21 +81,132 @@ async def create_agent(
     service: Annotated[AgentService, Depends(get_agent_service)],
     payload: AgentCreate,
     _: Annotated[bool, Depends(check_deadline)] = True,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[AgentResponse]:
     request_id = getattr(request.state, "request_id", "unknown")
     bound_logger = logger.bind(
         request_id=request_id, tenant_id=str(tenant_id), owner_id=payload.owner_id
     )
 
-    response = await service.create_agent(tenant_id, payload)
+    # ATF §4.4 tenant issuance quota — atomic Redis Lua check-and-INCR so
+    # two concurrent create_agent requests at count == quota-1 cannot both
+    # succeed. Same pattern as `services/gateway/proxy_helpers._RESERVE_LUA`
+    # (audit S7 / P1-6). Redis blip → fail OPEN (would DoS legitimate
+    # mints on infra blip); the 95% alert catches drift.
+    from services.registry.quota_atomic import reserve_quota_slot
+    _quota_cap = settings.TENANT_PROFILE_QUOTA_DEFAULT
+    _quota_key_prefix = "acp:tenant:profile_count:"
+    _quota_redis = get_redis_client(settings.REDIS_URL, decode_responses=True)
+    _quota_status, _quota_count, _cap, _quota_alert = "err", 0, _quota_cap, False
+    try:
+        _quota_status, _quota_count, _cap, _quota_alert = await reserve_quota_slot(
+            _quota_redis, str(tenant_id), _quota_cap, key_prefix=_quota_key_prefix,
+        )
+    finally:
+        await _quota_redis.aclose()
+
+    if _quota_status == "exceeded":
+        _r_deny = get_redis_client(settings.REDIS_URL)
+        try:
+            await push_audit_event(
+                redis=_r_deny, tenant_id=tenant_id, agent_id=None,
+                action="tenant_profile_quota_exceeded",
+                metadata={
+                    "action_class":  "C2",
+                    "quota":         _cap,
+                    "current_count": _quota_count,
+                },
+            )
+        finally:
+            await _r_deny.aclose()
+        raise HTTPException(
+            status_code=429,
+            detail=f"Tenant Aegis Profile quota exceeded: {_quota_count}/{_cap}",
+        )
+    if _quota_alert:
+        # 95%-headroom warning — atomic form fires EXACTLY ONCE (the mint
+        # that crossed the threshold), not once per mint above 95%.
+        _r_alert = get_redis_client(settings.REDIS_URL)
+        try:
+            await push_audit_event(
+                redis=_r_alert, tenant_id=tenant_id, agent_id=None,
+                action="tenant_profile_quota_approaching",
+                metadata={
+                    "action_class":  "C2",
+                    "quota":         _cap,
+                    "current_count": _quota_count,
+                },
+            )
+        finally:
+            await _r_alert.aclose()
+    if _quota_status == "err":
+        # Redis unreachable — log + continue. Fail-CLOSED here would DoS
+        # every legitimate mint on a Redis blip.
+        logger.warning("tenant_quota_check_redis_unavailable", tenant_id=str(tenant_id))
+
+    # ATF §4.4: the quota slot has been RESERVED at this point. Any
+    # failure between here and end-of-handler must RELEASE the slot
+    # or we leak the quota permanently. Wrap everything in a try
+    # block whose except path decrements the slot before re-raising.
+    from services.registry.quota_atomic import release_quota_slot
+
+    async def _release_quota() -> None:
+        if _quota_status != "ok":
+            return
+        _rb = get_redis_client(settings.REDIS_URL, decode_responses=True)
+        try:
+            await release_quota_slot(_rb, str(tenant_id), key_prefix=_quota_key_prefix)
+        finally:
+            await _rb.aclose()
+
+    try:
+        response = await service.create_agent(tenant_id, payload)
+    except HTTPException:
+        # HTTPException from service.create_agent (e.g. duplicate name)
+        # — release the slot before propagating so the caller can retry
+        # without consuming the tenant's quota headroom.
+        await _release_quota()
+        raise
+    except Exception:
+        # Any other DB/service failure — same treatment. The tenant
+        # sees a 500; the slot is returned.
+        await _release_quota()
+        raise
 
     # Enforce strict SaaS invariant: org_id == tenant_id
     from sdk.common.invariants import InvariantViolation, assert_org_consistency
     try:
         assert_org_consistency(response.org_id, tenant_id, "registry agent creation")
     except InvariantViolation as e:
-        # P1: Immediate abort and DB rollback if invariant violated
+        # P1: Immediate abort and DB rollback if invariant violated. Roll back
+        # the quota counter so a failed mint doesn't leak a slot.
+        await _release_quota()
         raise HTTPException(status_code=500, detail=str(e))
+
+    # ATF §4.3 — mint the Aegis Profile document as an overlay referencing
+    # the standard identity. Profile hash is a C2 ledgered event (§4.4
+    # "ledger-visible birth"); the hash also goes into every subsequent
+    # ledger entry's intent.aegis_profile_hash.
+    from sdk.common.aegis_profile import AegisProfile, ProfileSubject
+    from sdk.common.aegis_profile import (
+        fingerprint as _profile_fingerprint,
+    )
+    from sdk.common.provenance_enrichment import enrich_from_env
+    _profile = AegisProfile(
+        subject=ProfileSubject(
+            spiffe_id=f"spiffe://acme/agent/{response.id}",
+            idp_ref=f"aegis:tenant:{tenant_id}",
+            scim_ref=None,
+        ),
+        human_responsible=response.owner_id or "unknown",
+        gate_policy_ref=f"policy://tenant/{tenant_id}/current",
+        action_class_max="C3",
+        # Populated from CI env vars (AEGIS_MODEL_REF, ...). Missing vars
+        # leave the field None — we never fabricate provenance because a
+        # null field is honest, a fake one misleads the auditor.
+        provenance=enrich_from_env(),
+    )
+    _profile_hash = _profile_fingerprint(_profile)
 
     # RULE 2: Every action is audited
     # P1-1 FIX: Removed __aenter__() anti-pattern; use client directly
@@ -84,7 +218,12 @@ async def create_agent(
             agent_id=response.id,
             action="agent_registration",
             request_id=request_id,
-            metadata={"name": response.name, "owner_id": response.owner_id}
+            metadata={
+                "name":                response.name,
+                "owner_id":            response.owner_id,
+                "aegis_profile_hash":  _profile_hash,   # ATF §4.3
+                "action_class":        "C2",             # profile-mint = C2
+            },
         )
     finally:
         await _redis.aclose()
@@ -157,9 +296,20 @@ async def list_registered_tools(
 
     from services.registry.models import Agent  # noqa: PLC0415
 
-    stmt = select(Agent).where(Agent.tenant_id == tenant_id, Agent.deleted_at.is_(None))
+    # audit S11e (P2-11): hard caps to prevent an unbounded aggregate on
+    # a tenant with a huge agent count or a bloated permissions table.
+    _AGENT_SCAN_CAP = 5000
+    _PERM_SCAN_CAP  = 10_000
+
+    stmt = (
+        select(Agent)
+        .where(Agent.tenant_id == tenant_id, Agent.deleted_at.is_(None))
+        .limit(_AGENT_SCAN_CAP + 1)
+    )
     result = await db.execute(stmt)
     agents = result.scalars().all()
+    truncated_agents = len(agents) > _AGENT_SCAN_CAP
+    agents = agents[:_AGENT_SCAN_CAP]
 
     tools: set[str] = set()
     for agent in agents:
@@ -173,11 +323,25 @@ async def list_registered_tools(
 
     # Also pull from the permissions table (tool_name column)
     from services.registry.models import AgentPermission  # noqa: PLC0415
-    perm_stmt = select(AgentPermission.tool_name).where(AgentPermission.tenant_id == tenant_id)
+    perm_stmt = (
+        select(AgentPermission.tool_name)
+        .where(AgentPermission.tenant_id == tenant_id)
+        .limit(_PERM_SCAN_CAP + 1)
+    )
     perm_result = await db.execute(perm_stmt)
-    for (tool_name,) in perm_result.all():
+    perm_rows = perm_result.all()
+    truncated_perms = len(perm_rows) > _PERM_SCAN_CAP
+    for (tool_name,) in perm_rows[:_PERM_SCAN_CAP]:
         if tool_name and tool_name.strip():
             tools.add(tool_name.strip())
+
+    if truncated_agents or truncated_perms:
+        logger.warning(
+            "registry_tools_scan_truncated",
+            tenant_id=str(tenant_id),
+            agents_truncated=truncated_agents,
+            perms_truncated=truncated_perms,
+        )
 
     DEFAULT_TOOLS = [
         "read_file", "write_file", "execute_code", "web_search",
@@ -350,6 +514,7 @@ async def update_agent(
     service: Annotated[AgentService, Depends(get_agent_service)],
     agent_id: uuid.UUID,
     payload: AgentUpdate,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[AgentResponse]:
     request_id = getattr(request.state, "request_id", "unknown")
     bound_logger = logger.bind(
@@ -385,6 +550,7 @@ async def delete_agent(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     service: Annotated[AgentService, Depends(get_agent_service)],
     agent_id: uuid.UUID,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[None]:
     request_id = getattr(request.state, "request_id", "unknown")
     bound_logger = logger.bind(
@@ -442,6 +608,7 @@ async def quarantine_agent_endpoint(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     service: Annotated[AgentService, Depends(get_agent_service)],
     agent_id: uuid.UUID,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[dict]:
     """Mark agent quarantined: Redis flag + status='quarantined' + audit row.
     Idempotent — quarantining an already-quarantined agent is a no-op."""
@@ -455,15 +622,25 @@ async def quarantine_agent_endpoint(
         await _redis.setex(key, 86_400, reason)
 
         # Persistent status flip (survives Redis flush).
+        # audit S11f (P2-12): do NOT return 200 if the DB update fails —
+        # the Redis flag's 24h TTL would then quietly release the agent
+        # after Redis flushes, defeating the quarantine guarantee. Roll
+        # back the Redis flag and 500 so the operator knows to retry.
         try:
             await service.update_agent(
                 tenant_id, agent_id,
                 AgentUpdate(status="quarantined"),
             )
         except Exception as exc:
-            # If status enum doesn't accept the value we still hold the
-            # Redis flag — gateway short-circuit is the source of truth.
-            logger.warning("quarantine_status_update_skip", error=str(exc))
+            logger.error("quarantine_status_update_failed", error=str(exc))
+            try:
+                await _redis.delete(key)
+            except Exception as exc2:
+                swallow_log(logger, "quarantine_redis_cleanup_failed", exc2)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"quarantine DB persist failed: {exc}",
+            ) from exc
 
         await push_audit_event(
             redis=_redis, tenant_id=tenant_id, agent_id=agent_id,
@@ -489,6 +666,7 @@ async def release_quarantine_endpoint(
     tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
     service: Annotated[AgentService, Depends(get_agent_service)],
     agent_id: uuid.UUID,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[dict]:
     request_id = getattr(request.state, "request_id", "unknown")
     _redis = get_redis_client(settings.REDIS_URL)
@@ -528,6 +706,7 @@ async def add_permission(
     service: Annotated[AgentService, Depends(get_agent_service)],
     agent_id: uuid.UUID,
     payload: PermissionCreate,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[PermissionResponse]:
     request_id = getattr(request.state, "request_id", "unknown")
     bound_logger = logger.bind(
@@ -589,6 +768,7 @@ async def revoke_permission(
     service: Annotated[AgentService, Depends(get_agent_service)],
     agent_id: uuid.UUID,
     permission_id: uuid.UUID,
+    _role: None = Depends(require_admin_role),
 ) -> APIResponse[None]:
     request_id = getattr(request.state, "request_id", "unknown")
     bound_logger = logger.bind(

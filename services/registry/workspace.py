@@ -80,9 +80,9 @@ async def workspace_inventory(
         )
     ).all()
 
-    by_provider: dict[str, int] = {p: 0 for p in _KNOWN_PROVIDERS}
+    by_provider: dict[str, int] = dict.fromkeys(_KNOWN_PROVIDERS, 0)
     by_provider["unknown"] = 0
-    by_risk: dict[str, int] = {r: 0 for r in _KNOWN_RISK_LEVELS}
+    by_risk: dict[str, int] = dict.fromkeys(_KNOWN_RISK_LEVELS, 0)
     by_status: dict[str, int] = {}
     wizard_count = 0
 

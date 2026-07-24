@@ -187,8 +187,9 @@ async def slack_callback(
     # Persist. Reuse the existing slack_approvals.sign_link secret if
     # one already exists; otherwise mint a fresh per-tenant secret so
     # the existing slack_approvals.py post-card path keeps working.
-    from services.identity.models import Tenant
     from sqlalchemy import select
+
+    from services.identity.models import Tenant
     res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = res.scalar_one_or_none()
     if tenant is None:
@@ -227,9 +228,10 @@ async def slack_status(
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    from services.identity.models import Tenant
     from sqlalchemy import select
     from sqlalchemy.exc import ProgrammingError
+
+    from services.identity.models import Tenant
     try:
         res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
         tenant = res.scalar_one_or_none()
@@ -262,8 +264,9 @@ async def slack_disconnect(
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    from services.identity.models import Tenant
     from sqlalchemy import select
+
+    from services.identity.models import Tenant
     res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = res.scalar_one_or_none()
     if tenant is None:

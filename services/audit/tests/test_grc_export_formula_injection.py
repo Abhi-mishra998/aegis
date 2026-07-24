@@ -29,8 +29,8 @@ from types import SimpleNamespace
 import pytest
 
 from services.audit.grc_export import (
-    _escape_formula,
     _FORMULA_PREFIXES,
+    _escape_formula,
     build_grc_export,
 )
 

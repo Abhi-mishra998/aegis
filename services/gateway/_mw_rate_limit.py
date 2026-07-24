@@ -13,9 +13,9 @@ import structlog
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
-
 from prometheus_client import Counter
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.utils import RATE_LIMIT_EXCEEDED_TOTAL
 
@@ -351,8 +351,8 @@ class _RateLimitMixin:
             TENANT_RATE_LIMITED_TOTAL.labels(
                 tenant=t_id_str, limit_type=decision.limit_type or "unknown",
             ).inc()
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "tenant_rate_limit_metric_failed", exc)
 
         # Audit synchronously — required by Sprint 3.2 acceptance.
         try:

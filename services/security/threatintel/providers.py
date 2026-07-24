@@ -28,20 +28,15 @@ import abc
 import asyncio
 import json
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
-from . import store
-from .ioc import (
-    IOCRecord,
-    KIND_EXFIL_HOST,
-    KIND_OFFSHORE_TOKEN,
-    SEV_HIGH,
-    SOURCE_FEED,
-    SOURCE_HARDCODED,
-    make_id,
-)
+import structlog
 
+from sdk.common.background import swallow_log
+
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Curated defaults — re-exported from the shared Sprint 8 pattern catalog
@@ -52,7 +47,20 @@ from .ioc import (
 # ---------------------------------------------------------------------------
 from services.policy.pattern_catalog import (
     EXFIL_HOSTS as DEFAULT_EXFIL_HOSTS,
+)
+from services.policy.pattern_catalog import (
     OFFSHORE_TOKENS as DEFAULT_OFFSHORE_TOKENS,
+)
+
+from . import store
+from .ioc import (
+    KIND_EXFIL_HOST,
+    KIND_OFFSHORE_TOKEN,
+    SEV_HIGH,
+    SOURCE_FEED,
+    SOURCE_HARDCODED,
+    IOCRecord,
+    make_id,
 )
 
 
@@ -182,7 +190,8 @@ class HttpFeedProvider(BaseProvider):
                 resp = await self._client.get(
                     self._cfg.url, timeout=self._cfg.timeout_seconds,
                 )
-            except Exception:
+            except Exception as exc:
+                swallow_log(logger, "threatintel_http_fetch_failed", exc, url=self._cfg.url)
                 continue
             code = getattr(resp, "status_code", 0)
             if 200 <= code < 300:

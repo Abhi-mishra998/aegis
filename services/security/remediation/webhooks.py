@@ -15,7 +15,6 @@ import asyncio
 import json
 from typing import Any
 
-
 # Exponential backoff schedule between attempts (seconds). 4-attempt total
 # pad keeps remediation responsive — a slow webhook shouldn't keep the
 # storyline ledger in pending state for too long.

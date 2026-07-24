@@ -34,7 +34,6 @@ from typing import Any
 
 import httpx
 
-
 _GATEWAY_URL = os.getenv(
     "AEGIS_MCP_GATEWAY_URL",
     os.getenv("AEGIS_GATEWAY_URL", "http://localhost:8000"),
@@ -75,7 +74,7 @@ class _AegisClient:
         self._tenant_id: str | None = None
         self._client = httpx.AsyncClient(timeout=_TIMEOUT)
 
-    async def __aenter__(self) -> "_AegisClient":
+    async def __aenter__(self) -> _AegisClient:
         await self._validate_key()
         return self
 
@@ -276,7 +275,9 @@ async def verify_chain(
     # don't want to add a hard dep at module top so test collection works
     # without the full server image.
     try:
-        from sdk.common.audit_hash import compute_event_hash  # type: ignore[import-not-found]
+        from sdk.common.audit_hash import (
+            compute_event_hash,  # type: ignore[import-not-found]
+        )
     except Exception:
         compute_event_hash = None  # type: ignore[assignment]
 

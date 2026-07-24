@@ -26,7 +26,6 @@ import hmac
 import time
 from typing import Any
 
-
 _SIG_VERSION = "v1"   # Bump if the signed payload format changes.
 
 

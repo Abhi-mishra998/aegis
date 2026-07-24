@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-
 # Action kinds — strings rather than an enum so they round-trip cleanly
 # through JSON without a custom encoder, and so new adapters can land in
 # Sprint 7 without breaking serialised history.

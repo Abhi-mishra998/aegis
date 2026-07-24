@@ -40,10 +40,10 @@ matches after the first pass).
 from __future__ import annotations
 
 import re
-import structlog
-import sqlalchemy as sa
-from alembic import op
 
+import sqlalchemy as sa
+import structlog
+from alembic import op
 
 revision = "p2q3r4s5t6u7"
 down_revision = "d1f2e3a4b5c6"

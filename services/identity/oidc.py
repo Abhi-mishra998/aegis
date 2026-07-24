@@ -83,6 +83,40 @@ _jwks_cache: dict[str, tuple[float, dict]] = {}
 _DISCOVERY_TTL = 3600.0
 _JWKS_TTL = 3600.0
 
+# Bytes cap for IdP responses. Real-world OIDC discovery docs and JWKS are
+# a few KB. Cap generously at 1 MiB — anything larger is either an attack
+# (hostile IdP or MITM streaming an infinite body to OOM us) or a broken
+# IdP we should refuse rather than accept.
+_IDP_MAX_BYTES = 1 * 1024 * 1024
+
+
+async def _fetch_json_capped(
+    url: str,
+    *,
+    method: str = "GET",
+    data: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 10.0,
+) -> Any:
+    """Fetch a JSON document with a hard byte cap. Streams so we can
+    abort early rather than buffer an infinite body. Supports GET (default),
+    POST form-encoded (`data=`) — enough for OIDC discovery, JWKS, token
+    exchange, and userinfo lookups."""
+    import json as _json
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            method, url, data=data, headers=headers,
+        ) as resp:
+            resp.raise_for_status()
+            buf = bytearray()
+            async for chunk in resp.aiter_bytes():
+                buf.extend(chunk)
+                if len(buf) > _IDP_MAX_BYTES:
+                    raise ValueError(
+                        f"IdP response exceeded {_IDP_MAX_BYTES} bytes at {url}"
+                    )
+    return _json.loads(bytes(buf))
+
 
 def enabled_providers() -> list[str]:
     """Return provider names that have CLIENT_ID configured."""
@@ -104,10 +138,7 @@ async def _get_discovery(provider: str) -> dict[str, Any]:
         return cached[1]
 
     cfg = _provider_cfg(provider)
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(cfg["discovery_url"])
-        resp.raise_for_status()
-        doc = resp.json()
+    doc = await _fetch_json_capped(cfg["discovery_url"])
 
     _discovery_cache[provider] = (now, doc)
     return doc
@@ -130,10 +161,7 @@ async def _get_jwks(provider: str, force_refresh: bool = False) -> dict[str, Any
     if not jwks_uri:
         raise ValueError(f"OIDC discovery for '{provider}' is missing jwks_uri")
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(jwks_uri)
-        resp.raise_for_status()
-        jwks = resp.json()
+    jwks = await _fetch_json_capped(jwks_uri)
 
     _jwks_cache[provider] = (now, jwks)
     return jwks
@@ -286,21 +314,20 @@ async def exchange_code(
     cfg = _provider_cfg(provider)
     doc = await _get_discovery(provider)
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            doc["token_endpoint"],
-            data={
-                "grant_type":    "authorization_code",
-                "code":          code,
-                "redirect_uri":  redirect_uri,
-                "client_id":     cfg["client_id"],
-                "client_secret": cfg["client_secret"],
-                "code_verifier": code_verifier,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
-        token_resp = resp.json()
+    token_resp = await _fetch_json_capped(
+        doc["token_endpoint"],
+        method="POST",
+        data={
+            "grant_type":    "authorization_code",
+            "code":          code,
+            "redirect_uri":  redirect_uri,
+            "client_id":     cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+            "code_verifier": code_verifier,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15.0,
+    )
 
     id_token = token_resp.get("id_token", "")
     if not id_token:
@@ -318,13 +345,10 @@ async def exchange_code(
 
 
 async def _fetch_userinfo(userinfo_url: str, access_token: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            userinfo_url,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    return await _fetch_json_capped(
+        userinfo_url,
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
 
 
 # ---------------------------------------------------------------------------

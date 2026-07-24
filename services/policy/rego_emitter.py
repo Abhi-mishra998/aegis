@@ -23,8 +23,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
-from typing import Iterable
-
+from collections.abc import Iterable
 
 # Anchor: project root resolved from the file path so the script works
 # whether invoked from the repo root, an IDE test runner, or CI.
@@ -121,7 +120,7 @@ def check() -> tuple[bool, str]:
     # Cheap diff summary — full unified diff is noisy and pulls in
     # difflib for no real benefit at CI exit-status level.
     diff_lines: list[str] = []
-    for i, (e, a) in enumerate(zip(expected.splitlines(), actual.splitlines())):
+    for i, (e, a) in enumerate(zip(expected.splitlines(), actual.splitlines(), strict=False)):
         if e != a:
             diff_lines.append(f"line {i + 1}: expected={e!r} actual={a!r}")
             if len(diff_lines) >= 5:

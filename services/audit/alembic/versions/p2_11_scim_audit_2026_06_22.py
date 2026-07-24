@@ -41,7 +41,6 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-
 revision = "p2_11_scim_audit_2026_06_22"
 down_revision = "aa_merge_2026_06_20"
 branch_labels = None

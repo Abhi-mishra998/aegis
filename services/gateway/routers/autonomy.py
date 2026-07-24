@@ -20,8 +20,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Request
 from redis.asyncio import Redis
+
+from sdk.common.background import swallow_log
+
+logger = structlog.get_logger(__name__)
 
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
@@ -150,7 +155,7 @@ async def post_autonomy_override(request: Request) -> Any:
             _redis, tenant_id, "approval_resolved", payload,
             agent_id=str(agent_id_meta) if agent_id_meta else None,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "approval_resolved_publish_failed", exc)
 
     return response

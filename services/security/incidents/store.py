@@ -11,8 +11,14 @@ import json
 import time
 from typing import Any
 
+import structlog
+
+from sdk.common.background import swallow_log
+
 from .recorder import _meta_key, _open_zset_key, _steps_key
 from .storyline import Step, Storyline, build
+
+logger = structlog.get_logger(__name__)
 
 
 def _decode(v: Any) -> str:
@@ -39,7 +45,8 @@ async def get(
         for i, raw in enumerate(steps_raw, 1):
             try:
                 d = json.loads(_decode(raw))
-            except Exception:
+            except Exception as exc:
+                swallow_log(logger, "incident_step_parse_failed", exc)
                 continue
             steps.append(Step(
                 seq=i,

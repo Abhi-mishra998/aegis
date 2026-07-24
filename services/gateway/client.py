@@ -25,6 +25,7 @@ from redis.asyncio import Redis
 
 from sdk.common.auth import mint_service_token
 from sdk.common.background import safe_bg as _safe_bg
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX
 from sdk.common.resilient_client import ResilientClient
@@ -143,8 +144,8 @@ class AgentMetadataCache:
         try:
             if await self._redis.get(self._dirty_key(agent_id)) is not None:
                 return None
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "agent_cache_dirty_check_failed", exc, agent_id=str(agent_id))
         raw = await self._redis.get(self._key(agent_id))
         if raw is None:
             return None
@@ -521,8 +522,8 @@ class ServiceClient:
                 try:
                     data = resp.json()
                     reason = data.get("detail", reason)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "policy_403_json_parse_failed", exc)
                 return {"allowed": False, "reason": reason, "risk_adjustment": adjustment}
 
             if resp.status_code != 200:

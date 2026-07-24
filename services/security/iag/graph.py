@@ -17,9 +17,9 @@ IAM, Vault) — it only knows how to *reason* about it.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Any, Iterable
-
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Resource taxonomy. Sensitivities are an ordered enum so they round-trip

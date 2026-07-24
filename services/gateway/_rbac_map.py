@@ -21,8 +21,8 @@ The canonical spec is docs/security/rbac_matrix.md. Keep the two in sync.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 # Canonical Aegis role tier (highest → lowest).
 # ROOT is the platform-staff role added 2026-06-21 to close P0-0 (any tenant
@@ -75,7 +75,7 @@ class Rule:
     roles: frozenset[str]   # explicit allow-set, OR
     min_role: str | None    # tier-based minimum (read-allows-all-above)
     min_plan_tier: str | None = None  # arch-26 W3.4 — None means "no tier gate"
-    _regex: "re.Pattern[str] | None" = None  # filled on first match()
+    _regex: re.Pattern[str] | None = None  # filled on first match()
 
     def matches(self, path: str, method: str) -> bool:
         if "*" not in self.methods and method.upper() not in self.methods:
@@ -91,7 +91,7 @@ class Rule:
         return self._regex.match(path) is not None
 
 
-def _compile(pattern: str) -> "re.Pattern[str]":
+def _compile(pattern: str) -> re.Pattern[str]:
     if pattern.endswith("*"):
         # Trailing wildcard = any suffix
         prefix = pattern[:-1]

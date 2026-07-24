@@ -36,7 +36,6 @@ from services.audit.shadow_evaluator import (
     evaluate_rules,
 )
 
-
 _BUCKET_AGREEMENT     = "agreement"
 _BUCKET_NEWLY_DENIED  = "newly_denied"
 _BUCKET_NEWLY_ALLOWED = "newly_allowed"

@@ -182,6 +182,38 @@ class ACPSettings(BaseSettings):
         description="'closed' = deny on OPA failure (default, safe); 'open' = allow on OPA failure (use only for dev/staging)"
     )
 
+    @field_validator("OPA_FAIL_MODE")
+    @classmethod
+    def _guard_opa_fail_mode(cls, v: str, info) -> str:
+        """S6 (audit P1-5): OPA_FAIL_MODE=open is a total-policy-bypass foot-gun.
+
+        The three fail-open branches at ``services/policy/opa_client.py:91,
+        99, 163`` turn OPA outages into blanket ALLOW when this mode is
+        ``open``. That is a legitimate developer convenience for local dev,
+        but shipping it to prod means a single OPA brownout takes the
+        policy gate offline for every consequential action. Refuse to start
+        rather than let a typo in the env produce silent policy bypass.
+        """
+        v_lower = v.strip().lower()
+        if v_lower not in ("open", "closed"):
+            raise ValueError(
+                f"OPA_FAIL_MODE must be 'open' or 'closed'; got {v!r}."
+            )
+        env = (
+            (info.data.get("ENVIRONMENT") if info and info.data else None)
+            or os.environ.get("ENVIRONMENT")
+            or ""
+        ).strip().lower()
+        if v_lower == "open" and env == "prod":
+            raise ValueError(
+                "OPA_FAIL_MODE='open' is refused in prod: an OPA outage "
+                "would silently ALLOW every consequential action (policy "
+                "bypass). Set OPA_FAIL_MODE=closed for prod, or set "
+                "ENVIRONMENT to a non-prod value (development/staging) "
+                "if the fail-open is intentional for local work."
+            )
+        return v_lower
+
     # ─────────────────────────────────────────────
     # 🔗 Internal Service URLs (Defaults for local development)
     # ─────────────────────────────────────────────
@@ -199,6 +231,30 @@ class ACPSettings(BaseSettings):
     IDENTITY_GRAPH_SERVICE_URL: str = Field(default="http://localhost:8013")
     FLIGHT_RECORDER_SERVICE_URL: str = Field(default="http://localhost:8014")
     AUTONOMY_SERVICE_URL: str = Field(default="http://localhost:8015")
+    # ATF v3.2 §6 Execution Witness
+    WITNESS_SERVICE_URL: str = Field(default="http://localhost:8017")
+
+    # ATF v3.2 §4.4 — Aegis Profile issuance quota per tenant. Contractual
+    # ceiling on concurrent minted profiles. Blocks past this. Alerts on 95%.
+    TENANT_PROFILE_QUOTA_DEFAULT: int = Field(
+        default=1000,
+        description="Default per-tenant cap on concurrent Aegis Profiles. C2 audit event on 95% headroom, 429 past ceiling.",
+    )
+
+    # ATF v3.2 §4.2 SCIM adapter — customer's SCIM directory for
+    # human_responsible reconciliation. Blank disables the reconciler.
+    SCIM_BASE_URL: str = Field(
+        default="",
+        description="Customer SCIM 2.0 endpoint base URL, e.g. https://acme.scim.example/scim/v2",
+    )
+    SCIM_BEARER_TOKEN: str = Field(
+        default="",
+        description="Bearer token for the SCIM endpoint. Rotate via ops.",
+    )
+    SCIM_RECONCILE_TIMEOUT_SECONDS: float = Field(
+        default=5.0,
+        description="Per-request SCIM timeout. A slow directory MUST NOT stall reconciliation.",
+    )
 
     # Sprint 25 A4 — fail-fast if a prod deploy still has localhost service URLs.
     # The defaults above let dev/CI/examples work without env wiring; the
@@ -212,7 +268,7 @@ class ACPSettings(BaseSettings):
     # exactly as before. Set the flag once compose has every URL set + the
     # ASG/k8s rollout has been tested.
     @model_validator(mode="after")
-    def _no_localhost_urls_in_prod(self) -> "ACPSettings":
+    def _no_localhost_urls_in_prod(self) -> ACPSettings:
         if self.ENVIRONMENT != "production":
             return self
         if os.environ.get("AEGIS_VALIDATE_SERVICE_URLS", "0") != "1":
@@ -428,6 +484,20 @@ class ACPSettings(BaseSettings):
         default="",
         description="Expected iss claim on Clerk-signed JWTs. Must match CLERK_FRONTEND_API.",
     )
+    # audit S18b (P2-8): the Clerk JWT decoder used to skip aud verification,
+    # accepting any Clerk-signed token from the org regardless of which
+    # audience-scoped app minted it. Setting this + verify_aud=True in
+    # clerk_auth.py closes the same-org, cross-app replay window. Default
+    # "aegis" matches the standard Clerk JWT template we recommend; ops
+    # can override per-tenant.
+    CLERK_AUDIENCE: str = Field(
+        default="aegis",
+        description=(
+            "Expected `aud` claim on Clerk-signed JWTs. Aegis's default "
+            "Clerk template mints tokens with aud='aegis'; override only "
+            "if a customer's Clerk template uses a different audience."
+        ),
+    )
     CLERK_WEBHOOK_SECRET: str = Field(
         default="",
         description="Svix webhook signing secret (whsec_...) for verifying inbound Clerk webhooks.",
@@ -436,6 +506,52 @@ class ACPSettings(BaseSettings):
         default="aegis",
         description="Clerk JWT template name; the frontend calls getToken({template: this}).",
     )
+    # ─────────────────────────────────────────────────────────────
+    # ATF v3.2 §4.2 — external IdP acceptance. All optional; a blank
+    # value disables that adapter. The gateway auth dispatcher tries
+    # each configured adapter in order of specificity (SPIFFE > Entra
+    # > Okta > Clerk > legacy) and fails-closed with the uniform
+    # "Unauthorized" body if no adapter accepts.
+    # ─────────────────────────────────────────────────────────────
+    SPIFFE_TRUST_DOMAIN: str = Field(
+        default="",
+        description="Expected SPIFFE trust domain (e.g. 'acme.example'). Blank disables SPIFFE acceptance.",
+    )
+    SPIFFE_TRUST_BUNDLE_JSON: str = Field(
+        default="",
+        description="JWKS-shaped trust bundle for the SPIFFE trust domain, JSON string. Rotated by SPIRE or operator.",
+    )
+    SPIFFE_AUDIENCE: str = Field(
+        default="",
+        description="Expected `aud` on incoming SVIDs. Blank = verify_aud disabled (per-workload SVIDs may lack aud).",
+    )
+
+    ENTRA_TENANT_ID: str = Field(
+        default="",
+        description="Microsoft Entra tenant GUID. Blank disables Entra Agent ID acceptance.",
+    )
+    ENTRA_AUDIENCE: str = Field(
+        default="",
+        description="Expected `aud` on incoming Entra tokens (typically the Aegis app ID).",
+    )
+    ENTRA_JWKS_CACHE_SECONDS: int = Field(
+        default=3600,
+        description="Entra JWKS cache TTL. Entra rotates infrequently; 1h balances safety + load.",
+    )
+
+    OKTA_ISSUER: str = Field(
+        default="",
+        description="Full Okta issuer URL (https://<tenant>.okta.com/oauth2/default or an XAA auth server). Blank disables Okta acceptance.",
+    )
+    OKTA_AUDIENCE: str = Field(
+        default="",
+        description="Expected `aud` on incoming Okta tokens.",
+    )
+    OKTA_JWKS_CACHE_SECONDS: int = Field(
+        default=3600,
+        description="Okta JWKS cache TTL. Okta rotates keys periodically; 1h is safe.",
+    )
+
     CLERK_JWKS_CACHE_SECONDS: int = Field(
         default=3600,
         description="JWKS cache TTL in seconds. Clerk rotates keys infrequently; a 1h cache balances safety and load.",

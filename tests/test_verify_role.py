@@ -104,7 +104,10 @@ def test_malformed_header_returns_401():
     with pytest.raises(HTTPException) as exc:
         _run(dep, authorization="Token x")  # not Bearer
     assert exc.value.status_code == 401
-    assert "Malformed" in exc.value.detail
+    # P3-1 + N17: body unified to "Unauthorized" + realm "aegis" so the
+    # error detail cannot leak the specific failure mode to a probe.
+    assert exc.value.detail == "Unauthorized"
+    assert exc.value.headers["WWW-Authenticate"] == 'Bearer realm="aegis"'
 
 
 def test_validator_failure_returns_401_with_detail():
@@ -113,7 +116,10 @@ def test_validator_failure_returns_401_with_detail():
     with pytest.raises(HTTPException) as exc:
         _run(dep, authorization="Bearer invalid")
     assert exc.value.status_code == 401
-    assert "signature invalid" in exc.value.detail
+    # P3-1 + N17: per-reason slug no longer leaks to the client — it
+    # only appears in the structlog "verify_role_auth_failed" line.
+    assert exc.value.detail == "Unauthorized"
+    assert exc.value.headers["WWW-Authenticate"] == 'Bearer realm="aegis"'
 
 
 def test_uninitialized_validator_returns_503():

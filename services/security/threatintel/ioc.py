@@ -9,7 +9,6 @@ import hashlib
 from dataclasses import asdict, dataclass
 from typing import Any
 
-
 # Kinds — strings so they round-trip cleanly through JSON without a
 # custom encoder, and so new kinds can land later without invalidating
 # stored records.
@@ -79,5 +78,5 @@ def make_id(tenant_id: str, kind: str, value: str) -> str:
     Stable across processes + restarts; a feed that re-uploads the same
     record produces the same id, so the upsert path is idempotent.
     """
-    digest = hashlib.sha256(f"{tenant_id}|{kind}|{value}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{tenant_id}|{kind}|{value}".encode()).hexdigest()
     return digest[:12]

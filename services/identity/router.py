@@ -79,10 +79,12 @@ async def spawn_demo_tenant(
     """Provision an isolated demo tenant + read-only OWNER user.
     Returns ids the gateway needs to mint the demo JWT."""
     import uuid as _uuid
-    from datetime import UTC, datetime as _dt, timedelta as _td
+    from datetime import UTC
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
 
-    from services.identity.models import Organization, Tenant, User
     from sdk.common.roles import Role
+    from services.identity.models import Organization, Tenant, User
 
     tenant_id = _uuid.uuid4()
     org_id = _uuid.uuid4()
@@ -940,6 +942,19 @@ async def upsert_tenant(
             detail=f"Invalid org_id: expected a UUID, got {body.get('org_id')!r}",
         ) from exc
     tier_val      = body.get("tier", "basic")
+    # Same fail-fast pattern as rpm_val/degraded_policy: enum coercion
+    # against an unknown tier used to raise ValueError → 500. Validate
+    # eagerly so a typo gets a 4xx.
+    try:
+        tier_enum = TenantTier(tier_val)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid tier: {tier_val!r}; expected one of "
+                f"{[m.value for m in TenantTier]}"
+            ),
+        ) from exc
     try:
         rpm_val   = int(body.get("rpm_limit", _TIER_RPM_DEFAULTS.get(tier_val, 60)))
     except (ValueError, TypeError) as exc:
@@ -966,16 +981,44 @@ async def upsert_tenant(
 
     # Sprint 3.2 quota fields — optional in the request body so existing
     # callers don't break; defaults match the migration server_default.
-    rps_val      = int(body.get("requests_per_second", 50))
-    burst_val    = int(body.get("burst", 100))
-    daily_val    = int(body.get("daily_request_cap", 1_000_000))
-    monthly_raw  = body.get("monthly_request_cap")
-    monthly_val: int | None = int(monthly_raw) if monthly_raw is not None else None
+    # QA-VALIDATION follow-up: each numeric coercion catches ValueError
+    # so a non-numeric input surfaces as 4xx instead of a bare 500.
+    def _as_int(field: str, default: int | None) -> int | None:
+        raw = body.get(field, default)
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (ValueError, TypeError) as _exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid {field}: expected an integer, got {raw!r}",
+            ) from _exc
+
+    # These four fields have baked-in defaults, so _as_int cannot return
+    # None unless the caller EXPLICITLY sent null — in which case a
+    # ValueError-turned-4xx is the right shape. Cast for the typechecker.
+    rps_val      = int(_as_int("requests_per_second", 50) or 50)
+    burst_val    = int(_as_int("burst", 100) or 100)
+    daily_val    = int(_as_int("daily_request_cap", 1_000_000) or 1_000_000)
+    monthly_val  = _as_int("monthly_request_cap", None)
     cost_cap_raw = body.get("daily_inference_cost_cap_usd")
-    cost_cap_val: float | None = float(cost_cap_raw) if cost_cap_raw is not None else None
+    if cost_cap_raw is None:
+        cost_cap_val: float | None = None
+    else:
+        try:
+            cost_cap_val = float(cost_cap_raw)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Invalid daily_inference_cost_cap_usd: expected a number, "
+                    f"got {cost_cap_raw!r}"
+                ),
+            ) from exc
 
     if existing:
-        existing.tier                 = TenantTier(tier_val)
+        existing.tier                 = tier_enum
         existing.rpm_limit            = rpm_val
         existing.name                 = name_val
         existing.degraded_mode_policy = degraded_policy
@@ -989,7 +1032,7 @@ async def upsert_tenant(
             org_id=org_id_val,
             tenant_id=tenant_id_val,
             name=name_val,
-            tier=TenantTier(tier_val),
+            tier=tier_enum,
             rpm_limit=rpm_val,
             degraded_mode_policy=degraded_policy,
             requests_per_second=rps_val,
@@ -1367,7 +1410,10 @@ async def put_slack_config(
         # private/loopback in case DNS is poisoned or someone bypasses the
         # prefix check in a future refactor.
         if url:
-            from sdk.common.outbound_url_allowlist import OutboundUrlBlocked, validate_outbound_url
+            from sdk.common.outbound_url_allowlist import (
+                OutboundUrlBlocked,
+                validate_outbound_url,
+            )
             try:
                 validate_outbound_url(url)
             except OutboundUrlBlocked as exc:
@@ -1421,7 +1467,9 @@ async def put_slack_config(
 async def list_policy_packs_catalog() -> dict:
     """Static catalog of packs. Same content the wizard + Settings tab
     render — single source of truth lives in services/policy/packs.py."""
-    from services.policy import packs as _packs  # local import = no startup cost when unused
+    from services.policy import (
+        packs as _packs,  # local import = no startup cost when unused
+    )
     out: list[dict] = []
     for p in _packs.all_packs():
         out.append({
@@ -1846,15 +1894,48 @@ async def test_sso_config(
         if not test_url:
             return {"reachable": False, "issuer": issuer, "status": "no_issuer_configured"}
 
+    # SSRF guard: an authenticated tenant caller could otherwise point
+    # `issuer` at http://169.254.169.254/... (AWS metadata IMDSv1) or
+    # any private-CIDR endpoint and get the identity worker to make the
+    # request. `follow_redirects=False` because a hostile IdP could
+    # redirect to internal targets after passing the initial guard.
+    from sdk.common.outbound_url_allowlist import (
+        OutboundUrlBlocked,
+        validate_outbound_url,
+    )
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-            resp = await client.get(test_url)
-        reachable = resp.status_code < 400
+        validate_outbound_url(test_url, allowed_schemes=("http", "https"))
+    except OutboundUrlBlocked as exc:
+        return {
+            "reachable": False, "issuer": issuer,
+            "status": f"url_blocked: {exc.reason}",
+        }
+
+    try:
+        # Stream + byte cap: an unbounded response body would OOM the
+        # identity worker. OIDC discovery docs are <10KB; 1 MiB is
+        # generous. Doc contents are trusted only for the `issuer` claim.
+        _MAX = 1 * 1024 * 1024
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
+            async with client.stream("GET", test_url) as resp:
+                reachable = resp.status_code < 400
+                buf = bytearray()
+                if provider_type == "oidc" and reachable:
+                    async for chunk in resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > _MAX:
+                            return {
+                                "reachable": False, "issuer": issuer,
+                                "status": f"body_too_large: >{_MAX}B",
+                            }
+                status_code = resp.status_code
         discovered_issuer = issuer
-        if provider_type == "oidc" and reachable:
+        if provider_type == "oidc" and reachable and buf:
             try:
-                doc = resp.json()
-                discovered_issuer = doc.get("issuer", issuer)
+                import json as _json
+                doc = _json.loads(bytes(buf))
+                if isinstance(doc, dict):
+                    discovered_issuer = doc.get("issuer", issuer)
             except Exception as exc:
                 # OIDC discovery response wasn't JSON or the JSON shape
                 # didn't expose an issuer. Fall back to the configured
@@ -1868,7 +1949,7 @@ async def test_sso_config(
         return {
             "reachable": reachable,
             "issuer": discovered_issuer,
-            "status": f"http_{resp.status_code}",
+            "status": f"http_{status_code}",
         }
     except Exception as exc:
         logger.warning("sso_config_test_failed", url=test_url, error=str(exc))
@@ -1900,7 +1981,12 @@ async def sso_login(
     A PKCE verifier is generated, stored in Redis under the state token, and
     presented to the IdP token endpoint at callback (RFC 7636).
     """
-    from services.identity.oidc import build_auth_url, build_pkce_challenge, enabled_providers, generate_state
+    from services.identity.oidc import (
+        build_auth_url,
+        build_pkce_challenge,
+        enabled_providers,
+        generate_state,
+    )
 
     if provider not in enabled_providers():
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider}' is not configured")

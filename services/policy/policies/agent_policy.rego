@@ -17,7 +17,47 @@ main := {
 	"allow": allowed_final,
 	"reason": msg_final,
 	"risk_adjustment": adjustment + risk_adjustment,
+	# audit S15 (P2-5): return the explainability slice the fast path
+	# already produces via evaluate_full(). The slow path used to derive
+	# tier + findings + policy_id from the reason-string suffix; now the
+	# rego is the source of truth on both sides.
+	"tier": tier_final,
+	"findings": findings_final,
+	"policy_id": policy_id_final,
+	"explanation": msg_final,
 }
+
+# --- Explainability derivation ------------------------------------------
+
+# tier_final honours the __escalate suffix on the reason (used by
+# action_semantics_deny rules that opt into approval-required semantics
+# rather than a hard block).
+default tier_final := "allow"
+
+tier_final := "escalate" if {
+	not allowed_final
+	endswith(msg_final, "__escalate")
+}
+
+tier_final := "deny" if {
+	not allowed_final
+	not endswith(msg_final, "__escalate")
+}
+
+# findings_final and policy_id_final strip the __escalate suffix so the
+# SDK / SOC dashboards receive the canonical policy id.
+default findings_final := []
+default policy_id_final := ""
+
+findings_final := [_policy_id_stripped] if {
+	not allowed_final
+}
+
+policy_id_final := _policy_id_stripped if {
+	not allowed_final
+}
+
+_policy_id_stripped := trim_suffix(msg_final, "__escalate")
 
 # 2026-06-14 enterprise-grade: fold action-semantics deny into main.allow.
 # Previously `main.allow` only depended on the permission-check `allowed`,
@@ -29,16 +69,61 @@ allowed_final := false if {
 	action_semantics_deny
 }
 
+allowed_final := false if {
+	are_destructive_deny
+}
+
 allowed_final := allowed if {
 	not action_semantics_deny
+	not are_destructive_deny
 }
 
 msg_final := reason if {
 	action_semantics_deny
 }
 
+msg_final := are_destructive_msg if {
+	are_destructive_deny
+	not action_semantics_deny
+}
+
 msg_final := msg if {
 	not action_semantics_deny
+	not are_destructive_deny
+}
+
+# =========================
+# ARE DESTRUCTIVE ACTIONS (audit P1-17)
+# ARE zeroes gate_risk for KILL_AGENT / ISOLATE_AGENT / REVOKE_KEY at
+# services/api/are_executor.py:229 and delegates the decision to OPA,
+# but no rule was previously checking `input.metadata.action`. That
+# meant the destructive-remediation authorization path was a no-op
+# once ARE decided to enqueue the action. This block closes that gap.
+#
+# Threading: services/api/are_executor.py::_policy_gate embeds
+# `metadata.action = action_type`, so the check reads
+# `input.metadata.action`. Non-ARE call sites don't populate it, so
+# rules below are inert for the normal /execute path.
+# =========================
+
+_are_destructive := {"KILL_AGENT", "ISOLATE_AGENT", "REVOKE_KEY"}
+
+are_destructive_deny if {
+	object.get(input, ["metadata", "action"], "") in _are_destructive
+	not are_destructive_approved
+}
+
+# An operator-issued approval is threaded through as
+# `input.metadata.approval_id` (see how remediation policy webhook payloads
+# already carry an approval id). Presence means a human authorized the
+# destructive step; absence means auto-fired by the incident watcher and
+# must be denied here.
+are_destructive_approved if {
+	object.get(input, ["metadata", "approval_id"], "") != ""
+}
+
+are_destructive_msg := "HARD DENY: destructive remediation requires an operator approval_id" if {
+	are_destructive_deny
 }
 
 # =========================

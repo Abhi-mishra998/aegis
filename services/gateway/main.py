@@ -28,8 +28,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.background import swallow_log
+from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.gateway.auth import init_token_validator
@@ -85,8 +86,8 @@ class PubSubManager:
                 try:
                     await pubsub.unsubscribe(channel)
                     await pubsub.aclose()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "pubsub_unsubscribe_failed", exc, channel=channel)
                 del self._subs[channel]
 
     async def _reader(
@@ -119,8 +120,8 @@ class PubSubManager:
                 try:
                     await pubsub.unsubscribe(channel)
                     await pubsub.aclose()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    swallow_log(logger, "pubsub_unsubscribe_failed", exc, channel=channel)
             self._subs.clear()
 
 
@@ -359,10 +360,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Sprint 8 — Drain in-flight OTLP batches before the process exits so
     # the buyer's tail-end traces aren't lost on graceful shutdown.
     try:
-        from sdk.common.otel_exporter import shutdown_exporter as _shutdown_otel_exporter
+        from sdk.common.otel_exporter import (
+            shutdown_exporter as _shutdown_otel_exporter,
+        )
         _shutdown_otel_exporter()
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "otel_exporter_shutdown_failed", exc)
     await _app.state.client.aclose()
     await redis.aclose()
     await service_client.close()
@@ -524,36 +527,14 @@ async def _v1_prefix_alias(request: Request, call_next):
     return await call_next(request)
 
 
-# M1 closure 2026-06-18: per-IP rate limit on 401 responses to slow down
-# token-stuffing / enumeration. 60 401s/minute/IP → 429 with Retry-After.
-# Sits OUTERMOST so it sees the final response after auth resolved.
-_RATE_LIMIT_401_PER_MIN = int(os.environ.get("AUTH_FAIL_RATE_LIMIT_PER_MIN", "60"))
-_RATE_LIMIT_WINDOW_S    = 60
-
-@app.middleware("http")
-async def _rate_limit_401(request: Request, call_next):
-    response = await call_next(request)
-    if response.status_code != 401:
-        return response
-    # Prefer X-Forwarded-For (ALB sets it); fall back to peer addr.
-    xff = request.headers.get("x-forwarded-for", "")
-    client_ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")
-    key = f"acp:ratelimit:auth401:{client_ip}"
-    try:
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, _RATE_LIMIT_WINDOW_S)
-        if count > _RATE_LIMIT_401_PER_MIN:
-            ttl = max(1, await redis.ttl(key))
-            return JSONResponse(
-                status_code=429,
-                content={"success": False, "error": "Auth-failure rate limit exceeded", "meta": {"code": 429}},
-                headers={"Retry-After": str(ttl), "WWW-Authenticate": 'Bearer realm="rate_limited"'},
-            )
-    except Exception:
-        # Never fail-closed on rate limiter errors; just pass the original 401 through.
-        pass
-    return response
+# audit S11c (P2-9): the inline `_rate_limit_401` decorator that used to
+# sit here claimed to be OUTERMOST but was actually INNER — the
+# add_middleware() calls below (registered later, hence outermost in
+# Starlette semantics) wrap it. SecurityMiddleware
+# (services/gateway/middleware.py::_RateLimitMixin) already runs its own
+# per-IP burst-on-401 counter at the correct outer position, so the
+# inline decorator was redundant *and* mis-labeled. Deleting removes the
+# maintainer trap without regressing the anti-enumeration gate.
 
 
 # Add security middleware
@@ -563,6 +544,7 @@ app.add_middleware(SecurityMiddleware, redis=redis)  # type: ignore[arg-type]
 # on the request side, last on the response side — exactly where header
 # rewrites belong).
 from services.gateway.middleware import SecurityHeadersMiddleware  # noqa: E402
+
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Consolidated SDK Setup (logging, tracing, metrics, CORS, exception handlers)
@@ -605,71 +587,106 @@ async def gateway_health(request: Request) -> JSONResponse:
 # decomposed; admin is the first extraction. Each router lives under
 # services/gateway/routers/ and depends only on services/gateway/_helpers.py
 # (never on main.py — that would create a load-time cycle).
+from sdk.common.gate_mode import CURRENT_MODE as _CURRENT_GATE_MODE  # noqa: E402
 from services.gateway.routers.admin import router as _admin_router  # noqa: E402
 from services.gateway.routers.agents import router as _agents_router  # noqa: E402
 from services.gateway.routers.audit import router as _audit_router  # noqa: E402
 from services.gateway.routers.auth import router as _auth_router  # noqa: E402
-from services.gateway.routers.autonomy import (
-    router as _autonomy_router,  # noqa: E402
-)
-from services.gateway.routers.clerk import router as _clerk_router  # noqa: E402
-from services.gateway.routers.workspace import router as _workspace_router  # noqa: E402
 from services.gateway.routers.auto_response import (
     router as _auto_response_router,  # noqa: E402
 )
+from services.gateway.routers.autonomy import (
+    router as _autonomy_router,  # noqa: E402
+)
 from services.gateway.routers.billing import router as _billing_router  # noqa: E402
+from services.gateway.routers.clerk import router as _clerk_router  # noqa: E402
 from services.gateway.routers.compliance import (
     router as _compliance_router,  # noqa: E402
 )
 from services.gateway.routers.dashboard import router as _dashboard_router  # noqa: E402
-from services.gateway.routers.demo import router as _demo_router  # noqa: E402
 from services.gateway.routers.decision import router as _decision_router  # noqa: E402
+from services.gateway.routers.demo import router as _demo_router  # noqa: E402
 from services.gateway.routers.dlq import router as _dlq_router  # noqa: E402
 from services.gateway.routers.forensics import router as _forensics_router  # noqa: E402
+from services.gateway.routers.iag import router as _iag_router  # noqa: E402
 from services.gateway.routers.incidents import router as _incidents_router  # noqa: E402
+
+# Sprint EI-2 (2026-06-20) — Jira (and future ITSM) per-tenant integrations.
+from services.gateway.routers.integrations import (
+    router as _integrations_router,  # noqa: E402
+)
+
+# Sprint EI-17 (2026-06-21) — inbound ITSM webhooks (Jira + ServiceNow → close Aegis incident).
+from services.gateway.routers.itsm_webhooks import (
+    router as _itsm_webhooks_router,  # noqa: E402
+)
+
+# ATF v3.2 §14.5 deployment lifecycle endpoint.
+from services.gateway.routers.lifecycle import router as _lifecycle_router  # noqa: E402
+
+# Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
+from services.gateway.routers.messages import router as _messages_router  # noqa: E402
+
+# S19 split (2026-07-21) — team dashboard + approvals + replay endpoints,
+# split out of messages.py; same router shape, same mount point.
+from services.gateway.routers.messages_dashboard import (
+    router as _messages_dashboard_router,  # noqa: E402
+)
+
+# Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
+from services.gateway.routers.openai_messages import (
+    router as _openai_messages_router,  # noqa: E402
+)
 from services.gateway.routers.policy import router as _policy_router  # noqa: E402
 from services.gateway.routers.proxies import router as _proxies_router  # noqa: E402
-from services.gateway.routers.risk import router as _risk_router  # noqa: E402
-from services.gateway.routers.sso import router as _sso_router  # noqa: E402
-from services.gateway.routers.iag import router as _iag_router  # noqa: E402
 from services.gateway.routers.remediation import (
     router as _remediation_router,  # noqa: E402
 )
+from services.gateway.routers.risk import router as _risk_router  # noqa: E402
+
+# Sprint EI-3 (2026-06-20) — SCIM 2.0 protocol endpoints (User/Group/Schemas/SPC).
+from services.gateway.routers.scim import router as _scim_router  # noqa: E402
+
+# Sprint EI-3 (2026-06-20) — Okta SCIM bearer-token management (issue/list/revoke).
+from services.gateway.routers.scim_tokens import (
+    router as _scim_tokens_router,  # noqa: E402
+)
+
+# Sprint S3 (2026-06-19) — SIEM vendor wizard + per-vendor /siem/test probe.
+from services.gateway.routers.siem import router as _siem_router  # noqa: E402
+
+# Sprint S2 (2026-06-19) — One-click Slack OAuth Connect button.
+from services.gateway.routers.slack_oauth import (
+    router as _slack_oauth_router,  # noqa: E402
+)
+from services.gateway.routers.sso import router as _sso_router  # noqa: E402
 from services.gateway.routers.storylines import (
     router as _storylines_router,  # noqa: E402
-)
-from services.gateway.routers.threatintel import (
-    router as _threatintel_router,  # noqa: E402
 )
 from services.gateway.routers.stripe_webhook import (
     router as _stripe_router,  # noqa: E402
 )
+
+# Sprint S5 (2026-06-19) — Hierarchical Teams CRUD.
+from services.gateway.routers.teams import router as _teams_router  # noqa: E402
 from services.gateway.routers.tenant import router as _tenant_router  # noqa: E402
 from services.gateway.routers.tenant_admin import (
     router as _tenant_admin_router,  # noqa: E402
+)
+from services.gateway.routers.threatintel import (
+    router as _threatintel_router,  # noqa: E402
 )
 from services.gateway.routers.transparency import (
     router as _transparency_router,  # noqa: E402
 )
 from services.gateway.routers.users import router as _users_router  # noqa: E402
-# Sprint S2 (2026-06-19) — One-click Slack OAuth Connect button.
-from services.gateway.routers.slack_oauth import router as _slack_oauth_router  # noqa: E402
-# Sprint S3 (2026-06-19) — SIEM vendor wizard + per-vendor /siem/test probe.
-from services.gateway.routers.siem import router as _siem_router  # noqa: E402
-# Sprint S5 (2026-06-19) — Hierarchical Teams CRUD.
-from services.gateway.routers.teams import router as _teams_router  # noqa: E402
-# Sprint EI-2 (2026-06-20) — Jira (and future ITSM) per-tenant integrations.
-from services.gateway.routers.integrations import router as _integrations_router  # noqa: E402
-# Sprint EI-3 (2026-06-20) — Okta SCIM bearer-token management (issue/list/revoke).
-from services.gateway.routers.scim_tokens import router as _scim_tokens_router  # noqa: E402
-# Sprint EI-3 (2026-06-20) — SCIM 2.0 protocol endpoints (User/Group/Schemas/SPC).
-from services.gateway.routers.scim import router as _scim_router  # noqa: E402
-# Sprint EI-17 (2026-06-21) — inbound ITSM webhooks (Jira + ServiceNow → close Aegis incident).
-from services.gateway.routers.itsm_webhooks import router as _itsm_webhooks_router  # noqa: E402
-# Sprint 17 — Aegis for Teams: Anthropic-compatible /v1/messages proxy
-from services.gateway.routers.messages import router as _messages_router  # noqa: E402
-# Sprint 22 — OpenAI-compatible /v1/chat/completions proxy
-from services.gateway.routers.openai_messages import router as _openai_messages_router  # noqa: E402
+
+# ATF v3.2 §6 Execution Witness proxy — gateway forwards /witness/* to the
+# standalone witness container declared in infra/docker-compose.yml.
+from services.gateway.routers.witness_proxy import (
+    router as _witness_proxy_router,  # noqa: E402
+)
+from services.gateway.routers.workspace import router as _workspace_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_decision_router)
@@ -712,7 +729,10 @@ app.include_router(_workspace_router)
 app.include_router(_tenant_router)
 app.include_router(_demo_router)
 app.include_router(_messages_router)
+app.include_router(_messages_dashboard_router)
 app.include_router(_openai_messages_router)
+app.include_router(_witness_proxy_router)
+app.include_router(_lifecycle_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),
@@ -998,6 +1018,10 @@ async def public_status(request: Request) -> dict[str, Any]:
         "latency": latency_block,
         "p95_latency_ms": p95_latency_ms,
         "kill_switch": kill_switch,
+        # ATF §5.4 + §14.5 — surface the current Gate operating mode so ops
+        # can see at a glance whether decisions are actually enforcing or
+        # in dry-run/shadow.
+        "gate_mode": _CURRENT_GATE_MODE,
         "services": {
             "total": len(services_map),
             "healthy": healthy_services,
@@ -1230,7 +1254,9 @@ async def system_health(request: Request) -> dict[str, Any]:
     # cleanest signal — the UI labels the tile so operators see it's
     # "since-deploy" rather than implying a rolling window.
     try:
-        from prometheus_client import REGISTRY as _PROM_REG  # type: ignore[import-not-found]
+        from prometheus_client import (
+            REGISTRY as _PROM_REG,  # type: ignore[import-not-found]
+        )
         # ── Audit pipeline ─────────────────────────────────────────────
         audit_samples = {}
         # ── Billing pipeline ───────────────────────────────────────────
@@ -1999,8 +2025,8 @@ async def events_stream(request: Request) -> Response:
                                 SSE_CROSS_TENANT_DROP_TOTAL,
                             )
                             SSE_CROSS_TENANT_DROP_TOTAL.inc()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            swallow_log(logger, "sse_cross_tenant_metric_failed", exc)
                         logger.warning(
                             "sse_cross_tenant_drop",
                             authenticated_tenant=tenant_id_str,

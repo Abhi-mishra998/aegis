@@ -20,10 +20,10 @@ from typing import Any
 from . import store
 from .graph import (
     KIND_TABLE,
-    ResourceMeta,
     SENS_HIGH,
     SENS_LOW,
     SENS_MEDIUM,
+    ResourceMeta,
 )
 
 

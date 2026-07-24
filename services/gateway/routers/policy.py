@@ -17,9 +17,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Request
 from redis.asyncio import Redis
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.redis import get_redis_client
 from services.gateway._helpers import (
@@ -27,6 +29,8 @@ from services.gateway._helpers import (
     passthrough,
     publish_event,
 )
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -147,19 +151,19 @@ async def upload_policy_proxy(request: Request) -> Any:
                 or request.headers.get("X-Tenant-ID", "")
             )
             if tenant_id_str:
-                from sdk.common.redis import get_redis_client
                 from sdk.common.config import settings as _settings
+                from sdk.common.redis import get_redis_client
                 r = get_redis_client(_settings.REDIS_URL, decode_responses=True)
                 try:
                     await r.incr(f"acp:tenant:policy_version:{tenant_id_str}")
                 finally:
                     try:
                         await r.aclose()
-                    except Exception:  # noqa: BLE001
-                        pass
-        except Exception:  # noqa: BLE001
+                    except Exception as exc:
+                        swallow_log(logger, "policy_redis_close_failed", exc)
+        except Exception as exc:
             # Version-bump failure leaves the SDK on the previous version —
             # operator just needs to re-upload to surface the new policy on
             # replay. Better than failing the whole upload.
-            pass
+            swallow_log(logger, "policy_version_bump_failed", exc)
     return passthrough(resp)

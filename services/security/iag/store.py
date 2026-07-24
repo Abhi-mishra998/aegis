@@ -28,7 +28,6 @@ from typing import Any
 
 from .graph import ResourceMeta
 
-
 # 24 h TTL — same as the incident store (Sprint 4) so the two caches age
 # out together. Hourly ingestion refreshes; if ingestion is down the cache
 # decays after 24 h and the IAG-augmented fields disappear from the

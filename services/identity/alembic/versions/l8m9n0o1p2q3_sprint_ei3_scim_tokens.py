@@ -36,8 +36,6 @@ without deleting the row, so the audit trail of "this token did X on
 """
 from __future__ import annotations
 
-
-
 revision = "l8m9n0o1p2q3"
 down_revision = "k7l8m9n0o1p2"
 branch_labels = None

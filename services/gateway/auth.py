@@ -27,6 +27,7 @@ from jose import ExpiredSignatureError, JWTError, jwt
 from redis.asyncio import Redis
 
 from sdk.common.auth import extract_bearer_token
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX, REDIS_TOKEN_PREFIX
 from sdk.common.exceptions import ACPAuthError
@@ -232,6 +233,43 @@ class LocalTokenValidator:
 
         # Cache miss: dispatch by provider + token shape.
         auth_provider = settings.ACP_AUTH_PROVIDER
+
+        # ATF v3.2 §4.2 — external IdPs are tried BEFORE the Clerk +
+        # legacy paths in ascending order of specificity: SPIFFE (subject
+        # URI has spiffe:// prefix — unambiguous) → Entra (issuer is
+        # login.microsoftonline.com and includes the configured tid) →
+        # Okta (issuer matches the configured Okta org). Each adapter
+        # returns None-shape if its configuration isn't set, so tenants
+        # that haven't opted in aren't affected. All failures collapse to
+        # the uniform "Unauthorized" body via the wrapping HTTPException
+        # in _mw_auth.py.
+        from services.gateway.idp_verifiers import (
+            looks_like_entra,
+            looks_like_okta,
+            looks_like_spiffe,
+            verify_entra_token,
+            verify_okta_token,
+            verify_spiffe_token,
+        )
+        if looks_like_spiffe(token):
+            payload = await verify_spiffe_token(token, self._redis)
+            if self._redis and "exp" in payload:
+                await self._cache_payload(token, payload)
+            _LOCAL_TOKEN_LRU.set(token_hash, payload)
+            return payload
+        if looks_like_entra(token):
+            payload = await verify_entra_token(token, self._redis)
+            if self._redis and "exp" in payload:
+                await self._cache_payload(token, payload)
+            _LOCAL_TOKEN_LRU.set(token_hash, payload)
+            return payload
+        if looks_like_okta(token):
+            payload = await verify_okta_token(token, self._redis)
+            if self._redis and "exp" in payload:
+                await self._cache_payload(token, payload)
+            _LOCAL_TOKEN_LRU.set(token_hash, payload)
+            return payload
+
         is_clerk = (
             auth_provider in ("clerk", "both")
             and looks_like_clerk_token(token)
@@ -331,8 +369,9 @@ class LocalTokenValidator:
             cached_json = await self._redis.get(cache_key)
             if cached_json:
                 return json.loads(cached_json)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Best-effort read; fall through to full signature validation.
+            swallow_log(logger, "token_cache_read_failed", exc)
         return None
 
     async def _cache_payload(self, token: str, payload: dict[str, Any]) -> None:
@@ -344,8 +383,10 @@ class LocalTokenValidator:
             exp = payload.get("exp", 0)
             ttl = max(1, int(exp - time.time()))
             await self._redis.setex(cache_key, ttl, json.dumps(payload))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Cache write is best-effort; a failure just means the next
+            # request re-validates. Log so a Redis brownout is visible.
+            swallow_log(logger, "token_cache_write_failed", exc)
 
     @staticmethod
     def _token_hash(token: str) -> str:

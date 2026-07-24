@@ -11,8 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sdk.common.auth import verify_internal_secret
-from sdk.common.auth import mesh_headers
+from sdk.common.auth import mesh_headers, verify_internal_secret
 from sdk.common.background import safe_bg as _safe_bg
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id

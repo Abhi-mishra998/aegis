@@ -94,6 +94,32 @@ class AuditLog(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     )
 
 
+class AuditBillingStatus(Base):
+    """Mutable billing-lifecycle state, split off ``audit_logs`` so the
+    append-only trigger (``3a519b48a6f2``) can hold the chain absolutely.
+
+    Row lifecycle mirrors the original ``audit_logs.billing_status`` column:
+    the AFTER INSERT trigger on ``audit_logs`` writes an initial row,
+    ``PATCH /billing-status/complete`` UPSERTs to ``'completed'``. Readers
+    that used to filter on ``billing_status`` now JOIN this table.
+    """
+
+    __tablename__ = "audit_billing_status"
+
+    audit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="completed"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 # ---------------------------------------------------------------------------
 # Transparency log — daily Merkle root commitment over signed receipts.
 # ---------------------------------------------------------------------------

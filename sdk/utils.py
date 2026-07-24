@@ -485,7 +485,7 @@ def setup_app(app: FastAPI, service_name: str, *, register_health: bool = True) 
     try:
         from prometheus_fastapi_instrumentator import routing as _pfi_routing
         _orig_get_route_name = _pfi_routing._get_route_name
-        def _safe_get_route_name(scope, routes):  # type: ignore[no-untyped-def]
+        def _safe_get_route_name(scope: dict, routes: list) -> str:  # type: ignore[no-untyped-def]
             try:
                 return _orig_get_route_name(scope, routes)
             except AttributeError:
@@ -506,9 +506,15 @@ def setup_app(app: FastAPI, service_name: str, *, register_health: bool = True) 
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        # S11 (audit P2-7): X-Internal-Secret is the service-to-service
+        # mesh header — a browser has no legitimate reason to send it.
+        # Removing it from the CORS allow-list is defense-in-depth
+        # against a future misconfigured ALLOWED_ORIGINS or an XSS'd
+        # legitimate origin. Server-to-server calls do not go through
+        # the browser's CORS check, so nothing on the mesh regresses.
         allow_headers=["Content-Type", "Authorization", "X-Request-ID",
                        "X-Tenant-ID", "X-Agent-ID", "X-ACP-Tool", "X-Timestamp",
-                       "X-Internal-Secret", "X-API-Key"],
+                       "X-API-Key"],
         expose_headers=["X-Trace-ID", "X-Request-ID", "X-RateLimit-Remaining"],
     )
 

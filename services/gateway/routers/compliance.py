@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 
+from sdk.common.atf_article_12 import build_article_12_mapping
 from sdk.common.config import settings
 from services.gateway._helpers import (
     internal_headers,
@@ -28,6 +29,14 @@ from services.gateway._helpers import (
 )
 
 router = APIRouter()
+
+
+@router.get("/compliance/article-12-mapping", tags=["compliance"])
+async def compliance_article_12_mapping() -> dict[str, Any]:
+    """ATF v3.2 §8.2 — live mapping from every EU AI Act Article 12
+    requirement to the kernel component + endpoint that satisfies it.
+    Public metadata (no tenant data)."""
+    return {"success": True, "data": build_article_12_mapping()}
 
 
 def _base() -> str:

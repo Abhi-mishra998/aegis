@@ -287,7 +287,10 @@ class LearningService:
             try:
                 async with async_session() as session:
                     repo = LearningRepository(session)
-                    existing = await repo.get_profile(agent_id)
+                    # audit S11h (P1-14): pass tenant_id so the query filters
+                    # on the composite (tenant_id, agent_id) — belt-and-braces
+                    # over the accidental global-uniqueness of agent_id.
+                    existing = await repo.get_profile(tenant_id, agent_id)
 
                     payload = {
                         "tool_usage_distribution": profile.tool_usage_distribution,
@@ -303,7 +306,7 @@ class LearningService:
                         if existing.version > profile.version:
                             logger.warning("stale_profile_sync_skipped", agent_id=str(agent_id))
                             return
-                        await repo.update_profile(agent_id, **payload)
+                        await repo.update_profile(tenant_id, agent_id, **payload)
                     else:
                         await repo.create_profile(agent_id, tenant_id, **payload)
 

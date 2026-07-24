@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import secrets
 import time
 import uuid
 from datetime import UTC, datetime
@@ -20,8 +21,9 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from sdk.common.config import settings
 from sdk.common.auth import mesh_headers
+from sdk.common.background import swallow_log
+from sdk.common.config import settings
 from services.api.are_executor import AREExecutor
 from services.api.are_index import AREIndex
 
@@ -134,7 +136,8 @@ def _build_trace(cond: dict, incident: dict, window_count: int) -> tuple[bool, l
             continue
         try:
             passed = (actual in (rule_val or [])) if op == "in" else float(actual) >= float(rule_val)
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "are_condition_check_failed", exc, field=field, op=op)
             passed = False
         entry = {"field": field, "op": op, "value": rule_val, "actual": actual, "passed": passed}
         (matched if passed else failed).append(entry)
@@ -183,8 +186,8 @@ async def _incr_metric(redis, tenant_id: str, metric: str, label: str = "") -> N
     try:
         await redis.incr(key)
         await redis.expire(key, 86400)
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "are_metric_incr_failed", exc, metric=metric)
 
 
 async def _record_latency(redis, tenant_id: str, rule_id: str, latency_ms: float) -> None:
@@ -199,8 +202,8 @@ async def _record_latency(redis, tenant_id: str, rule_id: str, latency_ms: float
         # Cap to last 1000 samples
         await redis.zremrangebyrank(key, 0, -1001)
         await redis.expire(key, 3600)
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "are_latency_record_failed", exc, rule_id=rule_id)
 
 
 async def _check_backpressure(redis, stream_key: str) -> bool:
@@ -304,16 +307,28 @@ async def _publish_sse(
 
 async def _store_pending_approval(
     redis, tenant_id: str, rule_id: str, incident: dict, actions: list[dict]
-) -> None:
-    approval_key = f"{rule_id}:{incident.get('request_id', uuid.uuid4().hex)}"
+) -> str:
+    """audit S11l (P2-14): mint a fresh unguessable approval key server-side.
+
+    The old key format ``{rule_id}:{request_id}`` was predictable if the
+    attacker could observe another user's request_id in the same tenant
+    (same-tenant approval-hijack window). We now use ``secrets.
+    token_urlsafe(16)`` (128 bits of entropy) and stash the original
+    ``request_id`` inside the payload where downstream consumers can
+    still see it. Returns the minted approval_key so the caller can
+    surface it to the approver flow.
+    """
+    approval_key = secrets.token_urlsafe(16)
     key = f"acp:{tenant_id}:are:pending:{approval_key}"
     await redis.setex(key, 86400, json.dumps({
         "rule_id":      rule_id,
         "approval_key": approval_key,
+        "request_id":   incident.get("request_id", ""),
         "incident":     incident,
         "actions":      actions,
         "created_at":   datetime.now(UTC).isoformat(),
     }))
+    return approval_key
 
 
 # ─────────────────────────────────────────────────────────────────────────────

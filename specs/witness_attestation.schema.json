@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegis.spec/witness_attestation/3.0",
+  "title": "ATF v3.2 §6.4 Witness Attestation",
+  "description": "One signed record per Gate decision, emitted by the Execution Witness. Signature is Ed25519 over the RFC 8785 JCS canonical form of the body (every field except `signature`).",
+  "type": "object",
+  "required": ["attestation_version", "gate_decision_id", "claim", "verdict", "evidence", "witness_id", "ts", "signature"],
+  "additionalProperties": true,
+  "properties": {
+    "attestation_version": {
+      "type": "string",
+      "pattern": "^3\\.[0-9]+$"
+    },
+    "gate_decision_id": {"type": "string", "minLength": 1},
+    "claim":            {"type": "string"},
+    "verdict": {
+      "type": "string",
+      "enum": ["CORROBORATED", "CONTRADICTED", "UNOBSERVED"]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "detail", "ts"],
+        "properties": {
+          "type":         {"type": "string", "enum": ["net", "api", "fs", "process", "resource"]},
+          "detail":       {"type": "string"},
+          "ts":           {"type": "string", "format": "date-time"},
+          "payload_hash": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$|^null$"},
+          "extra":        {"type": "object"}
+        }
+      }
+    },
+    "witness_id": {
+      "type": "string",
+      "pattern": "^spiffe://",
+      "description": "SPIFFE ID of the emitting Witness instance."
+    },
+    "ts":        {"type": "string", "format": "date-time"},
+    "signature": {
+      "type": "string",
+      "description": "Base64url-encoded Ed25519 signature over the RFC 8785 JCS canonical form of the body (every property except `signature` itself)."
+    }
+  }
+}

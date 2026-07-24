@@ -661,6 +661,95 @@ services:
       retries: 3
       start_period: 30s
 
+  # ATF v3.2 §5.1 MCP proxy — sits between the agent runtime and a
+  # downstream MCP server. Every tools/call passes through the Aegis
+  # policy Gate before it reaches the downstream. MCP_GATE_DOWNSTREAM_URL
+  # is per-deployment (one gate per downstream server); blank disables
+  # the service (returns 503 on any tools/call — never silently forwards).
+  mcp_gate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: acp_mcp_gate
+    user: "999:999"
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8018:8000"
+    environment:
+      - REDIS_CLUSTER_ENABLED=false
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      # Configure this to the customer's real MCP server URL. Blank →
+      # service returns 503 (never forwards without an explicit target).
+      - MCP_GATE_DOWNSTREAM_URL=${MCP_GATE_DOWNSTREAM_URL:-}
+      # ATF §5.1 bearer token — the agent runtime co-located with this
+      # container sends `Authorization: Bearer <this>` on every call.
+      # In production the service refuses to boot without this set.
+      - MCP_GATE_BEARER_TOKEN=${MCP_GATE_BEARER_TOKEN:-}
+      # Optional downstream-side auth — some customers deploy their MCP
+      # server behind an auth proxy that expects a Bearer token. Blank
+      # → no Authorization sent (trusted-network deployments).
+      - MCP_GATE_DOWNSTREAM_BEARER_TOKEN=${MCP_GATE_DOWNSTREAM_BEARER_TOKEN:-}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - POLICY_SERVICE_URL=http://policy:8000
+    command: uvicorn services.mcp_gate.main:app --host 0.0.0.0 --port 8000 --workers 2
+    restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "192M"
+          cpus: "0.2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ATF v3.2 §6 Execution Witness — sidecar-shaped service. Ships without
+  # eBPF probes in this compose (they're host-side infra); the /observations
+  # endpoint accepts probe-shaped events from any source and the verdict
+  # engine emits signed attestations.
+  witness:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: acp_witness
+    user: "999:999"
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8017:8000"
+    environment:
+      - REDIS_CLUSTER_ENABLED=false
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      # Deterministic per-node witness identity — real deployments mint
+      # per-pod SPIFFE SVIDs; the dev default keeps signature verification
+      # stable across restarts.
+      - WITNESS_ID=${WITNESS_ID:-spiffe://local/witness/compose-0}
+      # Signing key persistence — the signer refuses to boot in prod
+      # without a stable key source (ephemeral key = fingerprint churn
+      # = verifier failures). PEM env var wins if set; otherwise the
+      # signer reads/writes /data/keys/witness-signing.pem on the volume.
+      - WITNESS_SIGNING_KEY_PEM=${WITNESS_SIGNING_KEY_PEM:-}
+      - WITNESS_SIGNING_KEY_PATH=/data/keys/witness-signing.pem
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    command: uvicorn services.witness.main:app --host 0.0.0.0 --port 8000 --workers 1
+    volumes:
+      - witness_keys:/data/keys
+    restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: "192M"
+          cpus: "0.2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/witness/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # ACP UI (React Frontend — nginx reverse-proxies /api to gateway)
   ui:
     build:
@@ -928,6 +1017,7 @@ volumes:
   grafana_data:
   alertmanager_data:
   audit_keys:
+  witness_keys:
 
 networks:
   acp_network:

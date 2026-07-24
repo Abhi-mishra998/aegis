@@ -59,13 +59,25 @@ def _b64d(s: str) -> bytes:
 
 
 def fingerprint_key(pub_pem: str | bytes) -> str:
-    """Return the first 32 hex chars of SHA-256(PEM bytes).
+    """Return the full 64-char SHA-256 hex fingerprint of the PEM bytes.
 
-    Matches the server's ``fingerprint_public_key`` function in receipts.py.
+    audit S18 (P2-6): pre-S18 signatures stored the first-16-byte
+    truncation of the digest. This helper now returns the full digest
+    to match the server; verify_receipt below accepts either form so a
+    customer SDK upgrade doesn't break historical receipts.
     """
     if isinstance(pub_pem, str):
         pub_pem = pub_pem.encode()
-    return hashlib.sha256(pub_pem).hexdigest()[:32]
+    return hashlib.sha256(pub_pem).hexdigest()
+
+
+def _fingerprint_matches(pub_pem: bytes | str, stored: str) -> bool:
+    if isinstance(pub_pem, str):
+        pub_pem = pub_pem.encode()
+    full = hashlib.sha256(pub_pem).hexdigest()
+    if stored == full:
+        return True
+    return bool(len(stored) == 32 and stored == full[:32])
 
 
 # ── Low-level primitives ──────────────────────────────────────────────────
@@ -95,7 +107,7 @@ def verify_receipt(payload: dict[str, Any], public_key_pem: str) -> bool:
         raise ValueError(f"unsupported algorithm: {payload['algorithm']!r} (expected 'ed25519')")
 
     pem_bytes = public_key_pem.encode("ascii") if isinstance(public_key_pem, str) else public_key_pem
-    if fingerprint_key(pem_bytes) != payload["public_key_fingerprint"]:
+    if not _fingerprint_matches(pem_bytes, payload["public_key_fingerprint"]):
         return False
 
     try:

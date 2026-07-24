@@ -13,10 +13,16 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
+
+import structlog
+
+from sdk.common.background import swallow_log
 
 from .ioc import IOCRecord, make_id
 
+logger = structlog.get_logger(__name__)
 
 _TTL_SECONDS    = 24 * 3600
 GLOBAL_TENANT_ID = "_global"
@@ -211,7 +217,8 @@ async def list_feeds(redis: Any, *, tenant_id: str) -> dict[str, dict[str, Any]]
         name = _decode(k)
         try:
             out[name] = json.loads(_decode(v))
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "threatintel_feed_parse_failed", exc, feed=name)
             continue
     return out
 

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegis.spec/ledger_entry/3.0",
+  "title": "ATF v3.2 §7.1 Ledger Entry",
+  "description": "The atomic unit of ATF: intent + authorization + observation + outcome + chain. Verifiers accept every MINOR under MAJOR 3; unknown MAJOR is rejected per §7.4.",
+  "type": "object",
+  "required": ["entry_version", "entry_id", "ts", "intent", "authorization", "observation", "outcome", "chain"],
+  "additionalProperties": true,
+  "properties": {
+    "entry_version": {
+      "type": "string",
+      "pattern": "^3\\.[0-9]+$",
+      "description": "Semver. Verifier refuses unknown MAJORs. New MINORs are additive."
+    },
+    "entry_id": {"type": "string", "minLength": 1},
+    "ts":       {"type": "string", "format": "date-time"},
+
+    "intent": {
+      "type": "object",
+      "required": ["agent", "claim", "action_class"],
+      "properties": {
+        "agent":              {"type": ["string", "null"]},
+        "aegis_profile_hash": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$|^null$"},
+        "claim":              {"type": ["string", "null"]},
+        "action_class":       {"type": ["string", "null"], "enum": ["C0", "C1", "C2", "C3", null]}
+      }
+    },
+
+    "authorization": {
+      "type": "object",
+      "required": ["decision"],
+      "properties": {
+        "gate_decision_id":     {"type": ["string", "null"]},
+        "decision":             {"type": ["string", "null"], "enum": ["allow", "monitor", "escalate", "deny", "quarantine", null]},
+        "policy_manifest_hash": {"type": ["string", "null"]},
+        "constraints_evaluated": {"type": "array", "items": {"type": "string"}},
+        "delegation_chain":      {"type": "array", "items": {"type": "object"}}
+      }
+    },
+
+    "observation": {
+      "type": "object",
+      "required": ["verdict"],
+      "properties": {
+        "witness_attestation_id": {"type": ["string", "null"]},
+        "verdict": {"type": "string", "enum": ["CORROBORATED", "CONTRADICTED", "UNOBSERVED"]},
+        "witness_sig": {"type": ["string", "null"]}
+      }
+    },
+
+    "outcome": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status":              {"type": "string"},
+        "response_hash":       {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$|^null$"},
+        "human_verification":  {"type": ["object", "null"]}
+      }
+    },
+
+    "chain": {
+      "type": "object",
+      "properties": {
+        "prev_entry_hash": {"type": ["string", "null"]},
+        "merkle_leaf":     {"type": ["string", "null"]},
+        "anchor_batch":    {"type": ["string", "null"]}
+      }
+    }
+  }
+}

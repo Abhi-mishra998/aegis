@@ -78,7 +78,7 @@ def test_canonical_json_is_stable() -> None:
 def test_fingerprint_length_and_hex() -> None:
     signer = get_signer()
     fp = fingerprint_public_key(signer.public_key_pem().encode("ascii"))
-    assert len(fp) == 32
+    assert len(fp) == 64  # S18: full SHA-256, was 32-char truncation
     int(fp, 16)  # must be valid hex
 
 

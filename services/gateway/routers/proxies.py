@@ -12,14 +12,18 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from services.gateway._helpers import (
     internal_headers,
     trust_proxy,
 )
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -87,8 +91,8 @@ async def get_playbooks_stats(request: Request) -> Any:
                     last = p.get("last_trigger_at")
                     if last and (last_trigger_at is None or str(last) > last_trigger_at):
                         last_trigger_at = str(last)
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "playbook_stats_aggregate_failed", exc)
 
     try:
         tpl = await client.get(f"{base}/autonomy/playbooks/templates", headers=hdrs, timeout=5.0)
@@ -96,8 +100,8 @@ async def get_playbooks_stats(request: Request) -> Any:
             data = tpl.json()
             templates = data.get("data", data) if isinstance(data, dict) else data
             total_templates = len(templates) if isinstance(templates, list) else 0
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "playbook_templates_fetch_failed", exc)
 
     return JSONResponse({
         "total_installed": total_installed,

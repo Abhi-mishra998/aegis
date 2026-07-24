@@ -14,6 +14,7 @@ from sdk.common.redis import get_redis_client
 from sdk.utils import setup_app
 from services.identity_graph.router import router
 from services.identity_graph.worker import (
+    _collusion_loop,
     _drift_loop,
     _graph_event_consumer,
     _trust_score_loop,
@@ -31,6 +32,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(_graph_event_consumer(redis, session_factory), name="graph_consumer"),
         asyncio.create_task(_trust_score_loop(session_factory),            name="trust_scorer"),
         asyncio.create_task(_drift_loop(session_factory),                  name="drift_detector"),
+        asyncio.create_task(_collusion_loop(session_factory),              name="collusion_detector"),
     ]
     logger.info("identity_graph_started", workers=len(workers))
     yield

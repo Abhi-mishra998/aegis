@@ -22,19 +22,24 @@ import json
 import time
 from typing import Any
 
+import structlog
+
+from sdk.common.background import swallow_log
+
+logger = structlog.get_logger(__name__)
+
 from .actions import (
     KIND_AUDIT_LOG,
     KIND_KILL_ACTIVE_TOKENS,
     KIND_PAGE_ONCALL,
     KIND_REVOKE_API_KEY,
-    RemediationAction,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_SKIPPED,
+    RemediationAction,
 )
 from .policy import RemediationPolicy, policy_for_tenant
 from .webhooks import post_webhook
-
 
 _LEDGER_TTL_SECONDS    = 24 * 3600
 _REVOKED_AGENTS_TTL    = 24 * 3600
@@ -66,7 +71,8 @@ async def get_ledger(redis: Any, tenant_id: str, incident_id: str) -> list[Remed
         try:
             s = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
             d = json.loads(s)
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "remediation_action_parse_failed", exc)
             continue
         out.append(RemediationAction(
             incident_id=str(d.get("incident_id") or ""),

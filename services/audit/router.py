@@ -23,12 +23,20 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sdk.common.atf_entry import to_atf_entry
+from sdk.common.atf_export_bundle import ExportSummary, build_bundle
 from sdk.common.auth import verify_internal_secret
+from sdk.common.background import swallow_log
 from sdk.common.config import settings
 from sdk.common.db import get_db, get_tenant_id
 from sdk.common.response import APIResponse
 from services.audit.integrity import verify_audit_chain
-from services.audit.models import AuditLog, AuditNote, PendingUsageEvent
+from services.audit.models import (
+    AuditBillingStatus,
+    AuditLog,
+    AuditNote,
+    PendingUsageEvent,
+)
 from services.audit.schemas import (
     AuditLogCreate,
     AuditLogListResponse,
@@ -153,15 +161,16 @@ async def get_summary(
     _cache_key = f"acp:audit_summary:{tid}:{agent_id or '_'}"
     try:
         cached_raw = await redis.get(_cache_key)
-    except Exception:
+    except Exception as exc:
+        swallow_log(logger, "audit_summary_cache_read_failed", exc)
         cached_raw = None
     if cached_raw:
         try:
             return APIResponse(
                 data=AuditSummaryResponse.model_validate(_json.loads(cached_raw))
             )
-        except Exception:
-            pass  # corrupted cache entry → fall through and recompute
+        except Exception as exc:
+            swallow_log(logger, "audit_summary_cache_corrupt", exc)
 
     # Sprint 1 BE — optional per-agent scope filter
     _agent_filter = (AuditLog.agent_id == agent_id) if agent_id is not None else sa.true()
@@ -209,7 +218,8 @@ async def get_summary(
             "medium": int(rd.medium or 0),
             "low": int(rd.low or 0),
         }
-    except Exception:
+    except Exception as exc:
+        swallow_log(logger, "audit_risk_dist_rollup_failed", exc)
         risk_dist = {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
     # Deep Insights from AuditAggregator (DB)
@@ -245,8 +255,8 @@ async def get_summary(
     # Redis errors; the response is already computed correctly.
     try:
         await redis.setex(_cache_key, 30, summary.model_dump_json())
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "audit_summary_cache_write_failed", exc)
     return APIResponse(data=summary)
 
 @router.get("/heatmap", response_model=APIResponse[dict])
@@ -273,8 +283,8 @@ async def get_heatmap(
         cached = await redis.get(_cache_key)
         if cached:
             return APIResponse(data=_json.loads(cached))
-    except Exception:
-        pass  # fail-open
+    except Exception as exc:
+        swallow_log(logger, "audit_trends_cache_read_failed", exc)
 
     import datetime as _dt
     cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=7)
@@ -298,8 +308,8 @@ async def get_heatmap(
         heatmap[day_name][int(row.hour)] = int(row.cnt)
     try:
         await redis.setex(_cache_key, 30, _json.dumps(heatmap))
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "audit_heatmap_cache_write_failed", exc)
     return APIResponse(data=heatmap)
 
 
@@ -387,8 +397,8 @@ async def pack_enforcement(
         cached = await redis.get(_cache_key)
         if cached:
             return APIResponse(data=_json.loads(cached))
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "audit_pack_cache_read_failed", exc)
 
     import datetime as _dt
     start = _dt.datetime.utcnow() - _dt.timedelta(days=days)
@@ -417,7 +427,8 @@ async def pack_enforcement(
         if isinstance(meta, str):
             try:
                 meta = _json.loads(meta)
-            except Exception:
+            except Exception as exc:
+                swallow_log(logger, "audit_metadata_json_parse_failed", exc)
                 meta = {}
         if not isinstance(meta, dict):
             continue
@@ -465,8 +476,8 @@ async def pack_enforcement(
     # QA-PERF-FIX (2026-06-24) — populate the 30 s pack-enforcement cache.
     try:
         await redis.setex(_cache_key, 30, _json.dumps(response_payload))
-    except Exception:
-        pass
+    except Exception as exc:
+        swallow_log(logger, "audit_pack_cache_write_failed", exc)
     return APIResponse(data=response_payload)
 
 
@@ -833,6 +844,61 @@ _FINDING_LABELS: dict[str, str] = {
 }
 
 
+@router.get("/{audit_id}/atf-view", response_model=APIResponse[dict])
+async def atf_view(
+    audit_id: str,
+    db:        Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """ATF v3.2 §7.1 canonical view of one audit row —
+    intent/authorization/observation/outcome/chain quads.
+
+    Verifiers + external SIEMs consume this shape; the raw audit_logs row
+    is the storage shape. Same data, different projection.
+    """
+    row_obj: AuditLog | None = None
+    try:
+        as_uuid = uuid.UUID(audit_id)
+        row_obj = (
+            await db.execute(
+                select(AuditLog).where(
+                    AuditLog.id == as_uuid,
+                    AuditLog.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+    except ValueError:
+        pass
+    if row_obj is None:
+        row_obj = (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.request_id == audit_id,
+                    AuditLog.tenant_id == tenant_id,
+                )
+                .order_by(AuditLog.timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    if row_obj is None:
+        raise HTTPException(status_code=404, detail="audit row not found")
+
+    row_dict = {
+        "id":            str(row_obj.id),
+        "agent_id":      str(row_obj.agent_id) if row_obj.agent_id else None,
+        "action":        row_obj.action,
+        "decision":      row_obj.decision,
+        "created_at":    row_obj.timestamp.isoformat() if row_obj.timestamp else None,
+        "prev_hash":     getattr(row_obj, "prev_hash", None),
+        "merkle_leaf":   getattr(row_obj, "merkle_leaf", None),
+        "anchor_batch":  getattr(row_obj, "anchor_batch", None),
+        "metadata_json": row_obj.metadata_json or {},
+    }
+    return APIResponse(data=to_atf_entry(row_dict))
+
+
 @router.get("/{audit_id}/explain", response_model=APIResponse[dict])
 async def explain_decision(
     audit_id: str,
@@ -883,7 +949,8 @@ async def explain_decision(
     if isinstance(meta, str):
         try:
             meta = _json.loads(meta)
-        except Exception:
+        except Exception as exc:
+            swallow_log(logger, "audit_metadata_json_parse_failed", exc)
             meta = {}
 
     risk_score = float(meta.get("risk_score") or 0)
@@ -1472,7 +1539,14 @@ async def export_chain(
 
     from fastapi.responses import StreamingResponse
 
-    query = select(AuditLog).where(AuditLog.tenant_id == tenant_id)
+    # S3 (2026-07-21): join audit_billing_status so the exported billing state
+    # reflects the current lifecycle status (the audit_logs column is preserved
+    # for backfill-consistent reads but is no longer updated post-migration).
+    query = (
+        select(AuditLog, AuditBillingStatus.status)
+        .outerjoin(AuditBillingStatus, AuditBillingStatus.audit_id == AuditLog.id)
+        .where(AuditLog.tenant_id == tenant_id)
+    )
     if agent_id:
         query = query.where(AuditLog.agent_id == agent_id)
     if chain_shard is not None:
@@ -1494,7 +1568,7 @@ async def export_chain(
         # Stream in batches so a large tenant doesn't pin all rows in memory.
         # SQLAlchemy async result streaming chunks rows by 100 per yield_per.
         result = await db.stream(query.execution_options(yield_per=500))
-        async for row in result.scalars():
+        async for row, current_status in result:
             payload = {
                 "id": str(row.id),
                 "tenant_id": str(row.tenant_id),
@@ -1508,7 +1582,7 @@ async def export_chain(
                 "event_hash": row.event_hash,
                 "prev_hash": row.prev_hash,
                 "chain_shard": row.chain_shard,
-                "billing_status": row.billing_status,
+                "billing_status": current_status or row.billing_status,
                 "metadata": row.metadata_json or {},
             }
             yield (_json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
@@ -1521,6 +1595,121 @@ async def export_chain(
             "Cache-Control": "no-store",
         },
     )
+
+
+@router.get("/export-atf-v3", response_model=APIResponse[dict])
+async def export_atf_v3(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+    since: str | None = Query(None, description="ISO-8601 lower bound (inclusive)"),
+    until: str | None = Query(None, description="ISO-8601 upper bound (exclusive)"),
+    limit: int = Query(1000, ge=1, le=10000),
+) -> APIResponse[dict]:
+    """ATF v3.2 §7.3 + §7.4 canonical export bundle.
+
+    Returns a single JSON document with entries projected into the §7.1
+    shape, a summary of action_class / verdict counts, and the current
+    policy manifest hash. Bundle self-declares `bundle_version` per
+    §7.4; verifiers refuse unknown MAJORs.
+
+    Kept bounded (limit ≤ 10k) — large regulator exports use the NDJSON
+    /export endpoint. This one is the canonical shape auditors + verifier
+    tooling consume.
+    """
+    from datetime import datetime as _dt
+
+    query = (
+        select(AuditLog, AuditBillingStatus.status)
+        .outerjoin(AuditBillingStatus, AuditBillingStatus.audit_id == AuditLog.id)
+        .where(AuditLog.tenant_id == tenant_id)
+    )
+    if since:
+        try:
+            query = query.where(AuditLog.timestamp >= _dt.fromisoformat(since))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail=f"invalid `since` (need ISO-8601): {since}",
+            ) from e
+    if until:
+        try:
+            query = query.where(AuditLog.timestamp < _dt.fromisoformat(until))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail=f"invalid `until` (need ISO-8601): {until}",
+            ) from e
+    query = query.order_by(AuditLog.timestamp.asc()).limit(limit)
+
+    rows = (await db.execute(query)).all()
+
+    entries: list[dict] = []
+    agents_seen: set[str] = set()
+    action_class_counts: dict[str, int] = {"C0": 0, "C1": 1 * 0, "C2": 0, "C3": 0}
+    verdict_counts: dict[str, int] = {"CORROBORATED": 0, "CONTRADICTED": 0, "UNOBSERVED": 0}
+    escalations = 0
+    contradictions = 0
+
+    period_start_iso = ""
+    period_end_iso = ""
+
+    for row_obj, current_status in rows:
+        row_dict = {
+            "id":            str(row_obj.id),
+            "agent_id":      str(row_obj.agent_id) if row_obj.agent_id else None,
+            "action":        row_obj.action,
+            "decision":      row_obj.decision,
+            "created_at":    row_obj.timestamp.isoformat() if row_obj.timestamp else None,
+            "prev_hash":     getattr(row_obj, "prev_hash", None),
+            "merkle_leaf":   None,
+            "anchor_batch":  None,
+            "metadata_json": {**(row_obj.metadata_json or {}),
+                              "billing_status": current_status or row_obj.billing_status},
+        }
+        entry = to_atf_entry(row_dict)
+        entries.append(entry)
+
+        if row_obj.agent_id:
+            agents_seen.add(str(row_obj.agent_id))
+        klass = entry.get("intent", {}).get("action_class") or "C0"
+        if klass in action_class_counts:
+            action_class_counts[klass] += 1
+        verdict = entry.get("observation", {}).get("verdict") or "UNOBSERVED"
+        if verdict in verdict_counts:
+            verdict_counts[verdict] += 1
+        if verdict == "CONTRADICTED":
+            contradictions += 1
+        if (row_obj.decision or "").lower() == "escalate":
+            escalations += 1
+
+        ts_iso = row_obj.timestamp.isoformat() if row_obj.timestamp else ""
+        if ts_iso and (not period_start_iso or ts_iso < period_start_iso):
+            period_start_iso = ts_iso
+        if ts_iso and (not period_end_iso or ts_iso > period_end_iso):
+            period_end_iso = ts_iso
+
+    from services.policy.manifest import POLICY_MANIFEST_HASH
+
+    summary = ExportSummary(
+        period_start=period_start_iso or (since or ""),
+        period_end=period_end_iso or (until or ""),
+        agent_count=len(agents_seen),
+        entry_count=len(entries),
+        action_class_counts=action_class_counts,
+        verdict_counts=verdict_counts,
+        escalations=escalations,
+        contradictions=contradictions,
+    )
+
+    bundle = build_bundle(
+        entries=entries,
+        merkle_proofs=[],   # per-entry proofs remain in /export NDJSON
+        anchor_refs=[],     # populated by the transparency scheduler on write
+        policy_manifests=[{
+            "hash":    POLICY_MANIFEST_HASH,
+            "content": "sha256 pin only; full rego bundle available via /policy/export",
+        }],
+        summary=summary,
+    )
+    return APIResponse(data=bundle)
 
 
 @router.get("/outbox-depth", response_model=APIResponse[dict], dependencies=[Depends(verify_internal_secret)])
@@ -1563,13 +1752,14 @@ async def get_billing_gaps(
     """Returns pending audit logs older than sla_seconds for a specific tenant."""
     from sqlalchemy import text
     stmt = text("""
-        SELECT id, tenant_id, agent_id, tool
-        FROM audit_logs
-        WHERE billing_status = 'pending'
-          AND action != 'management_api'
-          AND tenant_id = :tid
-          AND timestamp > NOW() - INTERVAL '5 minutes'
-          AND timestamp < NOW() - make_interval(secs => :sla)
+        SELECT al.id, al.tenant_id, al.agent_id, al.tool
+        FROM audit_logs al
+        JOIN audit_billing_status abs ON abs.audit_id = al.id
+        WHERE abs.status = 'pending'
+          AND al.action != 'management_api'
+          AND al.tenant_id = :tid
+          AND al.timestamp > NOW() - INTERVAL '5 minutes'
+          AND al.timestamp < NOW() - make_interval(secs => :sla)
         LIMIT :lim
     """)
     res = await db.execute(stmt, {"tid": tenant_id, "sla": sla_seconds, "lim": limit})
@@ -1590,12 +1780,13 @@ async def get_all_billing_gaps(
     """All-tenant billing gaps for the reconciliation worker (internal-secret only)."""
     from sqlalchemy import text
     stmt = text("""
-        SELECT id, tenant_id, agent_id, tool
-        FROM audit_logs
-        WHERE billing_status = 'pending'
-          AND action != 'management_api'
-          AND timestamp > NOW() - INTERVAL '5 minutes'
-          AND timestamp < NOW() - make_interval(secs => :sla)
+        SELECT al.id, al.tenant_id, al.agent_id, al.tool
+        FROM audit_logs al
+        JOIN audit_billing_status abs ON abs.audit_id = al.id
+        WHERE abs.status = 'pending'
+          AND al.action != 'management_api'
+          AND al.timestamp > NOW() - INTERVAL '5 minutes'
+          AND al.timestamp < NOW() - make_interval(secs => :sla)
         LIMIT :lim
     """)
     res = await db.execute(stmt, {"sla": sla_seconds, "lim": limit})
@@ -1617,20 +1808,21 @@ async def mark_billing_complete(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> APIResponse[dict]:
     """
-    Bulk-mark audit logs as billing_status='completed'.
+    Bulk-mark audit logs as billing complete.
     Called by Usage Service after successful usage_record insertion.
 
-    Note: This is the ONLY permitted mutation of audit_logs rows. The HMAC
-    chain covers the audit content columns (action, tool, decision, metadata_json,
-    prev_hash) but not this billing-metadata column, so cryptographic integrity
-    of the audit chain is maintained. The "append-only" invariant refers to
-    audit content, not billing lifecycle metadata.
+    S3 (2026-07-21): writes ``audit_billing_status`` instead of mutating
+    ``audit_logs``. The append-only trigger (``3a519b48a6f2``) holds the
+    chain absolutely; billing lifecycle state lives in the sibling table.
     """
     from sqlalchemy import text
     stmt = text("""
-        UPDATE audit_logs
-        SET billing_status = 'completed'
+        INSERT INTO audit_billing_status (audit_id, tenant_id, status, updated_at)
+        SELECT id, tenant_id, 'completed', NOW()
+        FROM audit_logs
         WHERE id = ANY(:ids)
+        ON CONFLICT (audit_id) DO UPDATE
+            SET status = 'completed', updated_at = NOW()
     """)
     await db.execute(stmt, {"ids": payload.audit_ids})
     await db.commit()
@@ -1649,12 +1841,13 @@ async def get_billing_stats(
     from sqlalchemy import text
     sla_stmt = text("""
         SELECT
-            COUNT(*) FILTER (WHERE timestamp < NOW() - INTERVAL '60 seconds') AS unbilled_sla,
-            COUNT(*) FILTER (WHERE timestamp >= NOW() - INTERVAL '60 seconds') AS pending
-        FROM audit_logs
-        WHERE billing_status = 'pending'
-          AND action != 'management_api'
-          AND tenant_id = :tid
+            COUNT(*) FILTER (WHERE al.timestamp < NOW() - INTERVAL '60 seconds') AS unbilled_sla,
+            COUNT(*) FILTER (WHERE al.timestamp >= NOW() - INTERVAL '60 seconds') AS pending
+        FROM audit_logs al
+        JOIN audit_billing_status abs ON abs.audit_id = al.id
+        WHERE abs.status = 'pending'
+          AND al.action != 'management_api'
+          AND al.tenant_id = :tid
     """)
     res = await db.execute(sla_stmt, {"tid": tenant_id})
     row = res.fetchone()

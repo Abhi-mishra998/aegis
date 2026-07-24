@@ -33,16 +33,16 @@ Why a registry rather than dispersed constants:
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Iterable
+from enum import StrEnum
 
 
 # ---------------------------------------------------------------------------
 # MITRE-aligned security objectives. Each Aegis signal belongs to exactly one.
 # Source: https://attack.mitre.org/
 # ---------------------------------------------------------------------------
-class SecurityObjective(str, Enum):
+class SecurityObjective(StrEnum):
     INITIAL_ACCESS       = "initial_access"        # TA0001
     PERSISTENCE          = "persistence"           # TA0003
     PRIVILEGE_ESCALATION = "privilege_escalation"  # TA0004
@@ -67,7 +67,7 @@ _OBJECTIVE_TO_TACTIC = {
 }
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     LOW      = "LOW"
     MEDIUM   = "MEDIUM"
     HIGH     = "HIGH"

@@ -35,6 +35,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from sdk.common.background import safe_bg, swallow_log
 from sdk.common.config import settings
 from services.gateway._helpers import internal_headers
 
@@ -268,8 +269,8 @@ async def _ensure_demo_agent(
                 headers={**headers, "Content-Type": "application/json"},
                 timeout=4.0,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow_log(logger, "demo_agent_permission_setup_failed", exc, tool=tool)
     return agent_id
 
 
@@ -542,18 +543,20 @@ async def list_demo_scenarios() -> dict[str, Any]:
 import asyncio
 import signal
 import subprocess
-from datetime import UTC, datetime, timedelta as _td
+from datetime import UTC, datetime
+from datetime import timedelta as _td
 from pathlib import Path as _Path
 from typing import Annotated as _Annot
 
-from fastapi import Depends as _Depends, Header as _Header
+from fastapi import Depends as _Depends
+from fastapi import Header as _Header
 from jose import jwt as _jwt
-from sqlalchemy import delete as _delete, select as _select
+from sqlalchemy import delete as _delete
+from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 
 from sdk.common.auth import _verify_mesh_jwt, verify_internal_secret
 from sdk.common.db import get_db
-
 
 _DEMO_DURATION_HOURS = 24
 # Sprint U13 2026-06-26 — bumped 30 → 120 minutes. Customers walking the
@@ -571,8 +574,8 @@ async def _spawn_demo_tenant(db) -> tuple[str, str]:
     the marketing-page "View live demo" link can be clicked many times
     by the same prospect and produce independent sandboxes.
     """
-    from services.identity.models import Tenant, User
     from sdk.common.roles import Role
+    from services.identity.models import Tenant, User
 
     tenant_id = uuid.uuid4()
     owner_id = uuid.uuid4()
@@ -1190,7 +1193,9 @@ async def spawn_demo_workspace(
     # absurd. The mesh JWT (ES256 + trusted kid) already constitutes a
     # stronger non-human-bot proof than Turnstile, so skip.
     if not is_mesh_operator:
-        from services.gateway._turnstile import verify as _verify_turnstile  # noqa: PLC0415
+        from services.gateway._turnstile import (
+            verify as _verify_turnstile,  # noqa: PLC0415
+        )
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
@@ -1324,6 +1329,7 @@ async def spawn_demo_workspace(
     # requests.
     try:
         import hashlib as _hashlib  # noqa: PLC0415
+
         from sdk.common.constants import REDIS_TOKEN_PREFIX  # noqa: PLC0415
         from sdk.common.redis import get_redis_client  # noqa: PLC0415
         _r = get_redis_client(settings.REDIS_URL, decode_responses=True)
@@ -1347,13 +1353,13 @@ async def spawn_demo_workspace(
     # the seed populates 5 agents + 60 audit rows so the dashboard the
     # visitor lands on isn't empty. Defined at line 597, was previously
     # dead code (no call site). Errors are swallowed inside the helper.
-    asyncio.create_task(_seed_demo_data(tenant_id, owner_email))
+    asyncio.create_task(safe_bg(_seed_demo_data(tenant_id, owner_email)))
     # Second background task: trickle live decisions for the demo TTL so
     # Live Feed visibly rolls during the buyer's session, not just shows
     # backfill. Fully sandboxed to this tenant via the JWT; killed at TTL.
-    asyncio.create_task(
+    asyncio.create_task(safe_bg(
         _run_demo_traffic(tenant_id, token, _DEMO_JWT_TTL_MINUTES * 60),
-    )
+    ))
     return {
         "success": True,
         "data": {

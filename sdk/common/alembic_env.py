@@ -33,6 +33,7 @@ service modules itself (it would create a fan-out of side-effect imports).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Iterable
 from logging.config import fileConfig
 from pathlib import Path
@@ -59,10 +60,8 @@ def _purge_appledouble(script_location: str | None) -> None:
         return
     for p in versions.iterdir():
         if p.name.startswith("._") or p.name == ".DS_Store":
-            try:
+            with contextlib.suppress(OSError):
                 p.unlink()
-            except OSError:
-                pass
 
 
 def run(

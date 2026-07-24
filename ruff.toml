@@ -35,6 +35,8 @@ ignore = [
     "ANN401", # typing.Any is legitimately necessary in generic wrappers
     "N806",   # SessionLocal/Session uppercase is the SQLAlchemy convention
     "ASYNC109", # asyncio.timeout is fine; trio alternative not used
+    "E701",   # compact one-line `if x: return y` guards (score-band lookups) are idiomatic
+    "E702",   # compact `a; b` two-statement lines in tight helpers are readable
 ]
 
 [lint.per-file-ignores]

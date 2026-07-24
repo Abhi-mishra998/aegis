@@ -33,65 +33,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-# Make the project importable so ``services.gateway`` resolves regardless of
-# whether pytest is invoked with PYTHONPATH set. Same idiom as
-# tests/test_n16_n20_ssrf_hardening.py.
-#
-# Extra care: pytest's default ``prepend`` import-mode walks up looking for
-# an ``__init__.py`` and adds the FIRST package-rootless directory to
-# sys.path. Because ``tests/services/__init__.py`` exists in this repo,
-# pytest implants ``tests/`` into sys.path before ``test_demo_spawn_mesh_
-# operator.py`` runs — that shadows the top-level ``services/`` namespace
-# package with the empty ``tests/services``. We move the repo root to the
-# front of sys.path and evict any partial ``services``/``services.gateway``
-# binding so ``from services.gateway.routers import demo`` resolves to the
-# real router. Running with ``pytest --import-mode=importlib`` makes this
-# unnecessary; the bootstrap below is a belt-and-suspenders for the
-# default invocation.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_TESTS_DIR = Path(__file__).resolve().parent
-# Belt-and-suspenders against pytest's default ``prepend`` import-mode
-# putting ``tests/`` on sys.path BEFORE the repo root — that makes
-# ``import services`` resolve to the empty ``tests/services`` package and
-# breaks every downstream ``services.gateway`` import. Drop the tests dir
-# (it's never needed for runtime imports — tests reference modules by
-# their fully-qualified ``tests.<x>`` names if at all) and prepend the
-# repo root so the real ``services/`` namespace wins. Then evict any
-# stale partial binding so the next ``import services`` re-resolves.
-sys.path[:] = [p for p in sys.path if Path(p).resolve() != _TESTS_DIR]
-sys.path.insert(0, str(_REPO_ROOT))
-# Evict any stale ``services`` binding (e.g. previous test files that
-# triggered pytest to import ``tests.services`` as a package — that pollutes
-# ``sys.modules['services']`` to point at the empty stub).
-for _stale in [k for k in list(sys.modules) if k == "services" or k.startswith("services.")]:
-    del sys.modules[_stale]
-# Force a fresh resolution of ``services`` from the real namespace package
-# so any subsequent ``from services.<x> import y`` inside test bodies hits
-# the right path. The import below also catches the failure at module-load
-# time instead of inside individual tests, giving a single clear stack.
-import importlib  # noqa: E402
-_services_mod = importlib.import_module("services")
-if str(_REPO_ROOT / "services") not in [str(Path(p).resolve()) for p in _services_mod.__path__]:
-    # Defensive — re-anchor the namespace package to the real services/ dir.
-    _services_mod.__path__ = [str(_REPO_ROOT / "services")]
-    # Drop everything so the next imports re-resolve through the corrected __path__.
-    for _stale in [k for k in list(sys.modules) if k == "services" or k.startswith("services.")]:
-        del sys.modules[_stale]
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import HTTPException
+from jose import jwt
 
-import pytest  # noqa: E402
-from cryptography.hazmat.primitives import serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
-from fastapi import HTTPException  # noqa: E402
-from jose import jwt  # noqa: E402
-
-from sdk.common import auth as mesh_auth  # noqa: E402
+from sdk.common import auth as mesh_auth
 from sdk.common.config import settings  # noqa: E402
 
 
@@ -418,10 +371,15 @@ def test_5_public_xff_from_alb_peer_allows(monkeypatch, trusted_keypair):
 # ───────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.integration
 def test_mesh_operator_rate_limit_uses_issuer_bucket(monkeypatch, trusted_keypair):
     """Hammer the mesh-operator path 6 times: the 6th call must 429, and the
     Redis key must be bucketed by ``mesh:<issuer>`` not by source IP. Proves
-    a rogue operator script can't accidentally burn another caller's quota."""
+    a rogue operator script can't accidentally burn another caller's quota.
+
+    audit follow-up: real Redis required (INCRBYFLOAT on the issuer
+    bucket). Skipped under the default `-m "not integration"` filter.
+    """
     stub = _patch_redis(monkeypatch)
     from services.gateway.routers import demo as demo_router
 

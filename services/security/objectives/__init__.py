@@ -31,7 +31,6 @@ from . import (
     privilege_escalation,
 )
 
-
 # Public surface — the orchestrator iterates this tuple.
 # Order does NOT matter for correctness (orchestrator dedupes) but is kept
 # stable for log readability + deterministic test output.

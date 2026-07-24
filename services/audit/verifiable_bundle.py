@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -319,7 +319,7 @@ async def generate_verifiable_bundle(
             "start": period_start.isoformat(),
             "end":   period_end.isoformat(),
         },
-        "generated_at":   datetime.now(timezone.utc).isoformat(),
+        "generated_at":   datetime.now(UTC).isoformat(),
         "public_keys":    public_keys,
         "merkle_roots":   merkle_roots,
         "records":        records,

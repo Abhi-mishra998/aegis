@@ -18,6 +18,6 @@ Submodules:
 Sprint 5 will compute and stamp blast_radius on each Storyline.
 Sprint 6 will wire the Storyline into auto-remediation playbooks.
 """
-from . import recorder, storyline, store
+from . import recorder, store, storyline
 
 __all__ = ["recorder", "storyline", "store"]

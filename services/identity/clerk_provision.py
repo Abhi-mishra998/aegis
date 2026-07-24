@@ -40,6 +40,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.identity import CLERK_PLACEHOLDER_HASH
 from services.identity.models import (
     DegradedModePolicy,
     Organization,
@@ -201,10 +202,9 @@ async def _upsert_user_for_clerk(
     role: UserRole,
 ) -> tuple[uuid.UUID, bool]:
     """UPSERT keyed on clerk_user_id. Idempotent under concurrency."""
-    placeholder_hash = "$2b$12$ClerkOwnsThisPasswordPlaceholderHashXXXX"
     values = {
         "email": (email or f"{clerk_user_id}@clerk.invalid").lower(),
-        "hashed_password": placeholder_hash,
+        "hashed_password": CLERK_PLACEHOLDER_HASH,
         "tenant_id": tenant.tenant_id,
         # ck_users_org_tenant_match: users.org_id MUST equal users.tenant_id
         # for Clerk-provisioned rows.

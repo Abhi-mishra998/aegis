@@ -54,6 +54,16 @@ RETRY_SLEEP_S           = float(os.getenv("RETRY_SLEEP_S", "2.0"))
 BLOCK_MS                = 2000
 BATCH_SIZE              = 100
 
+# ATF v3.2 §Phase 3 item 2 — collusion detector.
+# Weight threshold: only edges with N+ interactions in the window count
+# toward community assignment. Prevents incidental one-off calls from
+# collapsing unrelated agents into one cluster.
+COLLUSION_INTERVAL_S      = int(os.getenv("COLLUSION_INTERVAL_S", "300"))     # every 5 min
+COLLUSION_WINDOW_HOURS    = int(os.getenv("COLLUSION_WINDOW_HOURS", "24"))
+COLLUSION_MIN_EDGE_WEIGHT = float(os.getenv("COLLUSION_MIN_EDGE_WEIGHT", "3"))
+COLLUSION_MIN_CLUSTER     = int(os.getenv("COLLUSION_MIN_CLUSTER", "3"))       # 3+ agents = worth alerting
+COLLUSION_DRIFT_THRESHOLD = float(os.getenv("COLLUSION_DRIFT_THRESHOLD", "0.6"))
+
 
 async def _ensure_group(redis: Redis) -> None:
     try:
@@ -256,3 +266,128 @@ async def _drift_loop(session_factory: async_sessionmaker) -> None:
         except Exception as exc:
             logger.critical("drift_loop_error", error=str(exc))
         await asyncio.sleep(DRIFT_INTERVAL_S)
+
+
+async def _collusion_loop(session_factory: async_sessionmaker) -> None:
+    """ATF v3.2 §Phase 3 item 2 — periodic collusion detection.
+
+    Every COLLUSION_INTERVAL_S:
+      * Read the last-24h edges per tenant.
+      * Build undirected weighted graph (weight = interaction count).
+      * Run label-propagation communities with a min-edge threshold so
+        incidental interactions don't collapse unrelated agents.
+      * A community with ≥ COLLUSION_MIN_CLUSTER agents where at least
+        one has drift ≥ COLLUSION_DRIFT_THRESHOLD gets a
+        `collusion_suspicion` DriftSignal recorded.
+
+    Fail-closed on Redis/DB errors like the sibling loops.
+    """
+    from collections import Counter, defaultdict
+
+    from sqlalchemy import distinct, select
+
+    from services.identity_graph.collusion import (
+        label_propagation_communities,
+    )
+    from services.identity_graph.models import GraphEdge
+
+    while True:
+        try:
+            async with session_factory() as db:
+                repo = GraphRepository(db)
+                since = datetime.now(tz=UTC) - timedelta(hours=COLLUSION_WINDOW_HOURS)
+
+                # Per-tenant edge rollup — build the graph in memory.
+                tenants = (await db.execute(
+                    select(distinct(GraphEdge.tenant_id))
+                    .where(GraphEdge.occurred_at >= since)
+                )).scalars().all()
+
+                for tenant_id in tenants:
+                    edge_rows = (await db.execute(
+                        select(GraphEdge.src_node_id, GraphEdge.dst_node_id)
+                        .where(GraphEdge.tenant_id == tenant_id)
+                        .where(GraphEdge.occurred_at >= since)
+                    )).all()
+                    if not edge_rows:
+                        continue
+
+                    weights: Counter[tuple[str, str]] = Counter()
+                    for src, dst in edge_rows:
+                        if src == dst:
+                            continue
+                        key = (str(src), str(dst)) if str(src) < str(dst) else (str(dst), str(src))
+                        weights[key] += 1
+
+                    graph: dict[str, list[tuple[str, float]]] = defaultdict(list)
+                    for (a, b), w in weights.items():
+                        graph[a].append((b, float(w)))
+                        graph[b].append((a, float(w)))
+
+                    if not graph:
+                        continue
+
+                    communities = label_propagation_communities(
+                        dict(graph),
+                        min_edge_weight=COLLUSION_MIN_EDGE_WEIGHT,
+                    )
+
+                    # Group by community id → member list.
+                    members_by_cluster: dict[int, list[str]] = defaultdict(list)
+                    for node_id, cluster_id in communities.items():
+                        members_by_cluster[cluster_id].append(node_id)
+
+                    for cluster_id, members in members_by_cluster.items():
+                        if len(members) < COLLUSION_MIN_CLUSTER:
+                            continue
+
+                        # Any high-drift member in the cluster?
+                        elevated: list[dict[str, Any]] = []
+                        for node_id_str in members:
+                            try:
+                                node = await repo.get_node(tenant_id, uuid.UUID(node_id_str))
+                            except (ValueError, AttributeError):
+                                continue
+                            if node is None:
+                                continue
+                            if float(node.drift_score or 0.0) >= COLLUSION_DRIFT_THRESHOLD:
+                                elevated.append({
+                                    "node_id":     node_id_str,
+                                    "drift_score": float(node.drift_score),
+                                })
+
+                        if not elevated:
+                            continue
+
+                        severity = "critical" if len(elevated) >= 2 else "warn"
+                        # One suspicion signal per elevated node so triage
+                        # queues rank the individual actors, not just the
+                        # cluster.
+                        for e in elevated:
+                            try:
+                                await repo.add_drift(
+                                    tenant_id=tenant_id,
+                                    node_id=uuid.UUID(e["node_id"]),
+                                    signal_type="collusion_suspicion",
+                                    severity=severity,
+                                    baseline={},
+                                    observed={
+                                        "cluster_id":     cluster_id,
+                                        "cluster_size":   len(members),
+                                        "elevated_count": len(elevated),
+                                        "cluster_sample": members[:20],
+                                    },
+                                    delta=float(len(elevated)),
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "collusion_signal_write_failed",
+                                    tenant_id=str(tenant_id),
+                                    node_id=e["node_id"],
+                                    error=str(exc),
+                                )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.critical("collusion_loop_error", error=str(exc))
+        await asyncio.sleep(COLLUSION_INTERVAL_S)
