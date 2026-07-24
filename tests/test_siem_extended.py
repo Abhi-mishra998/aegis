@@ -34,25 +34,24 @@ from services.audit.siem import (
     _resolve_siem_credentials,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 def _event(**overrides: Any) -> SIEMEvent:
-    defaults = dict(
-        timestamp="2026-06-13T00:00:00+00:00",
-        tenant_id="t-1",
-        agent_id="a-1",
-        action="execute_tool",
-        tool="db.query",
-        decision="allow",
-        reason=None,
-        risk_score=0.1,
-        request_id="req-1",
-        event_hash="abc",
-    )
+    defaults = {
+        "timestamp": "2026-06-13T00:00:00+00:00",
+        "tenant_id": "t-1",
+        "agent_id": "a-1",
+        "action": "execute_tool",
+        "tool": "db.query",
+        "decision": "allow",
+        "reason": None,
+        "risk_score": 0.1,
+        "request_id": "req-1",
+        "event_hash": "abc",
+    }
     defaults.update(overrides)
     return SIEMEvent(**defaults)  # type: ignore[arg-type]
 
@@ -197,7 +196,7 @@ async def test_sentinel_signature_and_headers():
     assert sent == 1
     call = client.post.await_args
     headers = call.kwargs["headers"]
-    body = call.kwargs["content"]
+    call.kwargs["content"]
     assert "x-ms-date" in headers
     assert headers["Log-Type"] == "AegisAudit"
     assert headers["Authorization"].startswith(
@@ -378,6 +377,12 @@ def test_resolve_credentials_ssm_calls_loader():
 def test_load_ssm_credentials_normalizes_to_upper_snake():
     """``/aegis-siem/elastic/cloud_id`` and ``/aegis-siem/elastic/api_key``
     end up keyed under ``CLOUD_ID``, ``API_KEY``."""
+    # `patch("boto3.client", ...)` needs boto3 importable. Skip cleanly
+    # on runners without it — the SSM path is only exercised in AWS
+    # deployments, so the mock coverage there suffices.
+    import pytest
+    pytest.importorskip("boto3")
+
     fake_paginator = MagicMock()
     fake_paginator.paginate = MagicMock(return_value=iter([
         {"Parameters": [

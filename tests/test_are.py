@@ -325,6 +325,13 @@ def test_admin_roles_are_correct():
 # ─── Audit events stream key ──────────────────────────────────────────────────
 
 def test_audit_stream_key():
+    # `services.api.main` imports schemas.api_key which uses pydantic.EmailStr —
+    # that pulls in the optional `email-validator` package. Skip cleanly on
+    # runners that don't have it installed rather than failing the whole
+    # suite for a dep that's optional for this constant check.
+    import pytest
+    pytest.importorskip("email_validator")
+
     from services.api.main import _AUDIT_ARE_GROUP, _AUDIT_STREAM
     assert _AUDIT_STREAM == "acp:audit:events"
     assert _AUDIT_ARE_GROUP == "are-audit-workers"
