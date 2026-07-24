@@ -215,27 +215,9 @@ def _internal_headers(request: Request | None = None) -> dict[str, str]:
     return headers
 
 
-def _passthrough(resp: httpx.Response) -> Response:
-    """
-    2026-05-14 — Forward upstream JSON + STATUS CODE to the client.
-
-    Without this, the existing pattern `return resp.json()` collapses every
-    upstream 4xx/5xx into a 200 with `{"success": false, "data": null}` body.
-    The UI's `request()` wrapper only treats non-2xx as errors, so it
-    silently rendered empty state on every backend failure (e.g. the
-    Invoice Ledger 500 was invisible to operators).
-
-    Returns a JSONResponse with the upstream status code preserved.
-    """
-    try:
-        body = resp.json()
-    except Exception:
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type", "application/octet-stream"),
-        )
-    return JSONResponse(content=body, status_code=resp.status_code)
+# _passthrough removed — use services.gateway._helpers.passthrough
+# (identical wire-shape, single source of truth).
+from services.gateway._helpers import passthrough as _passthrough  # noqa: E402
 
 
 async def _process_billing_queue(redis_client, s_client) -> None:
