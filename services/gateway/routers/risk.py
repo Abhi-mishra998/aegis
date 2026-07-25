@@ -65,6 +65,28 @@ async def risk_signal_weights(request: Request) -> Any:
     return passthrough(resp)
 
 
+# Sprint UI-6 — write path was missing. Decision svc gates ADMIN/SECURITY
+# server-side; the gateway middleware also blocks non-admin POST/PUT so this
+# is defense-in-depth via role check at the mesh boundary.
+@router.put("/risk/signal-weights", tags=["risk"])
+async def risk_signal_weights_write(request: Request) -> Any:
+    """Proxy → Decision service (write path). ADMIN/SECURITY only.
+
+    The decision service enforces the role gate; we forward the body verbatim.
+    """
+    body = await request.body()
+    headers = internal_headers(request)
+    ctype = request.headers.get("content-type")
+    if ctype:
+        headers["Content-Type"] = ctype
+    resp = await request.app.state.client.put(
+        f"{settings.DECISION_SERVICE_URL.rstrip('/')}/decision/signal-weights",
+        content=body,
+        headers=headers,
+    )
+    return passthrough(resp)
+
+
 @router.get("/risk/timeline", tags=["risk"])
 async def risk_timeline(request: Request) -> Any:
     """Proxy → Audit service risk timeline. Forwards ?days= query param."""

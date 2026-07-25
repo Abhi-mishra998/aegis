@@ -10,8 +10,9 @@ import {
   Database,
   Layers,
   HeartPulse,
+  ShieldAlert,
 } from 'lucide-react'
-import { dashboardService, witnessService } from '../services/api'
+import { dashboardService, witnessService, decisionService } from '../services/api'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 // Queue depth thresholds — keep in sync with infra/prometheus-rules.yml.
@@ -143,6 +144,9 @@ function OverallBanner({ status, healthy, total, lastChecked }) {
 export default function SystemHealth() {
   const [data, setData] = useState(null)
   const [witness, setWitness] = useState(null)
+  const [detection, setDetection] = useState(null)  // Sprint UI-6: /decision/summary
+  const [topThreats, setTopThreats] = useState([])  // Sprint UI-6: /risk/top-threats
+  const [recentDecisions, setRecentDecisions] = useState([])  // Sprint UI-6: /decision/history
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -180,6 +184,25 @@ export default function SystemHealth() {
       // loss → UNOBSERVED verdicts). Surfaced via the panel's
       // "witness unreachable" state rather than a full page error.
       setWitness(null)
+    }
+
+    // Sprint UI-6 — Detection engine surface. Three parallel calls,
+    // each fault-tolerant: if the decision svc is down, the panel just
+    // shows dashes instead of blocking the whole page (SystemHealth is
+    // often what an on-call opens WHEN things are broken).
+    try {
+      const [sum, top, hist] = await Promise.allSettled([
+        decisionService.getSummary(),
+        decisionService.getTopThreats(10),
+        decisionService.getHistory(15),
+      ])
+      setDetection(sum.status === 'fulfilled' ? (sum.value?.data ?? sum.value) : null)
+      const t = top.status === 'fulfilled' ? (top.value?.data ?? top.value) : []
+      setTopThreats(Array.isArray(t) ? t : (t?.items || t?.threats || []))
+      const h = hist.status === 'fulfilled' ? (hist.value?.data ?? hist.value) : {}
+      setRecentDecisions(h?.items || [])
+    } catch {
+      // Never let detection-panel failures fail the whole health page.
     }
   }, [])
 
@@ -322,6 +345,93 @@ export default function SystemHealth() {
             </div>
           )
         })()}
+      </div>
+
+      {/* Sprint UI-6 — Detection engine observability. Summary counters +
+          24h risk timeline sparkline + top threats + recent decisions.
+          Backed by /decision/summary, /risk/top-threats, /decision/history. */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <ShieldAlert size={14} className="text-neutral-400" />
+          <span className="text-sm font-semibold text-white">Detection Engine</span>
+          <span className="ml-auto text-[10px] font-mono text-neutral-600 hidden sm:inline">
+            from /decision/*
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatTile label="Threats blocked"    value={detection?.threats_blocked ?? '—'}    />
+          <StatTile label="High-risk agents"   value={detection?.high_risk_agents ?? '—'}   />
+          <StatTile label="Total requests (24h)" value={detection?.total_requests ?? '—'}   />
+          <StatTile label="Top threats (window)" value={topThreats?.length ?? 0}            />
+        </div>
+        {/* 24h risk sparkline — inline SVG, no chart lib needed */}
+        {Array.isArray(detection?.metrics) && detection.metrics.length > 0 && (
+          <div className="mt-4 rounded-lg border border-white/[0.06] bg-black/30 p-3">
+            <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2">
+              24h risk timeline (score 0–100, hourly)
+            </div>
+            <RiskSparkline points={detection.metrics} />
+          </div>
+        )}
+        {/* Top threats + recent decisions, side-by-side on desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2">
+              Top threats
+            </div>
+            {topThreats.length === 0 ? (
+              <p className="text-xs text-neutral-500 italic py-4">
+                No threats reported in the current window.
+              </p>
+            ) : (
+              <ul className="divide-y divide-white/[0.04] rounded-lg border border-white/[0.06]">
+                {topThreats.slice(0, 8).map((t, i) => (
+                  <li key={t.id || t.threat_id || i} className="flex items-center gap-2 px-3 py-2 text-xs">
+                    <span className="text-neutral-400 font-mono w-4">{i + 1}</span>
+                    <span className="text-neutral-200 truncate flex-1">
+                      {t.label || t.threat || t.name || t.type || 'threat'}
+                    </span>
+                    <span className="text-[10px] text-neutral-500 font-mono">
+                      {t.count ?? t.hits ?? ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2">
+              Recent decisions
+            </div>
+            {recentDecisions.length === 0 ? (
+              <p className="text-xs text-neutral-500 italic py-4">
+                No recent decisions on the ledger.
+              </p>
+            ) : (
+              <ul className="divide-y divide-white/[0.04] rounded-lg border border-white/[0.06]">
+                {recentDecisions.slice(0, 8).map((d, i) => (
+                  <li key={d.id || i} className="flex items-center gap-2 px-3 py-2 text-xs">
+                    <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded ${
+                      d.decision === 'BLOCK' || d.decision === 'DENY' || d.action === 'deny'
+                        ? 'text-red-400 bg-red-500/10'
+                        : d.decision === 'ESCALATE' || d.action === 'escalate'
+                          ? 'text-amber-400 bg-amber-500/10'
+                          : 'text-neutral-500 bg-white/[0.04]'
+                    }`}>
+                      {d.decision || d.action || 'log'}
+                    </span>
+                    <span className="text-neutral-300 truncate flex-1 font-mono text-[10px]">
+                      {d.tool || d.metadata?.tool || d.agent_id?.slice(0, 8) || d.id?.slice(0, 8) || '—'}
+                    </span>
+                    <span className="text-[10px] text-neutral-600 font-mono shrink-0">
+                      {d.created_at ? new Date(d.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Operational Queues (2026-05-13): audit stream, audit DLQ, billing retry / DLQ */}
@@ -473,6 +583,35 @@ export default function SystemHealth() {
         Auto-refreshes every 30 seconds
       </p>
     </div>
+  )
+}
+
+// Sprint UI-6 — minimal KPI + sparkline helpers for the Detection Engine panel.
+function StatTile({ label, value }) {
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-[#0a0a0a] p-3">
+      <div className="text-[10px] uppercase tracking-widest text-neutral-500 truncate">{label}</div>
+      <div className="text-xl font-bold font-mono tabular-nums text-white mt-1">{value}</div>
+    </div>
+  )
+}
+
+function RiskSparkline({ points }) {
+  // Inline SVG so we don't drag in the charts vendor bundle for one plot.
+  // Points are [{time: "HH:00", score: 0..100}]. Scale x to width, y to height.
+  const W = 480
+  const H = 60
+  if (!points || points.length === 0) return null
+  const xs = points.map((_, i) => (i / Math.max(1, points.length - 1)) * (W - 4) + 2)
+  const maxY = Math.max(1, ...points.map((p) => Number(p.score) || 0))
+  const ys = points.map((p) => H - 2 - ((Number(p.score) || 0) / maxY) * (H - 8))
+  const d = xs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${ys[i].toFixed(1)}`).join(' ')
+  const areaD = `${d} L ${xs[xs.length - 1].toFixed(1)} ${H - 2} L ${xs[0].toFixed(1)} ${H - 2} Z`
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-14" preserveAspectRatio="none" aria-label="24h risk timeline">
+      <path d={areaD} fill="rgba(239, 68, 68, 0.08)" />
+      <path d={d} stroke="rgb(239, 68, 68)" strokeWidth="1.5" fill="none" strokeLinejoin="round" />
+    </svg>
   )
 }
 

@@ -10,6 +10,7 @@ import {
   MessagesSquare,
   Settings as SettingsIcon,
   ShieldCheck,
+  Sliders,
   SlidersHorizontal,
   Users,
   Webhook,
@@ -18,6 +19,7 @@ import SystemValuesTab from '../components/settings/SystemValuesTab';
 import SlackApprovalsTab from '../components/settings/SlackApprovalsTab';
 import PolicyPacksTab from '../components/settings/PolicyPacksTab';
 import FeatureFlagsTab from '../components/settings/FeatureFlagsTab';
+import SignalWeightsTab from '../components/settings/SignalWeightsTab';
 import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 // Existing pages, lazy-imported so each tab only pulls its chunk on
@@ -56,6 +58,7 @@ const TABS = [
   { id: 'system-values', label: 'System Values',   icon: DollarSign,     Component: SystemValuesTab,  group: GROUP.WORKSPACE },
   { id: 'policy-packs',  label: 'Policy packs',    icon: ShieldCheck,    Component: PolicyPacksTab,   group: GROUP.WORKSPACE },
   { id: 'feature-flags', label: 'Feature flags',   icon: SlidersHorizontal, Component: FeatureFlagsTab, group: GROUP.WORKSPACE },
+  { id: 'signal-weights', label: 'Signal weights', icon: Sliders,         Component: SignalWeightsTab, group: GROUP.WORKSPACE },
   { id: 'quota',         label: 'Quota',           icon: Gauge,          Component: QuotaManagement,  group: GROUP.WORKSPACE },
   { id: 'reports',       label: 'Reports',         icon: Calendar,       Component: ScheduledReports, group: GROUP.WORKSPACE },
 ];

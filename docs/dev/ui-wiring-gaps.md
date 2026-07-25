@@ -16,6 +16,7 @@ Legend: 🔴 blocker for enterprise self-serve · 🟡 admin/ops workflow · �
 | UI-3 | C3 toggle · behavior opt-in · collusion feed | ✅ shipped |
 | UI-4 | deployment lifecycle page · destruction-cert flow | ✅ shipped |
 | UI-5 | multi-IdP config · Teams/PagerDuty channels | ✅ shipped |
+| UI-6 | detection engine summary/history/timeline/top-threats + signal-weights tuning | ✅ shipped |
 
 ---
 
@@ -43,6 +44,21 @@ Legend: 🔴 blocker for enterprise self-serve · 🟡 admin/ops workflow · �
 | ~~13~~ ✅ | Witness deployment mode (B1) | `WITNESS_DEPLOYMENT_MODE=sidecar\|serverless`; `GET /witness/health` surfaces `deployment_mode` | ✅ "Execution Witness" panel shipped on `pages/SystemHealth.jsx`. Sidecar → green + evidence-collected note; serverless → amber + "verdicts UNOBSERVED by design" note; unknown → neutral. Also surfaces heartbeat-stale flag when set | Sprint UI-2 |
 | ~~14~~ ✅ | Witness trust-boundary doc (B4) | `docs/security/witness-trust-boundary.md` | ✅ Card + link shipped on `pages/TrustCenter.jsx` (still pending: link from the future Witness settings panel — Sprint UI-2) | Sprint UI-1 |
 | ~~15~~ ✅ | Approval scope enforcement (Q37) | `_approved_rule_id` carried on re-queued incident; worker skips other rules with `approval_scope_skip` audit event | ✅ Amber scope-of-approval banner shipped on `pages/ApprovalInbox.jsx` (names the rule + explains §5.7 single-action-binding) | Sprint UI-1 |
+
+## 🟡 Detection engine surfaces (Sprint UI-6, added post-hoc)
+
+Found by a second-pass audit after the original ledger's 15 items were closed:
+six decision/risk endpoints were gateway-proxied but had no UI caller. Closed
+in Sprint UI-6.
+
+| # | Backend feature | Endpoint(s) | UI needed | Notes |
+|---|---|---|---|---|
+| ~~19~~ ✅ | Decision engine summary | `GET /decision/summary` (proxied) — returns `{threats_blocked, high_risk_agents, total_requests, metrics:[{time,score}]}` | ✅ "Detection Engine" panel on `pages/SystemHealth.jsx` with four stat tiles + inline SVG 24h risk sparkline | Sprint UI-6 |
+| ~~20~~ ✅ | Decision engine history | `GET /decision/history?limit=` (proxied via `routers/decision.py`) | ✅ "Recent decisions" list on same SystemHealth panel — colour-coded BLOCK/ESCALATE/log with tool+timestamp | Sprint UI-6 |
+| ~~21~~ ✅ | Top threats feed | `GET /risk/top-threats?limit=` (proxied via `routers/risk.py`) | ✅ "Top threats" list on same panel — ranked, count per threat | Sprint UI-6 |
+| ~~22~~ ✅ | Risk timeline | `GET /risk/timeline?days=` (proxied) | ✅ Rolled into the sparkline above; `decisionService.getTimeline()` also exposed for future dashboard tiles | Sprint UI-6 |
+| ~~23~~ ✅ | Signal weights (read) | `GET /decision/signal-weights` (proxied as `/risk/signal-weights`) | ✅ "Signal weights" tab on Settings (`components/settings/SignalWeightsTab.jsx`). Range slider + numeric input for each of the 5 signals (inference/behavior/anomaly/cost/cross_agent) | Sprint UI-6 |
+| ~~24~~ ✅ | Signal weights (write) | `PUT /decision/signal-weights` — was missing gateway proxy; Sprint UI-6 added `PUT /risk/signal-weights` in `routers/risk.py` | ✅ Save button on the same tab. ADMIN/SECURITY only (both backend + UI role-gated); "Reset to defaults" restores 1.0 across the board | Sprint UI-6 |
 
 ## 🟢 Platform-team-only (no per-customer UI needed)
 

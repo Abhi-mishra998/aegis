@@ -1271,6 +1271,26 @@ export const ssoService = {
   getIdpStatus: ()     => request('/auth/idp/status'),
 };
 
+// Sprint UI-6 — decision engine observability + tuning surfaces.
+// `getSummary` returns {threats_blocked, high_risk_agents, total_requests, metrics}
+// (metrics is a 24h hourly [{time, score}] array pulled from the audit svc).
+// `getHistory` returns recent `execute_tool` audit rows for the SOC drill-down.
+// `getSignalWeights` returns the tunable per-tenant weights + signal labels;
+// `setSignalWeights` requires ADMIN/SECURITY and PUTs a partial weights map.
+// `getTimeline` and `getTopThreats` are read-only dashboard aggregates already
+// proxied through the gateway's /risk/* cluster.
+export const decisionService = {
+  getSummary:        ()          => request('/decision/summary'),
+  getHistory:        (limit = 20) => request(`/decision/history?limit=${limit}`),
+  getSignalWeights:  ()          => request('/risk/signal-weights'),
+  setSignalWeights:  (weights)   => request('/risk/signal-weights', {
+    method: 'PUT',
+    body: JSON.stringify({ weights }),
+  }),
+  getTimeline:       (days = 7)  => request(`/risk/timeline?days=${days}`),
+  getTopThreats:     (limit = 10) => request(`/risk/top-threats?limit=${limit}`),
+};
+
 export const killSwitchService = {
   getStatus: (tenantId) => request(`/decision/kill-switch/${tenantId}`),
   triggerKill: (tenantId) =>
