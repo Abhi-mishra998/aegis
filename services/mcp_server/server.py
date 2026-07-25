@@ -167,9 +167,13 @@ def main() -> None:
             "Install with: pip install 'mcp>=0.5'\n"
         )
         sys.exit(2)
+    # Report the URL tools.py actually resolved (single source of truth) so
+    # the startup log matches runtime behavior. If the env vars were unset
+    # in production, tools.py would already have raised at import time.
+    from services.mcp_server.tools import _GATEWAY_URL
     logger.info(
         "aegis_mcp_starting",
-        gateway=os.getenv("AEGIS_GATEWAY_URL", "http://localhost:8000"),
+        gateway=_GATEWAY_URL,
         has_api_key=bool(os.getenv("AEGIS_MCP_API_KEY")),
     )
     server.run()

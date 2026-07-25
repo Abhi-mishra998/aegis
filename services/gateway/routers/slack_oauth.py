@@ -285,12 +285,23 @@ async def slack_disconnect(
 
 # ── Helpers ───────────────────────────────────────────────────────────
 def _redirect_uri() -> str:
-    """Public callback URL Slack hands the user back to."""
-    base = (
-        os.environ.get("PUBLIC_BASE_URL")
-        or os.environ.get("ALB_PUBLIC_HOST")
-        or "http://localhost:8000"
-    )
+    """Public callback URL Slack hands the user back to.
+
+    The URL must match what's registered in the Slack app config, so a
+    silent fallback to localhost in production would result in Slack
+    rejecting the OAuth exchange with a confusing error. Fail-fast if
+    neither env var is set and ENVIRONMENT=production; keep localhost
+    for local dev.
+    """
+    base = os.environ.get("PUBLIC_BASE_URL") or os.environ.get("ALB_PUBLIC_HOST")
+    if not base:
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(
+                "Slack OAuth misconfigured: PUBLIC_BASE_URL / ALB_PUBLIC_HOST "
+                "not set in ENVIRONMENT=production. Set one before enabling "
+                "the Slack integration."
+            )
+        base = "http://localhost:8000"
     if not base.startswith("http"):
         base = "https://" + base
     return f"{base.rstrip('/')}/sso/slack/callback"

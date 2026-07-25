@@ -348,12 +348,17 @@ async def _execute_step(
     # The gateway calls its own /execute pipeline. INTERNAL_GATEWAY_URL is
     # set in docker-compose to the in-network container DNS name; in
     # production it's the ALB-private endpoint. Falls back to localhost
-    # only when neither is configured (single-process dev).
-    base = (
-        os.environ.get("INTERNAL_GATEWAY_URL")
-        or os.environ.get("GATEWAY_URL")
-        or "http://localhost:8000"
-    )
+    # only when neither is configured (single-process dev). In production
+    # both being unset means demo /execute would hit localhost:8000 on
+    # the ALB — refuse instead of silently self-routing.
+    base = os.environ.get("INTERNAL_GATEWAY_URL") or os.environ.get("GATEWAY_URL")
+    if not base:
+        if settings.ENVIRONMENT == "production":
+            raise HTTPException(
+                status_code=503,
+                detail="demo runner disabled: INTERNAL_GATEWAY_URL not set in production",
+            )
+        base = "http://localhost:8000"
     started = time.monotonic()
     try:
         resp = await client.post(
@@ -884,11 +889,25 @@ async def _run_demo_traffic(tenant_id: str, jwt: str, ttl_seconds: int) -> None:
         )
         return
 
+    # Same env-var resolution as the /execute helper — the traffic script
+    # calls into the same gateway. Skip (not raise) if unset in prod so a
+    # missing env var stops demo traffic without failing the tenant boot;
+    # the /execute helper above will surface the 503 the user actually sees.
+    traffic_host = os.environ.get("INTERNAL_GATEWAY_URL") or os.environ.get("GATEWAY_URL")
+    if not traffic_host:
+        if settings.ENVIRONMENT == "production":
+            logger.warning(
+                "demo_traffic_skipped_no_internal_gateway_url",
+                tenant_id=tenant_id,
+            )
+            return
+        traffic_host = "http://localhost:8000"
+
     try:
         proc = subprocess.Popen(  # noqa: S603
             [
                 "python3", str(traffic_script),
-                "--host", "http://localhost:8000",
+                "--host", traffic_host,
                 "--tenant-id", tenant_id,
                 "--token", jwt,
                 "--rounds", "200",

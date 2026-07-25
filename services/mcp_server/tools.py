@@ -34,10 +34,29 @@ from typing import Any
 
 import httpx
 
-_GATEWAY_URL = os.getenv(
-    "AEGIS_MCP_GATEWAY_URL",
-    os.getenv("AEGIS_GATEWAY_URL", "http://localhost:8000"),
-).rstrip("/")
+def _resolve_gateway_url() -> str:
+    """Return the gateway URL for the MCP tools to call.
+
+    Order: AEGIS_MCP_GATEWAY_URL → AEGIS_GATEWAY_URL → dev fallback.
+
+    In production (ENVIRONMENT=production) BOTH env vars unset is a
+    misconfiguration — the MCP server would silently start pointing at
+    localhost:8000 and every tool call would time out or hit whatever
+    happens to answer on that port. Fail-fast so ops sees it at boot.
+    """
+    url = os.getenv("AEGIS_MCP_GATEWAY_URL") or os.getenv("AEGIS_GATEWAY_URL")
+    if url:
+        return url.rstrip("/")
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        raise RuntimeError(
+            "AEGIS_MCP_GATEWAY_URL / AEGIS_GATEWAY_URL not set in "
+            "ENVIRONMENT=production; refusing to fall back to "
+            "http://localhost:8000."
+        )
+    return "http://localhost:8000"
+
+
+_GATEWAY_URL = _resolve_gateway_url()
 _TIMEOUT = float(os.getenv("AEGIS_MCP_TIMEOUT", "10.0"))
 
 
