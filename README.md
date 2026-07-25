@@ -21,8 +21,12 @@ verifiable audit trail.
 - [Service inventory](#service-inventory)
 - [Data model](#data-model)
 - [Cryptographic trust chain](#cryptographic-trust-chain)
+- [Deployment lifecycle (ATF §14.5)](#deployment-lifecycle-atf-145)
+- [Multi-IdP acceptance (ATF §4.2)](#multi-idp-acceptance-atf-42)
+- [Per-tenant feature flags](#per-tenant-feature-flags)
 - [SDK integration](#sdk-integration)
 - [Security layers](#security-layers)
+- [Admin console surfaces](#admin-console-surfaces)
 - [Performance measurements](#performance-measurements)
 - [Screenshots — live decisions](#screenshots--live-decisions)
 - [Quick start](#quick-start)
@@ -98,7 +102,7 @@ cryptographic logging and billing pipeline finish in the background.
 
 [![Architecture diagram](screenshot/architecture-diagram.png)](screenshot/architecture-diagram.png)
 
-12 services · 25 containers · single gateway entry point · fail-closed at every
+15 services · 27 containers · single gateway entry point · fail-closed at every
 gate. Six tiers, top to bottom:
 
 | Tier | Contents | Responsibility |
@@ -152,13 +156,14 @@ outbox buffers. If the inference proxy times out, requests fail closed.
 
 | Service | Port | Detail |
 |---|---|---|
-| Behavior | `8007` | 7+ anomaly detectors: call-rate spike, PII density, cross-agent correlation, time-of-day, new-tool usage, geo-velocity, bulk-op. Per-tenant `degraded_mode_policy` (`block_high_risk` / `block_all` / `allow_with_audit`). Fail-closed on timeout. |
+| Behavior | `8007` | 7+ anomaly detectors: call-rate spike, PII density, cross-agent correlation, time-of-day, new-tool usage, geo-velocity, bulk-op. Per-tenant `degraded_mode_policy` (`block_high_risk` / `block_all` / `allow_with_audit`). Fail-closed on timeout. Learned cross-agent term is gated by the tenant `behavior_fingerprinting` flag (ADR-002 — advisory only, never authoritative). |
 | Insight (Groq) | `8011` | Sends risk context to a Groq LLM. Returns plain-language threat narrative for the SOC feed. ~2 s enrichment, runs off the hot path. |
-| Identity Graph | `8013` | Graph in Postgres. Nodes: agents, users, tools, resources, API keys. Edges: permissions, ownership, delegation. Compromise simulation (BFS depth=3) returns quantified blast radius. |
+| Identity Graph | `8013` | Graph in Postgres. Nodes: agents, users, tools, resources, API keys. Edges: permissions, ownership, delegation. Compromise simulation (BFS depth=3) returns quantified blast radius. Collusion detector (ATF §Phase 3 item 2) writes `collusion_suspicion` DriftSignals — surfaced in the UI's Incidents → Collusion tab. |
 | Flight Recorder | `8014` | Captures pre-gate snapshot, per-gate outcome, post-gate snapshot. 2 / 5 / 15 / 60 min replay windows. |
-| Autonomy | `8015` | Bounded contracts with `max_runtime`, `max_cost`, `max_destructive_ops_per_hour`. Deny-list and approval-required list. |
+| Autonomy | `8015` | Bounded contracts with `max_runtime`, `max_cost`, `max_destructive_ops_per_hour`. Deny-list and approval-required list. Escalation channels: Slack, Microsoft Teams (adaptive cards), PagerDuty Events v2, generic HTTPS webhook — configured per tenant, SSRF-guarded. |
 | Forensics | `8012` | Incident investigation: timeline reconstruction, attack attribution, cross-session correlation. |
 | ARE | `8005` | Auto-Response Engine. `IF (window + severity + risk + tool filter) THEN (KILL → ISOLATE → THROTTLE → ALERT)`. Cooldown + max-triggers-per-hour prevent alert storms. |
+| Witness | `8016` | ATF v3.2 §6 Execution Witness. Sidecar deployment collects evidence (verdicts become `CORROBORATED`); serverless deployment forces every verdict to `UNOBSERVED` by design. Surfaces `deployment_mode` + heartbeat freshness on `GET /witness/health`; UI reads it into the System Health page. |
 
 ---
 
@@ -240,6 +245,21 @@ On gateway boot, active kill switches load from Postgres into Redis. If Redis
 is flushed mid-incident, the next request rehydrates. The kill switch survives
 a full Redis restart — verified in the demo pack.
 
+### Redis-backed runtime state
+
+A small set of hot-path settings live in Redis with Postgres or env vars
+as the fallback source of truth. Redis is treated as a *cache with an
+authoritative source*, never as the only copy of anything important.
+
+| Key | Contents | Fallback | Rationale |
+|---|---|---|---|
+| `acp:tenant_settings:{tenant_id}` (hash) | Per-tenant feature flags — `c3_sampling`, `behavior_fingerprinting` | Env-var comma-lists (`ACP_C3_SAMPLING_TENANTS`, `ACP_BEHAVIOR_FINGERPRINTING_TENANTS`) | Hot-path check on every request; env fallback preserves ops-managed deployments |
+| `acp:lifecycle:{tenant_id}` (string) | Current deployment state (`ENFORCE`, `DECOMMISSION`, …) | `lifecycle_*` rows in the audit chain | Audit chain is the durable record; a lost Redis key is reconstructible from the last transition event |
+| `acp:signal_weights:{tenant_id}` (string, JSON) | Per-tenant risk signal weights map | `DEFAULT_WEIGHTS` in `services/decision/engine.py` | Malformed or unreachable state silently falls back to defaults — a bad override can never poison the live decision pipeline |
+| `acp:kill_switch:{tenant_id}[:agent_id]` | Boolean isolation state | `acp_identity.kill_switches` | See kill-switch table above |
+| `acp:jti:{jti}` | Revoked token IDs | Postgres `revoked_tokens` | 15-min TTL matches access-token TTL — natural expiry |
+| `acp:webhooks:{tenant_id}` (hash) | Escalation channel URLs / keys (`slack_url`, `teams_url`, `pagerduty_key`, `generic_url`) | Env-var fallback | Per-tenant configurable without a redeploy; secrets are masked on read |
+
 ---
 
 ## Cryptographic trust chain
@@ -302,6 +322,108 @@ aegis-verify --bundle bundle.json
 
 Six independent checks (V1–V6). Spec, checklist, and a deterministic
 reference bundle in [`docs/AEVF/`](docs/AEVF/).
+
+---
+
+## Deployment lifecycle (ATF §14.5)
+
+The deployment itself is modelled as an explicit state machine so every
+environment transition is a first-class, ledgered event rather than an
+implicit config change.
+
+```
+INSTALL → BOOTSTRAP → ENFORCE → (ROTATE | UPGRADE | ROLLBACK)* → DECOMMISSION → DESTROY
+```
+
+`ROTATE`, `UPGRADE`, and `ROLLBACK` return to `ENFORCE` on completion. All
+other transitions are forward-only. State is stored per tenant at
+`acp:lifecycle:{tenant_id}` in Redis; the audit ledger is the durable record
+so a lost Redis state can be reconstructed from the last `lifecycle_*` row.
+
+Every transition is:
+
+- OWNER-role gated at the gateway (`POST /lifecycle/transition`).
+- Written to the audit chain as an `action_class=C3` event (same anchoring
+  class as production execution decisions — a transition is treated with
+  the same evidentiary weight as any enforced tool call).
+- Illegal target → `409` from the state-machine module
+  (`sdk/common/atf_lifecycle.py`), never a silent no-op.
+
+`DESTROY` is terminal. It mints a signed **destruction certificate** built
+from the final Merkle anchor and returns it in the transition response.
+The customer keeps that JSON forever as proof of what existed and when it
+was terminated (§14.5 line 3). The certificate is re-issuable via
+`POST /audit/logs/destruction-certificate` for as long as the audit rows
+remain on disk; once retention expires, the certificate is the only remaining
+proof.
+
+Endpoints:
+
+- `GET /lifecycle` — current state + legal next states
+- `POST /lifecycle/transition` — OWNER-only, body `{target, reason}`
+- `POST /audit/logs/destruction-certificate` — re-issue
+
+UI: `/lifecycle` (Sidebar → Admin → Lifecycle). Happy-path timeline with
+`ROTATE/UPGRADE/ROLLBACK` rendered as orbits around `ENFORCE`, per-transition
+confirm dialog with reason field, and an inline ledger of the last 40
+lifecycle events.
+
+---
+
+## Multi-IdP acceptance (ATF §4.2)
+
+The gateway accepts three workload-token formats for agent-to-gateway auth,
+in addition to the customer-facing SAML/OIDC used by the console.
+
+| Adapter | Purpose | Config env vars |
+|---|---|---|
+| SPIFFE | Cross-cluster workload identity (SPIRE, Istio, custom) | `SPIFFE_TRUST_DOMAIN`, `SPIFFE_TRUST_BUNDLE_JSON`, `SPIFFE_AUDIENCE` |
+| Entra Agent ID | Azure workload identity | `ENTRA_TENANT_ID`, `ENTRA_AUDIENCE` |
+| Okta XAA | Okta workload federation | `OKTA_ISSUER`, `OKTA_AUDIENCE` |
+
+Dispatch lives in `services/gateway/idp_verifiers.py`. Each adapter is OFF
+unless its env vars are set; a blank config skips that adapter without a
+warning. Every failure path raises the same `ACPAuthError("Unauthorized")` —
+per-adapter reason is emitted to internal counters only so the response
+body reveals nothing about which validator branch was tried. JWKS is
+cached in Redis + a bounded in-process LRU (8 entries). A cache-fetch
+failure fails CLOSED (never fails open with an empty key set).
+
+`GET /auth/idp/status` returns the enabled/disabled state, the identifier
+(SPIFFE trust domain, Entra tenant, Okta issuer), and the audience for
+each adapter. It never returns trust-bundle material. Visible in the UI
+on Settings → SSO as a read-only "Trusted issuers" panel — a compromised
+customer admin flipping `SPIFFE_TRUST_BUNDLE_JSON` from the console would
+nuke the chain of trust, so the write path lives at the env-var boundary
+only.
+
+---
+
+## Per-tenant feature flags
+
+Two ATF v3.2 controls are cost/privacy-sensitive enough to be OFF by
+default and per-tenant opt-in:
+
+| Flag | Effect | Cost |
+|---|---|---|
+| `c3_sampling` (§9.3) | Plan every C3 action three times, require a 2-of-3 quorum, BLOCK inconsistent plans | 3× planner latency + tokens on C3 actions only |
+| `behavior_fingerprinting` (§9.2, ADR-002) | Consume the learned cross-agent behavioral signal as an advisory display feed | None on the hot path; recorded in audit + SOC dashboard, never authoritative on the gate |
+
+Flags live in `sdk/common/tenant_settings.py`. An explicit UI-set boolean
+overrides the historical env-var enable-list; leaving a flag unset falls
+back to the env var so ops-managed deployments keep working without a
+console configuration step. 60-second in-process cache on the hot path.
+A Redis outage cannot flip an explicit-false to a fallback-true (verified
+by a runnable self-check in the module — `python -m sdk.common.tenant_settings`).
+
+Endpoints: `GET /tenant/settings` returns `{flag: {effective, override}}`
+so the UI can distinguish "using ops default" from "you explicitly set
+this". `POST /tenant/settings` is OWNER-gated and accepts only the
+whitelisted flag names — arbitrary keys are 422.
+
+UI: Settings → Feature flags. Also surfaces the env-var name each flag
+falls back to, so an admin considering a UI change can see what ops
+already configured.
 
 ---
 
@@ -378,7 +500,7 @@ checks collapse into one layer.
 
 | # | Layer | Defends against | Mechanism |
 |---|---|---|---|
-| 1 | Auth | Stolen tokens, replay, spoofed agent IDs | RS256 JWT + `jti` revocation in Redis; 15-min TTL |
+| 1 | Auth | Stolen tokens, replay, spoofed agent IDs | RS256 JWT + `jti` revocation in Redis; 15-min TTL. Gateway also accepts SPIFFE / Entra Agent ID / Okta XAA workload tokens (see [Multi-IdP acceptance](#multi-idp-acceptance-atf-42)) — every adapter is off unless its trust root is configured, JWKS is cached with fail-CLOSED semantics. |
 | 2 | Rate limit | Runaway loops, cost exhaustion, DDoS from compromised agents | Token bucket per tenant (RPS + burst) + daily/monthly hard caps |
 | 3 | Input validation | Malformed payloads, SQLi in parameters, `../` traversal, oversized bodies | Pydantic schema + regex pattern scan + 10 KB cap |
 | 4 | Permissions | Tool call outside agent's registered set | Exact-match allow-list per agent, no wildcards |
@@ -393,6 +515,59 @@ Audit is last, not first — deliberately. It records everything, *including
 which layer blocked or failed to block a request*. Independence of the audit
 path is what lets the next chain verification surface a policy-layer failure
 that no live signal caught.
+
+---
+
+## Admin console surfaces
+
+The React console (Vite + React 18, served by nginx) consumes only the
+gateway — no privileged path, no direct database or downstream-service
+access. Every admin action routes through the same request pipeline
+described above; a browser can do nothing an API caller with the same
+role could not do.
+
+**Route map** (role gates listed as enforced at the gateway; the UI hides
+or disables the corresponding action for non-eligible roles):
+
+| Route | Purpose | Role |
+|---|---|---|
+| `/dashboard` | Live decision feed + threat rollup + posture score | Any |
+| `/incidents` | Incident triage · SOC feed · Collusion cluster detector (§Phase 3 item 2) | Any |
+| `/approval-inbox` | Category-B escalations awaiting human approval; scope-of-approval banner names the exact rule and explains the §5.7 single-action binding | Any |
+| `/agents`, `/agents/:id` | Registry with per-agent Provenance block (§4.3 Aegis Profile snapshot: profile hash + `model_ref`, `prompt_template_hash`, `tool_manifest_hash`, `container_image_digest`, `sbom_ref`); 429 on issuance quota exceeded surfaces a friendly quota-reached message pointing at `/settings?tab=quota` | Any |
+| `/identity-graph` | Compromise simulation, blast radius, trust-boundary view | Any |
+| `/flight-recorder` | Per-request timeline with pre-gate / per-gate / post-gate snapshots | Any |
+| `/decision-explorer`, `/session-explorer` | Deep drill into a single decision or agent session | Any |
+| `/lifecycle` | Deployment lifecycle admin (see §14.5 above) — INSTALL → … → DESTROY with C3-ledgered transitions + destruction certificate download | OWNER |
+| `/system-health` | 25-container health · Operational Queues (audit stream depth, DLQs, billing retry) · Execution Witness deployment-mode banner (sidecar = green / serverless = amber / heartbeat-stale = red) · Detection Engine panel (24h risk sparkline + top threats + recent decisions) | Any |
+| `/kill-switch` | Tenant-wide kill switch — Redis + Postgres backed; survives a Redis flush by rehydrating on the next request | OWNER / ADMIN |
+| `/settings?tab=signal-weights` | Per-tenant tuning of the five risk signals (inference / behavior / anomaly / cost / cross-agent). Slider + numeric input, sum-of-weights informational (backend does not normalize), reset-to-defaults | ADMIN / SECURITY |
+| `/settings?tab=feature-flags` | Per-tenant opt-in toggles: `c3_sampling`, `behavior_fingerprinting`. Shows effective, override, and env-var fallback distinctly | OWNER |
+| `/settings?tab=sso` | SSO config (SAML / OIDC) + read-only "Trusted issuers" panel (SPIFFE / Entra / Okta) with per-adapter status + env-var names for ops | OWNER |
+| `/settings?tab=webhooks` | Slack · Microsoft Teams · PagerDuty · generic-HTTPS escalation channels, each with a live test button that fires a real message | ADMIN |
+| `/settings?tab=scim-tokens` | SCIM 2.0 bearer tokens (list / create / revoke) + one-click reconcile trigger (`POST /scim/reconcile`) | ADMIN |
+| `/settings?tab=quota` | Rate limit, daily / monthly caps, agent issuance quota, current usage | ADMIN |
+| `/compliance` | AEVF v3 evidence bundle export · destruction certificate re-issue · signing-key history with cross-signed rotation markers · framework-controls rollup | ADMIN |
+| `/policies` | Visual policy builder (compiles to Rego) · policy simulator · staging / shadow replay · analytics | ADMIN |
+| `/audit-logs` | Chain-verifiable audit log with an in-browser "Verify Integrity" action | Any |
+| `/admin` | Platform super-admin (cross-tenant) — deliberately URL-only, not in the sidebar | Platform |
+
+**Real-time surface.** All live pages consume a single Server-Sent Events
+endpoint (`GET /events/stream`), fanned out from Redis pub/sub. 16 event
+types (`policy_decision`, `incident_updated`, `approval_required`,
+`approval_resolved`, `kill_switch`, `risk_updated`, `agent_created`,
+`agent_deleted`, `tool_executed`, `behavior_flagged`, `would_have_blocked`,
+`llm_proxy_call`, `llm_proxy_escalate`, `billing_updated`, `quota_warning`,
+`insight_generated`) all have publishers in `services/` and at least one
+consumer in `ui/src/pages/`. Verified by a UI ↔ backend parity check —
+every subscribed topic has a real publisher; every `setInterval` polling
+loop has a matching `clearInterval` on unmount.
+
+**Fresh vs cached.** Pages that are opened WHEN something is broken
+(SystemHealth, Incidents, ApprovalInbox) use `Promise.allSettled` for
+their fanout fetches so a single downstream failure never blocks the
+whole page — a partially-degraded panel is more useful than a full-page
+error to an on-call operator.
 
 ---
 
@@ -707,16 +882,33 @@ parameter for prod-ha. Full walkthrough:
 ## Repository layout
 
 ```
-services/         12 FastAPI microservices — gateway is the sole entry point
-sdk/              shared internal Python helpers + acp-client
-integrations/     aegis-anthropic / aegis-openai / aegis-langchain / aegis-bedrock
-tools/            aegis_verify (publishes as aegis-aevf on PyPI)
-ui/               React 18 + Vite admin console (served by nginx)
-infra/            docker-compose + terraform (modules + envs/{dev, prod-ha})
-tests/            pytest — security/, policy/, eval/, integration/
-demos/            three end-to-end demo packs
-scripts/          ops scripts (backup, reconcile, export, redact, key rotation)
-docs/             GitBook reference documentation
+services/                 15 FastAPI microservices — gateway is the sole entry point
+  gateway/                edge — 5 sequential gates + all customer-facing routers
+    routers/              tenant_settings, lifecycle, sso, decision, risk, ...
+    idp_verifiers.py      §4.2 multi-IdP dispatch (SPIFFE / Entra / Okta XAA)
+  witness/                §6 Execution Witness — sidecar/serverless deployment modes
+  autonomy/               contracts + playbook runner + Slack/Teams/PD/webhook dispatch
+  identity_graph/         graph + collusion detector (§Phase 3 item 2)
+  ...
+sdk/
+  common/
+    atf_lifecycle.py      §14.5 deployment state machine (pure, unit-testable)
+    tenant_settings.py    Redis-backed per-tenant flag layer with env fallback
+    behavior_opt_in.py    §9.2 opt-in with ADR-002 "never authoritative" invariant
+    consistency_sampling  §9.3 sample-and-check for C3 actions
+integrations/             aegis-anthropic / aegis-openai / aegis-langchain / aegis-bedrock
+tools/                    aegis_verify (publishes as aegis-aevf on PyPI)
+ui/                       React 18 + Vite admin console (served by nginx)
+  src/pages/              58 pages — Dashboard, Incidents, LifecycleAdmin, ...
+  src/components/settings FeatureFlagsTab, SignalWeightsTab, ScimTokensTab, ...
+infra/                    docker-compose + terraform (modules + envs/{dev, prod-ha})
+tests/                    pytest — security/, policy/, eval/, integration/
+demos/                    three end-to-end demo packs
+scripts/                  ops scripts (backup, reconcile, export, redact, key rotation)
+docs/
+  dev/ui-wiring-gaps.md   living ledger of every UI wiring gap (21/21 closed)
+  security/               threat model, witness trust boundary
+  AEVF/                   evidence verification format spec + reference bundle
 ```
 
 ---
