@@ -122,6 +122,28 @@ STRIPE_KEY=$(ssm "/$${PARAM_PREFIX}/stripe/secret-key")
 STRIPE_PRO=$(ssm "/$${PARAM_PREFIX}/stripe/pro-price-id")
 STRIPE_ENT=$(ssm "/$${PARAM_PREFIX}/stripe/enterprise-price-id")
 
+# Sprint UI-5 — ATF §4.2 multi-IdP acceptance. Each adapter is OFF unless
+# the corresponding params are set; empty string is safe (adapter skips).
+SPIFFE_TD=$(ssm "/$${PARAM_PREFIX}/idp/spiffe-trust-domain")
+SPIFFE_BUNDLE=$(ssm "/$${PARAM_PREFIX}/idp/spiffe-trust-bundle-json")
+SPIFFE_AUD=$(ssm "/$${PARAM_PREFIX}/idp/spiffe-audience")
+ENTRA_TID=$(ssm "/$${PARAM_PREFIX}/idp/entra-tenant-id")
+ENTRA_AUD=$(ssm "/$${PARAM_PREFIX}/idp/entra-audience")
+OKTA_ISS=$(ssm "/$${PARAM_PREFIX}/idp/okta-issuer")
+OKTA_AUD=$(ssm "/$${PARAM_PREFIX}/idp/okta-audience")
+
+# Sprint UI-3 — per-tenant feature flag env-var fallback (Redis override
+# in the UI takes precedence). Comma-separated tenant IDs; empty = off.
+C3_TENANTS=$(ssm "/$${PARAM_PREFIX}/features/c3-sampling-tenants")
+BEHAVIOR_TENANTS=$(ssm "/$${PARAM_PREFIX}/features/behavior-fingerprinting-tenants")
+BEHAVIOR_MODE=$(ssm "/$${PARAM_PREFIX}/features/behavior-fingerprinting-mode")
+
+# Sprint UI-5 — escalation channel fallbacks (per-tenant Redis config in
+# UI overrides these). Empty = alertmanager runs but drops the fanout.
+SLACK_WH=$(ssm "/$${PARAM_PREFIX}/alerting/slack-webhook-url")
+TEAMS_WH=$(ssm "/$${PARAM_PREFIX}/alerting/teams-webhook-url")
+PD_KEY=$(ssm "/$${PARAM_PREFIX}/alerting/pagerduty-routing-key")
+
 # audit-final-22 follow-on (2026-06-23) — fetch the 14 per-service mesh
 # private keys + the shared trusted-keys map. Without these, the gateway
 # can sign mesh JWTs but downstream services (registry, audit, etc.)
@@ -201,8 +223,39 @@ GRAFANA_ADMIN_PASSWORD=$${GRAFANA_PWD}
 VITE_GATEWAY_URL=https://$${DOMAIN}
 SLACK_OAUTH_CLIENT_ID=
 SLACK_OAUTH_CLIENT_SECRET=
-SLACK_WEBHOOK_URL=
-PAGERDUTY_ROUTING_KEY=
+
+# Sprint UI-6 — witness service reachable by container name on the
+# docker-compose network. Without this the gateway falls back to
+# config.py default `http://localhost:8017` which does NOT resolve
+# inside the gateway container.
+WITNESS_SERVICE_URL=http://witness:8000
+
+# Sprint UI-6 — MCP server (if deployed alongside) needs the gateway URL
+# to reach /execute. mcp_server/tools.py raises at import time in prod
+# when both AEGIS_MCP_GATEWAY_URL and AEGIS_GATEWAY_URL are unset.
+AEGIS_MCP_GATEWAY_URL=http://gateway:8000
+
+# Sprint UI-5 — escalation channels; per-tenant Redis config in the UI
+# overrides these. Empty = channel is skipped (alertmanager keeps running).
+SLACK_WEBHOOK_URL=$${SLACK_WH}
+TEAMS_WEBHOOK_URL=$${TEAMS_WH}
+PAGERDUTY_ROUTING_KEY=$${PD_KEY}
+
+# Sprint UI-5 — multi-IdP acceptance. Each adapter is OFF unless BOTH
+# of its required fields are set. See services/gateway/idp_verifiers.py.
+SPIFFE_TRUST_DOMAIN=$${SPIFFE_TD}
+SPIFFE_TRUST_BUNDLE_JSON=$${SPIFFE_BUNDLE}
+SPIFFE_AUDIENCE=$${SPIFFE_AUD}
+ENTRA_TENANT_ID=$${ENTRA_TID}
+ENTRA_AUDIENCE=$${ENTRA_AUD}
+OKTA_ISSUER=$${OKTA_ISS}
+OKTA_AUDIENCE=$${OKTA_AUD}
+
+# Sprint UI-3 — env-var fallback for per-tenant feature flags. UI
+# toggles at /settings?tab=feature-flags override these.
+ACP_C3_SAMPLING_TENANTS=$${C3_TENANTS}
+ACP_BEHAVIOR_FINGERPRINTING_TENANTS=$${BEHAVIOR_TENANTS}
+ACP_BEHAVIOR_FINGERPRINTING_MODE=$${BEHAVIOR_MODE}
 ACP_MESH_TRUSTED_KEYS=$${MESH_TRUSTED}
 MESH_API_PRIVATE_KEY=$${MESH_API_PRIV}
 MESH_AUDIT_PRIVATE_KEY=$${MESH_AUDIT_PRIV}
