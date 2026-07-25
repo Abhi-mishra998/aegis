@@ -245,11 +245,10 @@ Bedrock / Azure / their on-prem GPU — Aegis doesn't mark them up.
 
 For a customer with 10 million tool calls per month:
 
-- Aegis Enterprise tier (per `docs/legal/sla-template.md` + Stripe
-  price IDs): ~$5k/month flat
+- Aegis self-hosted (OSS): infra baseline ~$260/mo (see [aegis-on-aws.md])
 - Their own LLM cost (e.g. Claude Sonnet 4.5 on Bedrock at $3/$15
   per 1M tokens, ~500 tokens per tool call): ~$15k-30k/month
-- **Aegis is ~20-30% of the total stack cost** for a customer at
+- **Aegis is <2% of the total stack cost** for a customer at
   that scale; the LLM is the bigger line item. Path A doesn't change
   this — the LLM cost is the same whether Aegis proxies or not.
 

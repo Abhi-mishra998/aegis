@@ -33,8 +33,7 @@ from dataclasses import dataclass
 # the /admin* rule now lists only ROOT.
 ROLE_TIERS = ("ROOT", "OWNER", "ADMIN", "SECURITY_ANALYST", "DEVELOPER", "READ_ONLY")
 
-# arch-26 W3.4 2026-06-26 — plan-tier ladder (highest → lowest). Mirrors
-# the Stripe price-id → tier mapping in services/gateway/routers/stripe_webhook.py.
+# arch-26 W3.4 2026-06-26 — plan-tier ladder (highest → lowest).
 # enterprise inherits pro inherits starter inherits basic. A rule that
 # declares min_plan_tier="enterprise" requires the tenant be on enterprise
 # (no automatic upgrade). Today no rule uses this — the scaffold is in
@@ -215,11 +214,9 @@ RULES: tuple[Rule, ...] = (
     _R("/policy/test",                 ("POST",),        min_role="SECURITY_ANALYST"),
     _R("/policy/*",                    ("POST","PUT","PATCH","DELETE"), min_role="SECURITY_ANALYST"),
     _R("/policy*",                     ("GET",),         min_role="READ_ONLY"),
-    # Audit 2026-06-22 §3 — close fall-through bypass on sso/billing writes
+    # Audit 2026-06-22 §3 — close fall-through bypass on sso writes
     _R("/sso/saml/*",                  ("POST","PUT","PATCH","DELETE"), roles=("OWNER",)),
     _R("/sso/saml*",                   ("GET",),         min_role="ADMIN"),
-    _R("/billing/subscription",        ("POST","PATCH","PUT","DELETE"), roles=("OWNER",)),
-    _R("/billing/subscription*",       ("GET",),         min_role="ADMIN"),
     _R("/integrations/jira/test",      ("POST",),        roles=("OWNER", "ADMIN")),
     # Audit 2026-06-22 §3 — close fall-through: /integrations/jira POST (initial
     # create) was uncovered (only PUT/DELETE were rule-bound). Same for /servicenow.
@@ -245,15 +242,6 @@ RULES: tuple[Rule, ...] = (
     _R("/scim/v2/tokens/*",            ("DELETE",),      roles=("OWNER",)),
     _R("/scim/v2/tokens",              ("POST",),        roles=("OWNER",)),
     _R("/scim/v2/tokens",              ("GET",),         roles=("OWNER",)),
-    _R("/billing/checkout",            ("POST",),        roles=("OWNER",)),
-    _R("/billing/portal",              ("POST",),        roles=("OWNER",)),
-    # 2026-06-22 — billing GETs are read-only views (plan, invoices, cost
-    # attribution, budget requests). Org ADMIN should see them to do
-    # ops/finance work even though only OWNER can move money via the
-    # POST endpoints above. Personal workspaces are auto-promoted to
-    # OWNER in sdk/common/clerk_auth.py so single-user accounts always
-    # land here regardless.
-    _R("/billing*",                    ("GET",),         roles=("OWNER", "ADMIN")),
     _R("/tenant/quota",                ("GET",),         min_role="READ_ONLY"),
     _R("/auto-response/*",             ("*",),           min_role="SECURITY_ANALYST"),
     _R("/autonomy/contracts/*",        ("POST", "PATCH", "DELETE"), roles=("OWNER", "ADMIN")),

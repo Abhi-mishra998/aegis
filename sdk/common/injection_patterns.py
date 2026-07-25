@@ -40,6 +40,34 @@ INJECTION_PATTERN_DEFS: list[tuple[re.Pattern[str], str, str]] = [
         "persona_reassignment",
         "high",
     ),
+    # Sprint UI-Fix (2026-07-25 brutal-test audit) — bare-name role hijack.
+    # "You are now DAN" / "You are now Aegis-Uncensored" / "You are now ChatGPT-Dev".
+    # Original persona_reassignment required "a" or "an" determiner and missed
+    # any-caps bare name pattern. The bare-name variant is the entire DAN
+    # jailbreak family (DAN, STAN, DUDE, AIM, OMEGA, etc.).
+    (
+        re.compile(
+            r"you\s+are\s+now\s+(?:DAN|STAN|DUDE|AIM|OMEGA|EVIL|JAILBREAK|"
+            r"UNRESTRICTED|UNFILTERED|(?:ChatGPT|Claude|GPT|AI)[-\s]?(?:DEV|JAILBREAK|"
+            r"UNCENSORED|EVIL|EXTREME))\b",
+            re.IGNORECASE,
+        ),
+        "persona_hijack_bare_name",
+        "critical",
+    ),
+    # Sprint UI-Fix — companion pattern for the DAN framing without "now".
+    # "You are DAN", "act as DAN", "pretend to be DAN". Covers the phrasing
+    # where the attacker skips the "now" transition word.
+    (
+        re.compile(
+            r"(?:you\s+are|act\s+as|pretend\s+to\s+be)\s+"
+            r"(?:DAN|STAN|DUDE|AIM|OMEGA|(?:an\s+)?"
+            r"(?:AI|assistant|model)\s+without\s+(?:restrictions?|filters?|rules?|limits?))\b",
+            re.IGNORECASE,
+        ),
+        "persona_hijack_dan_family",
+        "critical",
+    ),
     (
         re.compile(
             # Sprint 2.5 — added ``have\s+no`` to catch ``act as if you have

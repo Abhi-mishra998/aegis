@@ -97,18 +97,26 @@ async def _tally_execute_tool_calls_sql(
             select(func.count()).select_from(AuditLog).where(*base_filter),
         )).scalar_one() or 0
     )
+    # Group by the raw column, coalesce+lower in Python. Postgres treats
+    # two `coalesce(col, $1)` expressions with distinct placeholders as
+    # non-identical at parse time and rejects the SELECT/GROUP-BY pair
+    # with "column must appear in GROUP BY" (2026-07-25 EU_AI_ACT bundle
+    # 500). Raw column in GROUP BY sidesteps the ambiguity entirely.
     by_tool_rows = (await db.execute(
-        select(func.coalesce(AuditLog.tool, "unknown"), func.count())
+        select(AuditLog.tool, func.count())
         .where(*base_filter)
-        .group_by(func.coalesce(AuditLog.tool, "unknown")),
+        .group_by(AuditLog.tool),
     )).all()
-    by_tool = {str(t): int(c) for t, c in by_tool_rows}
+    by_tool = {(t or "unknown"): int(c) for t, c in by_tool_rows}
     by_decision_rows = (await db.execute(
-        select(func.lower(func.coalesce(AuditLog.decision, "unknown")), func.count())
+        select(AuditLog.decision, func.count())
         .where(*base_filter)
-        .group_by(func.lower(func.coalesce(AuditLog.decision, "unknown"))),
+        .group_by(AuditLog.decision),
     )).all()
-    by_decision = {str(d): int(c) for d, c in by_decision_rows}
+    by_decision: dict[str, int] = {}
+    for d, c in by_decision_rows:
+        key = (d or "unknown").lower()
+        by_decision[key] = by_decision.get(key, 0) + int(c)
     first_id = (await db.execute(
         select(AuditLog.id).where(*base_filter)
         .order_by(AuditLog.timestamp.asc()).limit(1),

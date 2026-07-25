@@ -111,7 +111,7 @@ across both clouds:
 ```
 
 **Single NAT Gateway** (Azure equivalent: NAT Gateway resource) for
-outbound to Anthropic / OpenAI / Stripe / Sigstore. **No public IPs**
+outbound to Anthropic / OpenAI / Sigstore. **No public IPs**
 on VMSS instances; Front Door is the only ingress.
 
 ---

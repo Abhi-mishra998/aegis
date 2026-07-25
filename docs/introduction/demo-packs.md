@@ -132,7 +132,7 @@ The Incidents page emptiness is by design — the demo scripts never trip the in
 The packs are read-or-write against the live dev environment. They are not isolated. Running them:
 
 - Mutates the registry (`agents` rows), the autonomy service (contracts), the identity_graph (nodes / edges), and the tenant rpm_limit (support pack sets 30/min for scenario 6).
-- Does **not** mutate production-style billing — usage events flow through but no Stripe webhook is wired in dev.
+- Usage events flow through the `audit → outbox → usage` telemetry pipeline; no external biller is called (OSS build).
 - Does **not** leave fixtures behind beyond the agent rows and audit/decision history. To reset, drop the three `*-demo` rows from `acp_registry.agents`.
 
 ## Next

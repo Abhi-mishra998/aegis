@@ -94,7 +94,7 @@ resource "aws_s3_bucket_policy" "alb_logs" {
 
 # ─── Backups bucket ────────────────────────────────────────────────────
 resource "aws_s3_bucket" "backups" {
-  bucket        = "${var.name_prefix}-backups-${var.account_id}"
+  bucket        = "${var.name_prefix}-backups-${var.account_id}${var.backup_bucket_suffix}"
   force_destroy = false
 
   # Sprint EH-5 — S3 Object Lock for tamper-evidence on backup objects.
@@ -163,7 +163,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
 # permissions it needs to ship management-event logs. Without the
 # policy, the CloudTrail create call fails with InsufficientS3BucketPolicy.
 resource "aws_s3_bucket" "cloudtrail" {
-  bucket        = "${var.name_prefix}-cloudtrail-${var.account_id}"
+  bucket        = "${var.name_prefix}-cloudtrail-${var.account_id}${var.backup_bucket_suffix}"
   force_destroy = false
 
   # Sprint EH-5 — CloudTrail logs are the forensic backstop. Object Lock

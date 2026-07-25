@@ -84,9 +84,6 @@ _SKIP_PATHS = frozenset(
         "/auth/sso/providers",  # SSO provider list (public — drives login UI buttons)
         "/events/stream",  # SSE — inline auth handled in the route handler
         "/csp/report",     # CSP violation reports — browsers can't attach creds; handler 204s
-        # sprint-5.3: Stripe webhook authenticates via Stripe-Signature, not JWT.
-        # The handler verifies the signature before processing the event.
-        "/billing/stripe/webhook",
         # Sprint 1 — Clerk integration surface. The webhook authenticates
         # via Svix signature (verified upstream in identity); the
         # provision endpoint authenticates via Clerk Bearer JWT validated

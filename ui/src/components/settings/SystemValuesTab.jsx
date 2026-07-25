@@ -25,7 +25,7 @@ import Button from '../Common/Button';
  */
 const SUGGESTED_KINDS = [
   { kind: 'table',    blurb: 'DB tables (customers, payments, audit_logs)' },
-  { kind: 'api',      blurb: 'External APIs / webhooks (stripe, wire-transfer)' },
+  { kind: 'api',      blurb: 'External APIs / webhooks (wire-transfer, integrations)' },
   { kind: 'secret',   blurb: 'Credentials / API keys' },
   { kind: 'bucket',   blurb: 'Object storage buckets (S3, GCS)' },
   { kind: 'queue',    blurb: 'Message queues / streams (SQS, Kafka)' },

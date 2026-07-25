@@ -1,3 +1,4 @@
+import React from 'react'
 import { AlertOctagon, RefreshCw, Copy, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
 
 function buildReport(error, errorInfo, incidentId) {

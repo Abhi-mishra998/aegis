@@ -15,10 +15,11 @@ from services.usage.schemas.usage import UsageCreate, UsageSummary
 
 logger = structlog.get_logger(__name__)
 
-_INTERNAL_HEADERS = {
-    **mesh_headers("usage"),
-    "Content-Type": "application/json",
-}
+
+def _internal_headers() -> dict[str, str]:
+    """Fresh mesh JWT per call — mesh TTL is 5 minutes, module-level cache
+    goes stale (2026-07-25 audit /logs/* 403 fix)."""
+    return {**mesh_headers("usage"), "Content-Type": "application/json"}
 
 
 class UsageRepository:
@@ -61,7 +62,7 @@ class UsageRepository:
                 await client.patch(
                     f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/billing-status/complete",
                     json={"audit_ids": [str(audit_id)]},
-                    headers=_INTERNAL_HEADERS,
+                    headers=_internal_headers(),
                 )
         except Exception as exc:
             logger.warning("audit_billing_status_update_failed", audit_id=str(audit_id), error=str(exc))
@@ -136,7 +137,7 @@ class UsageRepository:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
                     f"{settings.AUDIT_SERVICE_URL.rstrip('/')}/logs/billing-stats",
-                    headers={**_INTERNAL_HEADERS, "X-Tenant-ID": str(tenant_id)},
+                    headers={**_internal_headers(), "X-Tenant-ID": str(tenant_id)},
                 )
                 if resp.status_code == 200:
                     stats = resp.json().get("data", {})

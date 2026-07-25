@@ -504,7 +504,6 @@ from services.gateway.routers.auto_response import (
 from services.gateway.routers.autonomy import (
     router as _autonomy_router,  # noqa: E402
 )
-from services.gateway.routers.billing import router as _billing_router  # noqa: E402
 from services.gateway.routers.clerk import router as _clerk_router  # noqa: E402
 from services.gateway.routers.compliance import (
     router as _compliance_router,  # noqa: E402
@@ -569,10 +568,6 @@ from services.gateway.routers.sso import router as _sso_router  # noqa: E402
 from services.gateway.routers.storylines import (
     router as _storylines_router,  # noqa: E402
 )
-from services.gateway.routers.stripe_webhook import (
-    router as _stripe_router,  # noqa: E402
-)
-
 # Sprint S5 (2026-06-19) — Hierarchical Teams CRUD.
 from services.gateway.routers.teams import router as _teams_router  # noqa: E402
 from services.gateway.routers.tenant import router as _tenant_router  # noqa: E402
@@ -607,7 +602,6 @@ app.include_router(_dlq_router)
 app.include_router(_autonomy_router)
 app.include_router(_proxies_router)
 app.include_router(_tenant_admin_router)
-app.include_router(_stripe_router)
 app.include_router(_sso_router)
 app.include_router(_dashboard_router)
 app.include_router(_auto_response_router)
@@ -617,7 +611,6 @@ app.include_router(_storylines_router)
 app.include_router(_iag_router)
 app.include_router(_remediation_router)
 app.include_router(_threatintel_router)
-app.include_router(_billing_router)
 app.include_router(_compliance_router)
 app.include_router(_transparency_router)
 app.include_router(_risk_router)

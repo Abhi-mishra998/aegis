@@ -45,4 +45,20 @@ if [ "$violations" -gt 0 ]; then
   echo "FAILED: $violations React-hook import violation(s) found" >&2
   exit 1
 fi
-echo "✓ all React-hook callers import their hooks"
+
+# Also catch bare `React.Foo` namespace refs without `import React from 'react'`.
+# Killer bug 2026-07-25: main.jsx used <React.StrictMode> with no React import →
+# bundle shipped `Uncaught ReferenceError: React is not defined` on load.
+while IFS= read -r f; do
+  if grep -qE "^import React( |,)" "$f"; then
+    continue
+  fi
+  echo "ERROR: $f references React.* but does not 'import React from \"react\"'" >&2
+  violations=$((violations + 1))
+done < <(grep -RIlE "\bReact\.[A-Za-z]" src/ 2>/dev/null | grep -E '\.(jsx?|tsx?)$')
+
+if [ "$violations" -gt 0 ]; then
+  echo "FAILED: $violations React import violation(s) found" >&2
+  exit 1
+fi
+echo "✓ all React-hook and React.* callers import React"

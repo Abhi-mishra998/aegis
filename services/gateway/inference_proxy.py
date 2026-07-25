@@ -249,8 +249,35 @@ class InputValidator:
 class InjectionDetector:
     """Rule-based prompt injection detection."""
 
-    @staticmethod
-    def scan(text: str) -> ProxyDecision:
+    # Sprint UI-Fix (2026-07-25 brutal-test audit) — attacker embeds zero-width
+    # characters between words to break the regex tokenizer while the LLM still
+    # reads through them normally ("Ignore​previous‌instructions").
+    # Also normalises full-width Latin letters (used to spell "IGNORE" as
+    # "ＩＧＮＯＲＥ" past a pattern that looks for [a-z]). Strip zero-widths, apply
+    # NFKC normalization, THEN scan.
+    _ZERO_WIDTH = {
+        "​",  # zero-width space
+        "‌",  # zero-width non-joiner
+        "‍",  # zero-width joiner
+        "⁠",  # word joiner
+        "﻿",  # zero-width no-break space (BOM)
+        "᠎",  # Mongolian vowel separator (rendered invisible)
+    }
+
+    @classmethod
+    def _normalize(cls, text: str) -> str:
+        # Replace invisible chars with a regular space — deleting them fuses
+        # word boundaries and defeats the regex (attacker's exact bypass:
+        # "Ignore​all‌previous" → stripping gives
+        # "Ignoreallprevious" which regex misses; replacing preserves
+        # "Ignore all previous"). Then NFKC (full-width Latin, etc.).
+        cleaned = "".join(" " if ch in cls._ZERO_WIDTH else ch for ch in text)
+        import unicodedata
+        return unicodedata.normalize("NFKC", cleaned)
+
+    @classmethod
+    def scan(cls, text: str) -> ProxyDecision:
+        text = cls._normalize(text)
         for pattern in INJECTION_PATTERNS:
             match = pattern.search(text)
             if match:
@@ -269,6 +296,110 @@ class InjectionDetector:
                     metadata={"pattern": pattern.pattern, "match": match.group(0)[:80]},
                 )
         return ProxyDecision(allowed=True, reason="no injection detected")
+
+
+# ---------------------------------------------------------------------------
+# B2. INBOUND PII DETECTOR (Sprint UI-Fix v3 2026-07-25)
+# ---------------------------------------------------------------------------
+# Catches sensitive identifiers in the /v1/messages user prompt BEFORE it
+# reaches the upstream LLM. Rationale: even if the LLM refuses to process
+# the data (Claude 4.5 generally does), the prompt is still logged inside
+# the tenant's audit chain + Anthropic's request logs, and the token bill
+# still fires. Better to reject at the gate.
+#
+# Coverage: US SSN, Luhn-valid credit card numbers, obvious API-key
+# prefixes (Anthropic/OpenAI/AWS/GitHub), private RSA/EC keys. NOT
+# exhaustive (Presidio-style is a bigger dependency); the patterns are
+# tuned for false-positive-low, false-negative-high tradeoff — a real
+# customer prompt that happens to contain a credit-card-like number
+# would trigger, and that's the correct posture for a security proxy.
+class PiiDetector:
+    """Detects sensitive identifiers in prompt text."""
+
+    # Tolerate whitespace between digit groups — attacker splices zero-widths
+    # (which our _normalize turns into spaces) inside "123-45-6789" and we
+    # still want to catch it. Bounded \s* keeps the pattern from matching
+    # unrelated long-form paragraphs.
+    _SSN_RE = re.compile(r"\b\d{3}\s*-\s*\d{2}\s*-\s*\d{4}\b")
+    _CC_RE  = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+    _API_KEY_RES = [
+        (re.compile(r"\bsk-ant-api\d\d-[A-Za-z0-9_-]{40,}"), "anthropic_api_key"),
+        (re.compile(r"\bsk-[A-Za-z0-9]{20,}"),               "openai_api_key"),
+        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"),                "aws_access_key"),
+        (re.compile(r"\bghp_[A-Za-z0-9]{36}\b"),             "github_pat"),
+        (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),      "slack_token"),
+    ]
+    _PRIV_KEY_RE = re.compile(
+        r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PRIVATE )?PRIVATE KEY-----",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _luhn_ok(cls, digits: str) -> bool:
+        """Verify a possible-card-number passes Luhn. Reduces false positives
+        from arbitrary long-digit runs (like order numbers)."""
+        total, alt = 0, False
+        for d in reversed(digits):
+            if not d.isdigit():
+                continue
+            n = int(d)
+            if alt:
+                n *= 2
+                if n > 9:
+                    n -= 9
+            total += n
+            alt = not alt
+        return total > 0 and total % 10 == 0
+
+    @classmethod
+    def scan(cls, text: str) -> ProxyDecision:
+        # Normalise the same way InjectionDetector does — attackers use
+        # zero-width chars to obfuscate PII too ("123-45-6789" with
+        # zero-widths spliced between digits).
+        text = InjectionDetector._normalize(text)
+
+        findings: list[str] = []
+        matched_sample: str = ""
+
+        if cls._SSN_RE.search(text):
+            findings.append("ssn_detected")
+            matched_sample = cls._SSN_RE.search(text).group(0)
+
+        # Luhn-check any 13-19 digit run to weed out order/tracking numbers.
+        for m in cls._CC_RE.finditer(text):
+            digits_only = "".join(c for c in m.group(0) if c.isdigit())
+            if 13 <= len(digits_only) <= 19 and cls._luhn_ok(digits_only):
+                findings.append("credit_card_detected")
+                matched_sample = matched_sample or m.group(0)
+                break
+
+        for pat, name in cls._API_KEY_RES:
+            if pat.search(text):
+                findings.append(name)
+                matched_sample = matched_sample or pat.search(text).group(0)[:20]
+                break  # one API-key match is enough
+
+        if cls._PRIV_KEY_RE.search(text):
+            findings.append("private_key_material")
+            matched_sample = matched_sample or "-----BEGIN … PRIVATE KEY-----"
+
+        if not findings:
+            return ProxyDecision(allowed=True, reason="no PII detected")
+
+        logger.warning(
+            "pii_in_prompt_detected",
+            findings=findings,
+            sample=matched_sample[:32],
+        )
+        return ProxyDecision(
+            allowed=False,
+            reason=f"PII in prompt: {', '.join(findings)}",
+            status_code=400,
+            flags=findings,
+            risk_score=80.0,
+            risk_level="high",
+            metadata={"sample": matched_sample[:32]},
+        )
 
 
 # ---------------------------------------------------------------------------

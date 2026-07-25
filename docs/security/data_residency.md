@@ -79,7 +79,6 @@ For the EU instance the matching EU posture is:
 | Clerk (auth/SSO) | Email, name, hashed password | Clerk supports EU residency at the org tier (`region = "eu-west-1"`); the EU Aegis stack uses a separate Clerk org pinned to EU. See <https://clerk.com/docs/deployments/regions>. |
 | Anthropic API | Customer prompt + LLM response | Anthropic offers EU-residency endpoints (`api.eu.anthropic.com`); the EU stack's `ANTHROPIC_API_BASE` is set to that endpoint in SSM. |
 | OpenAI API | Customer prompt + LLM response | OpenAI offers EU residency via the Azure-hosted variant; default in EU stack is the Azure EU endpoint. Document the Azure path with the customer in their DPA. |
-| Stripe (billing) | Email, company name, charge metadata | Stripe processes EU customers via its EU entity automatically. We do NOT send any prompt or policy data to Stripe. |
 | GitHub (source code only) | None | We use GitHub to host application source; no customer data ever lands here. |
 | AWS | All of the above, bound to eu-west-1 | Standard AWS DPA + Schrems II SCCs. |
 | Sigstore (cosign verify) | None | Public transparency log; we publish artifact signatures, never customer data. |

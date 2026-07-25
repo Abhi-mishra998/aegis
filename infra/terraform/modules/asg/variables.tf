@@ -98,11 +98,6 @@ variable "mesh_jwt_secret_id" {
   type        = string
 }
 
-variable "stripe_webhook_secret_id" {
-  description = "Secrets Manager id for Stripe webhook secret."
-  type        = string
-}
-
 variable "groq_api_key_secret_id" {
   description = "Secrets Manager id for Groq API key."
   type        = string

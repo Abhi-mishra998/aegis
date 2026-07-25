@@ -54,7 +54,7 @@ launch templates fire user_data:
 # Per-tenant secrets — start with empties; the app boots cleanly
 # even with placeholders, the operator fills in real values later.
 for key in clerk_secret_key clerk_publishable_key anthropic_api_key \
-           openai_api_key stripe_secret_key internal_secret; do
+           openai_api_key internal_secret; do
   aws ssm put-parameter --region eu-west-1 \
     --name "/aegis/eu/${key}" \
     --value "PENDING_OPERATOR" \

@@ -200,9 +200,7 @@ curl -sS https://ha.aegisagent.in/billing/dlq \
 
 - [Audit](audit.md) — the source of the outbox
 - [Identity](identity.md) — the tenant cap surface
-- [Billing UI](../ui/settings/billing.md) — the human-facing surface
 
-There is no separate `billing` service. Billing is a cross-service flow:
-`audit` → outbox → `usage` (this service) → optional Stripe webhook in
-`api`. The UI page at `/billing` consumes the usage endpoints documented
-above.
+There is no separate `billing` service. Cost aggregation is a cross-service
+flow: `audit` → outbox → `usage` (this service). The usage endpoints are
+telemetry-only in the OSS build — plug in your own biller if you need one.

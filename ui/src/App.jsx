@@ -44,7 +44,6 @@ const safeLazy = (loader) => lazy(() => loader().catch((err) => {
 // Order preserved from the original eager list for review.
 const Login              = safeLazy(() => import('./pages/Login'));
 const Signup             = safeLazy(() => import('./pages/Signup'));
-const Pricing            = safeLazy(() => import('./pages/Pricing'));
 const OnboardingWizard   = safeLazy(() => import('./pages/OnboardingWizard'));
 const ShadowModeReview   = safeLazy(() => import('./pages/ShadowModeReview'));
 const Policies           = safeLazy(() => import('./pages/Policies'));
@@ -55,7 +54,6 @@ const Agents             = safeLazy(() => import('./pages/Agents'));
 const KillSwitch         = safeLazy(() => import('./pages/KillSwitch'));
 const Forensics          = safeLazy(() => import('./pages/Forensics'));
 const AuditLogs          = safeLazy(() => import('./pages/AuditLogs'));
-const Billing            = safeLazy(() => import('./pages/Billing'));
 const AgentPlayground    = safeLazy(() => import('./pages/AgentPlayground'));
 const DeveloperPanel     = safeLazy(() => import('./pages/DeveloperPanel'));
 const SystemHealth       = safeLazy(() => import('./pages/SystemHealth'));
@@ -418,12 +416,11 @@ function App() {
               <Route path="/playground"      element={<ProtectedRoute><AgentPlayground /></ProtectedRoute>} />
               <Route path="/auto-response"   element={<ProtectedRoute><AutoResponse /></ProtectedRoute>} />
               <Route path="/compliance"      element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
-              {/* Sprint 6 — Pricing/marketing pages out of the authenticated
-                  app per PRODUCT_PLAN §12.3. External links land on dashboard. */}
+              {/* Pricing/Billing pages deleted 2026-07-25 — project is open
+                  source. Old bookmarks redirect to dashboard. */}
               <Route path="/open-source" element={<Navigate to="/dashboard" replace />} />
-              {/* U11 — Pricing is now a real public page (3 tiers + FAQ + sales
-                  CTA). First sales question every buyer asks. */}
-              <Route path="/pricing"     element={<Pricing />} />
+              <Route path="/pricing"     element={<Navigate to="/dashboard" replace />} />
+              <Route path="/billing"     element={<Navigate to="/dashboard" replace />} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
 
               {/* Legacy admin routes — consolidated into the Settings hub.
@@ -439,7 +436,6 @@ function App() {
               <Route path="/observability"   element={<Navigate to="/live-feed" replace />} />
               <Route path="/system-health"   element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />
-              <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
               <Route path="/webhook-settings"  element={<Navigate to="/settings?tab=webhooks" replace />} />
               <Route path="/admin"             element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
               <Route path="/lifecycle"         element={<ProtectedRoute><LifecycleAdmin /></ProtectedRoute>} />

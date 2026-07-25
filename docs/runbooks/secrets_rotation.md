@@ -9,7 +9,6 @@
 | `Internal service secret` | Secrets Manager `aegis-prod-internal-secret` | Every service (mesh auth) | 90 d | Coordinated rolling restart |
 | `Mesh JWT secret` | Secrets Manager `aegis-prod-mesh-jwt-secret` | Service-to-service | 90 d | Same as internal_secret |
 | `Redis AUTH token` | Secrets Manager `aegis-prod-redis-auth-token` | All services | 180 d | ElastiCache rotate-auth-token + app restart |
-| `Stripe webhook secret` | Secrets Manager `aegis-prod-stripe-webhook-secret` | Gateway (`/billing/stripe/webhook`) | When Stripe rotates | Operator paste + put-secret-value |
 | `Groq API key` | Secrets Manager `aegis-prod-groq-api-key` | Gateway demo path | On suspected leak | Operator paste |
 | `Anthropic API key` | SSM `/aegis-prodha/anthropic/upstream-key` | Gateway `/v1/messages` proxy | 90 d or per-tenant (see §3) | `aws ssm put-parameter --overwrite` |
 | `Clerk secret key` | SSM `/aegis-prodha/clerk/secret-key` | Gateway, identity | On Clerk dashboard rotation | Operator paste |
@@ -36,7 +35,7 @@ aws autoscaling start-instance-refresh \
 
 `MinHealthyPercentage=100` keeps both targets healthy during the rotation. JWTs issued before rotation will fail on the next request — Clerk sessions auto-refresh, legacy HS256 sessions force re-login.
 
-## 2 — Operator-supplied secret rotation (Clerk / Stripe)
+## 2 — Operator-supplied secret rotation (Clerk, Anthropic, Groq)
 
 1. Generate new key in vendor dashboard.
 2. Put into SSM:
@@ -111,7 +110,7 @@ The ed25519 key at SSM `/aegis-prodha/receipt-signing-key` is the root of the cu
 | Mint new key (vendor or terraform taint) | 1 min |
 | `put-secret-value` / `put-parameter --overwrite` | 1 min |
 | Rolling restart both targets (parallel) | 6 min |
-| Revoke prior key at vendor (Anthropic / Stripe / Clerk console) | 1 min |
+| Revoke prior key at vendor (Anthropic / Clerk console) | 1 min |
 | **Total RTO** | **< 10 min** |
 
 During the 6-minute restart window: in-flight tokens MAY still validate. Worst case = a leaked HS256 JWT could authenticate for up to the JWT's `exp` (max 15 min). For a real incident, also publish to the Redis revocation channel:

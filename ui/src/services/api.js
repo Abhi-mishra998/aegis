@@ -467,7 +467,6 @@ export const api = {
   getApiKeys: () => request("/api-keys"),
   createApiKey: (data) => request("/api-keys", { method: "POST", body: JSON.stringify(data) }),
   revokeApiKey: (id) => request(`/api-keys/${id}`, { method: "DELETE" }),
-  getBilling: () => request("/billing/summary"),
   getRisk: () => request("/risk/summary"),
   getSSOProviders: () => request("/auth/sso/providers").catch(() => ({ providers: [] })),
 };
@@ -704,29 +703,7 @@ export const forensicsService = {
   exportInvestigation: (id) => request(`/forensics/export/${id}`, { method: 'POST' }),
 };
 
-export const billingService = {
-  getSummary: (agentId) => request(_withAgent("/billing/summary", agentId)),
-  getInvoices: (agentId) => request(_withAgent("/billing/invoices", agentId)),
-  getDashboard: () => request("/usage/dashboard"),
-  getAnomalies: () => request("/usage/anomalies"),
-  listBudgetRequests: (status) => request(`/billing/budget-requests${status ? `?status=${status}` : ''}`),
-  createBudgetRequest: (data) => request('/billing/budget-requests', { method: 'POST', body: JSON.stringify(data) }),
-  approveBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
-  rejectBudgetRequest: (id, data) => request(`/billing/budget-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
-  getCostAttribution: (weeks = 4, agentId) => request(_withAgent(`/billing/cost-attribution?weeks=${weeks}`, agentId)),
-  // Sprint 9 — Stripe wiring.
-  getPlan: () => request("/billing/plan"),
-  createCheckoutSession: (tier) =>
-    request("/billing/checkout-session", {
-      method: "POST",
-      body: JSON.stringify({ tier }),
-    }),
-  createPortalSession: (customerId) =>
-    request("/billing/portal-session", {
-      method: "POST",
-      body: JSON.stringify({ customer_id: customerId }),
-    }),
-};
+// billingService removed 2026-07-25 — project is open source, no Stripe.
 
 export const playgroundService = {
   execute: (agentId, tool, payload, options = {}) =>

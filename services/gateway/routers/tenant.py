@@ -55,8 +55,8 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
     An attacker who breached one tenant could previously read `"tier":"enterprise"`
     on every neighbouring tenant they could enumerate, narrowing the next
     target. Tier still drives quota internally — it's just no longer leaked
-    on the public surface. Stripe-side billing and the admin/* routes (gated
-    by ROOT) retain authoritative tier visibility.
+    on the public surface. The admin/* routes (gated by ROOT) retain
+    authoritative tier visibility.
     """
     tenant_id = getattr(request.state, "tenant_id", None)
     if tenant_id is None:

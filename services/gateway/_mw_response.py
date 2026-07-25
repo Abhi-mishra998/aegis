@@ -177,9 +177,29 @@ class _ResponseMixin:
                 # GAP-4: pass reason/policy_id so the bulk-PII tighter
                 # counter can fire based on the actual rule that matched.
                 _deny_reason = (reason or policy_id or "") or ""
-                asyncio.create_task(_safe_bg(
-                    self._record_runaway_failure(str(t_id), str(a_id), str(tool), _deny_reason)
-                ))
+                # Sprint v4-Fix (2026-07-25 load-test finding) — do NOT count
+                # the auto-quarantine deny itself as a fresh failure. The
+                # runaway-loop system was creating a positive-feedback loop:
+                # 50 legit-request 429s → quarantine fires → subsequent
+                # requests return "agent_quarantined:runaway_loop:…" denies
+                # → THOSE denies were being counted as fresh failures →
+                # counter kept growing → quarantine never released within
+                # window even after original bursty behavior stopped. Fix:
+                # skip the counter increment when the deny reason itself is
+                # a quarantine-caused rejection. Same for "kill_switch" —
+                # those are Aegis-own blocks, not agent-caused failures.
+                _rl = (_deny_reason or "").lower()
+                _is_own_block = (
+                    "agent_quarantined" in _rl
+                    or "runaway_loop"    in _rl
+                    or "kill_switch"     in _rl
+                    or "tenant blocked"  in _rl
+                    or "sec-cumulative"  in _rl
+                )
+                if not _is_own_block:
+                    asyncio.create_task(_safe_bg(
+                        self._record_runaway_failure(str(t_id), str(a_id), str(tool), _deny_reason)
+                    ))
 
             # Real-time UI feed — pre-policy hard-denies (path traversal,
             # SQL injection, dangerous code, PII exfil) AND main-pipeline

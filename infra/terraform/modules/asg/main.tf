@@ -106,7 +106,6 @@ DB_PASS=$(sec "${var.rds_master_secret_id}")
 INT_SEC=$(sec "${var.internal_secret_arn}")
 JWT_SECRET=$(sec "${var.jwt_signing_secret_id}")
 MESH_JWT=$(sec "${var.mesh_jwt_secret_id}")
-STRIPE_WEBHOOK=$(sec "${var.stripe_webhook_secret_id}")
 GROQ_KEY=$(sec "${var.groq_api_key_secret_id}")
 
 ANTHROPIC_KEY=$(ssm "/$${PARAM_PREFIX}/anthropic/upstream-key")
@@ -118,9 +117,6 @@ CLERK_ISSUER=$(ssm "/$${PARAM_PREFIX}/clerk/issuer")
 CLERK_JWKS=$(ssm "/$${PARAM_PREFIX}/clerk/jwks-url")
 CLERK_TMPL=$(ssm "/$${PARAM_PREFIX}/clerk/jwt-template")
 CLERK_WEBHOOK=$(ssm "/$${PARAM_PREFIX}/clerk/webhook-secret")
-STRIPE_KEY=$(ssm "/$${PARAM_PREFIX}/stripe/secret-key")
-STRIPE_PRO=$(ssm "/$${PARAM_PREFIX}/stripe/pro-price-id")
-STRIPE_ENT=$(ssm "/$${PARAM_PREFIX}/stripe/enterprise-price-id")
 
 # Sprint UI-5 — ATF §4.2 multi-IdP acceptance. Each adapter is OFF unless
 # the corresponding params are set; empty string is safe (adapter skips).
@@ -205,10 +201,6 @@ CLERK_ISSUER=$${CLERK_ISSUER}
 CLERK_JWKS_URL=$${CLERK_JWKS}
 CLERK_JWT_TEMPLATE=$${CLERK_TMPL}
 CLERK_WEBHOOK_SECRET=$${CLERK_WEBHOOK}
-STRIPE_SECRET_KEY=$${STRIPE_KEY}
-STRIPE_WEBHOOK_SECRET=$${STRIPE_WEBHOOK}
-STRIPE_PRO_PRICE_ID=$${STRIPE_PRO}
-STRIPE_ENTERPRISE_PRICE_ID=$${STRIPE_ENT}
 PUBLIC_BASE_URL=https://$${DOMAIN}
 INTERNAL_GATEWAY_URL=http://gateway:8000
 ENVIRONMENT=production

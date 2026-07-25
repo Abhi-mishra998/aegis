@@ -113,10 +113,6 @@ Routes that legitimately need no role gate (`/health`, `/demo/spawn-workspace`, 
 | `/siem/test` | POST | OWNER, ADMIN |
 | `/siem/vendors` | GET | OWNER, ADMIN |
 | `/sso/slack/*` | GET/POST | OWNER, ADMIN |
-| `/billing/*` | GET | OWNER |
-| `/billing/checkout` | POST | OWNER |
-| `/billing/portal` | POST | OWNER |
-| `/billing/stripe/webhook` | POST | unauthed (Stripe signature) |
 | `/tenant/quota` | GET | READ_ONLY+ |
 | `/auto-response/*` | GET | SECURITY_ANALYST+ |
 | `/auto-response/*` | POST | SECURITY_ANALYST+ |
@@ -136,7 +132,6 @@ Routes that legitimately need no role gate (`/health`, `/demo/spawn-workspace`, 
 /health, /docs, /openapi.json, /redoc, /system/health, /status
 /auth/token, /auth/login, /auth/agent/token, /auth/sso/providers
 /events/stream (inline auth in handler)
-/billing/stripe/webhook
 /webhooks/clerk
 /auth/clerk/provision
 /demo/spawn-workspace

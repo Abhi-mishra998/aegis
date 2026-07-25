@@ -46,7 +46,7 @@ from services.gateway import escalation_patterns, proxy_helpers, slack_approvals
 from services.gateway._helpers import internal_headers, publish_event
 from services.gateway.anthropic_pricing import cost_usd
 from services.gateway.client import service_client
-from services.gateway.inference_proxy import InjectionDetector
+from services.gateway.inference_proxy import InjectionDetector, PiiDetector
 from services.policy import packs as policy_packs
 
 logger = structlog.get_logger(__name__)
@@ -241,6 +241,26 @@ async def proxy_anthropic_messages(request: Request) -> Response:
             detail="API key role READ_ONLY cannot invoke /v1/messages",
         )
 
+    # Sprint UI-Fix (2026-07-25 brutal-test audit) — cross-tenant scope check.
+    # If the caller sent X-Tenant-ID, it MUST match the tenant this empkey
+    # belongs to. The header used to be silently ignored, which meant a
+    # tenant admin sending X-Tenant-ID=<other-tenant> got a 200 + real
+    # Anthropic response (billed to their own tenant, but the response
+    # semantically claimed to be for the other tenant — confusion + probe
+    # vector). Fail closed on mismatch, silent-pass on absence.
+    header_tid = (request.headers.get("x-tenant-id") or "").strip().lower()
+    if header_tid and header_tid != tenant_id_str.lower():
+        logger.warning(
+            "empkey_tenant_header_mismatch",
+            empkey_tenant=tenant_id_str,
+            header_tenant=header_tid,
+            key_prefix=key_data.get("key_prefix"),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="X-Tenant-ID header does not match the tenant this employee key belongs to",
+        )
+
     # Pin the tenant + role onto request.state so internal_headers() picks
     # them up for downstream service calls. /v1/messages auths via
     # x-api-key not Bearer, so the gateway's normal Clerk middleware
@@ -290,6 +310,30 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         # actual cost is reconciled after the LLM call by adding
         # (actual - reserved) via record_spend, which now accepts negatives.
         max_out = int((req_json or {}).get("max_tokens") or 4096)
+
+        # Sprint UI-Fix (2026-07-25 brutal-test audit) — max_tokens hard cap.
+        # Cost-bomb attack: attacker sends max_tokens=4000 (or 8192) and
+        # runs the tenant's Anthropic bill up 40× in one request. Enforce
+        # a per-tenant ceiling BEFORE the reserve check so it fails fast
+        # (no partial state, no Redis mutation). Ceiling is configurable
+        # via env var; sane default is 2048 (covers 99% of legitimate
+        # summarize/answer workloads; power users can raise it deliberately).
+        _max_tokens_ceiling = int(getattr(settings, "MAX_TOKENS_CEILING", 2048))
+        if max_out > _max_tokens_ceiling:
+            logger.warning(
+                "max_tokens_cap_exceeded",
+                requested=max_out, ceiling=_max_tokens_ceiling,
+                tenant_id=tenant_id_str, employee_email=employee_email,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"max_tokens={max_out} exceeds tenant ceiling of "
+                    f"{_max_tokens_ceiling}. Set MAX_TOKENS_CEILING higher "
+                    f"in the deployment env if this is a legitimate need."
+                ),
+            )
+
         msg_text = str((req_json or {}).get("messages") or "")
         reserved_usd = cost_usd(model, max(1, len(msg_text) // 4), max_out)
         _reserve_status, day_val, month_val = await proxy_helpers.reserve_or_reject(
@@ -345,6 +389,98 @@ async def proxy_anthropic_messages(request: Request) -> Response:
                     scan_text_parts.append(str(block.get("text") or ""))
 
         scan_text = "\n".join(scan_text_parts)
+
+        # Sprint UI-Fix v3 (2026-07-25) — input-size cap. Attacker floods
+        # the prompt with 4900+ chars to burn tokens on nonsense. Cap at
+        # a generous default (24000 chars ≈ ~6000 tokens); customer can
+        # raise it via MAX_INPUT_CHARS env var for real long-document
+        # workloads. Fires BEFORE any Anthropic call.
+        _max_input_chars = int(getattr(settings, "MAX_INPUT_CHARS", 24000))
+        if len(scan_text) > _max_input_chars:
+            logger.warning(
+                "input_size_cap_exceeded",
+                chars=len(scan_text), ceiling=_max_input_chars,
+                tenant_id=tenant_id_str, employee_email=employee_email,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Prompt input size {len(scan_text)} chars exceeds tenant "
+                    f"ceiling of {_max_input_chars}. Raise MAX_INPUT_CHARS in "
+                    f"the deployment env for legitimate long-context needs."
+                ),
+            )
+
+        # Sprint UI-Fix v3 — inbound PII scan. Reject prompts that leak
+        # SSN, credit-card (Luhn-verified), API keys, or private-key
+        # material before they reach Anthropic. Even if Claude refuses,
+        # the prompt still hits Anthropic's logs + the tenant's audit
+        # chain — better to fail closed at the gate.
+        pii_result = PiiDetector.scan(scan_text) if scan_text else None
+        if pii_result is not None and not pii_result.allowed:
+            await push_audit_event(
+                redis=redis, tenant_id=tenant_id_str, agent_id=None,
+                action="llm_proxy_call", tool="anthropic_messages",
+                decision="deny", reason=pii_result.reason,
+                metadata={
+                    "employee_email": employee_email, "model": model,
+                    "status_code": 400, "findings": pii_result.flags,
+                    "risk_score": pii_result.risk_score,
+                    "match_sample": (pii_result.metadata or {}).get("sample", ""),
+                },
+                request_id=request.headers.get("X-Request-ID"),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error":     "pii_in_prompt",
+                    "reason":    pii_result.reason,
+                    "findings":  pii_result.flags,
+                    "risk_score": pii_result.risk_score,
+                },
+            )
+
+        # Sprint UI-Fix v3 — sequential slow-drip pattern correlator.
+        # Individual /v1/messages requests may look benign but the third
+        # or fourth in a rapid escalation (schema? → sample? → dump?)
+        # signals exfil intent. Track same-employee message count in a
+        # 60-second sliding window; over 20 in that window escalates the
+        # NEXT request rather than the current one so we don't block a
+        # legit burst-user on their 21st call — the escalation shows up
+        # as a finding + risk boost, not a hard deny.
+        try:
+            _drip_key = f"acp:llm_drip:{tenant_id_str}:{employee_email}"
+            _drip_count = await redis.incr(_drip_key)
+            if _drip_count == 1:
+                await redis.expire(_drip_key, 60)
+            _drip_threshold = int(getattr(settings, "LLM_DRIP_THRESHOLD", 20))
+            if _drip_count > _drip_threshold:
+                logger.warning(
+                    "llm_drip_threshold_exceeded",
+                    count=_drip_count, threshold=_drip_threshold,
+                    tenant_id=tenant_id_str, employee_email=employee_email,
+                )
+                # Advisory-only in this rev: audit + tag; a follow-up sprint
+                # can wire this into the escalation flow. We're being deliberate
+                # about the "block first / measure risk later" tradeoff —
+                # 20 messages/minute is high but not impossible for an
+                # interactive Copilot user.
+                await push_audit_event(
+                    redis=redis, tenant_id=tenant_id_str, agent_id=None,
+                    action="llm_proxy_call", tool="anthropic_messages",
+                    decision="drip_flag", reason="rapid-fire LLM call cadence",
+                    metadata={
+                        "employee_email": employee_email,
+                        "count_60s": _drip_count, "threshold": _drip_threshold,
+                        "findings": ["llm_drip_burst"],
+                    },
+                    request_id=request.headers.get("X-Request-ID"),
+                )
+        except Exception as _drip_exc:
+            # Never let the drip counter block a legit request on a Redis
+            # blip — swallow and continue.
+            logger.debug("llm_drip_counter_failed", error=str(_drip_exc))
+
         scan_result = InjectionDetector.scan(scan_text) if scan_text else None
         if scan_result is not None and not scan_result.allowed:
             pattern_name = (scan_result.metadata or {}).get("pattern", "unknown")

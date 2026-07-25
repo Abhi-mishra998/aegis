@@ -156,7 +156,6 @@ module "asg" {
   internal_secret_arn      = module.secrets.internal_secret_arn
   jwt_signing_secret_id    = module.secrets.jwt_signing_name
   mesh_jwt_secret_id       = module.secrets.mesh_jwt_secret_arn
-  stripe_webhook_secret_id = module.secrets.stripe_webhook_secret_arn
   groq_api_key_secret_id   = module.secrets.groq_api_key_arn
   app_param_prefix         = var.app_param_prefix
   public_roots_bucket      = var.public_roots_bucket
@@ -206,6 +205,12 @@ module "s3" {
   alb_log_retention   = var.alb_log_retention_days
   public_roots_bucket = var.public_roots_bucket
   bundle_bucket       = var.bundle_bucket
+  # Post-teardown recovery — the default-named backups+cloudtrail buckets
+  # from the pre-2026-07-06 stack still exist and have Object Lock DISABLED
+  # (immutable at creation). Recreating them at the same name would force a
+  # destructive REPLACE. `-v3` gives terraform a fresh name so the old
+  # buckets are left untouched and expire via their own lifecycle rules.
+  backup_bucket_suffix = "-v3"
 }
 
 # ───────────────────────────────────────────────────────────────────────

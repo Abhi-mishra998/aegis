@@ -133,7 +133,6 @@ The table below is a snapshot for convenience as of v1.1 of this DPA; in the eve
 | Clerk, Inc.                    | Customer SSO / JWT issuance                | US (with EU + APAC options)  | EU-pinned Clerk organisation                 | User identifiers under §3.3            |
 | Anthropic, PBC                 | Upstream LLM (Path B only, if enabled)     | US (`api.anthropic.com`)     | EU (`api.eu.anthropic.com`) — opt-in         | Prompts and prompt-borne identifiers   |
 | OpenAI, L.L.C.                 | Upstream LLM (Path B only, if enabled)     | US (`api.openai.com`)        | Azure OpenAI EU regions — per-tenant DPA     | Prompts and prompt-borne identifiers   |
-| Stripe, Inc.                   | Billing / payment processing               | US + EU (auto-routed)        | EU entity for EU customers — no config change | Email, subscription metadata; cards tokenised |
 | GitHub, Inc.                   | Source code + CI                           | US                           | US — same (no Customer Data crosses)         | None (build artifacts only)            |
 | Sigstore (Fulcio + Rekor)      | Bundle-signing certificate authority + transparency log | Multi-region    | Multi-region — same                          | None (signatures only)                 |
 | `<SLACK_OR_PAGERDUTY_VENDOR>`  | Approval-routing notification              | `<REGION>`                   | `<REGION>`                                  | Approval card metadata                 |

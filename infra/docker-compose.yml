@@ -744,7 +744,12 @@ services:
           memory: "192M"
           cpus: "0.2"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/witness/health"]
+      # The /witness/health endpoint sits behind mesh-JWT auth, and Docker's
+      # healthcheck can't mint a mesh token. A `curl -f` returns 22 on the
+      # 403 → container flaps unhealthy every 30s despite being fully alive.
+      # Accepting 200 OR 403 answers the right question (is the app serving
+      # HTTP?) without weakening any real auth surface (2026-07-25).
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/witness/health | grep -qE '^(200|401|403)$'"]
       interval: 15s
       timeout: 5s
       retries: 3

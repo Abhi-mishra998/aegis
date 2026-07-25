@@ -74,7 +74,7 @@ flowchart LR
 | RDS endpoint | `acp-prodha-postgres.<id>.ap-south-1.rds.amazonaws.com:5432` (Multi-AZ `db.t3.small`) |
 | Redis endpoint | `master.acp-prodha-redis.1gloza.aps1.cache.amazonaws.com:6379` (`cluster_enabled=false`) |
 | KMS CMK | `alias/aegis-audit-envelope` (annual rotation) |
-| SSM SecureString prefixes | `/acp-prodha/*` (Secrets Manager) — rds_master_password, jwt_secret_key, redis_auth_token, groq_api_key, stripe_webhook_secret |
+| SSM SecureString prefixes | `/acp-prodha/*` (Secrets Manager) — rds_master_password, jwt_secret_key, redis_auth_token, groq_api_key |
 | Docker network | `infra_default` — every service-name DNS resolves on this network, per host |
 | Pinned images | `edoburu/pgbouncer:1.23.1`, `openpolicyagent/opa:0.69.0-debug` |
 

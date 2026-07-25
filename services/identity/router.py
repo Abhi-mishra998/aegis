@@ -2286,12 +2286,10 @@ async def invite_user(
     )
 
 
-# sprint-6.1 — surgical PATCH for tenant quota / tier updates.
-# The Stripe webhook (services/gateway/routers/stripe_webhook.py) calls
-# this to apply tier changes on subscription.created/updated/deleted.
-# Distinct from POST /auth/tenants (which is a full upsert used by
-# provisioning); this endpoint only updates the columns the request
-# explicitly sets, leaving everything else alone.
+# Surgical PATCH for tenant quota / tier updates. Distinct from POST
+# /auth/tenants (which is a full upsert used by provisioning); this endpoint
+# only updates the columns the request explicitly sets, leaving everything
+# else alone. Used by any admin flow that adjusts tenant limits.
 def _parse_int(v: Any, label: str) -> int:
     """Sprint 25 A5 — coerce to int or 400. Was previously unguarded → 500."""
     try:
@@ -2333,8 +2331,8 @@ async def patch_admin_tenant(
       - degraded_mode_policy            (DegradedModePolicy enum value)
       - is_active                       (bool)
 
-    Returns the updated row's metadata. Logs every applied field so the
-    SOC2 audit trail captures Stripe-driven changes.
+    Returns the updated row's metadata. Logs every applied field for the
+    SOC2 audit trail.
     """
     try:
         tenant_uuid = uuid.UUID(tenant_id)

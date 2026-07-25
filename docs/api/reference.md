@@ -325,7 +325,6 @@ The stream emits an `event: connected` line on subscription, then a heartbeat ev
 | `agent_quarantined` | `routers/agents.py` + `_mw_response.py` | `{agent_id, reason}` | Manual `POST /agents/{id}/quarantine` or auto-quarantine on runaway/bulk-PII loop |
 | `agent_quarantine_released` | `routers/agents.py` | `{agent_id, by}` | `DELETE /agents/{id}/quarantine` |
 | `risk_updated` | `routers/agents.py` permission grants | `{agent_id, score, delta, source}` | Permission grant, role change, drift recompute |
-| `billing_updated` | `routers/billing.py` | `{period, amount_usd, source}` | Budget request actioned, Stripe webhook reconciled |
 | `quota_warning` | `routers/tenant.py` | `{limit_type, used_pct, reset_at}` | 80% monthly request cap one-shot warning |
 | `kill_switch` | `routers/decision.py` | `{engaged: bool, by, reason}` | `POST/DELETE /decision/kill-switch/{tenant_id}` |
 | `incident_updated` | `routers/incidents.py` | `{incident_id, status, action}` | Create, status change, action recorded |

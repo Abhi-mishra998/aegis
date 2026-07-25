@@ -20,7 +20,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdk.common.auth import verify_internal_secret
@@ -87,24 +87,26 @@ async def workspace_inventory(
         .where(*base_where)
         .group_by(Agent.status),
     )).all()
+    # Group by raw columns; coalesce+lower in python. Postgres treats two
+    # parameterized `coalesce(col, $1)` expressions as distinct at parse
+    # time and rejects the SELECT/GROUP-BY pair (2026-07-25 /workspace/
+    # inventory 500). Same fix as services/audit/compliance.py.
     risk_rows = (await db.execute(
-        select(func.coalesce(Agent.risk_level, "low"), func.count())
+        select(Agent.risk_level, func.count())
         .where(*base_where)
-        .group_by(func.coalesce(Agent.risk_level, "low")),
+        .group_by(Agent.risk_level),
     )).all()
-    # `metadata->>'provider'` extracts the JSONB string at that key;
-    # NULL when absent, empty when set to "". Group + count in SQL.
+    # JSONB path expressions (`metadata->>'provider'`) get bound as
+    # parameters, and two parameterized copies fail Postgres's GROUP-BY
+    # identity check. Raw SQL sidesteps SQLAlchemy's binding entirely.
     provider_rows = (await db.execute(
-        select(
-            func.lower(func.coalesce(
-                Agent.metadata_data["provider"].astext, "",
-            )),
-            func.count(),
-        )
-        .where(*base_where)
-        .group_by(func.lower(func.coalesce(
-            Agent.metadata_data["provider"].astext, "",
-        ))),
+        text("""
+            SELECT metadata->>'provider' AS provider_key, COUNT(*)
+            FROM agents
+            WHERE tenant_id = :tid AND deleted_at IS NULL
+            GROUP BY metadata->>'provider'
+        """),
+        {"tid": tenant_id},
     )).all()
     # `metadata->'wizard'` present + not JSON-null + not JSON-false ≈
     # python's `bool(meta.get("wizard"))` for the shapes we actually write.
@@ -132,16 +134,16 @@ async def workspace_inventory(
     by_risk: dict[str, int] = dict.fromkeys(_KNOWN_RISK_LEVELS, 0)
     high_risk = 0
     for risk_val, cnt in risk_rows:
-        r = str(risk_val).lower()
+        r = (str(risk_val) if risk_val is not None else "low").lower()
         if r in by_risk:
-            by_risk[r] = int(cnt)
+            by_risk[r] = by_risk.get(r, 0) + int(cnt)
         if r in ("high", "critical"):
             high_risk += int(cnt)
 
     by_provider: dict[str, int] = dict.fromkeys(_KNOWN_PROVIDERS, 0)
     by_provider["unknown"] = 0
     for prov_val, cnt in provider_rows:
-        p = str(prov_val or "").strip()
+        p = (str(prov_val) if prov_val is not None else "").strip().lower()
         bucket = p if p in by_provider else "unknown"
         by_provider[bucket] = by_provider.get(bucket, 0) + int(cnt)
 

@@ -75,7 +75,7 @@ a vendor design review. **Status:** in production at
 ```
 
 **Single NAT Gateway** (or one-per-AZ in Enterprise tier) carries every
-outbound call to Anthropic / OpenAI / Stripe / Sigstore. **No public IPs**
+outbound call to Anthropic / OpenAI / Sigstore. **No public IPs**
 on EC2 instances.
 
 ---

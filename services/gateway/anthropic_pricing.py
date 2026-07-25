@@ -1,14 +1,10 @@
 """Anthropic model pricing — USD per 1M tokens (June 2026).
 
-Source: anthropic.com/pricing. Numbers below are approximations rounded
-to the nearest cent — they're the basis of the Sprint 17 per-employee
-spend rollup, so a 1% slippage vs the real Anthropic invoice is
-acceptable for a usage indicator. The reconciliation against the actual
-invoice happens monthly in the Stripe webhook flow (Sprint 9).
+Source: anthropic.com/pricing. Used as a local cost indicator for
+per-employee spend rollups. A 1% slippage vs the real Anthropic
+invoice is acceptable — this is telemetry, not billing.
 
-If a model isn't in the table we fall back to the Haiku rate
-(conservative for the customer's bill, generous for our usage
-indicator).
+If a model isn't in the table we fall back to the Haiku rate.
 """
 from __future__ import annotations
 

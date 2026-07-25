@@ -66,6 +66,41 @@ class AuditWriter:
         chain_shard = compute_chain_shard(payload.request_id)
         tenant_lock = int.from_bytes(payload.tenant_id.bytes[:4], "big") & 0x7FFFFFFF
 
+        # Sprint v5-Fix (2026-07-25 chain-race audit) — belt-and-suspenders
+        # Redis SETNX lock on top of the Postgres advisory lock. Under
+        # concurrent load (>50 rps to the same shard) v4 detected chain
+        # gaps in shards 8+12 despite the advisory lock. Root cause is
+        # likely pgbouncer's transaction pooling interacting with the
+        # per-connection lock semantics — hard to reproduce cleanly.
+        # Defensive fix: acquire a Redis lock keyed by (tenant, shard) BEFORE
+        # touching the DB, so even if the advisory lock loses race
+        # coordination the Redis lock catches it. TTL 30s (transaction
+        # should complete much faster; TTL prevents deadlock on worker crash).
+        _redis_lock_key = f"acp:audit_chain_lock:{payload.tenant_id}:{chain_shard}"
+        _redis_lock_acquired = False
+        _lock_wait_deadline = asyncio.get_event_loop().time() + 10.0
+        try:
+            while asyncio.get_event_loop().time() < _lock_wait_deadline:
+                _redis_lock_acquired = await redis.set(
+                    _redis_lock_key, "1", nx=True, ex=30,
+                )
+                if _redis_lock_acquired:
+                    break
+                await asyncio.sleep(0.02)
+            if not _redis_lock_acquired:
+                logger.warning(
+                    "audit_chain_lock_timeout",
+                    tenant=str(payload.tenant_id), shard=chain_shard,
+                )
+                # Proceed without the Redis lock — advisory lock is the fallback.
+                # Don't fail the audit write on lock-acquire timeout since
+                # dropping audit rows is worse than a possible chain gap.
+        except Exception as _lock_exc:
+            logger.warning(
+                "audit_chain_lock_error", error=str(_lock_exc),
+                tenant=str(payload.tenant_id), shard=chain_shard,
+            )
+
         try:
             await db.execute(
                 text("SELECT pg_advisory_xact_lock(:t, :s)"),
@@ -213,3 +248,12 @@ class AuditWriter:
                 request_id=payload.request_id,
             )
             raise
+        finally:
+            # Sprint v5-Fix — release the belt-and-suspenders Redis lock
+            # whether commit succeeded or the txn rolled back.
+            if _redis_lock_acquired:
+                try:
+                    await redis.delete(_redis_lock_key)
+                except Exception:
+                    # Lock auto-expires via TTL; delete failure isn't fatal
+                    pass

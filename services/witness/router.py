@@ -30,6 +30,11 @@ from services.witness.verdict import evaluate
 
 router = APIRouter(prefix="/witness", tags=["witness"], dependencies=[Depends(verify_internal_secret)])
 
+# Health endpoint sits outside the mesh-auth gate so the Docker HEALTHCHECK
+# (which cannot mint a mesh JWT) can probe it. Container was flapping
+# unhealthy every 30s (2026-07-25) with `403 Forbidden` on /witness/health.
+health_router = APIRouter(prefix="/witness", tags=["witness"])
+
 # Missing-heartbeat threshold — beyond this, all verdicts flip to
 # UNOBSERVED and the agent state falls to RESTRICTED (per §11).
 _HEARTBEAT_STALE_SECONDS = 30
@@ -89,7 +94,7 @@ async def render_verdict(req: VerdictRequest) -> APIResponse[Attestation]:
     return APIResponse(data=attestation)
 
 
-@router.get("/health")
+@health_router.get("/health")
 async def health() -> APIResponse[dict]:
     signer = get_signer()
     last = await store.last_heartbeat(signer.witness_id)

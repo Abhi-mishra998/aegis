@@ -22,10 +22,13 @@ from services.usage.router.usage import router as usage_router
 
 logger = structlog.get_logger(__name__)
 
-_INTERNAL_HEADERS = {
-    **mesh_headers("usage"),
-    "Content-Type": "application/json",
-}
+
+def _internal_headers() -> dict[str, str]:
+    """Fresh mesh JWT on every internal call. Mesh tokens have a 5-minute
+    TTL — module-level caching (the old `_INTERNAL_HEADERS` dict) meant the
+    long-running reconciliation worker sent an expired token forever after
+    the first 5 minutes (2026-07-25 audit 403 storm on /logs/*)."""
+    return {**mesh_headers("usage"), "Content-Type": "application/json"}
 
 
 async def pending_usage_worker() -> None:
@@ -163,7 +166,7 @@ async def billing_reconciliation_worker() -> None:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
                     f"{audit_base}/logs/billing-gaps/all",
-                    headers=_INTERNAL_HEADERS,
+                    headers=_internal_headers(),
                     params={"limit": 1000, "sla_seconds": 60},
                 )
 
@@ -232,7 +235,7 @@ async def billing_reconciliation_worker() -> None:
                     patch_resp = await client.patch(
                         f"{audit_base}/logs/billing-status/complete",
                         json={"audit_ids": healed_ids},
-                        headers=_INTERNAL_HEADERS,
+                        headers=_internal_headers(),
                     )
                 if patch_resp.status_code == 200:
                     logger.info("reconciliation_complete", auto_healed=len(healed_ids))

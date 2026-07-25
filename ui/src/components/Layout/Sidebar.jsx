@@ -5,7 +5,7 @@ import {
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
-  CreditCard, Radio, Bell, BookOpen,
+  Radio, Bell, BookOpen,
   Workflow, MessagesSquare, Gauge, HeartPulse, DollarSign, Share2,
   Beaker, EyeOff, Inbox, Eye,
 } from 'lucide-react'
@@ -81,7 +81,7 @@ const adminNav = [
   // Compliance was duplicated here; it lives in primaryNav (Prove section).
   { path: '/system-health', label: 'System Health', icon: HeartPulse },
   { path: '/lifecycle',     label: 'Lifecycle',     icon: Workflow    },
-  { path: '/billing',       label: 'Billing',       icon: CreditCard },
+  // Billing/Pricing removed 2026-07-25 — project is open source, no paid tiers.
 ]
 
 const killSwitchItem = { path: '/kill-switch', label: 'Kill Switch', icon: Power, danger: true }

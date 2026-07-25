@@ -33,11 +33,6 @@ output "mesh_jwt_secret_arn" {
   value       = aws_secretsmanager_secret.mesh_jwt_secret.arn
 }
 
-output "stripe_webhook_secret_arn" {
-  description = "Stripe webhook secret ARN (operator-supplied value)."
-  value       = aws_secretsmanager_secret.stripe_webhook_secret.arn
-}
-
 output "groq_api_key_arn" {
   description = "Groq API key ARN (operator-supplied value)."
   value       = aws_secretsmanager_secret.groq_api_key.arn
@@ -51,7 +46,6 @@ output "all_secret_arns" {
     aws_secretsmanager_secret.internal_secret.arn,
     aws_secretsmanager_secret.redis_auth_token.arn,
     aws_secretsmanager_secret.mesh_jwt_secret.arn,
-    aws_secretsmanager_secret.stripe_webhook_secret.arn,
     aws_secretsmanager_secret.groq_api_key.arn,
   ]
 }

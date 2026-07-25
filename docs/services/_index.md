@@ -37,9 +37,9 @@ Behavior and Autonomy are inline at stages 5 and 7; the other four are post-deci
 | Learning | `services/learning/` | 8016 | reads `acp_behavior` | [Learning](learning.md) |
 | MCP Server | `services/mcp_server/` | stdio | none | — (stdio surface, no HTTP) |
 
-Billing is a cross-service flow (`audit` → outbox → `usage` → optional
-Stripe webhook in `api`), not a separate service. Intelligence-style
-cross-agent correlation lives inside the `learning` service.
+Cost aggregation is a cross-service flow (`audit` → outbox → `usage`),
+not a separate service. Intelligence-style cross-agent correlation lives
+inside the `learning` service.
 
 `insight_worker` runs alongside Insight but is not addressable on a port.
 

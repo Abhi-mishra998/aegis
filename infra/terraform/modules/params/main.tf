@@ -28,12 +28,6 @@ locals {
     "clerk_webhook_secret" = { path = "/${var.env_prefix}/clerk/webhook-secret", description = "Clerk webhook signing secret." }
     "auth_provider"        = { path = "/${var.env_prefix}/aegis/auth-provider", description = "ACP_AUTH_PROVIDER (legacy|clerk|both)." }
 
-    # Stripe
-    "stripe_secret_key"     = { path = "/${var.env_prefix}/stripe/secret-key", description = "Stripe secret key (live or test)." }
-    "stripe_webhook_secret" = { path = "/${var.env_prefix}/stripe/webhook-secret", description = "Stripe webhook signing secret." }
-    "stripe_pro_price"      = { path = "/${var.env_prefix}/stripe/pro-price-id", description = "Stripe Price ID for the Pro tier." }
-    "stripe_ent_price"      = { path = "/${var.env_prefix}/stripe/enterprise-price-id", description = "Stripe Price ID for the Enterprise tier." }
-
     # Upstream LLM (Path B proxy)
     "anthropic_upstream" = { path = "/${var.env_prefix}/anthropic/upstream-key", description = "Corporate Anthropic API key for /v1/messages proxy." }
 

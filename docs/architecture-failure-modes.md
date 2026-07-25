@@ -108,8 +108,8 @@ page.
 
 Today's enforcing CSP still permits `unsafe-inline` on `script-src`
 and `style-src`. The reasons (React JSX style-prop compilation,
-Clerk overlay components, Stripe Elements iframe) are documented in
-the nginx config. To get rid of `unsafe-inline` cleanly:
+Clerk overlay components) are documented in the nginx config. To get
+rid of `unsafe-inline` cleanly:
 
 1. **Phase 1 (today)**: ship a parallel `Content-Security-Policy-
    Report-Only` header with the strict policy. Browsers don't enforce

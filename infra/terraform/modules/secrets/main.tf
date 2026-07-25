@@ -118,20 +118,6 @@ resource "aws_secretsmanager_secret_version" "mesh_jwt_secret" {
 # Created so IAM grants are wired and the names are stable; operator
 # fills the value via `aws secretsmanager put-secret-value` post-apply.
 
-resource "aws_secretsmanager_secret" "stripe_webhook_secret" {
-  name                    = "${var.name_prefix}-stripe-webhook-secret"
-  description             = "Stripe webhook signing secret. Set value via aws secretsmanager put-secret-value."
-  recovery_window_in_days = 7
-  tags                    = { Name = "${var.name_prefix}-stripe-webhook-secret" }
-}
-
-resource "aws_secretsmanager_secret_version" "stripe_webhook_secret" {
-  secret_id     = aws_secretsmanager_secret.stripe_webhook_secret.id
-  secret_string = "PLACEHOLDER-overwrite-via-aws-secretsmanager-put-secret-value"
-
-  lifecycle { ignore_changes = [secret_string] }
-}
-
 resource "aws_secretsmanager_secret" "groq_api_key" {
   name                    = "${var.name_prefix}-groq-api-key"
   description             = "Groq API key (voice agent). Set value via aws secretsmanager put-secret-value."

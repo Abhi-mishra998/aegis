@@ -46,7 +46,7 @@ const OUT_OF_SCOPE = [
   'Social engineering against our employees or our suppliers',
   'Physical attacks against our infrastructure',
   'Denial-of-service attacks (please don\'t — we have a small WAF budget)',
-  'Findings in third-party SaaS we use (Clerk, Stripe, AWS) — report directly to that vendor',
+  'Findings in third-party SaaS we use (Clerk, AWS) — report directly to that vendor',
   'Best-practice warnings without a demonstrable security impact (e.g. "missing Content-Security-Policy" without a real XSS chain)',
 ]
 
@@ -54,26 +54,22 @@ const REWARDS = [
   {
     severity: 'CRITICAL',
     examples: 'RCE, auth bypass, cross-tenant data leak, audit-chain tamper',
-    today: 'Public credit + retroactive payment when we introduce a paid tier ($5k+ committed)',
-    tomorrow: 'Up to $20,000 once ARR > $1M',
+    today: 'Public credit in CHANGELOG + GitHub Security Advisory + our thanks',
   },
   {
     severity: 'HIGH',
     examples: 'Privilege escalation, RBAC bypass, secret leak in logs',
-    today: 'Public credit + retroactive payment ($1k+ committed)',
-    tomorrow: 'Up to $5,000',
+    today: 'Public credit + coordinated disclosure',
   },
   {
     severity: 'MEDIUM',
     examples: 'Cache poisoning, SSRF without exfil, info disclosure',
     today: 'Public credit',
-    tomorrow: 'Up to $500',
   },
   {
     severity: 'LOW',
     examples: 'CSRF on low-impact endpoint, missing security header on a non-sensitive page',
     today: 'Public credit (at our discretion)',
-    tomorrow: 'Public credit',
   },
 ]
 
@@ -198,13 +194,12 @@ function SafeHarbor () {
 function Rewards () {
   return (
     <section className="px-6 py-12 max-w-5xl mx-auto">
-      <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">Rewards — honest version</h2>
+      <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">Rewards</h2>
       <p className="text-xs text-neutral-500 leading-relaxed mb-4 max-w-2xl">
-        Aegis is pre-revenue. Today we offer public credit + a written
-        commitment to retroactively pay your finding once we cross
-        $1M ARR. The "Tomorrow" column is the bounty we commit to
-        introducing at that milestone. We will email you when the paid
-        tier opens.
+        Aegis is open source. We can't offer cash bounties — but we
+        publish every valid finding in the CHANGELOG with credit, and
+        we cut a GitHub Security Advisory with your handle for anything
+        HIGH+ severity.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -212,8 +207,7 @@ function Rewards () {
             <tr>
               <th className="text-left py-2 pr-4">Severity</th>
               <th className="text-left py-2 pr-4">Examples</th>
-              <th className="text-left py-2 pr-4">Today (pre-revenue)</th>
-              <th className="text-left py-2">Tomorrow (post-$1M ARR)</th>
+              <th className="text-left py-2">Reward</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/[0.05]">
@@ -221,8 +215,7 @@ function Rewards () {
               <tr key={r.severity} className="align-top">
                 <td className="py-3 pr-4 font-mono text-[11px] text-white">{r.severity}</td>
                 <td className="py-3 pr-4 text-neutral-300">{r.examples}</td>
-                <td className="py-3 pr-4 text-neutral-300">{r.today}</td>
-                <td className="py-3 text-neutral-300">{r.tomorrow}</td>
+                <td className="py-3 text-neutral-300">{r.today}</td>
               </tr>
             ))}
           </tbody>
