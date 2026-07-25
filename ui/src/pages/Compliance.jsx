@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink, BookOpen } from 'lucide-react'
+import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink, BookOpen, KeyRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
-import { auditService, complianceService } from '../services/api'
+import { auditService, complianceService, transparencyService } from '../services/api'
 
 const FRAMEWORKS = [
   {
@@ -51,6 +51,20 @@ export default function Compliance() {
   const [packEvidence, setPackEvidence] = useState(null)
   const [packsLoading, setPacksLoading] = useState(true)
   const [boardLoading, setBoardLoading] = useState(false)
+  // Q25 (ATF §14.5 ROTATE) — signing-key history: active key + every
+  // rotated historical key. Auditor visibility for cross-signature
+  // verification.
+  const [signingKeys, setSigningKeys] = useState(null)
+  const [keysLoading, setKeysLoading] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    setKeysLoading(true)
+    transparencyService.listKeys()
+      .then(res => { if (!cancelled) setSigningKeys(res?.data ?? res ?? null) })
+      .catch(()  => { if (!cancelled) setSigningKeys(null) })
+      .finally(() => { if (!cancelled) setKeysLoading(false) })
+    return () => { cancelled = true }
+  }, [])
 
   const loadEvidence = async (fw) => {
     setLoading(prev => ({ ...prev, [fw]: true }))
@@ -325,6 +339,59 @@ export default function Compliance() {
           <button onClick={() => setError('')} className="ml-auto text-neutral-600 hover:text-neutral-400 text-xs">✕</button>
         </div>
       )}
+
+      {/* Q25 (ATF §14.5 ROTATE) — signing-key history. Every past
+          rotation is a `transparency_historical_keys` row with the
+          retired key's PEM + fingerprint + rotation timestamp; the
+          active key is the one currently signing new roots. Auditor's
+          question: "when did you rotate, and does chain verification
+          survive?" */}
+      <Card title="Signing keys (audit chain)" icon={KeyRound}>
+        <p className="text-[11px] text-neutral-500 leading-snug mb-3">
+          Q25 / ATF §14.5 ROTATE — every past rotation is a{' '}
+          <code className="text-neutral-400">transparency_historical_keys</code>{' '}
+          row with the retired key's PEM + fingerprint + rotation
+          timestamp. Cross-signature (new key attests to the old key's
+          final root) makes chain verification survive rotation.
+        </p>
+        {keysLoading ? (
+          <div className="text-xs text-neutral-500">Loading key history…</div>
+        ) : !signingKeys || (!signingKeys.active && (signingKeys.historical || []).length === 0) ? (
+          <div className="text-xs text-neutral-500">
+            No signing-key history available. Fresh deployment or the
+            endpoint returned empty.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {signingKeys.active && (
+              <div className="rounded-lg border border-green-500/20 bg-green-500/[0.04] px-3 py-2 flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-[10px] uppercase tracking-widest text-green-400 font-semibold shrink-0">
+                  Active
+                </span>
+                <code className="text-[11px] text-neutral-300 font-mono break-all">
+                  {signingKeys.active.fingerprint || signingKeys.active.public_key_fingerprint || '—'}
+                </code>
+                <span className="text-[10px] text-neutral-500 sm:ml-auto shrink-0">
+                  {signingKeys.active.algorithm || 'ed25519'}
+                </span>
+              </div>
+            )}
+            {(signingKeys.historical || []).map((k, i) => (
+              <div key={k.fingerprint || i} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-[10px] uppercase tracking-widest text-neutral-500 font-semibold shrink-0">
+                  Rotated {k.rotated_at ? new Date(k.rotated_at).toLocaleDateString() : ''}
+                </span>
+                <code className="text-[11px] text-neutral-400 font-mono break-all">
+                  {k.fingerprint}
+                </code>
+                <span className="text-[10px] text-neutral-600 sm:ml-auto shrink-0">
+                  {k.transition_new_key_signature ? 'cross-signed ✓' : 'legacy row'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* Framework cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

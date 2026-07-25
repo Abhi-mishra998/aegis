@@ -11,7 +11,7 @@ import {
   Layers,
   HeartPulse,
 } from 'lucide-react'
-import { dashboardService } from '../services/api'
+import { dashboardService, witnessService } from '../services/api'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 // Queue depth thresholds — keep in sync with infra/prometheus-rules.yml.
@@ -142,6 +142,7 @@ function OverallBanner({ status, healthy, total, lastChecked }) {
 
 export default function SystemHealth() {
   const [data, setData] = useState(null)
+  const [witness, setWitness] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -165,6 +166,20 @@ export default function SystemHealth() {
       setLoading(false)
       setRefreshing(false)
       hasLoadedRef.current = true
+    }
+
+    // B1 (ATF §6.1 + Appendix D.1) — witness deployment mode. A
+    // separate service call because the witness has its own health
+    // endpoint independent of the platform gateway aggregator. Silent
+    // fail on network error — the panel simply shows "unknown".
+    try {
+      const wres = await witnessService.getHealth()
+      setWitness(wres?.data ?? wres ?? null)
+    } catch {
+      // witness reachability failure is a separate signal (heartbeat
+      // loss → UNOBSERVED verdicts). Surfaced via the panel's
+      // "witness unreachable" state rather than a full page error.
+      setWitness(null)
     }
   }, [])
 
@@ -268,6 +283,46 @@ export default function SystemHealth() {
           ))}
         </div>
       )}
+
+      {/* B1 (ATF §6.1 + Appendix D.1) — Execution Witness deployment
+          mode. Sidecar = evidence collected + verdicts can be
+          CORROBORATED. Serverless = evidence unavailable, verdicts
+          FORCED to UNOBSERVED. Anything else (unknown / unreachable) =
+          the panel must not falsely claim protection. */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <HeartPulse size={14} className="text-neutral-400" />
+          <span className="text-sm font-semibold text-white">Execution Witness</span>
+          <span className="ml-auto text-[10px] font-mono text-neutral-600 hidden sm:inline">
+            from /witness/health
+          </span>
+        </div>
+        {(() => {
+          const mode = witness?.deployment_mode
+          const hb   = witness?.heartbeat_stale
+          const cfg = mode === 'sidecar'    ? { color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/20',  label: 'Sidecar', note: 'Evidence collected — CORROBORATED verdicts possible.' }
+                    : mode === 'serverless' ? { color: 'text-amber-400',  bg: 'bg-amber-500/10',  border: 'border-amber-500/20',  label: 'Serverless', note: 'No co-located witness — every verdict is UNOBSERVED by design (ATF Appendix D.1).' }
+                    :                         { color: 'text-neutral-400', bg: 'bg-neutral-500/10', border: 'border-neutral-500/20', label: 'Unknown', note: 'Witness health endpoint did not respond.' }
+          return (
+            <div className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4 flex flex-col sm:flex-row sm:items-center gap-3`}>
+              <div className={`text-sm font-semibold ${cfg.color} shrink-0`}>{cfg.label}</div>
+              <div className="flex-1 text-xs text-neutral-400 leading-snug">{cfg.note}</div>
+              {hb === true && (
+                <div className="text-[11px] text-red-400 flex items-center gap-1">
+                  <AlertTriangle size={11} /> Heartbeat stale — subsequent verdicts flip to UNOBSERVED
+                </div>
+              )}
+              <a
+                href="https://github.com/Abhi-mishra998/aegis/blob/main/docs/security/witness-trust-boundary.md"
+                target="_blank" rel="noopener noreferrer"
+                className="text-[11px] text-neutral-500 hover:text-white underline underline-offset-2 shrink-0"
+              >
+                Trust boundary →
+              </a>
+            </div>
+          )
+        })()}
+      </div>
 
       {/* Operational Queues (2026-05-13): audit stream, audit DLQ, billing retry / DLQ */}
       {data && (

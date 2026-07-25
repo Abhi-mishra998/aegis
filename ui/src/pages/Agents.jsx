@@ -148,7 +148,18 @@ export default function Agents() {
       await fetchAgents();
       await refreshAgents(); // sync Topbar selector
     } catch (err) {
-      setError(err.message || 'Deployment failed.');
+      // W2 (ATF §4.4) — friendly surface for the tenant-issuance-quota
+      // 429. The gateway returns `{"error": "QUOTA_EXCEEDED", ...}` with
+      // status 429; without this, the operator sees "Deployment failed"
+      // and doesn't know why. Point them at the Quota page where they
+      // can see current usage vs cap.
+      const msg = String(err?.message || '')
+      const isQuota = msg.includes('429') || /quota/i.test(msg) || /QUOTA_EXCEEDED/.test(msg)
+      if (isQuota) {
+        setError('Tenant agent quota reached — see Quota Management to see current usage vs cap, or contact ops to raise the cap.')
+      } else {
+        setError(msg || 'Deployment failed.')
+      }
     } finally {
       setCreating(false);
     }

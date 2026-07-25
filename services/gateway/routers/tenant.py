@@ -117,6 +117,20 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
                     },
                 )
 
+    # W2 (ATF §4.4) — tenant issuance quota: current agent count vs the
+    # contractual cap. Read directly from the Redis counter that
+    # `registry/router.py::create_agent` atomically INCRs on every mint.
+    # UI polls this alongside rate-limit + monthly quota so the operator
+    # sees agent headroom on the same panel.
+    profile_cap = int(settings.TENANT_PROFILE_QUOTA_DEFAULT or 0)
+    profile_count = 0
+    try:
+        raw = await _redis.get(f"acp:tenant:profile_count:{tenant_id}")
+        if raw is not None:
+            profile_count = int(raw)
+    except Exception as exc:
+        logger.warning("profile_count_read_failed", error=str(exc))
+
     return {
         "limits": {
             "requests_per_second":           int(limits.get("requests_per_second", 50)),
@@ -125,6 +139,10 @@ async def get_tenant_quota(request: Request) -> dict[str, Any]:
             "monthly_request_cap":           limits.get("monthly_request_cap"),
             "daily_inference_cost_cap_usd":  limits.get("daily_inference_cost_cap_usd"),
             "rpm_limit":                     rpm,
+            "profile_cap":                   profile_cap,
         },
-        "usage": {**usage, **cost_usage},
+        "usage": {
+            **usage, **cost_usage,
+            "profile_count": profile_count,
+        },
     }

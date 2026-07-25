@@ -12,7 +12,7 @@ Legend: 🔴 blocker for enterprise self-serve · 🟡 admin/ops workflow · �
 | Sprint | Items | Status |
 |---|---|---|
 | UI-1 | ATF v3 button · SCIM reconcile · witness trust doc · approval scope | ✅ shipped |
-| UI-2 | provenance block · witness deployment-mode · signing-key history · issuance quota | pending |
+| UI-2 | provenance block · witness deployment-mode · signing-key history · issuance quota | ✅ shipped |
 | UI-3 | C3 toggle · behavior opt-in · collusion feed | pending |
 | UI-4 | deployment lifecycle page · destruction-cert flow | pending |
 | UI-5 | multi-IdP config · Teams/PagerDuty channels | pending |
@@ -34,13 +34,13 @@ Legend: 🔴 blocker for enterprise self-serve · 🟡 admin/ops workflow · �
 
 | # | Backend feature | Backend surface | UI needed | Notes |
 |---|---|---|---|---|
-| 7 | Tenant issuance quota (W2) | `POST /agents` returns `429 QUOTA_EXCEEDED` when tenant is at cap; C2 ledger event on approach | `pages/Agents.jsx` create-agent flow: surface the 429 with a clean message + link to raise the cap. `pages/QuotaManagement.jsx` needs an "issuance quota" tile alongside RPS/burst/daily/monthly | Currently a raw 429 in the console |
+| ~~7~~ ✅ | Tenant issuance quota (W2) | `POST /agents` returns `429 QUOTA_EXCEEDED` when tenant is at cap; C2 ledger event on approach | ✅ "Agents" tile shipped on QuotaManagement (profile_cap + profile_count added to `/tenant/quota` response); Agents.jsx create-agent catch shows a friendly quota-reached message pointing at QuotaManagement | Sprint UI-2 |
 | 8 | Consistency sampling C3 (W4) | `ACP_C3_SAMPLING_TENANTS` env var | Admin toggle on Settings → Policies tab: "Enable 3× consistency sampling on C3 actions" with cost warning | Env-only opt-in is fine short-term; UI toggle needed before it's a customer-configurable feature |
 | 9 | Behavior opt-in gate (W8) | `gate_score_consumption` at `services/behavior/service.py:307` gates learned signals | Settings → Privacy tab: per-tenant toggle "Enable learned behavior fingerprinting (advisory)" | ATF §9.2: must be off by default + advisory-only. UI needs to reflect that constraint |
 | 10 | Collusion detector (W7) | `services/identity_graph/worker.py::_collusion_loop` fires alerts | Incidents feed / SOC dashboard needs a "collusion cluster detected" event card with member drill-down (each agent + its ledger events in the window) | Detector is running; alerts have nowhere to render |
-| 11 | Rotate cross-signing status (Q25) | `transparency_historical_keys.transition_*` columns; `verify_rotation_cross_signature` | Settings → Security → "Signing key history": table of past rotations with cross-signature verification status per row | Auditor visibility; without it, rotations are silent |
-| 12 | Provenance block (B2) | `AgentProfile.provenance` = `{model_ref, prompt_template_hash, tool_manifest_hash, container_image_digest, sbom_ref}` populated at agent mint from `AEGIS_*` CI env vars | `pages/AgentProfile.jsx` provenance section — five fields with copy-to-clipboard | Regulator "what agent were you actually running" answer |
-| 13 | Witness deployment mode (B1) | `WITNESS_DEPLOYMENT_MODE=sidecar\|serverless`; `GET /witness/health` surfaces `deployment_mode` | Settings → Security → "Witness attestation" panel: current mode + explanation of what UNOBSERVED means when mode=serverless | Prevents an operator from silently claiming CORROBORATED on a serverless deploy |
+| ~~11~~ ✅ | Rotate cross-signing status (Q25) | `transparency_historical_keys.transition_*` columns; `verify_rotation_cross_signature` | ✅ "Signing keys (audit chain)" panel shipped on `pages/Compliance.jsx` (active key + historical rotations with cross-signed marker) | Sprint UI-2 |
+| ~~12~~ ✅ | Provenance block (B2) | `AgentProfile.provenance` populated at agent mint from `AEGIS_*` CI env vars | ✅ "Provenance (§4.3 Aegis Profile snapshot)" section on `pages/AgentProfile.jsx`. Backend also updated: `registry/service.py::persist_profile_snapshot` now writes provenance + `aegis_profile_hash` onto `agent.metadata_data` so `GET /agents/{id}` surfaces them | Sprint UI-2 |
+| ~~13~~ ✅ | Witness deployment mode (B1) | `WITNESS_DEPLOYMENT_MODE=sidecar\|serverless`; `GET /witness/health` surfaces `deployment_mode` | ✅ "Execution Witness" panel shipped on `pages/SystemHealth.jsx`. Sidecar → green + evidence-collected note; serverless → amber + "verdicts UNOBSERVED by design" note; unknown → neutral. Also surfaces heartbeat-stale flag when set | Sprint UI-2 |
 | ~~14~~ ✅ | Witness trust-boundary doc (B4) | `docs/security/witness-trust-boundary.md` | ✅ Card + link shipped on `pages/TrustCenter.jsx` (still pending: link from the future Witness settings panel — Sprint UI-2) | Sprint UI-1 |
 | ~~15~~ ✅ | Approval scope enforcement (Q37) | `_approved_rule_id` carried on re-queued incident; worker skips other rules with `approval_scope_skip` audit event | ✅ Amber scope-of-approval banner shipped on `pages/ApprovalInbox.jsx` (names the rule + explains §5.7 single-action-binding) | Sprint UI-1 |
 

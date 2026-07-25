@@ -208,6 +208,36 @@ async def create_agent(
     )
     _profile_hash = _profile_fingerprint(_profile)
 
+    # Persist the profile snapshot onto the agent row so GET /agents/{id}
+    # can surface `aegis_profile_hash` + `provenance` to the UI (B2 +
+    # §4.3). Provenance is captured AT MINT TIME — the auditor's
+    # question is "what was running when this record was created", not
+    # "what would we mint now." Writing to the JSONB metadata column
+    # avoids a schema migration and keeps the field optional for
+    # historical rows (missing → older-than-B2 mint).
+    from dataclasses import asdict as _asdict
+    try:
+        _prov_dict = (
+            _asdict(_profile.provenance) if _profile.provenance is not None else None
+        )
+    except Exception:
+        _prov_dict = None
+    try:
+        await service.persist_profile_snapshot(
+            tenant_id=tenant_id,
+            agent_id=response.id,
+            profile_hash=_profile_hash,
+            provenance=_prov_dict,
+        )
+    except Exception as exc:
+        # Snapshot persist failure is best-effort — the audit event
+        # above already carries the profile_hash, so the compliance
+        # trail is intact even if the metadata write races.
+        logger.warning(
+            "profile_snapshot_persist_failed",
+            agent_id=str(response.id), error=str(exc),
+        )
+
     # RULE 2: Every action is audited
     # P1-1 FIX: Removed __aenter__() anti-pattern; use client directly
     _redis = get_redis_client(settings.REDIS_URL)

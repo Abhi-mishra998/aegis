@@ -1067,8 +1067,19 @@ export const transparencyService = {
 // 2026-05-15 (Sprint 3.2): per-tenant quota — used by the Settings /
 // Billing pages to render the rps/burst/daily/monthly limits + the
 // inference cost cap with live usage counters.
+// W2 (2026-07-25): the response now also carries profile_cap +
+// profile_count for the tenant issuance quota (max concurrent agents).
 export const tenantService = {
   getQuota: () => request('/tenant/quota'),
+};
+
+// ATF §6 Execution Witness — health + attestation key (read-only from
+// the UI). B1/B4: the health payload carries `deployment_mode` so an
+// operator can see whether the witness is sidecar (evidence available)
+// or serverless (verdicts are UNOBSERVED by design).
+export const witnessService = {
+  getHealth:    () => request('/witness/health'),
+  getPublicKey: () => request('/witness/public-key'),
 };
 
 export const autonomyService = {

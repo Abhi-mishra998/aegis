@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Gauge, RefreshCw, AlertTriangle, CheckCircle2,
-  TrendingUp, Clock, Zap, Database, Sparkles,
+  TrendingUp, Clock, Zap, Database, Sparkles, Users,
 } from 'lucide-react'
 import { tenantService } from '../services/api'
 
@@ -108,6 +108,12 @@ export default function QuotaManagement() {
   const monthlyUsed = usage.requests_this_month ?? 0
   const costCap     = limits.daily_inference_cost_usd ?? 0
   const costUsed    = usage.inference_cost_today_usd ?? 0
+  // W2 (ATF §4.4) — tenant issuance quota: max concurrent agents per
+  // tenant. Enforced at agent-mint time via an atomic Redis counter;
+  // hitting the cap returns 429 on POST /agents. Surface as a tile so
+  // the admin sees remaining headroom before hitting the wall.
+  const profileCap   = limits.profile_cap ?? 0
+  const profileCount = usage.profile_count ?? 0
 
   const monthlyPct = monthlyCap > 0 ? Math.round((monthlyUsed / monthlyCap) * 100) : 0
   const resetAt    = quota?.reset_at || quota?.daily_reset_at
@@ -193,11 +199,18 @@ export default function QuotaManagement() {
       )}
 
       {/* Stat strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard icon={Zap}      label="Rate Limit"    value={`${rps} r/s`} sub={`burst: ${burst}`} />
         <StatCard icon={TrendingUp} label="Today"       value={(dailyUsed).toLocaleString()} sub={`of ${dailyCap.toLocaleString()} cap`} />
         <StatCard icon={Database}  label="This Month"   value={(monthlyUsed).toLocaleString()} sub={`${monthlyPct}% of ${monthlyCap.toLocaleString()}`} />
         <StatCard icon={Gauge}     label="Inference $"  value={`$${Number(costUsed).toFixed(2)}`} sub={`cap: $${Number(costCap).toFixed(2)}/day`} />
+        {/* W2 — issuance quota tile */}
+        <StatCard
+          icon={Users}
+          label="Agents"
+          value={profileCount.toLocaleString()}
+          sub={profileCap > 0 ? `of ${profileCap.toLocaleString()} cap` : 'no cap set'}
+        />
       </div>
 
       {/* Progress bars */}

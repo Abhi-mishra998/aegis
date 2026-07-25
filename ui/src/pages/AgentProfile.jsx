@@ -455,6 +455,44 @@ export default function AgentProfile() {
         </div>
       )}
 
+      {/* B2 (ATF §4.3) — Aegis Profile provenance snapshot. Captured at
+          mint time from CI env vars (AEGIS_MODEL_REF, prompt hash, tool
+          manifest hash, container image digest, SBOM ref). Missing
+          fields render as an em-dash — we do NOT fabricate a value
+          because a null field is honest, a fake one misleads the
+          auditor. */}
+      {(a.metadata?.aegis_profile_hash || a.metadata?.provenance) && (
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5">
+          <h2 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+            <GitMerge size={14} className="text-neutral-500" />
+            Provenance (§4.3 Aegis Profile snapshot)
+          </h2>
+          <p className="text-[11px] text-neutral-500 mb-3 leading-snug max-w-2xl">
+            Snapshot taken when this agent was minted. Regulator-facing
+            answer to "what was actually running when this record was
+            created" — provenance is bound to the historical row, not
+            re-computed on read.
+          </p>
+          <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-xs">
+            {[
+              ['Profile hash',          a.metadata?.aegis_profile_hash],
+              ['Model ref',             a.metadata?.provenance?.model_ref],
+              ['Prompt template hash',  a.metadata?.provenance?.prompt_template_hash],
+              ['Tool manifest hash',    a.metadata?.provenance?.tool_manifest_hash],
+              ['Container image digest',a.metadata?.provenance?.container_image_digest],
+              ['SBOM ref',              a.metadata?.provenance?.sbom_ref],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-baseline gap-2 min-w-0">
+                <dt className="text-neutral-500 shrink-0">{label}</dt>
+                <dd className="font-mono text-neutral-300 truncate" title={value || ''}>
+                  {value || <span className="text-neutral-600">—</span>}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard

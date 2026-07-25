@@ -127,6 +127,36 @@ class AgentService:
         await _invalidate_agent_caches(agent_id)
         return AgentResponse.model_validate(updated_agent)
 
+    async def persist_profile_snapshot(
+        self,
+        tenant_id: uuid.UUID,
+        agent_id: uuid.UUID,
+        *,
+        profile_hash: str,
+        provenance: dict | None,
+    ) -> None:
+        """Write the Aegis Profile snapshot (hash + provenance) into the
+        agent's metadata JSONB column. Called from `create_agent`
+        immediately after profile mint so `GET /agents/{id}` surfaces
+        the fields to the UI.
+
+        Best-effort — caller catches. Merge with existing metadata so
+        wizard-provisioned agents don't lose their `wizard: true` flag.
+        """
+        agent = await self.repo.get_by_id(tenant_id, agent_id)
+        if not agent:
+            return
+        meta = dict(agent.metadata_data or {})
+        meta["aegis_profile_hash"] = profile_hash
+        # Skip null provenance rather than persist `provenance: null`
+        # — cleaner UI conditional check.
+        if provenance is not None:
+            meta["provenance"] = provenance
+        agent.metadata_data = meta
+        await self.repo.db.flush()
+        await self.repo.db.commit()
+        await _invalidate_agent_caches(agent_id)
+
     async def delete_agent(self, tenant_id: uuid.UUID, agent_id: uuid.UUID) -> None:
         agent = await self.repo.get_by_id(tenant_id, agent_id)
         if not agent or agent.deleted_at is not None:
