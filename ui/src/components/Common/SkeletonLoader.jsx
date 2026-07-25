@@ -1,4 +1,3 @@
-import React from 'react'
 
 /**
  * SkeletonLoader — shimmer placeholder while content loads.

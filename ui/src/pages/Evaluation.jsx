@@ -17,7 +17,7 @@
 //
 // All data tenant-scoped at the backend via JWT. No mocked arrays.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ShieldCheck, AlertTriangle, ListChecks, Clock, PlayCircle, BookOpen,

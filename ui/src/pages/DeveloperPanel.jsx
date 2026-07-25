@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Code2, Key, Copy, Check, Plus, Trash2, Eye, EyeOff, Terminal, Book, RefreshCw, AlertTriangle } from 'lucide-react'
 import Card from '../components/Common/Card'
 import SkeletonLoader from '../components/Common/SkeletonLoader'

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { killSwitchService, auditService, parseApiError } from '../services/api'
 import {
   AlertTriangle, Power, ShieldCheck, AlertOctagon,

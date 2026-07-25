@@ -1,4 +1,3 @@
-import React from 'react'
 import { Loader2, Database } from 'lucide-react'
 
 /**

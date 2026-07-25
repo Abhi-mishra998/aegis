@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   KeyRound, Plus, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Copy,
 } from 'lucide-react'

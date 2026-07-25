@@ -6,7 +6,7 @@
 // queues them, lets the on-call decide, and records the decision in
 // human_override_events via POST /autonomy/overrides.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Inbox, CheckCircle2, XCircle, Clock, AlertTriangle, RefreshCw, User, PlayCircle, Zap,

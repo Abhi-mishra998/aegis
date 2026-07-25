@@ -9,7 +9,7 @@
 //   GET /graph/agents             — list of nodes + edges
 //   GET /graph/blast-radius/{id}  — set of nodes reachable from {id}
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ReactFlow, {
   Background,

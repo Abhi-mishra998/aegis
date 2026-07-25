@@ -1,4 +1,3 @@
-import React from 'react'
 import { Link } from 'react-router-dom'
 import {
   Shield, ShieldCheck, Lock, FileBadge2, Globe, Activity,

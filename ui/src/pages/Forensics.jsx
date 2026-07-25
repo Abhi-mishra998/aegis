@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useContext } from 'react'
+import { useState, useEffect, useRef, useContext } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { forensicsService } from '../services/api'
 import { AgentContext } from '../context/AgentContext'

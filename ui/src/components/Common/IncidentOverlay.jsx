@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { ShieldAlert, Copy, CheckCircle2, LogIn, Clock, AlertTriangle } from 'lucide-react'
 
 const COUNTDOWN_SECONDS = 12

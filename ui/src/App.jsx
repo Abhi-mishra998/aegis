@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, Suspense, lazy } from 'react';
+import { useState, useEffect, useCallback, useMemo, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthContext } from './context/AuthContext';
 import { AgentProvider } from './context/AgentContext';
@@ -355,6 +355,13 @@ function App() {
               <Route path="/security" element={<SecurityPage />} />
               <Route path="/security/policy" element={<SecurityPage />} />
               <Route path="/security/report" element={<SecurityPage />} />
+              {/* Note: /security is the public disclosure page above.
+                  A prior redirect `/security → /live-feed` was dead
+                  code (first-match wins in React Router; the public
+                  page above always won). The redirect used to point
+                  the old internal SecurityDashboard at LiveFeed; that
+                  dashboard no longer exists. Deleted the dead line
+                  during the frontend audit. */}
               {/* arch-26 W3.5 2026-06-26 — per-route ErrorBoundary on the
                   two pages that mount the most third-party render code
                   (charts, recharts, SkeletonLoader, SSE handlers). A
@@ -421,10 +428,11 @@ function App() {
 
               {/* Admin / surfaced via Settings hub (hidden from sidebar) */}
               <Route path="/rbac"            element={<ProtectedRoute><RBAC /></ProtectedRoute>} />
-              {/* Observability + SecurityDashboard consolidated into LiveFeed
-                  scope filter. External bookmarks / command palette entries
-                  redirect so deep links keep working. */}
-              <Route path="/security"        element={<Navigate to="/live-feed" replace />} />
+              {/* Observability consolidated into LiveFeed scope filter.
+                  External bookmarks / command palette entries redirect
+                  so deep links keep working. (The old /security
+                  redirect was dead — see note above; the public
+                  SecurityPage owns /security now.) */}
               <Route path="/observability"   element={<Navigate to="/live-feed" replace />} />
               <Route path="/system-health"   element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />

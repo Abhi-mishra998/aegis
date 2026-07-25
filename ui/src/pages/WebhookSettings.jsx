@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Webhook, Slack, Bell, Globe,
   Save, Play, Loader2, AlertCircle,

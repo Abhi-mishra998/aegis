@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   Shield, Search, Globe, Wifi, AlertTriangle,
   CheckCircle2, XCircle, Loader2, RefreshCw, Info,

@@ -6,7 +6,7 @@
 //
 // Data: GET /audit/fleet/agent-health, GET /audit/fleet/recent-events.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, HeartPulse } from 'lucide-react'
 import { fleetService } from '../services/api'

@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useCallback, useRef } from 'react'
+import { createContext, useState, useEffect, useCallback, useRef } from 'react'
 import { registryService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { useSSE } from '../hooks/useSSE'

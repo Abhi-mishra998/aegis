@@ -1,4 +1,3 @@
-import React from 'react';
 import { SignUp } from '@clerk/react';
 import { Link } from 'react-router-dom';
 import { Shield, Lock } from 'lucide-react';

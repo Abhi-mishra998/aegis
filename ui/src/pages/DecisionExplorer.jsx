@@ -13,7 +13,7 @@
 // The page accepts ?request_id=... in the URL so it deep-links from
 // other pages (Flight Recorder, Forensics, Live Feed).
 
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import ReactFlow, {
   Background,

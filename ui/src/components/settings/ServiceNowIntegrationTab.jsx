@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   CheckCircle2, RefreshCw, ExternalLink, Trash2, ShieldCheck, AlertCircle,
 } from 'lucide-react'

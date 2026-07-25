@@ -7,7 +7,7 @@
 // uses. No two-source-of-truth drift. The page accepts ?agent_id=...
 // from URL deep-links (the Agent Health table sends operators here).
 
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import {
   ResponsiveContainer, RadialBarChart, RadialBar, PolarAngleAxis, Tooltip,

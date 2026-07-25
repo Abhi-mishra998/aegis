@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertOctagon, Shield } from 'lucide-react';
 import { iagService } from '../../services/api';
 import Card from '../Common/Card';

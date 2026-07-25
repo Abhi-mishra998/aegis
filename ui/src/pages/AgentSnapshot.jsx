@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useParams, useLocation, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,

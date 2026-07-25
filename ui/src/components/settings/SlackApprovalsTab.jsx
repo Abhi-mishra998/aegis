@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CheckCircle2, MessagesSquare, RefreshCw, ExternalLink, Trash2 } from 'lucide-react'
 import Button from '../Common/Button'
 import { workspaceService } from '../../services/api'

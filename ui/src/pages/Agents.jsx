@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId, useRef } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { registryService } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
