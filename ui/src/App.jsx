@@ -61,16 +61,14 @@ const DeveloperPanel     = safeLazy(() => import('./pages/DeveloperPanel'));
 const SystemHealth       = safeLazy(() => import('./pages/SystemHealth'));
 const IdentityGraph      = safeLazy(() => import('./pages/IdentityGraph'));
 const FlightRecorder     = safeLazy(() => import('./pages/FlightRecorder'));
-const RBAC               = safeLazy(() => import('./pages/RBAC'));
+// RBAC / WebhookSettings / SiemSettings / ScheduledReports / QuotaManagement
+// are now lazy-loaded inside pages/Settings.jsx (the tabbed hub). Their
+// standalone routes here are Navigate redirects into /settings?tab=X.
 const Incidents          = safeLazy(() => import('./pages/Incidents'));
 const AutoResponse       = safeLazy(() => import('./pages/AutoResponse'));
 const Compliance         = safeLazy(() => import('./pages/Compliance'));
-const WebhookSettings    = safeLazy(() => import('./pages/WebhookSettings'));
 const AdminConsole       = safeLazy(() => import('./pages/AdminConsole'));
-const SiemSettings       = safeLazy(() => import('./pages/SiemSettings'));
-const ScheduledReports   = safeLazy(() => import('./pages/ScheduledReports'));
 const ThreatIntel        = safeLazy(() => import('./pages/ThreatIntel'));
-const QuotaManagement    = safeLazy(() => import('./pages/QuotaManagement'));
 const SsoSettings        = safeLazy(() => import('./pages/SsoSettings'));
 const Notifications      = safeLazy(() => import('./pages/Notifications'));
 const LiveFeed           = safeLazy(() => import('./pages/LiveFeed'));
@@ -369,7 +367,8 @@ function App() {
                   the boundary surfaces a recoverable error card with the
                   incident_id for support. */}
               <Route path="/dashboard" element={<ProtectedRoute><ErrorBoundary><Dashboard /></ErrorBoundary></ProtectedRoute>} />
-              <Route path="/audit-feed" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
+              {/* Legacy alias — /flight-recorder is the canonical route. */}
+              <Route path="/audit-feed" element={<Navigate to="/flight-recorder" replace />} />
 
               {/* Primary nav (5) */}
               <Route path="/flight-recorder" element={<ProtectedRoute><FlightRecorder /></ProtectedRoute>} />
@@ -426,8 +425,11 @@ function App() {
               <Route path="/pricing"     element={<Pricing />} />
               <Route path="/kill-switch"     element={<ProtectedRoute><KillSwitch /></ProtectedRoute>} />
 
-              {/* Admin / surfaced via Settings hub (hidden from sidebar) */}
-              <Route path="/rbac"            element={<ProtectedRoute><RBAC /></ProtectedRoute>} />
+              {/* Legacy admin routes — consolidated into the Settings hub.
+                  Kept as bookmark-safe redirects so external links + old
+                  browser history keep working; they land in the tabbed
+                  Settings page where every admin surface is discoverable. */}
+              <Route path="/rbac"             element={<Navigate to="/settings?tab=roles" replace />} />
               {/* Observability consolidated into LiveFeed scope filter.
                   External bookmarks / command palette entries redirect
                   so deep links keep working. (The old /security
@@ -437,12 +439,12 @@ function App() {
               <Route path="/system-health"   element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/developer"       element={<ProtectedRoute><DeveloperPanel /></ProtectedRoute>} />
               <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
-              <Route path="/webhook-settings" element={<ProtectedRoute><WebhookSettings /></ProtectedRoute>} />
-              <Route path="/admin"           element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
-              <Route path="/siem"            element={<ProtectedRoute><SiemSettings /></ProtectedRoute>} />
-              <Route path="/scheduled-reports" element={<ProtectedRoute><ScheduledReports /></ProtectedRoute>} />
-              <Route path="/threat-intel"     element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />
-              <Route path="/quota"            element={<ProtectedRoute><QuotaManagement /></ProtectedRoute>} />
+              <Route path="/webhook-settings"  element={<Navigate to="/settings?tab=webhooks" replace />} />
+              <Route path="/admin"             element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
+              <Route path="/siem"              element={<Navigate to="/settings?tab=siem" replace />} />
+              <Route path="/scheduled-reports" element={<Navigate to="/settings?tab=reports" replace />} />
+              <Route path="/threat-intel"      element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />
+              <Route path="/quota"             element={<Navigate to="/settings?tab=quota" replace />} />
               <Route path="/sso"              element={<ProtectedRoute><SsoSettings /></ProtectedRoute>} />
               <Route path="/notifications"    element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/live-feed"        element={<ProtectedRoute><ErrorBoundary><LiveFeed /></ErrorBoundary></ProtectedRoute>} />
