@@ -16,6 +16,7 @@ verifiable audit trail.
 ## Table of contents
 
 - [Problem](#problem)
+- [Tech stack](#tech-stack)
 - [Request pipeline](#request-pipeline)
 - [Architecture](#architecture)
 - [Service inventory](#service-inventory)
@@ -29,7 +30,9 @@ verifiable audit trail.
 - [Admin console surfaces](#admin-console-surfaces)
 - [Performance measurements](#performance-measurements)
 - [Screenshots — live decisions](#screenshots--live-decisions)
+- [Configuration](#configuration)
 - [Quick start](#quick-start)
+- [Production safety](#production-safety)
 - [Demo scenarios](#demo-scenarios)
 - [Video walkthroughs](#video-walkthroughs)
 - [Documentation](#documentation)
@@ -55,6 +58,41 @@ compromise.
 Aegis is a purpose-built enforcement layer for that gap. Every tool call is
 authenticated, authorized, risk-scored, policy-evaluated, and cryptographically
 logged before it executes.
+
+---
+
+## Tech stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Runtime (backend) | Python 3.11 | Type-hint maturity, `asyncio` performance, wide OS support |
+| Web framework | FastAPI + Starlette | Native ASGI, first-class Pydantic v2 integration, automatic OpenAPI |
+| ASGI server | uvicorn (`[standard]`) | Battle-tested, `--workers` scaling; no gevent monkey-patching |
+| Data validation | Pydantic v2 + pydantic-settings | Single canonical model for request bodies and typed env-var config |
+| ORM | SQLAlchemy 2.0 async + asyncpg | Non-blocking Postgres access from FastAPI without threadpool detours |
+| Database | PostgreSQL 14+ (RDS Multi-AZ in prod) | JSONB metadata, ACID for the transactional outbox, `gen_random_uuid()` for chain hashes |
+| Connection pool | pgbouncer (transaction pooling) | Bounded server-side conns without app-code changes; matches RDS `max_connections` budgets |
+| Cache / pub-sub / rate-limit | Redis 7+ (ElastiCache in prod, replication + failover) | Sub-ms atomic ops; SSE fanout; JWT `jti` revocation set; per-tenant feature flags |
+| Policy engine | Open Policy Agent (Rego) | Deny-by-default, Git-backed bundles, hot-reload without gateway restart |
+| Signing | ed25519 (`cryptography`) | 64-byte signatures, deterministic, no padding-oracle exposure |
+| JWT | RS256 (`python-jose`) | Public-key verification lets downstream services validate without secret sharing |
+| Multi-IdP workload auth | SPIFFE / Entra Agent ID / Okta XAA | See [Multi-IdP acceptance](#multi-idp-acceptance-atf-42) |
+| HTTP client | `httpx` (async) | HTTP/2, connection pooling, timeout budgets that don't leak |
+| Structured logs | `structlog` (JSON) | One canonical schema for gateway + services; direct Loki / CloudWatch ingest |
+| Metrics | Prometheus (`prometheus-fastapi-instrumentator`) | Per-route histograms, tenant-scoped counters, alertmanager fanout |
+| Traces | OpenTelemetry → Jaeger (dev) / OTLP (prod) | End-to-end correlation across 15 services |
+| MCP (Model Context Protocol) | `mcp>=0.5` | `services/mcp_server/` exposes governance tools to Claude Desktop / Cursor / VS Code |
+| Frontend framework | React 18 + Vite 5 | Fast HMR; per-page code-splitting via `React.lazy` |
+| UI styling | Tailwind CSS 3 (custom design tokens; no component lib) | Zero external UI-lib upgrade risk; every primitive lives in `ui/src/components/Common/` |
+| Charts | recharts | SVG, tree-shakable; heavy chart bundle lazy-loaded per page |
+| Graph rendering | reactflow (11.x) | Identity Graph nodes/edges; canvas-backed for 500+ node graphs |
+| Auth (customer-facing) | Clerk (`@clerk/react` 6) | Managed SAML / OIDC, MFA, session revocation without owning a user-management surface |
+| Form validation (UI) | zod | Same schema-first discipline as backend Pydantic; no runtime `PropTypes` |
+| Testing (backend) | pytest + pytest-asyncio | 2900+ tests across `services/`, `sdk/`, `tests/` |
+| Testing (frontend) | Playwright | Real-browser E2E; not shipping to prod (per-CI) |
+| Container runtime | Docker + Docker Compose (local); ECS / EC2 (prod-ha) | 27-container topology deterministic in dev; TF-managed launch templates in prod |
+| IaC | Terraform 1.5+ (modules + envs/{dev, prod-ha}) | Reproducible AWS baseline; import block for existing state |
+| Edge (prod) | nginx (reverse proxy + SPA fallback) | Static UI + gateway routes on the same domain; predictable regex matching for API prefixes |
 
 ---
 
@@ -754,6 +792,84 @@ defends against.
 
 ---
 
+## Configuration
+
+Every service reads config from environment variables via the typed
+`sdk/common/config.py` (Pydantic Settings). The full field set is 100+
+knobs — most have sane defaults. The essential ones are grouped below;
+the reference `.env.example` at the repo root lists everything with
+inline commentary.
+
+### Required (all environments)
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Postgres DSN. In prod: RDS Multi-AZ URI via Secrets Manager |
+| `REDIS_URL` | Redis DSN. In prod: ElastiCache replication group primary endpoint |
+| `JWT_SECRET_KEY` | Access-token signing key. Rotate via `scripts/maintenance/` |
+| `INTERNAL_SECRET` | Shared secret for gateway → downstream service mesh calls |
+| `MESH_JWT_SECRET` | Signs the short-lived JWTs the gateway mints for internal service hops |
+| `ENVIRONMENT` | `development` / `staging` / `production` — gates fail-fast checks (see [Production safety](#production-safety)) |
+
+### Downstream service URLs
+
+Only needed when running services on separate hosts. Docker Compose sets
+these automatically. In `production` the gateway will REFUSE to boot if
+`AEGIS_VALIDATE_SERVICE_URLS=1` and a URL still points at localhost.
+
+Each service has a `<NAME>_SERVICE_URL` — e.g. `REGISTRY_SERVICE_URL`,
+`DECISION_SERVICE_URL`, `AUDIT_SERVICE_URL`, `WITNESS_SERVICE_URL`, etc.
+See `sdk/common/config.py` for the full list.
+
+### Multi-IdP acceptance (§4.2)
+
+Each adapter is off unless the corresponding env vars are set.
+
+| Adapter | Required |
+|---|---|
+| SPIFFE | `SPIFFE_TRUST_DOMAIN` + `SPIFFE_TRUST_BUNDLE_JSON` (+ optional `SPIFFE_AUDIENCE`) |
+| Entra Agent ID | `ENTRA_TENANT_ID` + `ENTRA_AUDIENCE` |
+| Okta XAA | `OKTA_ISSUER` + `OKTA_AUDIENCE` |
+
+### Feature flag fallback (env → tenant override)
+
+Per-tenant Redis flags override these env-var enable-lists (see
+[Per-tenant feature flags](#per-tenant-feature-flags)). Env vars stay
+functional so ops-owned deployments don't need to touch the console.
+
+| Variable | Format | Effect |
+|---|---|---|
+| `ACP_C3_SAMPLING_TENANTS` | Comma-separated tenant IDs | Enables §9.3 consistency sampling for those tenants |
+| `ACP_BEHAVIOR_FINGERPRINTING_TENANTS` | Comma-separated tenant IDs | Enables §9.2 learned advisory signal for those tenants |
+| `ACP_BEHAVIOR_FINGERPRINTING_MODE` | `advisory` (default) / `off` | Never `authoritative` — enforced in `sdk/common/behavior_opt_in.py` |
+
+### Escalation channels
+
+Configured **per tenant** via the console (`/settings?tab=webhooks`). Env
+vars below are the fallback when a tenant has not set a per-tenant URL:
+
+`SLACK_WEBHOOK_URL`, `TEAMS_WEBHOOK_URL`, `PAGERDUTY_ROUTING_KEY`,
+`ALERT_WEBHOOK_URL` (generic).
+
+### Public URLs (production)
+
+| Variable | Purpose |
+|---|---|
+| `PUBLIC_BASE_URL` (or `ALB_PUBLIC_HOST`) | Public origin the customer reaches — used to build Slack OAuth callback URLs. `_redirect_uri()` raises at boot in production if unset. |
+| `AEGIS_GATEWAY_URL` (or `AEGIS_MCP_GATEWAY_URL`) | Public gateway URL the MCP server calls into. `services/mcp_server/tools.py` raises at import time in production if unset. |
+| `INTERNAL_GATEWAY_URL` (or `GATEWAY_URL`) | In-cluster gateway URL for demo-runner traffic. `/execute` helper returns 503 in production if unset. |
+
+### External integrations (optional)
+
+| Variable | Enables |
+|---|---|
+| `UPSTREAM_ANTHROPIC_KEY` / `UPSTREAM_OPENAI_KEY` | Inference proxy fanout to Anthropic / OpenAI |
+| `GROQ_API_KEY` | Insight service (LLM-generated threat narrative for the SOC feed) |
+| `SCIM_BASE_URL` + `SCIM_BEARER_TOKEN` | Okta SCIM 2.0 sync (reconciler cron + on-demand from console) |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile bot check on public signup |
+
+---
+
 ## Quick start
 
 ```bash
@@ -788,6 +904,30 @@ ACP_DRY_RUN=1 python3 demos/run_all_demos.py
 
 Full local runbook with env variables, Slack webhooks, S3 backup, and
 troubleshooting: [`docs/operations/deployment.md`](docs/operations/deployment.md).
+
+---
+
+## Production safety
+
+Design intent: **a misconfigured production deployment must fail loudly
+at boot, not silently at first customer request.** Dev-friendly localhost
+fallbacks are preserved when `ENVIRONMENT != production` so local
+`docker compose up` still works out of the box.
+
+| Component | Failure mode if misconfigured in production | Where |
+|---|---|---|
+| MCP server (`services/mcp_server/tools.py`) | Raises `RuntimeError` at import time if neither `AEGIS_MCP_GATEWAY_URL` nor `AEGIS_GATEWAY_URL` is set. Prevents the server from silently pointing tools at `localhost:8000`. | `_resolve_gateway_url()` |
+| Demo `/execute` helper (`services/gateway/routers/demo.py`) | Returns HTTP 503 if neither `INTERNAL_GATEWAY_URL` nor `GATEWAY_URL` is set. Traffic-generator subprocess logs `demo_traffic_skipped_no_internal_gateway_url` and returns instead of shelling out to a localhost hardcode. | `_execute_step()` |
+| Slack OAuth (`services/gateway/routers/slack_oauth.py`) | Raises `RuntimeError` if neither `PUBLIC_BASE_URL` nor `ALB_PUBLIC_HOST` is set. Slack would otherwise reject the OAuth exchange with a confusing `redirect_uri mismatch` — this makes the misconfig visible at boot. | `_redirect_uri()` |
+| Behavior firewall | Fails CLOSED on downstream timeout — `degraded_mode_policy` decides between `block_high_risk` / `block_all` / `allow_with_audit` per tenant. Unconditional `behavior_firewall_decision` audit row on every request. | `services/gateway/main.py` |
+| OPA policy engine | `OPA_FAIL_MODE=closed` (default). Bundle-server unreachability blocks writes, does not fall through to allow. | `sdk/common/config.py` |
+| Multi-IdP JWKS cache | Fails CLOSED — a cache-fetch failure raises `ACPAuthError`, never falls through with an empty key set. | `services/gateway/idp_verifiers.py` |
+| Kill switch | Loads active switches from Postgres into Redis at gateway boot. If Redis is flushed mid-incident, the next request rehydrates from Postgres. | `services/decision/router.py` |
+| Audit outbox | Audit row and billing event commit in the same Postgres transaction. If the audit row exists, the billing event was queued. | `acp_usage.pending_usage_events` |
+
+Same pattern applies to the ~100 other settings validated by
+`sdk/common/config.py::Settings` — invalid values fail at import, before
+the first request is served.
 
 ---
 
