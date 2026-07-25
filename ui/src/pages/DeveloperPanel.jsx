@@ -195,10 +195,14 @@ export default function DeveloperPanel() {
     {
       title: 'Step 1 — Login (get JWT)',
       desc:  'Returns a 15-minute access token in `data.access_token`. The same value is set as the httpOnly `acp_token` cookie for browser SDKs.',
-      code: `TOKEN=$(curl -s -X POST ${GW}/auth/token \\
+      code: `# Set your Aegis credentials before running.
+export ACP_EMAIL="you@example.com"
+export ACP_PASSWORD="your-password"
+
+TOKEN=$(curl -s -X POST ${GW}/auth/token \\
   -H "Content-Type: application/json" \\
   -H "X-Tenant-ID: ${tid}" \\
-  -d '{"email":"demo@aegisagent.in","password":"demo1234"}' \\
+  -d "{\\"email\\":\\"\${ACP_EMAIL}\\",\\"password\\":\\"\${ACP_PASSWORD}\\"}" \\
   | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
 
 echo "Token: \${TOKEN:0:40}..."`,
@@ -310,12 +314,13 @@ echo "Token: \${TOKEN:0:40}..."`,
 
   const SDK_PYTHON = `# pip install httpx
 # Real working sample against ${GW}
+# Set ACP_EMAIL / ACP_PASSWORD in your environment before running.
 import asyncio, httpx, os
 
 GATEWAY  = "${GW}"
 TENANT   = "${tid}"
-EMAIL    = "demo@aegisagent.in"
-PASSWORD = "demo1234"
+EMAIL    = os.environ["ACP_EMAIL"]
+PASSWORD = os.environ["ACP_PASSWORD"]
 AGENT_ID = "${DEMO_AGENT}"  # demo-agent
 
 async def main():
@@ -358,10 +363,11 @@ asyncio.run(main())`
   // sample, not runtime UI logging).
   const SDK_JS = `// Real working sample against ${GW}
 // Node 18+ has fetch built in.
+// Set ACP_EMAIL / ACP_PASSWORD in your environment before running.
 const GATEWAY  = '${GW}';
 const TENANT   = '${tid}';
-const EMAIL    = 'demo@aegisagent.in';
-const PASSWORD = 'demo1234';
+const EMAIL    = process.env.ACP_EMAIL;
+const PASSWORD = process.env.ACP_PASSWORD;
 const AGENT_ID = '${DEMO_AGENT}'; // demo-agent
 
 (async () => {

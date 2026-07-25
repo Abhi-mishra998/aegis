@@ -1362,13 +1362,13 @@ export const teamService = {
 }
 
 // Sprint EI-3 — Okta SCIM bearer-token management used by
-// settings/ScimTokensTab.jsx. Backend at /scim/tokens.
+// settings/ScimTokensTab.jsx. Backend at /scim/v2/tokens (SCIM 2.0 prefix).
 // W5 (ATF §4.2) — reconcile trigger added here so all SCIM ops live in
 // one service object.
 export const scimService = {
-  listTokens:  () => request('/scim/tokens'),
-  createToken: (label) => request('/scim/tokens', { method: 'POST', body: JSON.stringify({ label }) }),
-  revokeToken: (tokenId) => request(`/scim/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+  listTokens:  () => request('/scim/v2/tokens'),
+  createToken: (label) => request('/scim/v2/tokens', { method: 'POST', body: JSON.stringify({ label }) }),
+  revokeToken: (tokenId) => request(`/scim/v2/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
   // Force a directory sync after an IdP-side change; cron runs it too.
   reconcile:   () => request('/scim/reconcile', { method: 'POST', body: '{}' }),
 }
