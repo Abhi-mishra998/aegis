@@ -83,6 +83,26 @@ export default function ScimTokensTab() {
     }
   }
 
+  // W5 (ATF §4.2) — force a directory sync now. The reconciliation cron
+  // already runs periodically; this lets an admin trigger it immediately
+  // after they change something in their IdP so they can see the effect
+  // without waiting for the next cron tick.
+  const [reconcileLoading, setReconcileLoading] = useState(false)
+  const [reconcileResult, setReconcileResult] = useState(null)
+  const reconcile = async () => {
+    setReconcileLoading(true); setError(''); setReconcileResult(null)
+    try {
+      const resp = await scimService.reconcile()
+      // Backend returns {ok, processed, ...} shape; surface whatever the
+      // service gives us for admin visibility.
+      setReconcileResult(resp?.data || resp || { ok: true })
+    } catch (e) {
+      setError(e?.message || 'Reconcile failed')
+    } finally {
+      setReconcileLoading(false)
+    }
+  }
+
   if (loading) return <div className="text-sm text-neutral-500">Loading…</div>
 
   return (
@@ -191,6 +211,33 @@ export default function ScimTokensTab() {
         <Button onClick={issue} disabled={busy} variant="primary">
           {busy ? <RefreshCw size={12} className="animate-spin" /> : <Plus size={12} />}
           Issue token
+        </Button>
+      </div>
+
+      {/* W5 — manual SCIM reconcile trigger */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-white">Directory reconcile</div>
+          <p className="text-[11px] text-neutral-500 mt-0.5 leading-snug max-w-xl">
+            Force a full SCIM directory sync now. Aegis normally reconciles on a
+            periodic cron; use this button after making changes in your IdP
+            (renaming a user, removing an assignment, etc.) so you see the
+            effect in the audit trail immediately.
+          </p>
+          {reconcileResult && (
+            <div className="text-[11px] text-green-400 mt-2 flex items-center gap-1">
+              <CheckCircle2 size={11} /> Reconcile complete
+              {typeof reconcileResult.processed === 'number' && (
+                <span className="text-neutral-500">
+                  · {reconcileResult.processed} refs processed
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <Button onClick={reconcile} disabled={reconcileLoading} variant="secondary">
+          <RefreshCw size={12} className={reconcileLoading ? 'animate-spin' : ''} />
+          Reconcile now
         </Button>
       </div>
 

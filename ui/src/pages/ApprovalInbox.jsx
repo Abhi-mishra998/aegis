@@ -403,6 +403,24 @@ function ApprovalInboxPage() {
                   />
                 </div>
 
+                {/* Q37 (ATF §5.7 single-action-binding) — surface the
+                    scope constraint the human is implicitly accepting.
+                    The auto-response worker skips any OTHER rule that
+                    happens to match this incident, so approving one
+                    action ≠ approving every rule the incident touches. */}
+                <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold">Scope of this approval:</span>{' '}
+                    You are approving the <span className="font-mono">
+                    {selected.rule_name || selected.rule_id || 'auto-response rule'}</span>{' '}
+                    action only. Other rules that match the same incident
+                    will be SKIPPED (logged as{' '}
+                    <span className="font-mono">approval_scope_skip</span>).
+                    §5.7 single-action-binding.
+                  </div>
+                </div>
+
                 <div className="mt-3 flex justify-end gap-2">
                   <button
                     onClick={() => decide('override')}

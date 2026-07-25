@@ -126,6 +126,28 @@ export default function Compliance() {
     }
   }
 
+  // W3 (ATF §7.3) — regulator-facing export bundle v3. Downloads the
+  // §7.1 canonical JSON shape with entries + summary + policy manifests
+  // + anchor references. Bounded to 10k entries per the backend cap.
+  const [atfV3Loading, setAtfV3Loading] = useState(false)
+  const handleAtfV3Bundle = async () => {
+    setAtfV3Loading(true)
+    setError('')
+    try {
+      const blob = await auditService.downloadAtfV3Bundle()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `aegis-atf-v3-bundle-${iso(today)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err.message || 'ATF v3 bundle download failed.')
+    } finally {
+      setAtfV3Loading(false)
+    }
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -137,16 +159,29 @@ export default function Compliance() {
             <p className="text-xs text-neutral-500 mt-0.5">Generate evidence reports for EU AI Act, NIST AI RMF, and SOC 2</p>
           </div>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={handleBoardReport}
-          loading={boardLoading}
-          aria-label="Generate board report PDF"
-        >
-          <BookOpen size={12} aria-hidden="true" />
-          Generate Board Report
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleAtfV3Bundle}
+            loading={atfV3Loading}
+            aria-label="Download ATF v3 export bundle (JSON)"
+            title="§7.3 canonical export bundle: entries + summary + policy manifests + anchor references. Regulator-facing."
+          >
+            <Download size={12} aria-hidden="true" />
+            ATF v3 bundle
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleBoardReport}
+            loading={boardLoading}
+            aria-label="Generate board report PDF"
+          >
+            <BookOpen size={12} aria-hidden="true" />
+            Generate Board Report
+          </Button>
+        </div>
       </div>
 
       {/* Date range */}

@@ -90,6 +90,17 @@ const SECTIONS = [
     linkLabel: 'AWS / Azure / hybrid patterns',
   },
   {
+    // B4 (ATF v3.2 §6.1) — Witness trust boundary is what the Execution
+    // Witness assumes about the host it runs on. Auditors ask this
+    // question first. The doc names the trusted primitives, the defended
+    // threats, the bounded properties, and what's explicitly NOT claimed.
+    icon: Shield,
+    title: 'Witness trust boundary',
+    body: 'What the Execution Witness assumes about the host, what it defends against, and — honestly — what is out of scope. Trusts host kernel + container runtime + signing-key storage + Redis. Defends against a compromised agent process. Bounded properties: heartbeat-loss visibility, anchor-bounded taint. Not claimed: malicious host, kernel compromise, key-in-hand attacker, serverless evidence.',
+    href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/security/witness-trust-boundary.md',
+    linkLabel: 'Witness trust-boundary doc',
+  },
+  {
     icon: Shield,
     title: 'Failure-mode behaviour',
     body: 'What happens if Redis / OPA / Postgres dies? Documented per dependency with the exact code path that implements the fail-behaviour. Default is fail-closed for policy decisions (a governance product can never default-allow during an outage); fail-open for observability. Circuit breakers + exponential-backoff retries on every cross-service call via sdk/common/resilient_client.py.',

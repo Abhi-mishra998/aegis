@@ -835,3 +835,15 @@ async def issue_destruction_certificate(request: Request) -> Any:
         headers=internal_headers(request),
     )
     return passthrough(resp)
+
+
+# W3 (ATF §7.3) — export bundle v3 for regulators. Streamed JSON body.
+@router.get("/audit/logs/export-atf-v3", tags=["audit"])
+async def export_atf_v3_bundle(request: Request) -> Any:
+    qs = request.url.query
+    path = "/logs/export-atf-v3" + (f"?{qs}" if qs else "")
+    resp = await request.app.state.client.get(
+        f"{_base()}{path}",
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)

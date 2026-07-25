@@ -632,6 +632,23 @@ export const auditService = {
   addNote: (auditId, data) => request(`/audit/logs/${encodeURIComponent(auditId)}/notes`, {
     method: 'POST', body: JSON.stringify(data),
   }),
+  // W3 (ATF §7.3) — regulator-facing export bundle v3. Streamed JSON
+  // (bounded to 10k entries; larger periods should use /audit/export NDJSON).
+  downloadAtfV3Bundle: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return blobRequest(`/audit/logs/export-atf-v3${qs ? `?${qs}` : ''}`)
+  },
+  // Q24 (ATF §14.5 DESTROY) — customer-retainable destruction certificate.
+  // Called from the lifecycle DESTROY transition (auto-attached in the
+  // transition response) or directly by the compliance page for re-issuance
+  // while audit rows remain on disk.
+  issueDestructionCertificate: (retentionFloorDays = null) =>
+    request('/audit/logs/destruction-certificate', {
+      method: 'POST',
+      body: JSON.stringify(
+        retentionFloorDays ? { retention_floor_days: retentionFloorDays } : {},
+      ),
+    }),
 };
 
 export const registryService = {
@@ -1282,10 +1299,14 @@ export const teamService = {
 
 // Sprint EI-3 — Okta SCIM bearer-token management used by
 // settings/ScimTokensTab.jsx. Backend at /scim/tokens.
+// W5 (ATF §4.2) — reconcile trigger added here so all SCIM ops live in
+// one service object.
 export const scimService = {
   listTokens:  () => request('/scim/tokens'),
   createToken: (label) => request('/scim/tokens', { method: 'POST', body: JSON.stringify({ label }) }),
   revokeToken: (tokenId) => request(`/scim/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+  // Force a directory sync after an IdP-side change; cron runs it too.
+  reconcile:   () => request('/scim/reconcile', { method: 'POST', body: '{}' }),
 }
 
 // Sprint EI-2 / EI-6 — Jira + ServiceNow integration config used by

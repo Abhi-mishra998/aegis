@@ -110,3 +110,22 @@ async def sso_callback_proxy(provider: str, request: Request) -> Any:
             rr.headers["set-cookie"] = resp.headers["set-cookie"]
         return rr
     return passthrough(resp)
+
+
+# W5 (ATF §4.2) — SCIM reconciler trigger. Manual invocation for admins
+# who want to force a directory sync after they changed something in
+# their IdP (the cron already runs periodically).
+@router.post("/scim/reconcile", tags=["scim"])
+async def scim_reconcile_proxy(request: Request) -> Any:
+    body: dict = {}
+    if request.headers.get("content-length") not in (None, "0"):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+    resp = await request.app.state.client.post(
+        f"{_base()}/scim/reconcile",
+        json=body if isinstance(body, dict) else {},
+        headers=internal_headers(request),
+    )
+    return passthrough(resp)
