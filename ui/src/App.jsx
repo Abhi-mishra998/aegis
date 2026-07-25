@@ -68,6 +68,7 @@ const Incidents          = safeLazy(() => import('./pages/Incidents'));
 const AutoResponse       = safeLazy(() => import('./pages/AutoResponse'));
 const Compliance         = safeLazy(() => import('./pages/Compliance'));
 const AdminConsole       = safeLazy(() => import('./pages/AdminConsole'));
+const LifecycleAdmin     = safeLazy(() => import('./pages/LifecycleAdmin'));
 const ThreatIntel        = safeLazy(() => import('./pages/ThreatIntel'));
 const SsoSettings        = safeLazy(() => import('./pages/SsoSettings'));
 const Notifications      = safeLazy(() => import('./pages/Notifications'));
@@ -441,6 +442,7 @@ function App() {
               <Route path="/billing"         element={<ProtectedRoute><Billing /></ProtectedRoute>} />
               <Route path="/webhook-settings"  element={<Navigate to="/settings?tab=webhooks" replace />} />
               <Route path="/admin"             element={<ProtectedRoute><AdminConsole /></ProtectedRoute>} />
+              <Route path="/lifecycle"         element={<ProtectedRoute><LifecycleAdmin /></ProtectedRoute>} />
               <Route path="/siem"              element={<Navigate to="/settings?tab=siem" replace />} />
               <Route path="/scheduled-reports" element={<Navigate to="/settings?tab=reports" replace />} />
               <Route path="/threat-intel"      element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />

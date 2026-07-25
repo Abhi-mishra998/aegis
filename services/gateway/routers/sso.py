@@ -49,6 +49,50 @@ async def sso_providers(request: Request) -> Any:
     return passthrough(resp)
 
 
+# Sprint UI-5 — ATF v3.2 §4.2 multi-IdP acceptance status (READ-ONLY).
+#
+# SPIFFE/Entra/Okta trust roots are deployment-wide (single trust anchor per
+# gateway) — the customer must NEVER be able to flip them from the UI or a
+# malicious admin could nuke the chain of trust. This endpoint just surfaces
+# WHAT is currently accepted so tenant OWNERs can confirm the ops team wired
+# their identity provider. No secrets returned: only the enabled bool +
+# tenant/trust-domain/issuer identifiers that the IdP itself publishes.
+@router.get("/auth/idp/status")
+async def get_idp_status(request: Request) -> Any:
+    """Return read-only per-adapter acceptance status for the gateway.
+
+    Response: `{adapters: [{name, enabled, identifier?, audience?}]}`.
+    Fields that would leak trust-bundle material (SPIFFE_TRUST_BUNDLE_JSON)
+    are NEVER returned — an OWNER can see "SPIFFE is on for trust domain
+    acme.example" but not the JWKS itself. To change any of these, ops
+    must update the deployment's env vars.
+    """
+    adapters = [
+        {
+            "name":       "SPIFFE",
+            "enabled":    bool(settings.SPIFFE_TRUST_DOMAIN and settings.SPIFFE_TRUST_BUNDLE_JSON),
+            "identifier": settings.SPIFFE_TRUST_DOMAIN or None,
+            "audience":   settings.SPIFFE_AUDIENCE or None,
+            "env_vars":   ["SPIFFE_TRUST_DOMAIN", "SPIFFE_TRUST_BUNDLE_JSON", "SPIFFE_AUDIENCE"],
+        },
+        {
+            "name":       "Entra Agent ID",
+            "enabled":    bool(settings.ENTRA_TENANT_ID and settings.ENTRA_AUDIENCE),
+            "identifier": settings.ENTRA_TENANT_ID or None,
+            "audience":   settings.ENTRA_AUDIENCE or None,
+            "env_vars":   ["ENTRA_TENANT_ID", "ENTRA_AUDIENCE"],
+        },
+        {
+            "name":       "Okta XAA",
+            "enabled":    bool(settings.OKTA_ISSUER and settings.OKTA_AUDIENCE),
+            "identifier": settings.OKTA_ISSUER or None,
+            "audience":   settings.OKTA_AUDIENCE or None,
+            "env_vars":   ["OKTA_ISSUER", "OKTA_AUDIENCE"],
+        },
+    ]
+    return {"data": {"adapters": adapters}}
+
+
 @router.get("/auth/sso/config")
 async def get_sso_config(request: Request) -> Any:
     """Proxy → Identity: read tenant SSO provider config (secrets masked)."""

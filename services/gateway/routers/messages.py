@@ -580,12 +580,13 @@ async def proxy_anthropic_messages(request: Request) -> Response:
         # Cheap short-circuit: unless the tenant is in ACP_C3_SAMPLING_TENANTS,
         # skip classification + the extra HTTP entirely.
         from services.policy.c3_gate import evaluate as _c3_evaluate
-        from services.policy.c3_gate import should_sample as _c3_should_sample
+        from services.policy.c3_gate import should_sample_async as _c3_should_sample_async
         # Pre-classify by peeking at the incoming request. Only C3-tagged
         # requests trigger the 3× upstream sampling — everything else
-        # goes straight through.
+        # goes straight through. Uses the Redis-backed per-tenant flag
+        # (Sprint UI-3) with env-var fallback for backward compat.
         _pre_class = _classify_incoming_anthropic_request(raw_body)
-        if _c3_should_sample(_pre_class, tenant_id_str):
+        if await _c3_should_sample_async(redis, _pre_class, tenant_id_str):
             async def _plan_once() -> dict[str, object]:
                 async with httpx.AsyncClient(timeout=_UPSTREAM_TIMEOUT_S) as _c:
                     _r = await _c.post(_ANTHROPIC_URL, content=raw_body, headers=forward_headers)

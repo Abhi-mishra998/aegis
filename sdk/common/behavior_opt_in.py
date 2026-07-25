@@ -33,8 +33,29 @@ def _read_mode() -> BehaviorMode:
 
 
 def get_mode_for(tenant_id: str) -> BehaviorMode:
-    """Effective mode for a given tenant. Off unless explicitly enabled."""
+    """Effective mode for a given tenant. Off unless explicitly enabled.
+
+    ENV-VAR PATH — kept for callers without a Redis handle. The async
+    form (`get_mode_for_async(redis, tenant_id)`) consults the per-
+    tenant UI override first, then falls back to this env-var check.
+    """
     if tenant_id not in _read_enabled_set():
+        return "off"
+    return _read_mode()
+
+
+async def get_mode_for_async(redis, tenant_id: str) -> BehaviorMode:
+    """Async form: UI-set per-tenant flag first, env-var fallback.
+
+    Mode is `advisory` iff the flag is enabled (via UI OR env-var list)
+    AND `ACP_BEHAVIOR_FINGERPRINTING_MODE` is not set to "off".
+    """
+    from sdk.common.tenant_settings import get_flag
+    enabled = await get_flag(
+        redis, tenant_id, "behavior_fingerprinting",
+        env_var="ACP_BEHAVIOR_FINGERPRINTING_TENANTS",
+    )
+    if not enabled:
         return "off"
     return _read_mode()
 
@@ -59,6 +80,22 @@ def gate_score_consumption(
     if proposed_use == "gate_input":
         return False  # ADR-002 — never authoritative
     mode = get_mode_for(tenant_id)
+    return mode == "advisory" and proposed_use == "display"
+
+
+async def gate_score_consumption_async(
+    redis,
+    tenant_id: str,
+    proposed_use: Literal["display", "gate_input"],
+) -> bool:
+    """Async form: consults the per-tenant UI flag first (env-var fallback).
+
+    Preferred in request-path code that already holds a Redis handle —
+    otherwise `gate_score_consumption` silently misses UI-set overrides.
+    """
+    if proposed_use == "gate_input":
+        return False  # ADR-002 — never authoritative, no matter what UI says
+    mode = await get_mode_for_async(redis, tenant_id)
     return mode == "advisory" and proposed_use == "display"
 
 

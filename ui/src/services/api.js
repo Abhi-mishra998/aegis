@@ -1073,6 +1073,32 @@ export const tenantService = {
   getQuota: () => request('/tenant/quota'),
 };
 
+// Sprint UI-3 — per-tenant opt-in feature flags (OWNER-only writes).
+// `get()` returns {flag: {effective, override}} so the UI can distinguish
+// "using ops default" from "you explicitly set this". `set()` accepts a
+// partial map of the whitelisted flags (c3_sampling, behavior_fingerprinting).
+export const tenantSettingsService = {
+  get: () => request('/tenant/settings'),
+  set: (flags) => request('/tenant/settings', {
+    method: 'POST',
+    body: JSON.stringify(flags),
+  }),
+};
+
+// Sprint UI-4 — ATF §14.5 deployment lifecycle state machine.
+// `get()` returns `{state, next}` where `next` is the sorted list of
+// legal target states from the current one. `transition(target, reason)`
+// is OWNER-gated; when the new state is DESTROY, the response also
+// carries `destruction_certificate` (auto-fetched from the audit svc
+// while the ledger is still on disk).
+export const lifecycleService = {
+  get: () => request('/lifecycle'),
+  transition: (target, reason) => request('/lifecycle/transition', {
+    method: 'POST',
+    body: JSON.stringify({ target, reason: reason || '' }),
+  }),
+};
+
 // ATF §6 Execution Witness — health + attestation key (read-only from
 // the UI). B1/B4: the health payload carries `deployment_mode` so an
 // operator can see whether the witness is sidecar (evidence available)
@@ -1139,6 +1165,8 @@ export const webhookService = {
   getConfig:     ()     => request('/webhooks/config'),
   saveConfig:    (data) => request('/webhooks/config', { method: 'POST', body: JSON.stringify(data) }),
   testSlack:     (data) => request('/webhooks/test/slack', { method: 'POST', body: JSON.stringify(data || {}) }),
+  // Sprint UI-5 — Microsoft Teams incoming-webhook channel.
+  testTeams:     (data) => request('/webhooks/test/teams', { method: 'POST', body: JSON.stringify(data || {}) }),
   testPagerduty: (data) => request('/webhooks/test/pagerduty', { method: 'POST', body: JSON.stringify(data || {}) }),
   testWebhook:   (data) => request('/webhooks/test/webhook', { method: 'POST', body: JSON.stringify(data || {}) }),
 };
@@ -1236,6 +1264,11 @@ export const ssoService = {
   saveConfig:   (data) => request('/auth/sso/config', { method: 'POST', body: JSON.stringify(data) }),
   testConfig:   (data) => request('/auth/sso/config/test', { method: 'POST', body: JSON.stringify(data || {}) }),
   getProviders: ()     => request('/auth/sso/providers'),
+  // Sprint UI-5 — ATF v3.2 §4.2 read-only status of the gateway's
+  // multi-IdP acceptance layer (SPIFFE / Entra Agent ID / Okta XAA).
+  // Deployment-wide trust roots — a customer OWNER can see what's
+  // accepted but must ask ops to change any of it.
+  getIdpStatus: ()     => request('/auth/idp/status'),
 };
 
 export const killSwitchService = {

@@ -39,15 +39,36 @@ class C3GateResult:
 def should_sample(action_class: str, tenant_id: str) -> bool:
     """True iff the tenant has opted into C3 sampling AND the action is C3.
 
-    Opt-in is a comma-separated env var:
+    ENV-VAR PATH (historical): tenant in
         ACP_C3_SAMPLING_TENANTS=tenant-a,tenant-b
-    Sampling is off unless explicitly enabled — 3× cost is real.
+    Kept for backward compat + ops-owned deployments.
+
+    Per-tenant Redis override (Sprint UI-3): use
+    ``should_sample_async(redis, action_class, tenant_id)`` from the
+    request path — it consults the UI-set per-tenant flag first, then
+    falls back to this env-var check. A live UI toggle in Settings
+    writes the Redis flag; ops env-var still works for legacy setups.
     """
     if action_class != "C3":
         return False
     raw = os.getenv("ACP_C3_SAMPLING_TENANTS", "")
     enabled = {t.strip() for t in raw.split(",") if t.strip()}
     return tenant_id in enabled
+
+
+async def should_sample_async(redis: Any, action_class: str, tenant_id: str) -> bool:
+    """Async form that consults the per-tenant UI toggle first.
+
+    Callers in an async context (e.g. gateway messages proxy) should
+    prefer this — the env-var version misses admin-set overrides.
+    """
+    if action_class != "C3":
+        return False
+    from sdk.common.tenant_settings import get_flag
+    return await get_flag(
+        redis, tenant_id, "c3_sampling",
+        env_var="ACP_C3_SAMPLING_TENANTS",
+    )
 
 
 async def evaluate(

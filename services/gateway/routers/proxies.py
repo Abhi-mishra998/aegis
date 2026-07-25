@@ -167,6 +167,11 @@ async def test_slack_proxy(request: Request) -> Any:
     return await trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/test/slack", request)
 
 
+@router.post("/webhooks/test/teams", tags=["webhooks"])
+async def test_teams_proxy(request: Request) -> Any:
+    return await trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/test/teams", request)
+
+
 @router.post("/webhooks/test/pagerduty", tags=["webhooks"])
 async def test_pagerduty_proxy(request: Request) -> Any:
     return await trust_proxy(settings.AUTONOMY_SERVICE_URL, "/autonomy/webhooks/test/pagerduty", request)

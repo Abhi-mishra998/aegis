@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Webhook, Slack, Bell, Globe,
+  Webhook, Slack, Bell, Globe, MessagesSquare,
   Save, Play, Loader2, AlertCircle,
   AlertTriangle, RefreshCw, Plus,
 } from 'lucide-react'
@@ -8,7 +8,7 @@ import { webhookService } from '../services/api'
 import { SecretInput, StatusBadge, IntegrationCard } from '../components/Common/ConnectorPrimitives'
 
 export default function WebhookSettings() {
-  const [cfg, setCfg] = useState({ slack_url: '', pagerduty_key: '', generic_url: '' })
+  const [cfg, setCfg] = useState({ slack_url: '', teams_url: '', pagerduty_key: '', generic_url: '' })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -25,6 +25,7 @@ export default function WebhookSettings() {
         const c = d?.data || d || {}
         setCfg(prev => ({
           slack_url: c.slack_url ?? prev.slack_url,
+          teams_url: c.teams_url ?? prev.teams_url,
           pagerduty_key: c.pagerduty_key ?? prev.pagerduty_key,
           generic_url: c.generic_url ?? prev.generic_url,
         }))
@@ -56,6 +57,8 @@ export default function WebhookSettings() {
       let result
       if (channel === 'slack') {
         result = await webhookService.testSlack({ webhook_url: cfg.slack_url })
+      } else if (channel === 'teams') {
+        result = await webhookService.testTeams({ url: cfg.teams_url })
       } else if (channel === 'pagerduty') {
         result = await webhookService.testPagerduty({ routing_key: cfg.pagerduty_key })
       } else {
@@ -84,7 +87,7 @@ export default function WebhookSettings() {
   // Unit 9 (2026-06-23): empty-state hint when no destination is configured.
   // We don't gate the form behind it — the configured fields still render — but
   // the banner gives a clear "what do I do next?" entry point.
-  const nothingConfigured = !cfg.slack_url && !cfg.pagerduty_key && !cfg.generic_url
+  const nothingConfigured = !cfg.slack_url && !cfg.teams_url && !cfg.pagerduty_key && !cfg.generic_url
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -142,6 +145,9 @@ export default function WebhookSettings() {
               <a href="#slack_url" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs text-neutral-200 hover:border-white/20">
                 <Plus size={12} /> Add Slack
               </a>
+              <a href="#teams_url" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs text-neutral-200 hover:border-white/20">
+                <Plus size={12} /> Add Teams
+              </a>
               <a href="#pd_key" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs text-neutral-200 hover:border-white/20">
                 <Plus size={12} /> Add PagerDuty
               </a>
@@ -176,6 +182,33 @@ export default function WebhookSettings() {
           <p className="text-xs text-neutral-600">
             The test fires a real Slack block-kit message to the configured URL.
             Create an incoming webhook at <span className="text-neutral-400">api.slack.com/apps</span>.
+          </p>
+        </div>
+      </IntegrationCard>
+
+      <IntegrationCard icon={MessagesSquare} title="Microsoft Teams" description="Post adaptive-card alerts to a Teams channel via incoming webhook">
+        <div className="space-y-3">
+          <SecretInput
+            id="teams_url"
+            label="Incoming Webhook URL"
+            placeholder="https://<tenant>.webhook.office.com/webhookb2/…"
+            value={cfg.teams_url}
+            onChange={v => setCfg(c => ({ ...c, teams_url: v }))}
+          />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => test('teams')}
+              disabled={!cfg.teams_url || testing.teams}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-xs text-neutral-300 hover:border-white/20 disabled:opacity-40"
+            >
+              {testing.teams ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+              Send test card
+            </button>
+            <StatusBadge result={results.teams} />
+          </div>
+          <p className="text-xs text-neutral-600">
+            Create an incoming webhook in Teams: <span className="text-neutral-400">channel → Connectors → Incoming Webhook</span>.
+            Playbook steps with <code className="text-neutral-400">channel: teams</code> use this URL.
           </p>
         </div>
       </IntegrationCard>

@@ -4,7 +4,7 @@ import {
   AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
   RefreshCw, Filter, ChevronRight, Zap, User,
   Activity, TrendingDown, Eye, Lock, Slash, ArrowUpRight,
-  Download, Crosshair, PlayCircle,
+  Download, Crosshair, PlayCircle, Users2,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
@@ -12,7 +12,7 @@ import SkeletonLoader from '../components/Common/SkeletonLoader';
 import Modal from '../components/Common/Modal';
 import DataTable from '../components/Common/DataTable';
 import ErrorBoundary from '../components/Common/ErrorBoundary';
-import { incidentService, socService } from '../services/api';
+import { incidentService, socService, graphService } from '../services/api';
 import { AgentContext } from '../context/AgentContext';
 import { useSSE } from '../hooks/useSSE';
 // Sprint 5 — orphan-endpoint surfacing inside the incident detail modal.
@@ -423,6 +423,166 @@ function SocFeed() {
   );
 }
 
+// ── Collusion Feed (ATF §Phase 3 item 2) ───────────────────────────────────
+// Reads `graphService.listDrift()` (which returns every DriftSignal in the
+// window) and keeps only `signal_type === 'collusion_suspicion'`. The graph
+// worker writes one row per elevated actor in a suspicious cluster, so we
+// group by `observed.cluster_id` to render one row per cluster rather than
+// one row per member — otherwise a 5-agent cluster spams the feed 5x.
+function CollusionFeed() {
+  const { addToast } = useContext(AuthContext);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [minutes, setMinutes] = useState(1440);
+
+  const fetchFeed = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await graphService.listDrift(minutes);
+      const all = res?.data || [];
+      setRows(all.filter((s) => s.signal_type === 'collusion_suspicion'));
+    } catch {
+      addToast('Failed to load collusion feed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [minutes, addToast]);
+
+  useEffect(() => { fetchFeed(); }, [fetchFeed]);
+
+  // Group members under each cluster_id. Keep the highest severity seen
+  // (critical > warn) and the most recent detection time so operators
+  // triage the freshest evidence first.
+  const clusters = useMemo(() => {
+    const byCluster = new Map();
+    for (const r of rows) {
+      const cid = r.observed?.cluster_id;
+      if (!cid) continue;
+      const existing = byCluster.get(cid);
+      if (!existing) {
+        byCluster.set(cid, {
+          cluster_id:     cid,
+          cluster_size:   r.observed?.cluster_size ?? 0,
+          elevated_count: r.observed?.elevated_count ?? 0,
+          cluster_sample: r.observed?.cluster_sample || [],
+          severity:       r.severity,
+          detected_at:    r.detected_at,
+          members:        [r.node_id],
+          max_delta:      r.delta ?? 0,
+        });
+      } else {
+        existing.members.push(r.node_id);
+        if (r.severity === 'critical') existing.severity = 'critical';
+        if (r.detected_at > existing.detected_at) existing.detected_at = r.detected_at;
+        if ((r.delta ?? 0) > existing.max_delta) existing.max_delta = r.delta;
+      }
+    }
+    return Array.from(byCluster.values()).sort((a, b) =>
+      b.detected_at.localeCompare(a.detected_at),
+    );
+  }, [rows]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users2 size={14} className="text-purple-400" />
+          <span className="text-xs text-neutral-400">
+            Collusion suspicion — cross-agent interaction clusters flagged by the graph detector
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            name="window"
+            value={minutes}
+            onChange={(e) => setMinutes(Number(e.target.value))}
+            className="input-standard input-compact text-xs w-32"
+          >
+            <option value={60}>Last 1h</option>
+            <option value={360}>Last 6h</option>
+            <option value={1440}>Last 24h</option>
+            <option value={4320}>Last 3d</option>
+            <option value={10080}>Last 7d</option>
+          </select>
+          <Button variant="secondary" size="sm" onClick={fetchFeed} disabled={loading}>
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+      </div>
+
+      <Card>
+        {loading ? (
+          <div className="p-4"><SkeletonLoader count={5} /></div>
+        ) : clusters.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16">
+            <Users2 size={32} className="text-neutral-700 mb-3" />
+            <p className="text-sm text-neutral-500">No collusion clusters in the selected window</p>
+            <p className="text-[10px] text-neutral-600 mt-1">
+              The graph detector runs periodically — signals appear when
+              multiple agents in the same interaction cluster show elevated drift.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-white/[0.04]">
+            {clusters.map((c) => {
+              const sevCls = c.severity === 'critical'
+                ? { text: 'text-red-400',    dot: 'bg-red-500',    bar: 'bg-red-500' }
+                : { text: 'text-amber-400',  dot: 'bg-amber-500',  bar: 'bg-amber-500' };
+              return (
+                <div key={c.cluster_id} className="flex items-start gap-3 px-4 py-3 hover:bg-white/[0.02] transition-colors">
+                  <div className={`w-0.5 self-stretch rounded-full shrink-0 ${sevCls.bar}`} />
+                  <div className="shrink-0 pt-0.5">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-medium uppercase ${sevCls.text}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${sevCls.dot}`} />
+                      {c.severity}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-[10px] text-neutral-500 font-mono">cluster</span>
+                      <span className="text-[10px] text-neutral-700 font-mono truncate">{c.cluster_id}</span>
+                    </div>
+                    <p className="text-xs text-neutral-300 leading-snug">
+                      <span className="font-semibold">{c.elevated_count}</span>{' '}
+                      of <span className="font-semibold">{c.cluster_size}</span>{' '}
+                      agents in the cluster have elevated drift.
+                    </p>
+                    {c.cluster_sample.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {c.cluster_sample.slice(0, 8).map((m) => (
+                          <span
+                            key={String(m)}
+                            className="text-[10px] px-1.5 py-0 rounded border border-white/[0.06] text-neutral-500 font-mono"
+                          >
+                            {String(m).slice(0, 8)}
+                          </span>
+                        ))}
+                        {c.cluster_sample.length > 8 && (
+                          <span className="text-[10px] text-neutral-600 px-1">
+                            +{c.cluster_sample.length - 8} more
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-[11px] font-mono font-bold text-neutral-400">
+                      Δ {c.max_delta?.toFixed?.(2) ?? c.max_delta}
+                    </p>
+                    <p className="text-[10px] text-neutral-700 font-mono mt-0.5">
+                      {c.detected_at ? _relTime(c.detected_at) : '—'}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const SEVERITY_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
@@ -744,6 +904,7 @@ function IncidentsPage() {
         {[
           { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
           { id: 'soc',       label: 'SOC Feed',  icon: Activity },
+          { id: 'collusion', label: 'Collusion', icon: Users2 },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -763,8 +924,11 @@ function IncidentsPage() {
       {/* SOC Feed tab */}
       {activeTab === 'soc' && <SocFeed />}
 
+      {/* Collusion Feed tab (ATF §Phase 3 item 2) */}
+      {activeTab === 'collusion' && <CollusionFeed />}
+
       {/* Incidents tab content */}
-      {activeTab !== 'soc' && <>
+      {activeTab === 'incidents' && <>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

@@ -309,8 +309,10 @@ class BehaviorService:
         # signal — recorded in the audit trail + surfaced on the SOC
         # dashboard, never contributing to the Gate's authoritative
         # decision when the tenant is opted-out.
-        from sdk.common.behavior_opt_in import gate_score_consumption
-        _learned_allowed = gate_score_consumption(str(tenant_id), "display")
+        from sdk.common.behavior_opt_in import gate_score_consumption_async
+        _learned_allowed = await gate_score_consumption_async(
+            self.redis, str(tenant_id), "display"
+        )
         cross_agent_risk = 0.0
         if anomaly_score > 0.3 and _learned_allowed:
             try:

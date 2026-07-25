@@ -579,6 +579,9 @@ from services.gateway.routers.tenant import router as _tenant_router  # noqa: E4
 from services.gateway.routers.tenant_admin import (
     router as _tenant_admin_router,  # noqa: E402
 )
+from services.gateway.routers.tenant_settings import (
+    router as _tenant_settings_router,  # noqa: E402
+)
 from services.gateway.routers.threatintel import (
     router as _threatintel_router,  # noqa: E402
 )
@@ -639,6 +642,7 @@ app.include_router(_messages_dashboard_router)
 app.include_router(_openai_messages_router)
 app.include_router(_witness_proxy_router)
 app.include_router(_lifecycle_router)
+app.include_router(_tenant_settings_router)
 
 # ─────────────────────────────────────────────────────────────
 # P0-5 FIX: Removed include_router(audit_router), include_router(registry_router),

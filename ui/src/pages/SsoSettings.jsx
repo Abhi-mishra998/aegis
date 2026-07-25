@@ -3,6 +3,7 @@ import {
   Save, Play, CheckCircle2, XCircle,
   Loader2, AlertCircle, Lock, Globe,
   AlertTriangle, RefreshCw, Mail, Upload,
+  Server, Shield,
 } from 'lucide-react'
 import { ssoService } from '../services/api'
 import { SecretInput } from '../components/Common/ConnectorPrimitives'
@@ -12,6 +13,125 @@ const PROVIDER_TYPES = [
   { value: 'saml',  label: 'SAML 2.0',   desc: 'Okta, Azure AD, ADFS, OneLogin' },
   { value: 'oidc',  label: 'OIDC',        desc: 'Auth0, Okta, Google Workspace' },
 ]
+
+// Sprint UI-5 — ATF v3.2 §4.2 multi-IdP acceptance status (read-only).
+//
+// SPIFFE / Entra Agent ID / Okta XAA are the token formats the *gateway*
+// accepts for agent-to-gateway auth (separate from user-facing SAML/OIDC).
+// Trust roots are ops-controlled env-vars — a customer OWNER can see what
+// is currently accepted but must ask ops to change any of it (flipping
+// SPIFFE_TRUST_BUNDLE_JSON from the UI would let a rogue admin nuke the
+// chain of trust). Panel is read-only by design.
+function TrustedIssuersPanel() {
+  const [adapters, setAdapters] = useState(null)
+  const [loading, setLoading]   = useState(true)
+  const [err, setErr]           = useState('')
+
+  const load = useCallback(() => {
+    setLoading(true)
+    setErr('')
+    ssoService.getIdpStatus()
+      .then((r) => setAdapters(r?.data?.adapters || []))
+      .catch((e) => setErr(e?.message || 'Failed to load IdP status'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  return (
+    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Shield size={14} className="text-neutral-400" />
+        <h2 className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
+          Trusted issuers (agent-to-gateway)
+        </h2>
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading}
+          className="ml-auto p-1 rounded hover:bg-white/[0.06] text-neutral-500"
+          aria-label="Refresh"
+        >
+          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+      <p className="text-xs text-neutral-500 leading-relaxed">
+        Agent tokens presented to <code className="text-neutral-400">POST /execute</code> are
+        validated against these trust roots (ATF v3.2 §4.2). Each adapter is
+        OFF unless ops configured it. Trust roots are deployment-wide —
+        <span className="text-neutral-400"> a customer admin cannot flip them</span>,
+        by design; a compromised admin would otherwise be able to disable
+        agent authentication.
+      </p>
+
+      {err && (
+        <div className="flex items-center gap-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-xs text-red-400">
+          <AlertCircle size={12} /> {err}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="h-20 bg-white/[0.03] animate-pulse rounded" />
+      ) : (
+        <div className="space-y-2">
+          {(adapters || []).map((a) => (
+            <div
+              key={a.name}
+              className={`p-3 rounded-lg border ${
+                a.enabled
+                  ? 'border-green-500/20 bg-green-500/[0.03]'
+                  : 'border-white/[0.06] bg-white/[0.02]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Server size={13} className={a.enabled ? 'text-green-400' : 'text-neutral-500'} />
+                <span className="text-sm font-semibold text-white">{a.name}</span>
+                <span className={`ml-auto text-[10px] uppercase tracking-widest px-2 py-0.5 rounded ${
+                  a.enabled
+                    ? 'text-green-400 bg-green-500/10'
+                    : 'text-neutral-500 bg-white/[0.04]'
+                }`}>
+                  {a.enabled ? 'accepted' : 'disabled'}
+                </span>
+              </div>
+              {a.enabled && (
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                  {a.identifier && (
+                    <div>
+                      <span className="text-neutral-500">Identifier: </span>
+                      <code className="text-neutral-300 font-mono break-all">{a.identifier}</code>
+                    </div>
+                  )}
+                  {a.audience && (
+                    <div>
+                      <span className="text-neutral-500">Audience: </span>
+                      <code className="text-neutral-300 font-mono break-all">{a.audience}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!a.enabled && a.env_vars?.length > 0 && (
+                <p className="text-[10px] text-neutral-600 mt-1.5">
+                  Ops must set: {a.env_vars.map((v, i) => (
+                    <span key={v}>
+                      {i > 0 && ', '}
+                      <code className="text-neutral-500 font-mono">{v}</code>
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
+          ))}
+          {(adapters || []).length === 0 && (
+            <p className="text-xs text-neutral-500 italic py-2">
+              No IdP adapters reported by the gateway.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function SsoSettings() {
   const { addToast } = useAuth()
@@ -309,6 +429,9 @@ export default function SsoSettings() {
           )}
         </div>
       </div>
+
+      {/* Multi-IdP acceptance panel (ATF §4.2) — read-only per design. */}
+      <TrustedIssuersPanel />
 
       {/* ACS URL */}
       <div className="p-4 bg-white/[0.02] border border-[var(--border-subtle)] rounded-xl text-xs space-y-2">

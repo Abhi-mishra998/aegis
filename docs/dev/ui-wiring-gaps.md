@@ -13,9 +13,9 @@ Legend: 🔴 blocker for enterprise self-serve · 🟡 admin/ops workflow · �
 |---|---|---|
 | UI-1 | ATF v3 button · SCIM reconcile · witness trust doc · approval scope | ✅ shipped |
 | UI-2 | provenance block · witness deployment-mode · signing-key history · issuance quota | ✅ shipped |
-| UI-3 | C3 toggle · behavior opt-in · collusion feed | pending |
-| UI-4 | deployment lifecycle page · destruction-cert flow | pending |
-| UI-5 | multi-IdP config · Teams/PagerDuty channels | pending |
+| UI-3 | C3 toggle · behavior opt-in · collusion feed | ✅ shipped |
+| UI-4 | deployment lifecycle page · destruction-cert flow | ✅ shipped |
+| UI-5 | multi-IdP config · Teams/PagerDuty channels | ✅ shipped |
 
 ---
 
@@ -24,20 +24,20 @@ Legend: 🔴 blocker for enterprise self-serve · 🟡 admin/ops workflow · �
 | # | Backend feature | Endpoint(s) | UI needed | Notes |
 |---|---|---|---|---|
 | ~~1~~ ✅ | ATF v3 export bundle (W3) | `GET /audit/logs/export-atf-v3` | ✅ "ATF v3 bundle" button shipped on `pages/Compliance.jsx` + gateway proxy added | Sprint UI-1 |
-| 2 | Destruction certificate (Q24) | `POST /audit/logs/destruction-certificate` | Download button + confirm-consent flow on the DESTROY lifecycle transition modal | §14.5 mandates the customer keeps this cert forever |
-| 3 | Deployment lifecycle (§14.5) | `GET /lifecycle`, `POST /lifecycle/transition` | New "Deployment lifecycle" admin page — INSTALL→BOOTSTRAP→ENFORCE→ROTATE→UPGRADE→ROLLBACK→DECOMMISSION→DESTROY state machine with per-transition confirm dialog and audit-trail view | OWNER-role gated; every transition is a C3 ledgered event |
-| 4 | Multi-IdP dispatcher (W1) | Backend accepts SPIFFE / Entra Agent ID / Okta XAA tokens via `services/gateway/idp_verifiers.py`; config lives in env vars | `pages/SsoSettings.jsx` currently only handles single SAML/OIDC — needs a "trusted issuers" list (SPIFFE trust domain, Entra tenant, Okta audience) with per-provider enable toggle | Enterprise SSO customer can't configure their identity source |
+| ~~2~~ ✅ | Destruction certificate (Q24) | `POST /audit/logs/destruction-certificate` | ✅ Downloadable certificate card on `pages/LifecycleAdmin.jsx`. DESTROY transition auto-attaches the cert in the response; re-issue button available while audit rows remain on disk | Sprint UI-4 |
+| ~~3~~ ✅ | Deployment lifecycle (§14.5) | `GET /lifecycle`, `POST /lifecycle/transition` | ✅ New `pages/LifecycleAdmin.jsx` (route `/lifecycle`, Admin nav). Happy-path timeline + reachable-target buttons + ConfirmDialog with reason field + inline ledger of last 40 transitions. OWNER-only writes; 409 illegal-transition surfaced with actionable message. DESTROY uses danger variant + Skull icon | Sprint UI-4 |
+| ~~4~~ ✅ | Multi-IdP dispatcher (W1) | `services/gateway/idp_verifiers.py`; new `GET /auth/idp/status` (read-only) surfaces enabled + identifier + audience per adapter | ✅ "Trusted issuers" panel shipped on `pages/SsoSettings.jsx`. Read-only by design (trust roots are deployment-wide; a compromised admin flipping SPIFFE_TRUST_BUNDLE_JSON via UI would let them nuke chain-of-trust). Empty adapters show the env-var names ops must set | Sprint UI-5 |
 | ~~5~~ ✅ | SCIM reconciler trigger (W5) | `POST /scim/reconcile` | ✅ "Reconcile now" button shipped on `components/settings/ScimTokensTab.jsx` + gateway proxy added | Sprint UI-1 |
-| 6 | Escalation channel selector (W6) | `fire_teams`, `fire_pagerduty`, `fire_webhook` in `services/autonomy/webhook_executor.py` | `SlackApprovalsTab.jsx` exists; needs sibling tabs for Teams (webhook URL), PagerDuty (routing key), generic webhook | Enterprise customer on Teams/PagerDuty currently has no path to wire escalations |
+| ~~6~~ ✅ | Escalation channel selector (W6) | `fire_teams`, `fire_pagerduty`, `fire_generic_webhook` in `services/autonomy/webhook_executor.py`; per-tenant Redis config at `acp:webhooks:{tenant_id}` | ✅ Slack + PagerDuty + generic were already on `pages/WebhookSettings.jsx`; Sprint UI-5 added Teams: `teams_url` on WebhookConfig schema, `POST /webhooks/test/teams` endpoint, SEND_ALERT dispatch `channel: teams` branch in `webhook_executor.py`, IntegrationCard on WebhookSettings.jsx with adaptive-card test button | Sprint UI-5 |
 
 ## 🟡 Admin / ops workflows without UI
 
 | # | Backend feature | Backend surface | UI needed | Notes |
 |---|---|---|---|---|
 | ~~7~~ ✅ | Tenant issuance quota (W2) | `POST /agents` returns `429 QUOTA_EXCEEDED` when tenant is at cap; C2 ledger event on approach | ✅ "Agents" tile shipped on QuotaManagement (profile_cap + profile_count added to `/tenant/quota` response); Agents.jsx create-agent catch shows a friendly quota-reached message pointing at QuotaManagement | Sprint UI-2 |
-| 8 | Consistency sampling C3 (W4) | `ACP_C3_SAMPLING_TENANTS` env var | Admin toggle on Settings → Policies tab: "Enable 3× consistency sampling on C3 actions" with cost warning | Env-only opt-in is fine short-term; UI toggle needed before it's a customer-configurable feature |
-| 9 | Behavior opt-in gate (W8) | `gate_score_consumption` at `services/behavior/service.py:307` gates learned signals | Settings → Privacy tab: per-tenant toggle "Enable learned behavior fingerprinting (advisory)" | ATF §9.2: must be off by default + advisory-only. UI needs to reflect that constraint |
-| 10 | Collusion detector (W7) | `services/identity_graph/worker.py::_collusion_loop` fires alerts | Incidents feed / SOC dashboard needs a "collusion cluster detected" event card with member drill-down (each agent + its ledger events in the window) | Detector is running; alerts have nowhere to render |
+| ~~8~~ ✅ | Consistency sampling C3 (W4) | `ACP_C3_SAMPLING_TENANTS` env var + per-tenant Redis override (`sdk/common/tenant_settings.py`); `POST /tenant/settings` | ✅ "Feature flags" tab shipped on Settings page (`components/settings/FeatureFlagsTab.jsx`). OWNER-role gated, 60s cache, effective-vs-override surfaced. Gateway `messages.py` proxy now uses async form that consults the per-tenant flag before the historical env-var list | Sprint UI-3 |
+| ~~9~~ ✅ | Behavior opt-in gate (W8) | `gate_score_consumption_async` at `services/behavior/service.py:313`; per-tenant Redis flag via `POST /tenant/settings` | ✅ Same "Feature flags" tab exposes `behavior_fingerprinting` toggle. `behavior/service.py` now calls the async form → learned cross-agent term is gated per-tenant; `advisory-only` invariant preserved (never authoritative, even with flag on) | Sprint UI-3 |
+| ~~10~~ ✅ | Collusion detector (W7) | `services/identity_graph/worker.py::_collusion_loop` writes `signal_type="collusion_suspicion"` DriftSignals; surfaced via `GET /graph/drift?minutes=…` | ✅ New "Collusion" tab shipped on `pages/Incidents.jsx`. Groups drift signals by `observed.cluster_id`, shows elevated/cluster-size, member id chips, severity (critical/warn), Δ score, and recency. Empty state explains the periodic-detector cadence | Sprint UI-3 |
 | ~~11~~ ✅ | Rotate cross-signing status (Q25) | `transparency_historical_keys.transition_*` columns; `verify_rotation_cross_signature` | ✅ "Signing keys (audit chain)" panel shipped on `pages/Compliance.jsx` (active key + historical rotations with cross-signed marker) | Sprint UI-2 |
 | ~~12~~ ✅ | Provenance block (B2) | `AgentProfile.provenance` populated at agent mint from `AEGIS_*` CI env vars | ✅ "Provenance (§4.3 Aegis Profile snapshot)" section on `pages/AgentProfile.jsx`. Backend also updated: `registry/service.py::persist_profile_snapshot` now writes provenance + `aegis_profile_hash` onto `agent.metadata_data` so `GET /agents/{id}` surfaces them | Sprint UI-2 |
 | ~~13~~ ✅ | Witness deployment mode (B1) | `WITNESS_DEPLOYMENT_MODE=sidecar\|serverless`; `GET /witness/health` surfaces `deployment_mode` | ✅ "Execution Witness" panel shipped on `pages/SystemHealth.jsx`. Sidecar → green + evidence-collected note; serverless → amber + "verdicts UNOBSERVED by design" note; unknown → neutral. Also surfaces heartbeat-stale flag when set | Sprint UI-2 |

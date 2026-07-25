@@ -80,6 +80,7 @@ const advancedNav = [
 const adminNav = [
   // Compliance was duplicated here; it lives in primaryNav (Prove section).
   { path: '/system-health', label: 'System Health', icon: HeartPulse },
+  { path: '/lifecycle',     label: 'Lifecycle',     icon: Workflow    },
   { path: '/billing',       label: 'Billing',       icon: CreditCard },
 ]
 

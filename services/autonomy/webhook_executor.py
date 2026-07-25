@@ -807,6 +807,12 @@ async def execute_step(step: dict, context: dict | None = None) -> dict:
                 webhook_url=params.get("webhook_url", ""),
                 context=ctx,
             )
+        elif channel == "teams":
+            return await fire_teams(
+                message,
+                webhook_url=params.get("webhook_url", ""),
+                context=ctx,
+            )
         elif channel == "pagerduty":
             return await fire_pagerduty(
                 summary=message,

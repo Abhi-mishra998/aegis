@@ -834,6 +834,7 @@ from services.autonomy.webhook_executor import (  # noqa: E402
     fire_generic_webhook,
     fire_pagerduty,
     fire_slack,
+    fire_teams,
 )
 
 _WEBHOOK_KEY_TTL: int | None = None  # persistent — no TTL
@@ -856,12 +857,14 @@ async def _get_redis() -> _Redis:
 
 class WebhookConfigIn(BaseModel):
     slack_url:       str = ""
+    teams_url:       str = ""
     pagerduty_key:   str = ""
     generic_url:     str = ""
 
 
 class WebhookConfigOut(BaseModel):
     slack_url:       str = ""
+    teams_url:       str = ""
     pagerduty_key:   str = ""
     generic_url:     str = ""
 
@@ -884,6 +887,7 @@ async def get_webhook_config(
     raw: dict[str, str] = await redis.hgetall(key)
     return APIResponse(data=WebhookConfigOut(
         slack_url=_mask(raw.get("slack_url", "")),
+        teams_url=_mask(raw.get("teams_url", "")),  # Teams URL embeds the tenant token — treat as secret
         pagerduty_key=_mask(raw.get("pagerduty_key", "")),
         generic_url=raw.get("generic_url", ""),  # URL is not a secret, don't mask
     ))
@@ -905,6 +909,8 @@ async def save_webhook_config(
     mapping: dict[str, str] = {}
     if payload.slack_url:
         mapping["slack_url"] = payload.slack_url
+    if payload.teams_url:
+        mapping["teams_url"] = payload.teams_url
     if payload.pagerduty_key:
         mapping["pagerduty_key"] = payload.pagerduty_key
     if payload.generic_url:
@@ -931,6 +937,30 @@ async def test_slack_webhook(
     # Supplied URL takes precedence over stored config
     webhook_url = req.url or raw.get("slack_url", "")
     result = await fire_slack(
+        message=req.message,
+        webhook_url=webhook_url,
+        context={"tenant_id": str(tenant_id), "test": "true"},
+    )
+    return APIResponse(data=result)
+
+
+@router.post("/webhooks/test/teams", response_model=APIResponse[dict])
+async def test_teams_webhook(
+    req: WebhookTestRequest,
+    tenant_id: Annotated[uuid.UUID, Depends(get_tenant_id)],
+) -> APIResponse[dict]:
+    """Fire a test Microsoft Teams adaptive card using the configured
+    (or supplied) incoming-webhook URL."""
+    await _check_rate(
+        await _rl_redis(),
+        f"acp:ratelimit:autonomy:webhooks_test_teams:{tenant_id}",
+        limit=60,
+    )
+    redis = await _get_redis()
+    key = f"acp:webhooks:{tenant_id}"
+    raw: dict[str, str] = await redis.hgetall(key)
+    webhook_url = req.url or raw.get("teams_url", "")
+    result = await fire_teams(
         message=req.message,
         webhook_url=webhook_url,
         context={"tenant_id": str(tenant_id), "test": "true"},

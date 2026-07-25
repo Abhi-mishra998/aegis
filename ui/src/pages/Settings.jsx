@@ -10,12 +10,14 @@ import {
   MessagesSquare,
   Settings as SettingsIcon,
   ShieldCheck,
+  SlidersHorizontal,
   Users,
   Webhook,
 } from 'lucide-react';
 import SystemValuesTab from '../components/settings/SystemValuesTab';
 import SlackApprovalsTab from '../components/settings/SlackApprovalsTab';
 import PolicyPacksTab from '../components/settings/PolicyPacksTab';
+import FeatureFlagsTab from '../components/settings/FeatureFlagsTab';
 import TabErrorBoundary from '../components/Common/TabErrorBoundary';
 
 // Existing pages, lazy-imported so each tab only pulls its chunk on
@@ -53,6 +55,7 @@ const TABS = [
   { id: 'slack',         label: 'Slack approvals', icon: MessagesSquare, Component: SlackApprovalsTab, group: GROUP.INTEGRATIONS },
   { id: 'system-values', label: 'System Values',   icon: DollarSign,     Component: SystemValuesTab,  group: GROUP.WORKSPACE },
   { id: 'policy-packs',  label: 'Policy packs',    icon: ShieldCheck,    Component: PolicyPacksTab,   group: GROUP.WORKSPACE },
+  { id: 'feature-flags', label: 'Feature flags',   icon: SlidersHorizontal, Component: FeatureFlagsTab, group: GROUP.WORKSPACE },
   { id: 'quota',         label: 'Quota',           icon: Gauge,          Component: QuotaManagement,  group: GROUP.WORKSPACE },
   { id: 'reports',       label: 'Reports',         icon: Calendar,       Component: ScheduledReports, group: GROUP.WORKSPACE },
 ];
