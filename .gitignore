@@ -377,3 +377,145 @@ infra/terraform/**/terraform.rc
 **/*.exposed
 **/secret_backup*
 **/backup_secrets*
+
+# ==========================================
+# Broader defensive patterns v2 (2026-07-26)
+# ==========================================
+# The categories below were added after a repo-wide sweep identified
+# common credential-carrying files not covered by earlier patterns.
+
+# --- AI CLI + agent framework config directories ---
+# Modern LLM CLIs cache API keys in their own dot-directories.
+**/.anthropic/
+**/.openai/
+**/.copilot/
+**/.cursor/
+**/.gemini/
+**/.aider/
+**/.perplexity/
+# Note: .claude/ is already listed under IDEs/Editors above.
+
+# --- Editor / autosave / merge cruft that may contain plaintext creds ---
+**/*.orig
+**/*.rej
+**/*~
+**/.#*
+**/#*#
+
+# --- Network-capture dumps (often contain plaintext bearer tokens) ---
+**/*.pcap
+**/*.pcapng
+**/*.chls
+**/*.saz
+**/*.har
+
+# --- API-testing tools whose exports include bearer tokens ---
+**/*postman_collection*.json
+**/postman_environment*.json
+**/insomnia*.json
+**/insomnia_export*.json
+**/thunder-collection*.json
+**/.rest-client.env.json
+**/http-client.private.env.json
+
+# --- direnv / dotenv-style extras ---
+**/.envrc
+**/.envrc.local
+**/.env.direnv
+
+# --- Kubernetes credentials beyond the standard kubeconfig ---
+**/kubeadm-config*.yaml
+**/kubeadm-init*.yaml
+**/*bootstrap-token*
+**/*serviceaccount-token*
+
+# --- Ansible vault + related ---
+**/.vault_pass
+**/.vault_pass.txt
+**/vault_pass*.txt
+**/.ansible/tmp/
+**/ansible.log
+
+# --- HashiCorp additional ---
+**/.consul-token
+**/.nomad-token
+**/.terraformrc
+**/vault-agent.hcl
+
+# --- Yarn / pnpm auth files ---
+**/.yarnrc.yml
+!**/.yarnrc.example.yml
+**/.pnpmfile.cjs.local
+**/npm-shrinkwrap.local.json
+
+# --- Docker Compose local overrides (frequently carry laptop secrets) ---
+**/docker-compose.override.yml
+**/docker-compose.override.yaml
+**/docker-compose.local.yml
+**/docker-compose.dev.yml
+!**/docker-compose.override.example.yml
+# The project's own docker-compose.aws.yml + docker-compose.prod.yml
+# + docker-compose.test.yml + docker-compose.uioverride.yml are all
+# TRACKED intentionally — they don't ship secrets, only config.
+
+# --- Frontend framework env variants ---
+**/vite.config.local.*
+**/next.config.local.*
+**/nuxt.config.local.*
+**/svelte.config.local.*
+**/astro.config.local.*
+**/.env.vite.local
+**/.env.next.local
+
+# --- Session + JWT dumps ---
+**/*.jwt
+**/*.session
+**/*.bearer
+**/token.txt
+**/*_token.txt
+
+# --- Local scratch under repo root (safety net) ---
+/scratch_*
+/private_*
+/local_*
+**/PERSONAL_NOTES.md
+
+# --- CI runner secrets stashed locally ---
+**/.github/workflows/local/
+**/.circleci/local/
+**/act.env
+**/act.secrets
+
+# --- Terraform Cloud lock + Terragrunt cache ---
+**/terraform.tfstate.lock.info
+**/.terragrunt-cache/
+
+# --- Local Redis / Postgres data leaks ---
+**/redis.conf.local
+**/postgresql.conf.local
+**/pg_hba.local
+
+# --- Chart-generation output + test artifacts that may hold employee-key echoes ---
+docs/testing/**/chart-data*.json
+docs/testing/**/creds*.txt
+docs/testing/**/mint*.txt
+docs/testing/**/*.env
+
+# --- Common one-off creds landing in the repo root ---
+/anthropic_key
+/openai_key
+/aegis_token
+/claude_key
+/*.token
+/*.secret
+!/tsconfig*.json
+!/pyproject.toml
+!/package.json
+
+# --- Log dumps that may echo bearer headers ---
+**/access.log
+**/nginx-access.log
+**/uvicorn-*.log
+**/gunicorn-*.log
+**/access_log*
+**/error_log*
