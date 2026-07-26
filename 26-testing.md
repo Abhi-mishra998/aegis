@@ -25,6 +25,14 @@ This is a live, third-hand-verifiable engineering test report on Aegis, a runtim
 | Scalability at 100 concurrent workers on ONE key | Aegis rate-limits + quarantines correctly (this IS the security posture — see §7) |
 | Gateway CPU under 100-worker load | **86 % of the 0.5-vCPU cgroup limit**; container-level bottleneck identified |
 
+**Visual summary of what this report contains:**
+
+<p align="center">
+  <img src="docs/testing/2026-07-26/figures/fig-5-attack-matrix.svg" alt="Attack coverage matrix" width="720"/>
+</p>
+
+<p align="center"><em>Fig 0. Attack blocking rate by class across the full 123-payload combined test. Green = 100 %, amber = >70 %, red = <70 %. Overall recall 0.887; the two amber/red bars are documented in §7.4 with the exact payloads that slipped past.</em></p>
+
 **Three honest weaknesses uncovered by this test:**
 
 1. **OPA fail-mode configured `closed` but observed fail-OPEN on the `search_web` path.** The env var is set (`OPA_FAIL_MODE=closed`) and the code path in `services/policy/opa_client.py` honors it — but a specific tool path (`search_web`) appears to short-circuit before reaching OPA. Documented in §9; investigation open.
@@ -273,6 +281,18 @@ pip install 'aegis-anthropic==1.1.5' 'aegis-openai==1.1.6' \
 | `/v1/messages` cost-block | 111 ms | 130 ms | `max_tokens` check runs first |
 | `/v1/messages` scope-block | 122 ms | 193 ms | Header verify at auth layer |
 
+<p align="center">
+  <img src="docs/testing/2026-07-26/figures/fig-1-latency-histograms.svg" alt="Latency histograms per class" width="820"/>
+</p>
+
+<p align="center"><em>Fig 1. Per-request latency distributions across four representative request classes, 200 samples each. Deny paths (injection / PII / cost) are tight and fast; allow-path shows the long tail from queuing when the per-key rate limiter is hit.</em></p>
+
+<p align="center">
+  <img src="docs/testing/2026-07-26/figures/fig-2-latency-cdf.svg" alt="Latency CDF" width="720"/>
+</p>
+
+<p align="center"><em>Fig 2. Cumulative distribution of the same data. 90 % of deny requests complete in <200 ms; the allow-path's shift right is entirely rate-limit backpressure, not per-request cost — see §7.2 for the reason.</em></p>
+
 ### 7.2 Scalability curve (host 1, from inside the AWS network, past WAF)
 
 Sweep 50→100→250→500→1000→2000 concurrent workers × 30 s each, same tenant + employee key. Tenant `requests_per_second` was raised from 10 to 5000 for the test (restored after).
@@ -292,6 +312,12 @@ Sweep 50→100→250→500→1000→2000 concurrent workers × 30 s each, same t
 - At 2000 workers the load generator's httpx connection pool is exhausted (all 2000 as network errors). The gateway itself stays healthy — this is a client-side limit, not a server-side limit.
 
 **Correct interpretation.** Aegis is not throughput-optimized; it is a security proxy that aggressively rate-limits abusive traffic. If you actually need 1000 req/s of legitimate traffic, spread it across multiple employee keys and multiple tenants — do NOT hammer one key.
+
+<p align="center">
+  <img src="docs/testing/2026-07-26/figures/fig-3-scalability.svg" alt="Scalability sweep" width="920"/>
+</p>
+
+<p align="center"><em>Fig 3. Left: latency percentiles vs concurrency (log-log). Right: RPS bars vs success-rate line. The system stays stable up through 1000 concurrent workers; the drop-off at 2000 is client-side connection-pool exhaustion, not server-side collapse.</em></p>
 
 ### 7.3 Latency histogram (allow-path under 50-worker load — ASCII sparkline)
 
@@ -327,6 +353,12 @@ Captured with `docker stats --no-stream` immediately after the 100-worker scale-
 | Host disk | 5.2 GB / 30 GB (18 %) | — |
 
 **Interpretation.** The gateway is the bottleneck. Each container is capped at 0.5 vCPU. Removing that limit or scaling horizontally with more gateway containers is the next capacity lever.
+
+<p align="center">
+  <img src="docs/testing/2026-07-26/figures/fig-6-cpu-timeseries.svg" alt="Container CPU during load" width="820"/>
+</p>
+
+<p align="center"><em>Fig 4. Per-container CPU % across 20 seconds of small-load traffic (5 workers, 1000 requests). Gateway idles under this load; the periodic spikes on audit + decision are batch commits + risk-pipeline computations. Behavior + policy stay flat — they only wake on the classifier fan-out.</em></p>
 
 ---
 
@@ -395,6 +427,12 @@ post-recovery (3 requests):   3 × 200, avg 274 ms
 ```
 **Verdict: pass.** Fail-closed as configured; recovery in 16 s.
 
+<p align="center">
+  <img src="docs/testing/2026-07-26/figures/fig-4-chaos-decision.svg" alt="Chaos timeline kill Decision" width="820"/>
+</p>
+
+<p align="center"><em>Fig 5. Chaos timeline — kill the Decision service, sample request behavior every 500 ms, restart, measure recovery. Red band = outage window; green = healthy again. Request status flips cleanly from 200 → 503 → 200 with no ambiguous middle state (no partial-allows during the outage).</em></p>
+
 ### 9.2 Kill Audit service
 
 ```
@@ -441,6 +479,34 @@ probe every 1 s during the restart window:
 ```
 **Verdict: pass-with-note.** Zero-downtime is not achieved. ALB takes ~3 s to detect the killed instance and pull it from rotation, during which callers hitting that target get 404. This is normal ALB behavior; **improvement path**: add connection-draining and pre-drain the target before restart via ALB API. Documented as future work.
 
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant ALB as AWS ALB
+    participant G1 as Gateway host-1
+    participant G2 as Gateway host-2
+    Note over C,G2: t=0s baseline: both healthy
+    C->>ALB: probe /status
+    ALB->>G1: route
+    G1-->>C: 200 (382ms)
+    Note over G1: t=1s docker restart acp_gateway
+    C->>ALB: probe /status
+    ALB->>G1: route (still marked healthy)
+    G1--xC: connection refused → 404 (8.65s)
+    C->>ALB: probe /status
+    ALB->>G2: route (ALB just marked G1 unhealthy)
+    G2-->>C: 200 (105ms)
+    C->>ALB: probe /status
+    ALB->>G1: route (health-check not yet complete)
+    G1--xC: still starting → 404 (56ms)
+    Note over G1: t=~14s G1 healthy again
+    C->>ALB: probe /status
+    ALB->>G1: route
+    G1-->>C: 200 (364ms)
+```
+
+*Fig 9. ALB failover timeline during rolling gateway restart. The ~3 s window of intermittent 404s is the gap between "container killed" and "ALB removes the target." Improvement path: pre-drain the ALB target via API before killing the container.*
+
 ---
 
 ## 10. Operational behavior
@@ -477,6 +543,21 @@ Located in [`docs/runbooks/`](docs/runbooks/). Each one is structured `Alert →
 
 ---
 
+## 10.4 Grafana dashboards
+
+Aegis ships four production-ready Grafana dashboards checked into the repo. Each one is JSON-provisioned; screenshots can be taken from any deployment.
+
+| Dashboard | JSON file | Key panels |
+|---|---|---|
+| Platform SLO | `infra/grafana-dashboards/platform-slo.json` | request rate · error budget · p95 latency · availability rolling 30-day |
+| Trust layers | `infra/grafana-dashboards/trust-layers.json` | chain-integrity gauge · signed-receipt count · Merkle-root age · transparency-root gap |
+| Tenant activity | `infra/grafana-dashboards/tenant-activity.json` | per-tenant request rate · deny rate · high-risk agent count · runaway-quarantine count |
+| Queues | `infra/grafana-dashboards/queues.json` | audit-stream depth · consumer lag · DLQ length · outbox pending + failed |
+
+Every panel's PromQL is inline in the JSON. Alerts wired from these gauges live in `infra/prometheus-rules.yml`.
+
+---
+
 ## 11. Cryptographic verification
 
 Every audit row is: `event_hash = SHA-256(prev_hash || tenant_id || agent_id || action || tool || decision || request_id)`.
@@ -496,6 +577,97 @@ GET /logs/verify?limit=10000
 ```
 
 The `aegis-aevf` CLI (`pip install aegis-aevf==1.1.1`) is the offline reference verifier — anyone can point it at an exported bundle and confirm the chain without trusting the Aegis API.
+
+### 11.1 How the chain is built (visualization)
+
+```mermaid
+flowchart LR
+    subgraph req [Per request]
+        r1[request] --> h1[compute event_hash SHA-256]
+    end
+    h1 -->|prev_hash from shard head| c1[audit_logs row]
+    c1 -->|write with advisory lock| s0[Shard 0 chain]
+    c1 -.-> s1[Shard 1] 
+    c1 -.-> s2[Shard 2..15]
+    subgraph d [Daily]
+        s0 --> m[Merkle root]
+        s1 --> m
+        s2 --> m
+        m --> sig[ed25519 sign]
+        sig --> pub[S3 aegis-public-roots]
+    end
+    subgraph verify [Anyone verifies offline]
+        pub --> aevf[aegis-verify CLI]
+        aevf --> ok{Chain OK?}
+    end
+```
+
+*Fig 6. Cryptographic receipt + chain flow. Each request appends to one of 16 per-tenant shards; each daily epoch is Merkle-rooted, ed25519-signed with the platform key, and mirrored to a public S3 bucket. Third-party verification requires only the public root JSON — zero API calls to Aegis.*
+
+### 11.2 Request lifecycle end-to-end
+
+```mermaid
+sequenceDiagram
+    participant C as Client / Agent SDK
+    participant W as AWS WAF
+    participant G as Gateway (auth + scan)
+    participant R as Registry (allow-list)
+    participant P as Policy (OPA)
+    participant D as Decision (risk)
+    participant A as Audit (async)
+    participant U as Upstream Claude
+    C->>W: POST /v1/messages
+    W->>W: bot-control + rate rules
+    W->>G: forward
+    G->>G: auth + PII/injection scan
+    alt scan hit
+      G-->>C: 400/403 (blocked, no upstream)
+    else scan clean
+      G->>R: agent + tool allow-list check
+      G->>P: OPA policy decision
+      P->>D: risk score
+      D-->>G: allow / deny / escalate
+      alt allow
+        G->>U: forward prompt
+        U-->>G: response
+        G-->>C: 200 + receipt id
+      else deny
+        G-->>C: 403 + reason
+      end
+    end
+    G->>A: async audit-write (Redis XADD)
+    A->>A: append to shard-N chain + ed25519 sign
+```
+
+*Fig 7. Request lifecycle. The synchronous path (client → response) never blocks on audit; audit is fire-and-forget into a Redis stream that a background worker drains.*
+
+### 11.3 Attack detection layers
+
+```mermaid
+flowchart TB
+    req[Incoming request] --> waf{WAF bot + rate rules}
+    waf -- fail --> block1[403 WAF]
+    waf -- pass --> auth{Auth: acp_emp or JWT?}
+    auth -- fail --> block2[401]
+    auth -- pass --> tenant{X-Tenant matches key tenant?}
+    tenant -- no --> block3[403 cross-tenant]
+    tenant -- yes --> size{max_tokens ≤ ceiling AND input ≤ 24000?}
+    size -- no --> block4[400 cost-cap]
+    size -- yes --> pii{PII regex hit?}
+    pii -- yes --> block5[400 pii_in_prompt]
+    pii -- no --> inject{Injection pattern hit?}
+    inject -- yes --> block6[403 prompt_blocked]
+    inject -- no --> allowlist{Tool in agent's allow-list?}
+    allowlist -- no --> block7[403 not_in_allowlist]
+    allowlist -- yes --> opa{OPA policy: allow?}
+    opa -- no --> block8[403 policy_deny]
+    opa -- yes --> risk{Cumulative risk ≥ quarantine threshold?}
+    risk -- yes --> block9[403 quarantined]
+    risk -- no --> upstream[forward to upstream Claude / tool]
+    upstream --> audit[async audit write<br/>ed25519 sign]
+```
+
+*Fig 8. Every layer a request passes through before reaching upstream. Each block point produces a specific status code + reason, visible in the response body and the audit log. A request that reaches `upstream` has cleared 8 defenses in sequence.*
 
 ---
 

@@ -38,3 +38,29 @@ Raw output from the test run backing [`../../26-testing.md`](../../26-testing.md
 ## Interpretation
 
 Every table in `26-testing.md` references either a file in this directory or a specific command. If a number in the report doesn't have provenance you can point at here, flag it — nothing should be uncited.
+
+## Figures (SVG — GitHub renders inline)
+
+Under `figures/`. Rendered with matplotlib from real per-request timing data collected during the test window.
+
+- `fig-1-latency-histograms.svg` — per-class latency histograms (inject, PII, cost, allow)
+- `fig-2-latency-cdf.svg` — cumulative distribution overlay of the four classes
+- `fig-3-scalability.svg` — sweep 50→2000 workers (latency, RPS, success%)
+- `fig-4-chaos-decision.svg` — chaos timeline for kill Decision service
+- `fig-5-attack-matrix.svg` — attack coverage bar chart
+- `fig-6-cpu-timeseries.svg` — per-container CPU during small-load run
+
+Chart-generation scripts under `scripts/`:
+- `mint-fresh.py` — mint a test employee key + agent + permission (bootstrap for the load test)
+- `gen-chart-data.py` — collect per-request timings for 5 request classes × 200 samples each
+- `render-local.py` — matplotlib SVG generator from the trimmed data
+
+To reproduce the figures from a fresh test run:
+```bash
+# 1. Provision test creds
+python scripts/mint-fresh.py    # prints KEY= and AID=
+# 2. Substitute KEY + AID in gen-chart-data.py, then:
+docker exec acp_gateway python /tmp/gen-chart-data.py
+# 3. Pull /tmp/chart-data.json off the host, then:
+python scripts/render-local.py
+```
