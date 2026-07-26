@@ -126,6 +126,116 @@ async def proxy_auth_token(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/auth/register", tags=["auth"])
+async def proxy_auth_register(request: Request, response: Response) -> Any:
+    """Proxy → Identity `/auth/register`. Public — no auth required.
+
+    Also sets the httpOnly ``acp_token`` cookie on success so browser
+    EventSource + same-origin fetches (credentials: include) authenticate
+    without JS having to touch the token.
+    """
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/auth/register",
+        json=body,
+        headers=internal_headers(request),
+    )
+    response.status_code = resp.status_code
+    try:
+        data = resp.json()
+    except Exception:
+        data = None
+    if resp.status_code not in (200, 201) or data is None:
+        detail = (data or {}).get("detail") or (data or {}).get("error") or "Registration failed"
+        return {"success": False, "error": detail, "data": None}
+
+    info = data.get("data") or {}
+    token = info.get("access_token")
+    if token:
+        response.set_cookie(
+            key="acp_token",
+            value=token,
+            httponly=True,
+            secure=settings.ENVIRONMENT == "production",
+            samesite="strict",
+            max_age=86400,
+        )
+    return data
+
+
+@router.post("/auth/password/reset-request", tags=["auth"])
+async def proxy_password_reset_request(request: Request, response: Response) -> Any:
+    """Proxy → Identity `/auth/password/reset-request`. Always 202 to
+    prevent account enumeration."""
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/auth/password/reset-request",
+        json=body,
+        headers=internal_headers(request),
+    )
+    response.status_code = resp.status_code
+    try:
+        return resp.json()
+    except Exception:
+        return {"success": resp.status_code < 400, "data": {"status": "accepted"}}
+
+
+@router.post("/auth/password/reset-confirm", tags=["auth"])
+async def proxy_password_reset_confirm(request: Request, response: Response) -> Any:
+    """Proxy → Identity `/auth/password/reset-confirm`. Sets the
+    httpOnly ``acp_token`` cookie on success so the user is signed in
+    immediately after the reset."""
+    body = await request.json()
+    resp = await request.app.state.client.post(
+        f"{_base()}/auth/password/reset-confirm",
+        json=body,
+        headers=internal_headers(request),
+    )
+    response.status_code = resp.status_code
+    try:
+        data = resp.json()
+    except Exception:
+        data = None
+    if resp.status_code != 200 or data is None:
+        detail = (data or {}).get("detail") or (data or {}).get("error") or "Reset failed"
+        return {"success": False, "error": detail, "data": None}
+
+    info = data.get("data") or {}
+    token = info.get("access_token")
+    if token:
+        response.set_cookie(
+            key="acp_token",
+            value=token,
+            httponly=True,
+            secure=settings.ENVIRONMENT == "production",
+            samesite="strict",
+            max_age=86400,
+        )
+    return data
+
+
+@router.post("/auth/password/change", tags=["auth"])
+async def proxy_password_change(request: Request, response: Response) -> Any:
+    """Proxy → Identity `/auth/password/change`. Requires the caller's
+    current Aegis bearer token — forwarded verbatim to identity, which
+    verifies it + the supplied current_password before rotating the hash."""
+    body = await request.json()
+    fwd_headers = internal_headers(request)
+    auth = request.headers.get("Authorization")
+    if auth:
+        fwd_headers["Authorization"] = auth
+    resp = await request.app.state.client.post(
+        f"{_base()}/auth/password/change",
+        json=body,
+        headers=fwd_headers,
+    )
+    response.status_code = resp.status_code
+    try:
+        return resp.json()
+    except Exception:
+        return {"success": resp.status_code < 400, "data": None}
+
+
 @router.post("/auth/agent/token", tags=["auth"])
 async def proxy_agent_token(request: Request, response: Response) -> Any:
     """Proxy → Identity: issue token for agents.
