@@ -1,1084 +1,516 @@
-# Aegis
+<div align="center">
 
-Runtime security control plane for autonomous agents. Sits in front of every
-agent tool call, applies a policy pipeline, and produces a cryptographically
-verifiable audit trail.
+# 🛡️ Aegis
 
-- **License:** Apache 2.0
-- **Runtime:** Python 3.11, FastAPI, PostgreSQL 14+, Redis 7+, OPA
-- **Deploy target:** AWS (`ap-south-1` reference) / any Linux host with Docker
-- **Status:** production (single-tenant prod-ha + multi-tenant ready)
-- **Live site:** [aegisagent.in](https://aegisagent.in)
-- **Deep dive:** [projectsphere.hashnode.dev — I built a runtime firewall for AI agents](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
-- **GitBook Docs:** [https://docs.aegisagent.in](https://docs.aegisagent.in) 
----
+**The runtime security control plane for AI agents.**
+Every LLM prompt scanned. Every tool call authorized. Every decision cryptographically signed.
 
-## Table of contents
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Live](https://img.shields.io/badge/live-aegisagent.in-brightgreen)](https://aegisagent.in)
+[![PyPI aegis-anthropic](https://img.shields.io/pypi/v/aegis-anthropic?label=aegis-anthropic)](https://pypi.org/project/aegis-anthropic/)
+[![Attack recall 0.887](https://img.shields.io/badge/attack%20recall-0.887-brightgreen)](./26-testing.md)
+[![Chain integrity 0 violations](https://img.shields.io/badge/chain%20integrity-0%20violations-brightgreen)](./26-testing.md#11-cryptographic-verification)
 
-- [Problem](#problem)
-- [Tech stack](#tech-stack)
-- [Request pipeline](#request-pipeline)
-- [Architecture](#architecture)
-- [Service inventory](#service-inventory)
-- [Data model](#data-model)
-- [Cryptographic trust chain](#cryptographic-trust-chain)
-- [Deployment lifecycle (ATF §14.5)](#deployment-lifecycle-atf-145)
-- [Multi-IdP acceptance (ATF §4.2)](#multi-idp-acceptance-atf-42)
-- [Per-tenant feature flags](#per-tenant-feature-flags)
-- [SDK integration](#sdk-integration)
-- [Security layers](#security-layers)
-- [Admin console surfaces](#admin-console-surfaces)
-- [Performance measurements](#performance-measurements)
-- [Screenshots — live decisions](#screenshots--live-decisions)
-- [Configuration](#configuration)
-- [Quick start](#quick-start)
-- [Production safety](#production-safety)
-- [Demo scenarios](#demo-scenarios)
-- [Video walkthroughs](#video-walkthroughs)
-- [Documentation](#documentation)
-- [Reference deployment](#reference-deployment)
-- [Repository layout](#repository-layout)
-- [Scope and non-goals](#scope-and-non-goals)
+[**Live demo**](https://aegisagent.in) · [**Client setup**](./25-setup.md) · [**Test report**](./26-testing.md) · [**Docs**](https://docs.aegisagent.in) · [**Blog post**](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
+
+</div>
 
 ---
 
-## Problem
+## What Aegis does in 30 seconds
 
-Most agent deployments assume the model will behave. When it doesn't — prompt
-injection, hallucinated tool call, compromised token, over-broad permission —
-the failure modes are structural: production data leak, destructive operation,
-slow PII exfiltration, cross-tenant access, unreconstructible incident.
+Your AI agent is about to call `db.query(sql="DROP TABLE users")` or send a prompt with `"Ignore all previous instructions"`. Without Aegis, that call goes through. With Aegis, it's blocked in ~150 ms with a signed audit receipt.
 
-Traditional controls don't cover this cleanly. WAFs see network traffic. IAM
-sees user identities. API gateways see endpoints. None of them see the
-semantics of a tool call: what the agent is trying to *do*, on behalf of *whom*,
-against *which* resource, and whether the pattern of prior calls suggests
-compromise.
+```python
+from sdk.acp_client import Client, DeniedError
 
-Aegis is a purpose-built enforcement layer for that gap. Every tool call is
-authenticated, authorized, risk-scored, policy-evaluated, and cryptographically
-logged before it executes.
+acp = Client()  # reads AEGIS_EMPLOYEE_KEY + AEGIS_URL from env
 
----
+@acp.protect(agent_id="agent_42", tool="db.query")
+def query(sql: str) -> list[dict]:
+    return db.execute(sql)
 
-## Tech stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| Runtime (backend) | Python 3.11 | Type-hint maturity, `asyncio` performance, wide OS support |
-| Web framework | FastAPI + Starlette | Native ASGI, first-class Pydantic v2 integration, automatic OpenAPI |
-| ASGI server | uvicorn (`[standard]`) | Battle-tested, `--workers` scaling; no gevent monkey-patching |
-| Data validation | Pydantic v2 + pydantic-settings | Single canonical model for request bodies and typed env-var config |
-| ORM | SQLAlchemy 2.0 async + asyncpg | Non-blocking Postgres access from FastAPI without threadpool detours |
-| Database | PostgreSQL 14+ (RDS Multi-AZ in prod) | JSONB metadata, ACID for the transactional outbox, `gen_random_uuid()` for chain hashes |
-| Connection pool | pgbouncer (transaction pooling) | Bounded server-side conns without app-code changes; matches RDS `max_connections` budgets |
-| Cache / pub-sub / rate-limit | Redis 7+ (ElastiCache in prod, replication + failover) | Sub-ms atomic ops; SSE fanout; JWT `jti` revocation set; per-tenant feature flags |
-| Policy engine | Open Policy Agent (Rego) | Deny-by-default, Git-backed bundles, hot-reload without gateway restart |
-| Signing | ed25519 (`cryptography`) | 64-byte signatures, deterministic, no padding-oracle exposure |
-| JWT | RS256 (`python-jose`) | Public-key verification lets downstream services validate without secret sharing |
-| Multi-IdP workload auth | SPIFFE / Entra Agent ID / Okta XAA | See [Multi-IdP acceptance](#multi-idp-acceptance-atf-42) |
-| HTTP client | `httpx` (async) | HTTP/2, connection pooling, timeout budgets that don't leak |
-| Structured logs | `structlog` (JSON) | One canonical schema for gateway + services; direct Loki / CloudWatch ingest |
-| Metrics | Prometheus (`prometheus-fastapi-instrumentator`) | Per-route histograms, tenant-scoped counters, alertmanager fanout |
-| Traces | OpenTelemetry → Jaeger (dev) / OTLP (prod) | End-to-end correlation across 15 services |
-| MCP (Model Context Protocol) | `mcp>=0.5` | `services/mcp_server/` exposes governance tools to Claude Desktop / Cursor / VS Code |
-| Frontend framework | React 18 + Vite 5 | Fast HMR; per-page code-splitting via `React.lazy` |
-| UI styling | Tailwind CSS 3 (custom design tokens; no component lib) | Zero external UI-lib upgrade risk; every primitive lives in `ui/src/components/Common/` |
-| Charts | recharts | SVG, tree-shakable; heavy chart bundle lazy-loaded per page |
-| Graph rendering | reactflow (11.x) | Identity Graph nodes/edges; canvas-backed for 500+ node graphs |
-| Auth (customer-facing) | Clerk (`@clerk/react` 6) | Managed SAML / OIDC, MFA, session revocation without owning a user-management surface |
-| Form validation (UI) | zod | Same schema-first discipline as backend Pydantic; no runtime `PropTypes` |
-| Testing (backend) | pytest + pytest-asyncio | 2900+ tests across `services/`, `sdk/`, `tests/` |
-| Testing (frontend) | Playwright | Real-browser E2E; not shipping to prod (per-CI) |
-| Container runtime | Docker + Docker Compose (local); ECS / EC2 (prod-ha) | 27-container topology deterministic in dev; TF-managed launch templates in prod |
-| IaC | Terraform 1.5+ (modules + envs/{dev, prod-ha}) | Reproducible AWS baseline; import block for existing state |
-| Edge (prod) | nginx (reverse proxy + SPA fallback) | Static UI + gateway routes on the same domain; predictable regex matching for API prefixes |
-
----
-
-## Request pipeline
-
-Ten stages, in order. Cheap checks first — auth, rate limit, kill switch —
-so 90%+ of malformed or abusive traffic is rejected before any expensive check
-runs. Each stage is fail-closed: an unreachable dependency returns 5xx, never
-falls through to allow.
-
-```
-                                    stage    typical    failure code
-client                                       latency
-  |
-  |  POST /execute/{tool}
-  |  Authorization: Bearer <jwt>
-  |
-  +-> 1. JWT auth + revocation      < 1 ms   401
-      2. Rate limit (tenant/agent)   < 1 ms   429
-      3. Kill switch (Redis→PG)      < 1 ms   403
-      4. Payload validation          < 1 ms   400 / 413
-      5. Tool allow-list             < 2 ms   403
-      6. OPA policy evaluation       < 10 ms  403
-      7. Behavioral risk scoring     < 20 ms  403
-      8. Autonomy contract           < 5 ms   403
-      -----------------------------  --------
-      9. ed25519 receipt (async)     — cryptographic proof of decision
-     10. Billing outbox (async)      — audit + billing written in one txn
-      |
-      v
-upstream tool
+query("SELECT name FROM users LIMIT 10")   # ✅ runs
+query("DROP TABLE users")                   # ❌ DeniedError raised before it runs
 ```
 
-**Deny is faster than allow.** A blocked request usually terminates at stage
-2, 3, or 4 — before intelligence services are consulted at all. This is why
-p99 is lower than most people expect: the expensive stages don't run on
-denied traffic.
+**Aegis blocks:** prompt injection · DAN / OMEGA / STAN jailbreaks · SSN / credit-card / API-key exfil · cost bombs · cross-tenant escapes · runaway loops · unauthorized tool calls · unauthorized shell commands · unauthorized file reads.
 
-**Stages 9 and 10 are async.** The user gets a decision back at stage 8;
-cryptographic logging and billing pipeline finish in the background.
+**Aegis produces:** an ed25519-signed, Merkle-rooted, per-tenant audit chain that any regulator can verify offline in one command:
+
+```bash
+pip install aegis-aevf==1.1.1 && aegis-verify --bundle exported.json
+```
 
 ---
 
-## Architecture
+## Why it exists
 
-[![Architecture diagram](screenshot/architecture-diagram.png)](screenshot/architecture-diagram.png)
+AI agents ship faster than they can be secured. In 2026 an agent framework will happily execute a tool call constructed from a prompt-injected LLM response — no policy layer between "the model said so" and "the database was dropped." Existing solutions either:
 
-15 services · 27 containers · single gateway entry point · fail-closed at every
-gate. Six tiers, top to bottom:
+- **Live inside the model** (safety fine-tuning) — good, but 100 % model-specific and easily jailbroken
+- **Live outside the process** (WAF / IAM) — good for shapes of traffic, blind to the semantics of prompts and tool calls
+- **Live in a paid SaaS** — good if you like sending your prompts to a third party
 
-| Tier | Contents | Responsibility |
-|---|---|---|
-| External clients | AI agents, Python SDKs, React UI, SIEM, Slack | Everything that talks to Aegis from outside |
-| Edge — gateway | Gateway (`:8000`) with 5 sequential gates | Single entry point, fail-closed enforcement |
-| Core services | Identity, Registry, Policy, Decision, Audit, Billing | Synchronous decision path |
-| Intelligence & runtime trust | Behavior, Insight, Identity Graph, Flight Recorder, Autonomy, Forensics, ARE | Risk scoring, replay, compromise simulation |
-| Cryptographic trust | Receipts, Kill Switch, SSE stream, Reconciliation | Tamper-evident proof + runtime control |
-| Data plane | PostgreSQL, Redis, OPA bundle server, Prometheus, Grafana, Jaeger | Storage + telemetry |
+Aegis is the fourth option: a **process-adjacent runtime firewall** — open source, self-hosted, model-agnostic, tool-agnostic. It reads every prompt and every tool call, applies a 10-layer policy pipeline, and produces a tamper-evident audit trail.
 
-Load-bearing design choices:
+---
 
-- **Gateway is the only entry point.** No downstream service is reachable
-  from outside. Enforced at the network layer, not just documented.
-- **Gates run sequentially, not in parallel.** Order matters: auth → rate
-  limit → payload → permission → risk. Each gate blocks the next.
-- **Cryptographic trust sits sideways.** Receipts, kill switch, SSE, and
-  reconciliation observe the core services rather than participating in the
-  hot path. That is what keeps the deny path under 30 ms.
-- **Async work goes through a transactional outbox.** Every audit and billing
-  write commits in the same Postgres transaction as the decision — no queue
-  drift, no lost billing events.
+## 📐 The three diagrams
+
+### 1. AWS deployment topology
+
+Everything Aegis needs to run on AWS in `ap-south-1` (or any AWS region). Provisioned by Terraform in [`infra/terraform/`](infra/terraform/).
+
+```mermaid
+flowchart TB
+    user[User / Agent Process] -->|HTTPS| r53[Route 53]
+    r53 --> waf[AWS WAFv2<br/>Bot Control + Core Rules]
+    waf --> alb[Application Load Balancer<br/>TLS termination · dualstack]
+
+    subgraph vpc [VPC · ap-south-1 · 3 AZs]
+        subgraph public [Public subnets]
+            alb
+        end
+        subgraph private [Private subnets]
+            asg[Auto Scaling Group<br/>2× m6g.large EC2]
+            alb --> asg
+        end
+        subgraph data [Data subnets]
+            rds[(RDS Postgres 15<br/>Multi-AZ)]
+            redis[(ElastiCache Redis 7<br/>cluster 2-node)]
+        end
+        asg --> rds
+        asg --> redis
+    end
+
+    subgraph aws [AWS managed services]
+        s3[(S3<br/>bundle store +<br/>public transparency roots)]
+        sm[Secrets Manager<br/>DB pass · JWT keys · mesh keys]
+        ssm[SSM Parameter Store<br/>Clerk · Anthropic · feature flags]
+        kms[KMS<br/>audit envelope encryption]
+        cw[CloudWatch<br/>logs · metrics · alarms]
+        ct[CloudTrail<br/>immutable API history]
+    end
+
+    asg --> s3
+    asg --> sm
+    asg --> ssm
+    asg --> kms
+    asg --> cw
+    ct -.-> cw
+
+    style user fill:#fff,stroke:#333,stroke-width:2px
+    style waf fill:#c0392b,color:#fff
+    style alb fill:#3498db,color:#fff
+    style asg fill:#27ae60,color:#fff
+    style rds fill:#e67e22,color:#fff
+    style redis fill:#e67e22,color:#fff
+    style s3 fill:#8e44ad,color:#fff
+    style kms fill:#8e44ad,color:#fff
+```
+
+**~$290/month** baseline on-demand at current tenant volume — see [26-testing.md §12](./26-testing.md#12-cost-analysis) for the itemized bill. Free on local Docker Compose.
+
+---
+
+### 2. Aegis internal services
+
+19 microservices per host, all in Python 3.11 + FastAPI. Each service is a separate container with its own DB pool, mesh JWT signing key, and health check. Cross-service calls use ES256 mesh JWTs.
+
+```mermaid
+flowchart TB
+    subgraph front [Client-facing]
+        gw[gateway<br/>· auth<br/>· PII scan<br/>· injection scan<br/>· cost cap]
+        ui[ui<br/>React + Vite<br/>nginx static]
+    end
+
+    subgraph decision [Decision pipeline]
+        pol[policy<br/>OPA rules]
+        opa[OPA<br/>rego engine]
+        dec[decision<br/>10-layer risk<br/>pipeline]
+        beh[behavior<br/>agent baseline<br/>+ drift]
+    end
+
+    subgraph identity [Identity + registry]
+        idn[identity<br/>tenant · user · role]
+        reg[registry<br/>agent · permissions<br/>allow-list]
+        api[api<br/>employee virtual keys<br/>incidents · ARE]
+        ig[identity_graph<br/>blast radius<br/>compromise sim]
+    end
+
+    subgraph audit [Audit + evidence]
+        aud[audit<br/>ed25519 chain<br/>16 shards]
+        fr[flight_recorder<br/>step-level<br/>replay]
+        fo[forensics<br/>timeline<br/>investigation]
+    end
+
+    subgraph auto [Autonomy + intelligence]
+        au[autonomy<br/>contracts<br/>overrides]
+        ins[insight<br/>cross-tenant<br/>correlation]
+        lrn[learning<br/>signal weights]
+    end
+
+    subgraph other [Ops + specialty]
+        u[usage<br/>cost telemetry<br/>+ outbox]
+        wit[witness<br/>ATF §6<br/>execution attest]
+        mcp[mcp_gate<br/>MCP protocol<br/>middleware]
+        mcs[mcp_server<br/>stdio bridge]
+        sec[security<br/>signal registry<br/>34 signals]
+    end
+
+    subgraph data [Shared infra]
+        pg[(Postgres 15<br/>via pgbouncer)]
+        rd[(Redis 7<br/>stream + cache)]
+    end
+
+    gw --> pol
+    gw --> reg
+    gw --> dec
+    gw --> beh
+    pol --> opa
+    dec --> aud
+    dec --> u
+    dec --> fr
+    dec --> fo
+    dec --> ig
+    reg --> pg
+    idn --> pg
+    aud --> pg
+    aud --> rd
+    fr --> pg
+    fo --> pg
+    au --> pg
+    u --> pg
+    ig --> pg
+    ins --> pg
+    all_services["all services"] -.-> pg
+    all_services -.-> rd
+
+    style gw fill:#3498db,color:#fff
+    style dec fill:#c0392b,color:#fff
+    style aud fill:#27ae60,color:#fff
+    style opa fill:#e67e22,color:#fff
+```
+
+Full service inventory + memory limits + purpose in [Service inventory](#service-inventory).
+
+---
+
+### 3. Request workflow — end-to-end
+
+What actually happens when your agent calls `client.messages.create(...)`:
+
+```mermaid
+sequenceDiagram
+    participant A as Agent (your process)
+    participant SDK as Aegis SDK<br/>(aegis-anthropic)
+    participant WAF as AWS WAF
+    participant G as Gateway<br/>auth + scan
+    participant P as Policy + OPA
+    participant D as Decision<br/>+ Registry + Behavior
+    participant U as Upstream Claude
+    participant AU as Audit<br/>(async)
+
+    Note over A,AU: user prompt: "Summarize this email: ..."
+
+    A->>SDK: messages.create(model, prompt, max_tokens)
+    SDK->>WAF: POST /v1/messages<br/>x-api-key: acp_emp_...
+    WAF->>WAF: bot-control + rate rules
+    WAF->>G: forward
+    G->>G: validate employee key → tenant
+    G->>G: check X-Tenant-ID matches
+    G->>G: check max_tokens ≤ ceiling
+    G->>G: check input ≤ 24 000 chars
+    G->>G: PII scan (SSN / CC / API-keys)
+    G->>G: injection scan (regex + normalize)
+
+    alt scan hits attack
+        G-->>SDK: 400 or 403 + specific reason
+        SDK-->>A: raise HTTPStatusError
+        G->>AU: audit-write via Redis stream
+        Note right of AU: deny recorded<br/>even on blocked requests
+    else scan clean
+        G->>P: OPA policy check
+        P-->>G: allow / deny / escalate
+        G->>D: agent risk + behavior signals
+        D-->>G: risk score + recommendation
+        alt risk high or policy deny
+            G-->>SDK: 403 with reason
+        else all clear
+            G->>U: forward prompt to Anthropic
+            U-->>G: Claude response
+            G-->>SDK: 200 + response + receipt_id
+            SDK-->>A: response
+        end
+    end
+
+    G->>AU: audit-write (Redis XADD, non-blocking)
+    Note over AU: audit worker drains stream →<br/>ed25519 sign →<br/>append to shard-N chain →<br/>Postgres
+```
+
+The client sees a normal `messages.create()` call. Everything above happens in ~150 ms for deny paths, ~440 ms for allow paths + Claude's own inference latency.
+
+---
+
+## 🚀 Quickstart
+
+### For clients using the hosted service
+
+If a customer just wants to use Aegis without deploying it, [`25-setup.md`](./25-setup.md) is the 12-section walkthrough. TL;DR:
+
+```bash
+pip install 'aegis-anthropic==1.1.5'   # or aegis-openai / -langchain / -bedrock
+```
+
+Then log in at [aegisagent.in](https://aegisagent.in), mint an employee key, and use the SDK.
+
+### For engineers self-hosting on AWS
+
+```bash
+git clone https://github.com/Abhi-mishra998/aegis.git
+cd aegis/infra/terraform
+# Edit envs/prod/terraform.tfvars with your account + domain
+terraform init && terraform apply
+# ~15 minutes. Populates ALB, RDS, ElastiCache, ASG, WAF, R53, everything.
+```
+
+Total baseline cost: **~$290/month** (see [26-testing.md §12](./26-testing.md#12-cost-analysis) for itemized breakdown).
+
+### For engineers running locally
+
+Zero AWS, zero Clerk, single laptop:
+
+```bash
+git clone https://github.com/Abhi-mishra998/aegis.git
+cd aegis/infra
+cp .env.aws.template .env      # then fill in the placeholders
+docker compose up -d
+# 25 containers per host — takes ~2 minutes on first cold start
+open http://localhost:5173
+```
+
+Total cost: **$0.**
 
 ---
 
 ## Service inventory
 
-Split along failure-domain boundaries. If Behavior goes down, the gateway
-falls back to its degraded-mode policy. If Audit is briefly unavailable, the
-outbox buffers. If the inference proxy times out, requests fail closed.
+19 Python microservices + 6 infrastructure containers = 25 containers per host.
 
-### Edge
+### Aegis services
 
-| Service | Port | Detail |
-|---|---|---|
-| Gateway | `8000` | Nginx → FastAPI. 5 sequential fail-closed gates. JWT LRU cache (60 s / 10 k entries) cuts identity RTT from ~8 ms to ~0.3 ms warm. Per-downstream circuit breaker. |
-
-### Core (synchronous)
-
-| Service | Port | Detail |
-|---|---|---|
-| Identity | `8001` | RS256 JWT issue/validate. Redis `jti` revocation set. 15-min access / 7-day refresh. HMAC-256 API keys. |
-| Registry | `8002` | Agent CRUD with lifecycle FSM (ACTIVE → SUSPENDED → DECOMMISSIONED). Per-tool allow-list stored as rows. Unknown agent = deny. |
-| Policy (OPA) | `8003` | OPA bundle server, Git-backed Rego. 4 workers. Hot-reload without gateway restart. Hard-deny rules enforced here, not in application code. |
-| Decision | `8010` | Aggregates 5 signals (inference, behavior, anomaly, cost, cross-agent) into one score. Weighted sum configurable per tenant. p95 < 50 ms, Redis-cached per (agent, tool). |
-| Audit | `8004` | Append-only rows in PostgreSQL. 16-shard HMAC chain for write concurrency. ed25519 signature per row. Daily Merkle root sealed at midnight UTC. Offline verifier: `acp verify-chain`. |
-| Billing / Usage | `8006` | Transactional outbox in Postgres. Worker publishes `pending_usage_events`. Zero data loss: billing and audit rows share one transaction. |
-
-### Intelligence & runtime trust
-
-| Service | Port | Detail |
-|---|---|---|
-| Behavior | `8007` | 7+ anomaly detectors: call-rate spike, PII density, cross-agent correlation, time-of-day, new-tool usage, geo-velocity, bulk-op. Per-tenant `degraded_mode_policy` (`block_high_risk` / `block_all` / `allow_with_audit`). Fail-closed on timeout. Learned cross-agent term is gated by the tenant `behavior_fingerprinting` flag (ADR-002 — advisory only, never authoritative). |
-| Insight (Groq) | `8011` | Sends risk context to a Groq LLM. Returns plain-language threat narrative for the SOC feed. ~2 s enrichment, runs off the hot path. |
-| Identity Graph | `8013` | Graph in Postgres. Nodes: agents, users, tools, resources, API keys. Edges: permissions, ownership, delegation. Compromise simulation (BFS depth=3) returns quantified blast radius. Collusion detector (ATF §Phase 3 item 2) writes `collusion_suspicion` DriftSignals — surfaced in the UI's Incidents → Collusion tab. |
-| Flight Recorder | `8014` | Captures pre-gate snapshot, per-gate outcome, post-gate snapshot. 2 / 5 / 15 / 60 min replay windows. |
-| Autonomy | `8015` | Bounded contracts with `max_runtime`, `max_cost`, `max_destructive_ops_per_hour`. Deny-list and approval-required list. Escalation channels: Slack, Microsoft Teams (adaptive cards), PagerDuty Events v2, generic HTTPS webhook — configured per tenant, SSRF-guarded. |
-| Forensics | `8012` | Incident investigation: timeline reconstruction, attack attribution, cross-session correlation. |
-| ARE | `8005` | Auto-Response Engine. `IF (window + severity + risk + tool filter) THEN (KILL → ISOLATE → THROTTLE → ALERT)`. Cooldown + max-triggers-per-hour prevent alert storms. |
-| Witness | `8016` | ATF v3.2 §6 Execution Witness. Sidecar deployment collects evidence (verdicts become `CORROBORATED`); serverless deployment forces every verdict to `UNOBSERVED` by design. Surfaces `deployment_mode` + heartbeat freshness on `GET /witness/health`; UI reads it into the System Health page. |
-
----
-
-## Data model
-
-Four logical schemas, each with its own database role and explicit GRANT set.
-No cross-schema writes except via foreign keys.
-
-```
-acp_identity   tenants, users, agents, api_keys, revoked_tokens
-acp_registry   agent_tools (allow-list), agent_contracts
-acp_audit      audit_logs, transparency_roots, kill_switches
-acp_usage      pending_usage_events, usage_events, billing_summaries
-```
-
-### `acp_audit.audit_logs` — tamper-evident core
-
-```sql
-CREATE TABLE audit_logs (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    agent_id     UUID,
-    action       TEXT NOT NULL,        -- execute_tool, rate_limited, kill_switch_engaged, ...
-    tool         TEXT,
-    decision     TEXT,                 -- allow, deny, throttle, escalate, kill
-    risk_score   NUMERIC(5,4),
-    findings     TEXT[],               -- canonical vocab: pii_detected, anomaly_spike, ...
-    event_hash   TEXT NOT NULL,        -- SHA-256 of canonical JSON of this row
-    prev_hash    TEXT NOT NULL,        -- SHA-256 of previous row in this shard
-    chain_shard  SMALLINT NOT NULL,    -- 0..15 (16 parallel chains for write throughput)
-    signature    TEXT,                 -- ed25519 of event_hash
-    metadata     JSONB,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- No UPDATE or DELETE granted to any service role. Append-only enforced at DB level.
-```
-
-Shard assignment: `shard = tenant_id_int % 16`. Each shard is an independent
-HMAC chain. The daily Merkle root reduces all 16 shard tips into one signed
-digest stored in `transparency_roots`, which forms an append-only chain of
-roots via `prev_root_hash`. Even a post-hoc receipt-key compromise cannot
-alter past roots without breaking the chain.
-
-### `acp_usage.pending_usage_events` — transactional outbox
-
-```sql
-CREATE TABLE pending_usage_events (
-    id           UUID PRIMARY KEY,
-    audit_id     UUID NOT NULL REFERENCES audit_logs(id),   -- FK guarantees co-commit
-    tenant_id    UUID NOT NULL,
-    agent_id     UUID,
-    tokens_used  INTEGER,
-    tool         TEXT,
-    status       TEXT DEFAULT 'pending',                    -- pending → processing → delivered|failed
-    retry_count  INTEGER DEFAULT 0,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-Audit row and billing event commit in the same transaction. If the audit row
-exists, the billing event was queued. Structural, not best-effort.
-
-### `acp_identity.kill_switches` — durable isolation
-
-```sql
-CREATE TABLE kill_switches (
-    id            UUID PRIMARY KEY,
-    tenant_id     UUID NOT NULL,
-    agent_id      UUID,                    -- NULL = tenant-wide
-    engaged       BOOLEAN NOT NULL,
-    reason        TEXT,
-    engaged_by    UUID,
-    engaged_at    TIMESTAMPTZ,
-    disengaged_at TIMESTAMPTZ
-);
-```
-
-On gateway boot, active kill switches load from Postgres into Redis. If Redis
-is flushed mid-incident, the next request rehydrates. The kill switch survives
-a full Redis restart — verified in the demo pack.
-
-### Redis-backed runtime state
-
-A small set of hot-path settings live in Redis with Postgres or env vars
-as the fallback source of truth. Redis is treated as a *cache with an
-authoritative source*, never as the only copy of anything important.
-
-| Key | Contents | Fallback | Rationale |
+| Service | Port (internal) | Purpose | Memory limit |
 |---|---|---|---|
-| `acp:tenant_settings:{tenant_id}` (hash) | Per-tenant feature flags — `c3_sampling`, `behavior_fingerprinting` | Env-var comma-lists (`ACP_C3_SAMPLING_TENANTS`, `ACP_BEHAVIOR_FINGERPRINTING_TENANTS`) | Hot-path check on every request; env fallback preserves ops-managed deployments |
-| `acp:lifecycle:{tenant_id}` (string) | Current deployment state (`ENFORCE`, `DECOMMISSION`, …) | `lifecycle_*` rows in the audit chain | Audit chain is the durable record; a lost Redis key is reconstructible from the last transition event |
-| `acp:signal_weights:{tenant_id}` (string, JSON) | Per-tenant risk signal weights map | `DEFAULT_WEIGHTS` in `services/decision/engine.py` | Malformed or unreachable state silently falls back to defaults — a bad override can never poison the live decision pipeline |
-| `acp:kill_switch:{tenant_id}[:agent_id]` | Boolean isolation state | `acp_identity.kill_switches` | See kill-switch table above |
-| `acp:jti:{jti}` | Revoked token IDs | Postgres `revoked_tokens` | 15-min TTL matches access-token TTL — natural expiry |
-| `acp:webhooks:{tenant_id}` (hash) | Escalation channel URLs / keys (`slack_url`, `teams_url`, `pagerduty_key`, `generic_url`) | Env-var fallback | Per-tenant configurable without a redeploy; secrets are masked on read |
+| **gateway** | 8000 | Auth · rate limit · PII/injection scan · request routing | 1 GB |
+| **decision** | 8000 | 10-layer risk pipeline · cumulative-risk quarantine | 576 MB |
+| **policy** | 8000 | OPA client wrapper · policy CRUD | 480 MB |
+| **audit** | 8000 | ed25519-signed chain · 16 shards per tenant · Merkle root sealing | 512 MB |
+| **registry** | 8000 | Agent + permission CRUD · allow-list enforcement | 480 MB |
+| **identity** | 8000 | Tenant + user + role · Clerk provisioning | 480 MB |
+| **api** | 8000 | Employee virtual keys · incidents · ARE workflow | 192 MB |
+| **usage** | 8000 | Cost telemetry · outbox reconciliation | 160 MB |
+| **behavior** | 8000 | Per-agent baseline · drift detection | 640 MB |
+| **autonomy** | 8000 | Contracts · overrides · playbooks | 320 MB |
+| **forensics** | 8000 | Timeline · investigation · replay | 320 MB |
+| **flight_recorder** | 8000 | Step-level replay · phase timing | 128 MB |
+| **identity_graph** | 8000 | Blast radius · compromise simulation | 160 MB |
+| **insight** | 8000 | Cross-tenant correlation | 192 MB |
+| **insight_worker** | — | Background insight computation | 128 MB |
+| **learning** | — | Signal weight tuning (offline) | 128 MB |
+| **witness** | 8000 | ATF v3.2 §6 execution attestation | 192 MB |
+| **mcp_gate** | 8000 | MCP protocol authentication + rate | 192 MB |
+| **mcp_server** | stdio | MCP protocol bridge (no HTTP) | 128 MB |
+| **security** | (library) | Signal registry — 34 MITRE-tagged signals | — |
+
+### Infrastructure containers
+
+| Service | Purpose |
+|---|---|
+| **opa** | Rego policy engine (Open Policy Agent 0.69) |
+| **postgres** / **pgbouncer** | Data plane · connection pool |
+| **redis** | Cache · rate-limit token bucket · audit stream · pub/sub |
+| **prometheus** / **grafana** / **alertmanager** | Metrics + dashboards + paging |
+| **jaeger** | Distributed tracing (opt-in per request) |
+| **ui** | React SPA (Vite) served by nginx |
+| **bundle-server** | Signed bundle distribution |
 
 ---
 
-## Cryptographic trust chain
+## 📦 SDK packages
 
-Three independent layers. Compromising one does not compromise the next.
+Four provider-specific SDKs + one offline verifier. All published to PyPI.
 
-**Layer 1 — per-decision ed25519 receipts.**
-
-```
-receipt = {
-  "execution_id": "uuid",
-  "agent_id":     "uuid",
-  "tool":         "db.query",
-  "decision":     "allow",
-  "risk_score":   0.12,
-  "timestamp":    "2026-05-19T14:32:11Z",
-  "signature":    "base64(ed25519_sign(private_key, canonical_json(receipt)))"
-}
+```bash
+pip install 'aegis-anthropic==1.1.5'    # Anthropic Claude
+pip install 'aegis-openai==1.1.6'       # OpenAI GPT
+pip install 'aegis-langchain==1.1.7'    # LangChain
+pip install 'aegis-bedrock==1.1.7'      # AWS Bedrock
+pip install 'aegis-aevf==1.1.1'         # offline compliance verifier
 ```
 
-ed25519 chosen for: 64-byte signatures, no padding-oracle exposure,
-deterministic (identical input → identical signature, enabling dedup),
-public-key-only verification.
+### Three integration patterns
 
-**Layer 2 — HMAC chain across 16 shards.**
-
-Each row carries `event_hash = SHA-256(canonical_json(row))` and
-`prev_hash = event_hash` of the previous row in that shard. Altering any row
-changes its hash and breaks `prev_hash` in every row after. Self-detecting and
-forward-only. 16 shards allow concurrent writes without contention on one
-chain tip.
-
-**Layer 3 — daily Merkle root.**
-
-At midnight UTC:
-
-1. Collect the tip hash of each of the 16 shards.
-2. Build a Merkle tree over the 16 leaves.
-3. Sign the root with the *transparency key* (separate from the receipt key).
-4. Store the root with `prev_root_hash` linking to yesterday's root.
-
-**Offline verification.** Pure functions — read from the audit database and
-the public key, no Aegis API call. Runs against a cold backup with zero
-network access.
-
-```
-acp verify-chain   --from 2026-05-01 --to 2026-05-19
-acp verify-root    --date 2026-05-19
-acp verify-receipt --id <execution_id> --public-key ./aegis_public.pem
-```
-
-The audit chain format is published as the open spec **AEVF (Aegis Evidence
-Verification Format) `aevf/0.1.0`**. Any auditor can verify an exported
-evidence bundle without contacting Aegis infrastructure:
-
-```
-pip install 'aegis-aevf==1.1.0'
-aegis-verify --bundle bundle.json
-```
-
-Six independent checks (V1–V6). Spec, checklist, and a deterministic
-reference bundle in [`docs/AEVF/`](docs/AEVF/).
-
----
-
-## Deployment lifecycle (ATF §14.5)
-
-The deployment itself is modelled as an explicit state machine so every
-environment transition is a first-class, ledgered event rather than an
-implicit config change.
-
-```
-INSTALL → BOOTSTRAP → ENFORCE → (ROTATE | UPGRADE | ROLLBACK)* → DECOMMISSION → DESTROY
-```
-
-`ROTATE`, `UPGRADE`, and `ROLLBACK` return to `ENFORCE` on completion. All
-other transitions are forward-only. State is stored per tenant at
-`acp:lifecycle:{tenant_id}` in Redis; the audit ledger is the durable record
-so a lost Redis state can be reconstructed from the last `lifecycle_*` row.
-
-Every transition is:
-
-- OWNER-role gated at the gateway (`POST /lifecycle/transition`).
-- Written to the audit chain as an `action_class=C3` event (same anchoring
-  class as production execution decisions — a transition is treated with
-  the same evidentiary weight as any enforced tool call).
-- Illegal target → `409` from the state-machine module
-  (`sdk/common/atf_lifecycle.py`), never a silent no-op.
-
-`DESTROY` is terminal. It mints a signed **destruction certificate** built
-from the final Merkle anchor and returns it in the transition response.
-The customer keeps that JSON forever as proof of what existed and when it
-was terminated (§14.5 line 3). The certificate is re-issuable via
-`POST /audit/logs/destruction-certificate` for as long as the audit rows
-remain on disk; once retention expires, the certificate is the only remaining
-proof.
-
-Endpoints:
-
-- `GET /lifecycle` — current state + legal next states
-- `POST /lifecycle/transition` — OWNER-only, body `{target, reason}`
-- `POST /audit/logs/destruction-certificate` — re-issue
-
-UI: `/lifecycle` (Sidebar → Admin → Lifecycle). Happy-path timeline with
-`ROTATE/UPGRADE/ROLLBACK` rendered as orbits around `ENFORCE`, per-transition
-confirm dialog with reason field, and an inline ledger of the last 40
-lifecycle events.
-
----
-
-## Multi-IdP acceptance (ATF §4.2)
-
-The gateway accepts three workload-token formats for agent-to-gateway auth,
-in addition to the customer-facing SAML/OIDC used by the console.
-
-| Adapter | Purpose | Config env vars |
-|---|---|---|
-| SPIFFE | Cross-cluster workload identity (SPIRE, Istio, custom) | `SPIFFE_TRUST_DOMAIN`, `SPIFFE_TRUST_BUNDLE_JSON`, `SPIFFE_AUDIENCE` |
-| Entra Agent ID | Azure workload identity | `ENTRA_TENANT_ID`, `ENTRA_AUDIENCE` |
-| Okta XAA | Okta workload federation | `OKTA_ISSUER`, `OKTA_AUDIENCE` |
-
-Dispatch lives in `services/gateway/idp_verifiers.py`. Each adapter is OFF
-unless its env vars are set; a blank config skips that adapter without a
-warning. Every failure path raises the same `ACPAuthError("Unauthorized")` —
-per-adapter reason is emitted to internal counters only so the response
-body reveals nothing about which validator branch was tried. JWKS is
-cached in Redis + a bounded in-process LRU (8 entries). A cache-fetch
-failure fails CLOSED (never fails open with an empty key set).
-
-`GET /auth/idp/status` returns the enabled/disabled state, the identifier
-(SPIFFE trust domain, Entra tenant, Okta issuer), and the audience for
-each adapter. It never returns trust-bundle material. Visible in the UI
-on Settings → SSO as a read-only "Trusted issuers" panel — a compromised
-customer admin flipping `SPIFFE_TRUST_BUNDLE_JSON` from the console would
-nuke the chain of trust, so the write path lives at the env-var boundary
-only.
-
----
-
-## Per-tenant feature flags
-
-Two ATF v3.2 controls are cost/privacy-sensitive enough to be OFF by
-default and per-tenant opt-in:
-
-| Flag | Effect | Cost |
-|---|---|---|
-| `c3_sampling` (§9.3) | Plan every C3 action three times, require a 2-of-3 quorum, BLOCK inconsistent plans | 3× planner latency + tokens on C3 actions only |
-| `behavior_fingerprinting` (§9.2, ADR-002) | Consume the learned cross-agent behavioral signal as an advisory display feed | None on the hot path; recorded in audit + SOC dashboard, never authoritative on the gate |
-
-Flags live in `sdk/common/tenant_settings.py`. An explicit UI-set boolean
-overrides the historical env-var enable-list; leaving a flag unset falls
-back to the env var so ops-managed deployments keep working without a
-console configuration step. 60-second in-process cache on the hot path.
-A Redis outage cannot flip an explicit-false to a fallback-true (verified
-by a runnable self-check in the module — `python -m sdk.common.tenant_settings`).
-
-Endpoints: `GET /tenant/settings` returns `{flag: {effective, override}}`
-so the UI can distinguish "using ops default" from "you explicitly set
-this". `POST /tenant/settings` is OWNER-gated and accepts only the
-whitelisted flag names — arbitrary keys are 422.
-
-UI: Settings → Feature flags. Also surfaces the env-var name each flag
-falls back to, so an admin considering a UI change can see what ops
-already configured.
-
----
-
-## SDK integration
-
-Five lines to protect a tool. Every call is authenticated, policy-checked, and
-cryptographically logged before the function body runs.
+**Pattern A — decorate a plain Python function:**
 
 ```python
 from sdk.acp_client import Client, DeniedError
+acp = Client()
 
-acp = Client()  # reads ACP_API_KEY + ACP_BASE_URL from env
-
-@acp.protect(agent_id="agent_42", tool="db.query")
+@acp.protect(agent_id="my_agent", tool="db.query")
 def query(sql: str) -> list[dict]:
-    return db.execute(sql)  # runs only if allowed
-
-@acp.protect(agent_id="agent_42", tool="shell.exec")
-def run_shell(cmd: str) -> dict:
-    return {"output": subprocess.check_output(cmd)}
-
-query("SELECT * FROM customers LIMIT 1")   # allowed
-
-try:
-    run_shell("rm -rf /")
-except DeniedError as exc:
-    log.warning("denied: %s", exc)          # findings: ["not_in_allow_list"]
+    return db.execute(sql)
 ```
 
-Guard mode for frameworks that dispatch tools themselves (LangChain, AutoGen,
-CrewAI, custom orchestrators):
+**Pattern B — framework-dispatched tools (LangChain, CrewAI, AutoGen):**
 
 ```python
-decision = acp.guard(
-    tool="read_file",
-    parameters={"path": request.path},
-    tokens=200,
-    task="analyst workflow step 3",
-)
-# raises PermissionError on deny; returns decision dict on allow
-result = open(request.path).read()
+from sdk.acp_client import Client
+acp = Client()
+decision = acp.guard(tool="read_file", parameters={"path": path})
+result = open(path).read()  # only runs if allow
 ```
 
-Provider-specific wrappers on PyPI — every tool call routes through Aegis
-before reaching the provider:
-
-```
-pip install 'aegis-anthropic==1.1.2' 'aegis-openai==1.1.2' \
-            'aegis-langchain==1.1.3' 'aegis-bedrock==1.1.3'
-```
+**Pattern C — LLM proxy (full prompt scanning):**
 
 ```python
-from aegis_anthropic import AegisAnthropic
-
-client = AegisAnthropic(
-    aegis_key="<your-aegis-key>",
-    aegis_url="https://aegisagent.in",   # default; override for self-host
-    tenant_id="<tenant>",
-    agent_id="<agent>",
-    api_key="<anthropic-key>",
+from aegis_anthropic import AegisAnthropicProxy
+client = AegisAnthropicProxy(
+    employee_key=os.environ["AEGIS_EMPLOYEE_KEY"],
+    gateway_url="https://aegisagent.in",
 )
-resp = client.messages.create(model="claude-sonnet-4-5", tools=[...], messages=[...])
+resp = client.messages.create(
+    model="claude-sonnet-4-5", max_tokens=1024,
+    messages=[{"role": "user", "content": "Summarize this doc: ..."}],
+)
 ```
 
-Full integration guide: [`docs/integrations/sdk-wrappers.md`](docs/integrations/sdk-wrappers.md).
+Every prompt is PII-scanned, injection-scanned, cost-capped **before** it reaches Claude. See [25-setup.md §4](./25-setup.md#4-quick-start--5-lines-to-protect-a-tool) for the full walkthrough.
 
 ---
 
-## Security layers
+## 🔒 Security layers
 
-Ten layers, each addressing a different threat class. Bypassing one still
-runs into the next. Independence matters — most stacks fail because too many
-checks collapse into one layer.
+Every request passes through 10 checks. Each has its own status code + reason so you always know what stopped it.
 
-| # | Layer | Defends against | Mechanism |
+| Layer | Where | Blocks | Fail mode |
 |---|---|---|---|
-| 1 | Auth | Stolen tokens, replay, spoofed agent IDs | RS256 JWT + `jti` revocation in Redis; 15-min TTL. Gateway also accepts SPIFFE / Entra Agent ID / Okta XAA workload tokens (see [Multi-IdP acceptance](#multi-idp-acceptance-atf-42)) — every adapter is off unless its trust root is configured, JWKS is cached with fail-CLOSED semantics. |
-| 2 | Rate limit | Runaway loops, cost exhaustion, DDoS from compromised agents | Token bucket per tenant (RPS + burst) + daily/monthly hard caps |
-| 3 | Input validation | Malformed payloads, SQLi in parameters, `../` traversal, oversized bodies | Pydantic schema + regex pattern scan + 10 KB cap |
-| 4 | Permissions | Tool call outside agent's registered set | Exact-match allow-list per agent, no wildcards |
-| 5 | Policy | Always-deny operations regardless of risk score | OPA hard-deny rules: `DROP TABLE`, `k8s.delete.namespace`, `cluster-admin` grant, non-allow-listed email |
-| 6 | Content inspection | Prompt injection in tool parameters, PII in outputs | Parameter scan + PII density signal feeding layer 7 |
-| 7 | Behavioral analysis | Slow exfiltration, anomalous call patterns | 7+ detectors: call-rate spike, PII density, cross-agent correlation, bulk-op |
-| 8 | Risk scoring | Combined-signal attacks that pass individual layers | Weighted aggregation, threshold 0.85 = deny; 0.6–0.85 = monitor/throttle |
-| 9 | Action enforcement | Live threats needing runtime response | ARE: KILL, ISOLATE, THROTTLE, ALERT |
-| 10 | Audit | Cover-up, inability to prove what happened | ed25519 receipts + HMAC chain + daily Merkle root, offline-verifiable |
+| 1 | AWS WAF | bot UA · rate-based · SQL injection signatures | fail-open (upstream) |
+| 2 | Gateway auth | invalid key · missing header · expired JWT | fail-CLOSED (401) |
+| 3 | Cross-tenant | X-Tenant-ID mismatch | fail-CLOSED (403) |
+| 4 | Cost cap | max_tokens > ceiling · input > 24 000 chars | fail-CLOSED (400) |
+| 5 | PII scanner | SSN · CC (Luhn) · API keys · private-key PEM | fail-CLOSED (400) |
+| 6 | Injection scanner | 30+ regex patterns + NFKC normalize | fail-CLOSED (403) |
+| 7 | Agent allow-list | tool not in registry allow-list | fail-CLOSED (403) |
+| 8 | OPA policy | tenant-configured Rego rules | fail-CLOSED per config |
+| 9 | Cumulative risk | quarantine on 50+ failures in 5 min | fail-CLOSED (403) |
+| 10 | Audit chain | ed25519 sign + shard-lock append | fail-async (never blocks request path) |
 
-Audit is last, not first — deliberately. It records everything, *including
-which layer blocked or failed to block a request*. Independence of the audit
-path is what lets the next chain verification surface a policy-layer failure
-that no live signal caught.
+Test evidence: [26-testing.md §7-9](./26-testing.md) — real destructive tests against production, all findings documented (including the ones that didn't pass).
 
 ---
 
-## Admin console surfaces
+## 📊 What we tested + published
 
-The React console (Vite + React 18, served by nginx) consumes only the
-gateway — no privileged path, no direct database or downstream-service
-access. Every admin action routes through the same request pipeline
-described above; a browser can do nothing an API caller with the same
-role could not do.
+The report at [**26-testing.md**](./26-testing.md) is a 16-section engineering paper in the format Anthropic + Cloudflare publish theirs. It includes:
 
-**Route map** (role gates listed as enforced at the gateway; the UI hides
-or disables the corresponding action for non-eligible roles):
+- **Threat model** — assets, actors, boundaries, assumptions
+- **Architecture rationale** — why we chose each component + what we rejected
+- **Attack coverage matrix** — 123 payloads, per-class breakdown
+- **Chaos engineering** — real destructive tests: kill Decision / Audit / OPA / Gateway, measure recovery
+- **Scalability sweep** — 50 → 2 000 concurrent workers, find the breaking point
+- **Resource metrics** — CPU + memory + queue depth under load
+- **Cost analysis** — real AWS bill, per-10M-request projection
+- **6 SVG charts** — latency histograms, CDFs, scalability, chaos timeline
+- **4 Mermaid diagrams** — chain flow, request lifecycle, attack layers, ALB failover
+- **Honest limitations** — 3 open bugs called out in the executive summary
 
-| Route | Purpose | Role |
-|---|---|---|
-| `/dashboard` | Live decision feed + threat rollup + posture score | Any |
-| `/incidents` | Incident triage · SOC feed · Collusion cluster detector (§Phase 3 item 2) | Any |
-| `/approval-inbox` | Category-B escalations awaiting human approval; scope-of-approval banner names the exact rule and explains the §5.7 single-action binding | Any |
-| `/agents`, `/agents/:id` | Registry with per-agent Provenance block (§4.3 Aegis Profile snapshot: profile hash + `model_ref`, `prompt_template_hash`, `tool_manifest_hash`, `container_image_digest`, `sbom_ref`); 429 on issuance quota exceeded surfaces a friendly quota-reached message pointing at `/settings?tab=quota` | Any |
-| `/identity-graph` | Compromise simulation, blast radius, trust-boundary view | Any |
-| `/flight-recorder` | Per-request timeline with pre-gate / per-gate / post-gate snapshots | Any |
-| `/decision-explorer`, `/session-explorer` | Deep drill into a single decision or agent session | Any |
-| `/lifecycle` | Deployment lifecycle admin (see §14.5 above) — INSTALL → … → DESTROY with C3-ledgered transitions + destruction certificate download | OWNER |
-| `/system-health` | 25-container health · Operational Queues (audit stream depth, DLQs, billing retry) · Execution Witness deployment-mode banner (sidecar = green / serverless = amber / heartbeat-stale = red) · Detection Engine panel (24h risk sparkline + top threats + recent decisions) | Any |
-| `/kill-switch` | Tenant-wide kill switch — Redis + Postgres backed; survives a Redis flush by rehydrating on the next request | OWNER / ADMIN |
-| `/settings?tab=signal-weights` | Per-tenant tuning of the five risk signals (inference / behavior / anomaly / cost / cross-agent). Slider + numeric input, sum-of-weights informational (backend does not normalize), reset-to-defaults | ADMIN / SECURITY |
-| `/settings?tab=feature-flags` | Per-tenant opt-in toggles: `c3_sampling`, `behavior_fingerprinting`. Shows effective, override, and env-var fallback distinctly | OWNER |
-| `/settings?tab=sso` | SSO config (SAML / OIDC) + read-only "Trusted issuers" panel (SPIFFE / Entra / Okta) with per-adapter status + env-var names for ops | OWNER |
-| `/settings?tab=webhooks` | Slack · Microsoft Teams · PagerDuty · generic-HTTPS escalation channels, each with a live test button that fires a real message | ADMIN |
-| `/settings?tab=scim-tokens` | SCIM 2.0 bearer tokens (list / create / revoke) + one-click reconcile trigger (`POST /scim/reconcile`) | ADMIN |
-| `/settings?tab=quota` | Rate limit, daily / monthly caps, agent issuance quota, current usage | ADMIN |
-| `/compliance` | AEVF v3 evidence bundle export · destruction certificate re-issue · signing-key history with cross-signed rotation markers · framework-controls rollup | ADMIN |
-| `/policies` | Visual policy builder (compiles to Rego) · policy simulator · staging / shadow replay · analytics | ADMIN |
-| `/audit-logs` | Chain-verifiable audit log with an in-browser "Verify Integrity" action | Any |
-| `/admin` | Platform super-admin (cross-tenant) — deliberately URL-only, not in the sidebar | Platform |
-
-**Real-time surface.** All live pages consume a single Server-Sent Events
-endpoint (`GET /events/stream`), fanned out from Redis pub/sub. 16 event
-types (`policy_decision`, `incident_updated`, `approval_required`,
-`approval_resolved`, `kill_switch`, `risk_updated`, `agent_created`,
-`agent_deleted`, `tool_executed`, `behavior_flagged`, `would_have_blocked`,
-`llm_proxy_call`, `llm_proxy_escalate`, `billing_updated`, `quota_warning`,
-`insight_generated`) all have publishers in `services/` and at least one
-consumer in `ui/src/pages/`. Verified by a UI ↔ backend parity check —
-every subscribed topic has a real publisher; every `setInterval` polling
-loop has a matching `clearInterval` on unmount.
-
-**Fresh vs cached.** Pages that are opened WHEN something is broken
-(SystemHealth, Incidents, ApprovalInbox) use `Promise.allSettled` for
-their fanout fetches so a single downstream failure never blocks the
-whole page — a partially-degraded panel is more useful than a full-page
-error to an on-call operator.
+Headline numbers: **88.7 % recall · 98.6 % precision · 0 chain violations · 100 % PII/cost/scope block · 16 s Decision-service fail-closed recovery.**
 
 ---
 
-## Performance measurements
+## 🔧 Configuration
 
-Locust load test, 100 concurrent users, 120 seconds, realistic mix (75%
-allowed reads, 15% policy-checked writes, 10% attack patterns). Full 25-container
-stack on a single MacBook Pro M3, no tuning, no mocking. Not a
-microbenchmark and not the health-check endpoint.
+Every knob is an env var or a Redis key. The tuning ones that matter:
 
-| Metric | Target | Measured |
-|---|---|---|
-| Availability | 99.95% | 99.99% |
-| p50 latency | — | 17 ms |
-| p95 latency | < 100 ms | 27 ms |
-| p99 latency | < 200 ms | 60 ms |
-| Sustained throughput per instance | 20 req/s | 30 req/s |
-| Attack block rate | zero leaks | 100% (346/346) |
-| Audit delivery within 5 s | 100% | 100% within 2 s |
-| Billing reconciliation | 100% | 100% |
-
-Attack breakdown:
-
-| Class | Sent | Blocked at | Rate |
+| Setting | Default | Where | What it does |
 |---|---|---|---|
-| SQL injection in tool parameters | 89 | Layer 3 (input validation) | 100% |
-| Out-of-allow-list tool calls | 127 | Layer 4 (permissions) | 100% |
-| Policy-hard-denied ops (DROP, ns delete) | 83 | Layer 5 (OPA) | 100% |
-| High-risk behavioral anomalies | 47 | Layer 7 + 8 | 100% |
-
-Where the latency goes:
-
-```
-Deny at stage 2 (rate limit):   ~2 ms  — Redis INCR + response
-Deny at stage 5 (OPA):          ~12 ms — JWT + rate + OPA evaluation
-Allow (full pipeline):          ~27 ms — all 8 synchronous stages
-```
-
-Most-expensive stages on the allow path: OPA bundle evaluation (~8 ms) and
-Behavior consultation (~12 ms). Both cached; 40–60% hit rate in practice on
-repeated `(agent, tool)` pairs.
-
-Caveat: single-laptop numbers with the full stack co-located. Architecture is
-horizontal — three gateway replicas behind a load balancer reach 100+ req/s
-with the bottleneck moving to Decision, which scales the same way. The
-important claim is not "30 req/s" but "linear with replica count".
+| `MAX_TOKENS_CEILING` | 2048 | gateway env | Hard cap on `max_tokens` per LLM call |
+| `MAX_INPUT_CHARS` | 24 000 | gateway env | Hard cap on prompt character count |
+| `LLM_DRIP_THRESHOLD` | 20/60s | gateway env | Slow-drip correlation threshold |
+| `RUNAWAY_FAILURE_THRESHOLD` | 50/5min | code const | Auto-quarantine threshold per agent |
+| `OPA_FAIL_MODE` | `closed` | gateway env | What OPA does when unreachable |
+| `AUDIT_CHAIN_SHARD_COUNT` | 16 | audit env | Per-tenant chain parallelism |
+| `ACP_AUTH_PROVIDER` | `both` | gateway env | `legacy` (HS256) / `clerk` (RS256) / `both` |
+| tenant `requests_per_second` | 10 | Postgres tenants row | Per-tenant token bucket refill |
+| tenant `burst` | 20 | Postgres tenants row | Per-tenant token bucket size |
+| agent `daily_inference_cost_cap_usd` | NULL | Postgres | Per-agent daily $ cap (opt-in) |
 
 ---
 
-## Screenshots — live decisions
+## 🎛️ Operations
 
-Every screenshot below is the running system, not a mockup. Included as
-technical evidence of the enforcement path being complete.
+### Monitoring surfaces
 
-### System health
+- **Live status:** [`https://aegisagent.in/status`](https://aegisagent.in/status) — 13/13 operational should always be true
+- **Grafana:** provisioned dashboards in [`infra/grafana-dashboards/`](infra/grafana-dashboards/)
+  - `platform-slo.json` — request rate · error budget · availability
+  - `trust-layers.json` — chain integrity · signed receipts · Merkle root age
+  - `tenant-activity.json` — per-tenant traffic + deny rate
+  - `queues.json` — audit stream · DLQ · outbox
+- **Alerts:** in [`infra/prometheus-rules.yml`](infra/prometheus-rules.yml)
+  - Highest priority: `ChainViolationImmediate` — pages on any chain-integrity failure
 
-[![System health](<screenshot/system health.png>)](<screenshot/system health.png>)
+### Runbooks
 
-Live status of all 12 services with per-service latency (15–19 ms, all under
-the 100 ms SLA). Operational Queues at the bottom exposes audit stream depth
-and DLQ counts — earliest signal of async pipeline backup.
+Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert → Immediate action → Recovery steps → Verification`:
 
-### Real-time observability
-
-[![Real-time observability](screenshot/real-time-oberservibility.png)](screenshot/real-time-oberservibility.png)
-
-Live decision feed with per-signal risk breakdown: inference, behavior,
-anomaly, cost, cross-agent. Answers *why* a score landed where it did, not
-just *that* it was flagged. Groq-generated threat narrative in plain English
-on the right.
-
-### Security operations
-
-[![Security operations](screenshot/secuirty-ops.png)](screenshot/secuirty-ops.png)
-
-Cross-tenant SOC view: 509 total requests, 19 threats blocked, 7 active agents.
-Risk-distribution heatmap and top-threat-agent leaderboard.
-
-### Audit log — offline-verifiable
-
-[![Audit log](screenshot/audit-log.png)](screenshot/audit-log.png)
-
-Every row is immutable and carries its own `event_hash` linked to the
-previous. Filter panel exposes the full decision vocabulary. **Verify
-Integrity** runs the offline chain verifier against every record in view.
-
-### Behavioral forensics
-
-[![Behavioral forensics](screenshot/behavioral-forensic.png)](screenshot/behavioral-forensic.png)
-
-Click-to-drill timeline for any agent or request ID. 18 total events, avg
-risk 5,306, 7 blocked, 11 allowed. Reconstructible to the second, months
-after the fact.
-
-### Agent identity graph
-
-[![Identity graph](screenshot/agent-idenity-graph.png)](screenshot/agent-idenity-graph.png)
-
-Node-and-edge view of agents, tools, customers, resources. **Compromise
-Simulation** at configurable depth answers "if this token were stolen, what
-could the attacker reach?" — reachable nodes, affected resources, quantified
-blast radius.
-
-### Attack simulation
-
-[![Attack simulation](screenshot/attact-simulation.png)](screenshot/attact-simulation.png)
-
-Seven pre-built scenarios spanning injection, data destruction, credential
-harvesting, mass exfiltration, network scan. Every scenario logs to the
-audit chain — simulation requests are real requests.
-
-### Active agent inventory
-
-[![Active agents](screenshot/active-agent-inventory.png)](screenshot/active-agent-inventory.png)
-
-All registered agents: description, ACTIVE/INACTIVE state, current risk score.
-
-### RBAC
-
-[![RBAC](screenshot/RBAC.png)](screenshot/RBAC.png)
-
-Four built-in roles: ADMIN, SECURITY_OFFICER, ANALYST, VIEWER. Agent-scoped,
-not just user-scoped.
-
-### Visual policy builder
-
-[![Policy builder](screenshot/visuly-ploy-builder.png)](screenshot/visuly-ploy-builder.png)
-
-Point-and-click conditions compiled to Rego. Simulation panel replays the
-last 24h of traffic against the draft before saving.
-
-### Autonomy contracts
-
-[![Autonomy contracts](screenshot/autonomous-contract.png)](screenshot/autonomous-contract.png)
-
-Contracts declare `max_runtime`, `max_cost`, deny-lists, approval-required
-lists. Recent Violations pane shows real-time enforcement.
-
-### ARE rule builder
-
-[![ARE rule](screenshot/new-ARE-rule.png)](screenshot/new-ARE-rule.png)
-
-Detection window, minimum violations, severity, minimum risk, agent filter,
-tool filter. Actions execute in order (KILL → ALERT → THROTTLE → ISOLATE).
-
-### Agent playground
-
-[![Playground](screenshot/agent-playground.png)](screenshot/agent-playground.png)
-
-Execute requests against the decision engine and inspect results in real
-time. Compare decisions across runs to validate policy changes before
-production.
-
-### Kill switch
-
-[![Kill switch](screenshot/kill-button.png)](screenshot/kill-button.png)
-
-One click, tenant-wide isolation. Writes to Redis (hot path) and Postgres
-(durability). Tested by flushing Redis post-engage — agents remain blocked.
-
-### Slack incident
-
-[![Slack alert](screenshot/slack-notification.png)](screenshot/slack-notification.png)
-
-ARE-fired Slack alerts. Structured payload with incident ID, trigger,
-severity, agent, tool, violations. Full forensic trail lives in the audit
-log.
-
-### Jaeger tracing
-
-[![Jaeger](screenshot/jeager-ui.png)](screenshot/jeager-ui.png)
-
-End-to-end trace across all 12 services. DAG view surfaces bottlenecks
-immediately. Every span carries the trace ID for correlation with audit
-rows.
-
-### Request workflow
-
-[![Workflow](screenshot/workflow.png)](screenshot/workflow.png)
-
-Hand-drawn end-to-end pipeline: 10 stages, OPA policy evaluation, ed25519
-receipt, transactional outbox. Each stage labeled with the threat it
-defends against.
+- `audit_chain_violation.md` — highest severity, freeze writes + investigate
+- `key_rotation.md` — 90-day rotation cadence
+- `restore_drill.md` — cross-region DR
+- `tenant_data_request.md` — GDPR / DPDP right-to-portability + right-to-erasure
 
 ---
 
-## Configuration
+## 📚 Documentation index
 
-Every service reads config from environment variables via the typed
-`sdk/common/config.py` (Pydantic Settings). The full field set is 100+
-knobs — most have sane defaults. The essential ones are grouped below;
-the reference `.env.example` at the repo root lists everything with
-inline commentary.
-
-### Required (all environments)
-
-| Variable | Purpose |
+| Doc | Purpose |
 |---|---|
-| `DATABASE_URL` | Postgres DSN. In prod: RDS Multi-AZ URI via Secrets Manager |
-| `REDIS_URL` | Redis DSN. In prod: ElastiCache replication group primary endpoint |
-| `JWT_SECRET_KEY` | Access-token signing key. Rotate via `scripts/maintenance/` |
-| `INTERNAL_SECRET` | Shared secret for gateway → downstream service mesh calls |
-| `MESH_JWT_SECRET` | Signs the short-lived JWTs the gateway mints for internal service hops |
-| `ENVIRONMENT` | `development` / `staging` / `production` — gates fail-fast checks (see [Production safety](#production-safety)) |
-
-### Downstream service URLs
-
-Only needed when running services on separate hosts. Docker Compose sets
-these automatically. In `production` the gateway will REFUSE to boot if
-`AEGIS_VALIDATE_SERVICE_URLS=1` and a URL still points at localhost.
-
-Each service has a `<NAME>_SERVICE_URL` — e.g. `REGISTRY_SERVICE_URL`,
-`DECISION_SERVICE_URL`, `AUDIT_SERVICE_URL`, `WITNESS_SERVICE_URL`, etc.
-See `sdk/common/config.py` for the full list.
-
-### Multi-IdP acceptance (§4.2)
-
-Each adapter is off unless the corresponding env vars are set.
-
-| Adapter | Required |
-|---|---|
-| SPIFFE | `SPIFFE_TRUST_DOMAIN` + `SPIFFE_TRUST_BUNDLE_JSON` (+ optional `SPIFFE_AUDIENCE`) |
-| Entra Agent ID | `ENTRA_TENANT_ID` + `ENTRA_AUDIENCE` |
-| Okta XAA | `OKTA_ISSUER` + `OKTA_AUDIENCE` |
-
-### Feature flag fallback (env → tenant override)
-
-Per-tenant Redis flags override these env-var enable-lists (see
-[Per-tenant feature flags](#per-tenant-feature-flags)). Env vars stay
-functional so ops-owned deployments don't need to touch the console.
-
-| Variable | Format | Effect |
-|---|---|---|
-| `ACP_C3_SAMPLING_TENANTS` | Comma-separated tenant IDs | Enables §9.3 consistency sampling for those tenants |
-| `ACP_BEHAVIOR_FINGERPRINTING_TENANTS` | Comma-separated tenant IDs | Enables §9.2 learned advisory signal for those tenants |
-| `ACP_BEHAVIOR_FINGERPRINTING_MODE` | `advisory` (default) / `off` | Never `authoritative` — enforced in `sdk/common/behavior_opt_in.py` |
-
-### Escalation channels
-
-Configured **per tenant** via the console (`/settings?tab=webhooks`). Env
-vars below are the fallback when a tenant has not set a per-tenant URL:
-
-`SLACK_WEBHOOK_URL`, `TEAMS_WEBHOOK_URL`, `PAGERDUTY_ROUTING_KEY`,
-`ALERT_WEBHOOK_URL` (generic).
-
-### Public URLs (production)
-
-| Variable | Purpose |
-|---|---|
-| `PUBLIC_BASE_URL` (or `ALB_PUBLIC_HOST`) | Public origin the customer reaches — used to build Slack OAuth callback URLs. `_redirect_uri()` raises at boot in production if unset. |
-| `AEGIS_GATEWAY_URL` (or `AEGIS_MCP_GATEWAY_URL`) | Public gateway URL the MCP server calls into. `services/mcp_server/tools.py` raises at import time in production if unset. |
-| `INTERNAL_GATEWAY_URL` (or `GATEWAY_URL`) | In-cluster gateway URL for demo-runner traffic. `/execute` helper returns 503 in production if unset. |
-
-### External integrations (optional)
-
-| Variable | Enables |
-|---|---|
-| `UPSTREAM_ANTHROPIC_KEY` / `UPSTREAM_OPENAI_KEY` | Inference proxy fanout to Anthropic / OpenAI |
-| `GROQ_API_KEY` | Insight service (LLM-generated threat narrative for the SOC feed) |
-| `SCIM_BASE_URL` + `SCIM_BEARER_TOKEN` | Okta SCIM 2.0 sync (reconciler cron + on-demand from console) |
-| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile bot check on public signup |
+| **[25-setup.md](./25-setup.md)** | Client-facing setup guide (12 sections, SDK examples, attack coverage table) |
+| **[26-testing.md](./26-testing.md)** | Public engineering test report (16 sections, threat model, chaos, charts) |
+| **[testing.md](./testing.md)** | Informal v1-v5 fix-and-verify iteration log (kept for historical context) |
+| [`docs/architecture-failure-modes.md`](docs/architecture-failure-modes.md) | Per-component failure behavior |
+| [`docs/security/rbac_matrix.md`](docs/security/rbac_matrix.md) | Every endpoint → role required |
+| [`docs/security/subprocessors.md`](docs/security/subprocessors.md) | Third-party vendors + data flow |
+| [`docs/api/reference.md`](docs/api/reference.md) | Full HTTP API reference |
+| [`docs/observability/slos.md`](docs/observability/slos.md) | Documented SLOs + error budgets |
+| [`docs/runbooks/`](docs/runbooks/) | Operational runbooks |
+| [`SPRINT.md`](SPRINT.md) | Historical sprint plan + architecture rationale |
+| [`SECURITY.md`](SECURITY.md) | Responsible-disclosure policy |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute |
 
 ---
 
-## Quick start
+## 🤝 Contributing
 
-```bash
-git clone https://github.com/Abhi-mishra998/aegis.git
-cd aegis
-cp .env.example infra/.env         # fill JWT_SECRET_KEY, INTERNAL_SECRET locally
-cd infra
-docker compose up -d --build
-
-# Verify all 25 containers are healthy
-docker compose ps --format 'table {{.Name}}\t{{.Status}}'
-
-# UI:    http://localhost:8080
-# API:   http://localhost:8000
-# Grafana / Jaeger exposed on their default ports (see docker-compose.yml)
-```
-
-Seed a local admin user (interactive prompt for the password — nothing
-committed):
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-python3 -m pip install -r requirements-dev.txt
-python3 scripts/utils/seed_admin.py
-```
-
-Run the three demo packs in dry-run (no containers required, ~10 s):
-
-```bash
-ACP_DRY_RUN=1 python3 demos/run_all_demos.py
-```
-
-Full local runbook with env variables, Slack webhooks, S3 backup, and
-troubleshooting: [`docs/operations/deployment.md`](docs/operations/deployment.md).
+- **Bug reports + feature ideas:** [open an issue](https://github.com/Abhi-mishra998/aegis/issues)
+- **Security disclosures:** email `founder@aegisagent.in` — see [`SECURITY.md`](SECURITY.md)
+- **PRs:** read [`CONTRIBUTING.md`](CONTRIBUTING.md); every merged change must have a test.
+- **Pattern-recall improvements:** the biggest open area — see [26-testing.md §14](./26-testing.md#14-future-work). If you can add an injection payload that Aegis missed, that's a valid contribution.
 
 ---
 
-## Production safety
+## ⚖️ License
 
-Design intent: **a misconfigured production deployment must fail loudly
-at boot, not silently at first customer request.** Dev-friendly localhost
-fallbacks are preserved when `ENVIRONMENT != production` so local
-`docker compose up` still works out of the box.
-
-| Component | Failure mode if misconfigured in production | Where |
-|---|---|---|
-| MCP server (`services/mcp_server/tools.py`) | Raises `RuntimeError` at import time if neither `AEGIS_MCP_GATEWAY_URL` nor `AEGIS_GATEWAY_URL` is set. Prevents the server from silently pointing tools at `localhost:8000`. | `_resolve_gateway_url()` |
-| Demo `/execute` helper (`services/gateway/routers/demo.py`) | Returns HTTP 503 if neither `INTERNAL_GATEWAY_URL` nor `GATEWAY_URL` is set. Traffic-generator subprocess logs `demo_traffic_skipped_no_internal_gateway_url` and returns instead of shelling out to a localhost hardcode. | `_execute_step()` |
-| Slack OAuth (`services/gateway/routers/slack_oauth.py`) | Raises `RuntimeError` if neither `PUBLIC_BASE_URL` nor `ALB_PUBLIC_HOST` is set. Slack would otherwise reject the OAuth exchange with a confusing `redirect_uri mismatch` — this makes the misconfig visible at boot. | `_redirect_uri()` |
-| Behavior firewall | Fails CLOSED on downstream timeout — `degraded_mode_policy` decides between `block_high_risk` / `block_all` / `allow_with_audit` per tenant. Unconditional `behavior_firewall_decision` audit row on every request. | `services/gateway/main.py` |
-| OPA policy engine | `OPA_FAIL_MODE=closed` (default). Bundle-server unreachability blocks writes, does not fall through to allow. | `sdk/common/config.py` |
-| Multi-IdP JWKS cache | Fails CLOSED — a cache-fetch failure raises `ACPAuthError`, never falls through with an empty key set. | `services/gateway/idp_verifiers.py` |
-| Kill switch | Loads active switches from Postgres into Redis at gateway boot. If Redis is flushed mid-incident, the next request rehydrates from Postgres. | `services/decision/router.py` |
-| Audit outbox | Audit row and billing event commit in the same Postgres transaction. If the audit row exists, the billing event was queued. | `acp_usage.pending_usage_events` |
-
-Same pattern applies to the ~100 other settings validated by
-`sdk/common/config.py::Settings` — invalid values fail at import, before
-the first request is served.
+- Code: [Apache 2.0](LICENSE)
+- Documentation: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 ---
 
-## Demo scenarios
+<div align="center">
 
-Each demo is one command, reproducible from a clean clone, produces signed
-receipts, and exercises the enforcement path end-to-end.
+**Ship AI agents you can defend under oath.**
 
-**DevOps agent — Kubernetes operator.**
-Safe reads allowed. Non-prod scaling allowed. Namespace deletion hard-denied.
-Privilege escalation blocked. Delete storms throttled. Kill switch persists
-through Redis flush. 240+ events chain-verified.
+[Live](https://aegisagent.in) · [Setup](./25-setup.md) · [Test report](./26-testing.md) · [Blog](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents) · [Email](mailto:founder@aegisagent.in)
 
-```bash
-python3 demos/devops_agent/scripted_demo.py
-```
-
-**Database copilot — analyst SQL assistant.**
-Allowed SELECTs. Bulk queries behavior-scored. PII column exfiltration
-blocked. DDL destruction blocked with token revocation. Tenant-wide kill
-switch.
-
-```bash
-python3 demos/db_copilot/scripted_demo.py
-```
-
-**Support agent — customer service automation.**
-Ticket lookups allowed. Single-customer PII monitored. Cross-tenant access
-denied. Bulk PII export blocked. Email exfiltration denied by OPA hard-rule.
-Runaway bursts rate-limited.
-
-```bash
-python3 demos/support_agent/scripted_demo.py
-```
-
----
-
-## Video walkthroughs
-
-- **Full walkthrough (5 min)** — kill switch, audit chain, blast-radius sim, ed25519 receipt verification: [Google Drive](https://drive.google.com/file/d/1Eojid76NcrRLC1Gp302i113pNgrH1hso/view)
-- **Extended feature reel (Google Drive folder)** — additional demos, UI walkthroughs, incident replay: [Drive folder](https://drive.google.com/drive/folders/1cAnCFmF6SEqaqTbiijuj0HyGwXmy1lhZ?usp=sharing)
-- **Build-in-public post (LinkedIn)** — origin story, design decisions, technical Q&A: [LinkedIn post](https://www.linkedin.com/posts/abhishek-mishra-eng_buildinpublic-aiengineering-agenticai-ugcPost-7475888501163458560-nlvu/)
-- **Engineering deep dive (12 min read)** — why ed25519 over RSA, why a Merkle log instead of a plain hash chain, what tried to break it: [projectsphere.hashnode.dev](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
-
----
-
-## Documentation
-
-Canonical references at the repo root:
-
-| File | Scope |
-|---|---|
-| [`SECURITY.md`](SECURITY.md) | Vulnerability reporting, supported versions, scope, disclosure timeline |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Dev setup, branch model, test gates |
-| [`docs/operations/deployment.md`](docs/operations/deployment.md) | AWS reference deploy + local Docker |
-| [`docs/AEVF/`](docs/AEVF/) | Aegis Evidence Verification Format spec + auditor checklist |
-
-Full reference under [`docs/`](docs/) (GitBook layout, see
-[`docs/SUMMARY.md`](docs/SUMMARY.md)).
-
-Procurement & audit docs (for CISOs, security architects, privacy counsel):
-
-| File | Scope |
-|---|---|
-| [`docs/security/threat-model.md`](docs/security/threat-model.md) | STRIDE-per-asset model, top-10 threats with file:line mitigation citations |
-| [`docs/operations/incident-response.md`](docs/operations/incident-response.md) | Sev-0..3 classes, 72-hour customer-notify SLO, 14-day postmortem SLA |
-| [`docs/operations/retention-policy.md`](docs/operations/retention-policy.md) | 10-year audit / 90-day op-log / 24-month PII / 30-day offboarding windows |
-| [`docs/operations/disaster-recovery.md`](docs/operations/disaster-recovery.md) | Customer-facing RTO 4 h / RPO 15 min posture + drill log |
-
----
-
-## Reference deployment
-
-Published reference in [`infra/terraform/`](infra/terraform/):
-
-- Region: `ap-south-1` (Mumbai)
-- 2× `m6g.large` EC2 in an ASG behind a multi-AZ ALB
-- RDS PostgreSQL `db.t3.small` Multi-AZ, gp3 storage, 14-day backups
-- ElastiCache Redis (2 nodes, automatic failover)
-- Single NAT gateway (cost trade-off documented in `variables.tf`), S3 + DynamoDB VPC gateway endpoints
-- Multi-region CloudTrail, S3 default encryption, S3 Object Lock on backups (GOVERNANCE 30 d) and CloudTrail (COMPLIANCE 180 d)
-- AWS Secrets Manager for runtime credentials (rotation supported)
-- Customer-managed KMS key (`alias/aegis-audit-envelope`) for receipt-signing envelope encryption
-- WAFv2 web ACL: AWS managed core + bot-control + per-IP rate limit (2000 / 5 min)
-
-Build and deploy: `docker compose` locally, Terraform + SSM bundle-SHA
-parameter for prod-ha. Full walkthrough:
-[`docs/operations/deployment.md`](docs/operations/deployment.md).
-
----
-
-## Repository layout
-
-```
-services/                 15 FastAPI microservices — gateway is the sole entry point
-  gateway/                edge — 5 sequential gates + all customer-facing routers
-    routers/              tenant_settings, lifecycle, sso, decision, risk, ...
-    idp_verifiers.py      §4.2 multi-IdP dispatch (SPIFFE / Entra / Okta XAA)
-  witness/                §6 Execution Witness — sidecar/serverless deployment modes
-  autonomy/               contracts + playbook runner + Slack/Teams/PD/webhook dispatch
-  identity_graph/         graph + collusion detector (§Phase 3 item 2)
-  ...
-sdk/
-  common/
-    atf_lifecycle.py      §14.5 deployment state machine (pure, unit-testable)
-    tenant_settings.py    Redis-backed per-tenant flag layer with env fallback
-    behavior_opt_in.py    §9.2 opt-in with ADR-002 "never authoritative" invariant
-    consistency_sampling  §9.3 sample-and-check for C3 actions
-integrations/             aegis-anthropic / aegis-openai / aegis-langchain / aegis-bedrock
-tools/                    aegis_verify (publishes as aegis-aevf on PyPI)
-ui/                       React 18 + Vite admin console (served by nginx)
-  src/pages/              58 pages — Dashboard, Incidents, LifecycleAdmin, ...
-  src/components/settings FeatureFlagsTab, SignalWeightsTab, ScimTokensTab, ...
-infra/                    docker-compose + terraform (modules + envs/{dev, prod-ha})
-tests/                    pytest — security/, policy/, eval/, integration/
-demos/                    three end-to-end demo packs
-scripts/                  ops scripts (backup, reconcile, export, redact, key rotation)
-docs/
-  dev/ui-wiring-gaps.md   living ledger of every UI wiring gap (21/21 closed)
-  security/               threat model, witness trust boundary
-  AEVF/                   evidence verification format spec + reference bundle
-```
-
----
-
-## Scope and non-goals
-
-Aegis is a runtime control plane, not:
-
-- An agent framework — bring your own (LangChain, AutoGen, CrewAI, custom)
-- An LLM inference provider — proxies to Anthropic / OpenAI / Groq / Bedrock
-- A general-purpose APM — Prometheus, Jaeger, Grafana are dependencies
-- A wrapper around someone else's policy engine — OPA is embedded, evaluated in-process
-
-Explicitly in scope: policy enforcement, cryptographic audit, runtime kill
-control, blast-radius analysis, incident forensics. Anything else is a
-non-goal.
-
----
-
-## License and disclosure
-
-Apache 2.0 — see [`LICENSE`](LICENSE).
-
-Security disclosures: [`SECURITY.md`](SECURITY.md). Email before opening a
-public issue for anything sensitive.
-
----
-
-## Contact
-
-- Blog: [projectsphere.hashnode.dev](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
-- LinkedIn: [linkedin.com/in/abhishek-mishra-eng](https://www.linkedin.com/in/abhishek-mishra-eng)
-- GitHub: [github.com/Abhi-mishra998](https://github.com/Abhi-mishra998)
+</div>
