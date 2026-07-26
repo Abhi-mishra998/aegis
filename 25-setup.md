@@ -46,6 +46,21 @@ pip install 'aegis-aevf==1.1.1'
 
 > These pins include the 2026-07-26 WAF-compatibility fix (Mozilla-shaped User-Agent). If you're on an older version, `pip install --upgrade aegis-anthropic aegis-openai aegis-langchain aegis-bedrock`.
 
+**For Patterns A + B below** (custom-tool decorator + framework-dispatch guard), install the root Aegis package from the repo:
+
+```bash
+git clone https://github.com/Abhi-mishra998/aegis.git
+cd aegis
+pip install -e .    # exposes sdk.acp_client.Client + acp.protect + acp.guard
+```
+
+Set two env vars once (matches the same key names the LLM SDKs read):
+
+```bash
+export AEGIS_EMPLOYEE_KEY="acp_emp_…"
+export AEGIS_URL="https://aegisagent.in"      # or your self-hosted URL
+```
+
 ---
 
 ## 4. Quick start — 5 lines to protect a tool
@@ -55,7 +70,7 @@ pip install 'aegis-aevf==1.1.1'
 ```python
 from sdk.acp_client import Client, DeniedError
 
-acp = Client()  # reads ACP_API_KEY + ACP_BASE_URL from env
+acp = Client()  # reads AEGIS_EMPLOYEE_KEY + AEGIS_URL from env
 
 @acp.protect(agent_id="agent_42", tool="db.query")
 def query(sql: str) -> list[dict]:

@@ -466,6 +466,10 @@ class _ProxyChatCompletions:
             "Authorization": f"Bearer {self._p._employee_key}",
             "x-api-key":     self._p._employee_key,
             "Content-Type":  "application/json",
+            # Mozilla-shaped so AWS WAF Bot Control doesn't 403 us
+            # (2026-07-26 fix — bare httpx UA gets bot-blocked).
+            "User-Agent":    f"Mozilla/5.0 (compatible; aegis-openai-proxy/{__version__} httpx)",
+            "Accept":        "application/json",
         }
         if approval_id:
             headers["X-Aegis-Approval-ID"] = approval_id

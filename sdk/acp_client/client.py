@@ -45,8 +45,16 @@ class Client:
             or token
             or os.environ.get("ACP_TOKEN")
             or os.environ.get("ACP_API_KEY")
+            # Alias to match the LLM SDK env var name so clients set one
+            # variable, not two (2026-07-26 setup-guide consistency fix).
+            or os.environ.get("AEGIS_EMPLOYEE_KEY")
         )
-        self.base_url = (base_url or os.environ.get("ACP_BASE_URL") or "http://localhost:8000").rstrip("/")
+        self.base_url = (
+            base_url
+            or os.environ.get("ACP_BASE_URL")
+            or os.environ.get("AEGIS_URL")
+            or "https://aegisagent.in"
+        ).rstrip("/")
         if not self.api_key:
             raise ACPError(
                 "No ACP credential found. Pass api_key=/token= or set "
@@ -57,7 +65,11 @@ class Client:
             timeout=timeout,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
-                "User-Agent": "acp-python/0.2",
+                # Mozilla-shaped so AWS WAF Bot Control doesn't 403 us
+                # (2026-07-26 SDK deploy fix — bare product UAs get
+                # blocked by the AWSManagedRulesBotControlRuleSet).
+                "User-Agent": "Mozilla/5.0 (compatible; acp-python/0.3 httpx)",
+                "Accept": "application/json",
             },
         )
 
@@ -100,6 +112,42 @@ class Client:
             "/execute",
             json={"tool": tool, "payload": payload},
             headers={"X-Agent-ID": agent_id, "X-ACP-Tool": tool},
+        )
+
+    def guard(
+        self,
+        *,
+        tool: str,
+        parameters: dict[str, Any] | None = None,
+        tokens: int | None = None,
+        task: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Pre-flight policy check for framework-dispatched tools.
+
+        Used from LangChain / AutoGen / CrewAI style frameworks where the
+        function isn't a plain Python callable you can decorate. Call
+        ``guard()`` before the tool actually runs; it raises on deny,
+        returns the decision dict on allow.
+
+        Example:
+            decision = acp.guard(
+                tool="read_file",
+                parameters={"path": request.path},
+                tokens=200,
+                task="analyst workflow step 3",
+            )
+            result = open(request.path).read()
+        """
+        payload: dict[str, Any] = {"parameters": parameters or {}}
+        if tokens is not None:
+            payload["tokens"] = int(tokens)
+        if task is not None:
+            payload["task"] = task
+        return self.execute(
+            agent_id=agent_id or os.environ.get("ACP_AGENT_ID", "guard"),
+            tool=tool,
+            payload=payload,
         )
 
     def replay(self, *, execution_id: str) -> dict[str, Any]:
