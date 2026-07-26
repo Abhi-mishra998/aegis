@@ -3,16 +3,20 @@ import { cleanup } from '@testing-library/react';
 import { renderWithProviders } from '../test-utils';
 
 // Global module mocks — every page reads services/api + hooks/useSSE at
-// minimum, and many touch @clerk/react. Real implementations blow up under
-// jsdom (SSE opens EventSource; Clerk requires a provider).
+// minimum. Real implementations blow up under jsdom (SSE opens EventSource).
 vi.mock('../services/api',        () => import('../__mocks__/apiMock'));
-vi.mock('../services/clerkAuth',  () => ({
-  attachClerkAuth:      () => {},
-  getFreshClerkToken:   async () => null,
-  hasClerkAuth:         () => false,
-  setClerkTokenGetter:  () => {},
+vi.mock('../services/auth',       () => ({
+  attachAuth:            async (h) => h,
+  hasSession:            () => false,
+  getAccessToken:        () => null,
+  login:                 async () => ({}),
+  register:              async () => ({}),
+  requestPasswordReset:  async () => ({}),
+  confirmPasswordReset:  async () => ({}),
+  changePassword:        async () => ({}),
+  logout:                async () => {},
+  clearSession:          () => {},
 }));
-vi.mock('@clerk/react',           () => import('../__mocks__/clerkMock'));
 vi.mock('../hooks/useSSE',        () => ({ useSSE: () => ({ connected: false }) }));
 vi.mock('../lib/eventBus',        () => ({ eventBus: { on: () => () => {}, emit: () => {} } }));
 

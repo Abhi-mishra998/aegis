@@ -2,7 +2,7 @@ import { emitAuthFailure } from "../lib/authEvents";
 import { logger } from "../lib/logger";
 import { parseRule, parseRuleList } from "../lib/schemas";
 import { getSessionItem, setSessionItem, removeSessionItem } from "../lib/sessionStore";
-import { attachClerkAuth, getFreshClerkToken, hasClerkAuth } from "./clerkAuth";
+import { attachAuth, hasSession } from "./auth";
 
 // In dev: empty string → relative URLs → Vite proxy routes to :8000 (same-origin, no CORS/cookie issues).
 // In production (Docker/k8s): set VITE_GATEWAY_URL=https://your-gateway or leave empty for nginx proxy.
@@ -11,16 +11,15 @@ const API_BASE = import.meta.env.VITE_GATEWAY_URL || "";
 /**
  * ACP API Client
  *
- * C-6/UI-9 FIX: Token is NO LONGER stored in localStorage.
- * Authentication is handled exclusively via the httpOnly `acp_token` cookie
- * set by the Gateway on login. This eliminates the XSS token-theft vector.
- *
- * N18 FIX: Session metadata (tenant_id, expiry, user_email, user_role,
- * agent_id) is now stored in sessionStorage rather than localStorage so
- * that a future XSS sink cannot exfiltrate it past tab-close and so the
- * blast radius of any XSS is bounded to the tab where it lands. The real
- * Clerk JWT is never stored anywhere — Clerk's SDK keeps it in memory and
- * the httpOnly `acp_token` cookie carries the gateway-side proof.
+ * Auth model:
+ *   - `services/auth.js` owns the access token (sessionStorage, per-tab).
+ *   - `attachAuth(headers)` sets Authorization: Bearer on each request.
+ *   - Session metadata (tenant_id, expiry, user_email, user_role, agent_id)
+ *     is in sessionStorage so a future XSS sink can't exfiltrate past
+ *     tab-close.
+ *   - A SameSite=Strict `acp_token` cookie mirrors the JWT so SSE
+ *     (EventSource, which can't attach an Authorization header) has a
+ *     credential to present.
  */
 
 export const setSessionMetadata = (data) => {
@@ -42,21 +41,11 @@ export const clearSessionMetadata = () => {
   removeSessionItem("sse_query_token");
 };
 
-// Module-local: only the request() / blobRequest() helpers consume this.
-// External callers should rely on the response of those helpers (or watch
-// the AUTH_EVENTS.FAILURE event from authEvents.js) instead of mirroring
-// the gate logic themselves.
+// Client-side auth gate — cheap check to avoid firing requests with a
+// known-dead session. Server is the authoritative validator; this just
+// keeps us from spraying 401s across the page after tab-idle expiry.
 const isSessionValid = () => {
-  // Mirror App.jsx readSessionState: require tenant_id AND a non-expired expiry.
-  // The httpOnly cookie remains the server-side source of truth, but client-side
-  // gating must match the App-level redirect predicate or we leak requests with
-  // an expired session before the auth event clears state.
-  //
-  // Clerk path: if ClerkAuthBridge has registered a token getter, an active
-  // Clerk session exists — the gateway will validate the Bearer JWT directly.
-  // Accept that as session-valid even before the bridge has mirrored
-  // tenant_id into sessionStorage.
-  if (hasClerkAuth()) return true;
+  if (hasSession()) return true;
   const tenantId = getSessionItem("tenant_id");
   const expiry = parseInt(getSessionItem("acp_token_expiry") || "0", 10);
   return !!tenantId && expiry > Date.now();
@@ -179,11 +168,13 @@ const request = async (url, options = {}, retry = 1) => {
   try {
     const tenantId = getSessionItem("tenant_id");
 
-    // AUTH GATE: Block requests (except auth/health) if session is expired or missing.
-    // /auth/sso/providers is public — Login page fetches it before any token
-    // exists, so it must be exempt or the gate throws before we even reach login.
+    // AUTH GATE: block requests (except auth/health) if session is expired
+    // or missing. Public endpoints that a not-yet-signed-in user needs are
+    // exempted so the gate doesn't throw before we even reach login.
     const isAuthPath =
       url.includes("/auth/token") ||
+      url.includes("/auth/register") ||
+      url.includes("/auth/password/") ||
       url.includes("/auth/sso/providers") ||
       url.includes("/health");
 
@@ -201,10 +192,9 @@ const request = async (url, options = {}, retry = 1) => {
       ...(options.headers || {}),
     };
 
-    // Attach Clerk Bearer token if a session exists. Falls through silently
-    // (no header) for legacy cookie-auth flows so old admin@acp.local users
-    // still work. Gateway accepts either when ACP_AUTH_PROVIDER=both.
-    await attachClerkAuth(headers);
+    // Attach Bearer if a first-party session exists. Falls through silently
+    // when no token is present (e.g. the demo-cookie path).
+    await attachAuth(headers);
 
     const base = options.overrideBase || API_BASE;
     const finalUrl = url.startsWith("http") ? url : `${base}${url}`;
@@ -215,78 +205,13 @@ const request = async (url, options = {}, retry = 1) => {
       credentials: "include", // Always send httpOnly cookies
     });
 
-    // Gateway-bug compatibility: the gateway middleware currently translates
-    // an expired/malformed Bearer on auth-adjacent paths to 403 "Fail-Closed:
-    // decision service unavailable" instead of a clean 401. For Clerk-session
-    // requests we treat that specific 403 as an auth-rotation artifact and
-    // give it the same refresh-once-and-replay treatment as a real 401. If
-    // the retry still fails OR the 403 isn't the fail-closed signature, we
-    // fall through to the normal 4xx handling below.
-    const isFailClosed403 =
-      res.status === 403 &&
-      String(res.headers.get("content-type") || "").includes("application/json");
-    if (res.status === 401 || isFailClosed403) {
-      // Clerk session race: the Clerk JWT lifetime is 60s. Even with the
-      // exp-aware preflight in attachClerkAuth, requests can be in flight
-      // when the SDK rotates underneath them. Before declaring the session
-      // dead and bouncing the user to /login, ask Clerk to skip its
-      // in-memory cache, fetch a fresh JWT, and replay ONCE. If THAT also
-      // 401s, the session really is dead.
-      const isClerkSession = hasClerkAuth();
-      if (res.status !== 401 && isFailClosed403) {
-        // Confirm this 403 is the gateway's auth fail-closed (vs a genuine
-        // policy block) before treating it as a refreshable auth artifact.
-        // We peek the body without consuming the original response stream.
-        const peek = res.clone();
-        try {
-          const body = await peek.json();
-          const err = String(body?.error || "");
-          if (!err.includes("Fail-Closed") && !err.toLowerCase().includes("unauth")) {
-            // Real policy 403, not auth — fall through to standard handling.
-            return await _handleResponse(res, url);
-          }
-        } catch (_) {
-          // Non-JSON or unreadable — assume it's a real 403, not auth.
-          return await _handleResponse(res, url);
-        }
-      }
-      if (isClerkSession && !options._authRetried) {
-        try {
-          const freshToken = await getFreshClerkToken();
-          if (freshToken) {
-            const retryHeaders = {
-              ...headers,
-              Authorization: `Bearer ${freshToken}`,
-            };
-            const retryRes = await fetch(finalUrl, {
-              ...options,
-              headers: retryHeaders,
-              credentials: "include",
-            });
-            if (retryRes.status !== 401 && retryRes.status !== 403) {
-              // Quiet success — the first 401/403 is a Clerk-rotation artifact,
-              // not a real auth failure; the user's network panel still
-              // shows it, but the application path is OK so no console
-              // noise here.
-              return await _handleResponse(retryRes, url);
-            }
-          }
-        } catch (refreshErr) {
-          logger.warn("Clerk refresh-on-401 failed", refreshErr);
-        }
-      }
-      // Only log + emit auth_failure when the retry path also failed (or
-      // wasn't applicable). Logging on the first 401 of every Clerk-token-
-      // rotation moment flooded the console; users mistook the resolved
-      // requests for a permanent outage.
+    if (res.status === 401) {
       const observedStatus = res.status;
       console.error(`AUTHENTICATION_REQUIRED [${observedStatus}] ${url}`);
       clearSessionMetadata();
       if (window.location.pathname !== "/login") {
         emitAuthFailure({ reason: "unauthorized", url, statusCode: observedStatus });
       }
-      // Throw a special sentinel so the catch block knows NOT to retry.
-      // parseApiError() reads _status + _wwwAuth to map to a user-facing string.
       const authErr = new Error("UNAUTHORIZED: Session expired or credentials invalid.");
       authErr._noRetry = true;
       authErr._status = observedStatus;
@@ -325,7 +250,7 @@ const blobRequest = async (url, options = {}) => {
     ...(tenantId && { "X-Tenant-ID": tenantId }),
     "X-Request-ID": crypto.randomUUID(),
   };
-  await attachClerkAuth(headers);
+  await attachAuth(headers);
   const finalUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
   const res = await fetch(finalUrl, { ...options, headers, credentials: "include" });
   if (res.status === 401) {

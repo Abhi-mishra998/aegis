@@ -17,7 +17,6 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@clerk/react": "6.9.1",
     "lucide-react": "0.292.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",

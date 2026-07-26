@@ -13,11 +13,8 @@ import { getSessionItem } from './lib/sessionStore';
 import { clearSessionMetadata } from './services/api';
 
 // Critical-path imports — first paint cost.
-// Dashboard is the Lighthouse LCP target so it stays eager; the auth-bridge
-// must mount synchronously so ClerkAuthBridge can mirror the session into
-// AuthContext before any ProtectedRoute decides to redirect to /login.
+// Dashboard is the Lighthouse LCP target so it stays eager.
 import Dashboard from './pages/Dashboard';
-import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import DemoTokenBridge from './components/Layout/DemoTokenBridge';
 import TitleUpdater from './components/Layout/TitleUpdater';
 import Toast from './components/Common/Toast';
@@ -45,6 +42,8 @@ const safeLazy = (loader) => lazy(() => loader().catch((err) => {
 // Order preserved from the original eager list for review.
 const Login              = safeLazy(() => import('./pages/Login'));
 const Signup             = safeLazy(() => import('./pages/Signup'));
+const ForgotPassword     = safeLazy(() => import('./pages/ForgotPassword'));
+const ResetPassword      = safeLazy(() => import('./pages/ResetPassword'));
 const OnboardingWizard   = safeLazy(() => import('./pages/OnboardingWizard'));
 const ShadowModeReview   = safeLazy(() => import('./pages/ShadowModeReview'));
 const Policies           = safeLazy(() => import('./pages/Policies'));
@@ -332,11 +331,6 @@ function App() {
               />
             )}
 
-            {/* Mirrors Clerk session → legacy AuthContext + sessionStorage so the
-                existing ProtectedRoute / API client keep working without a
-                Clerk-specific rewrite of every consumer. */}
-            <ClerkAuthBridge />
-
             {/* Consumes ?demo_token=… from /demo/spawn-workspace's redirect_url
                 so the anonymous demo flow actually authenticates the visitor
                 instead of silently bouncing them to /login. */}
@@ -344,10 +338,10 @@ function App() {
 
             <Suspense fallback={<RouteFallback />}>
             <Routes>
-              {/* Clerk's <SignIn /> / <SignUp /> components own sub-routes
-                  (e.g. /signup/verify-email-address) — the `/*` is required. */}
-              <Route path="/login/*"  element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Login />} />
-              <Route path="/signup/*" element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Signup />} />
+              <Route path="/login"           element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Login />} />
+              <Route path="/signup"          element={auth.isAuthenticated ? <Navigate to="/dashboard" /> : <Signup />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password"  element={<ResetPassword />} />
               <Route path="/onboarding" element={<ProtectedRoute><OnboardingWizard /></ProtectedRoute>} />
               <Route path="/shadow-review" element={<ProtectedRoute><ShadowModeReview /></ProtectedRoute>} />
               <Route path="/threat-graph"  element={<ProtectedRoute><ThreatGraph /></ProtectedRoute>} />

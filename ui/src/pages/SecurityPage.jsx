@@ -46,7 +46,7 @@ const OUT_OF_SCOPE = [
   'Social engineering against our employees or our suppliers',
   'Physical attacks against our infrastructure',
   'Denial-of-service attacks (please don\'t — we have a small WAF budget)',
-  'Findings in third-party SaaS we use (Clerk, AWS) — report directly to that vendor',
+  'Findings in third-party SaaS we use (AWS) — report directly to that vendor',
   'Best-practice warnings without a demonstrable security impact (e.g. "missing Content-Security-Policy" without a real XSS chain)',
 ]
 

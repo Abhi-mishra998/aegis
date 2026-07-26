@@ -1,54 +1,42 @@
-import { SignIn } from '@clerk/react';
-import { Link } from 'react-router-dom';
-import { Shield, Lock } from 'lucide-react';
-
-const aegisAppearance = {
-  variables: {
-    colorPrimary: '#ffffff',
-    colorBackground: '#0a0a0a',
-    colorInputBackground: '#0a0a0a',
-    colorInputText: '#ffffff',
-    colorText: '#ffffff',
-    colorTextSecondary: '#a3a3a3',
-    colorDanger: '#f87171',
-    borderRadius: '0.75rem',
-    fontFamily: 'inherit',
-    fontSize: '0.875rem',
-  },
-  elements: {
-    rootBox: 'w-full',
-    card: 'bg-[#0a0a0a] border border-white/[0.07] rounded-2xl shadow-2xl',
-    headerTitle: 'text-white',
-    headerSubtitle: 'text-neutral-400',
-    formFieldLabel: 'text-neutral-300',
-    formFieldInput:
-      'bg-[#0a0a0a] border-white/[0.07] text-white focus:border-white/30',
-    formButtonPrimary:
-      'bg-white text-black hover:bg-neutral-200 normal-case font-semibold',
-    footerActionLink: 'text-white hover:underline',
-    identityPreviewText: 'text-neutral-300',
-    identityPreviewEditButton: 'text-white',
-    socialButtonsBlockButton:
-      'border border-white/10 hover:bg-white/[0.08] text-white',
-    socialButtonsBlockButtonText: 'text-white',
-    dividerLine: 'bg-white/[0.06]',
-    dividerText: 'text-neutral-700',
-    formFieldErrorText: 'text-red-400',
-    alertText: 'text-red-400',
-  },
-};
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Shield, Lock, Loader2 } from 'lucide-react';
+import { login } from '../services/auth';
 
 export default function Login() {
+  const navigate = useNavigate();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await login({ email, password });
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      // Special-case: password never set (legacy Clerk-provisioned user)
+      if (err?._body?.detail === 'password_not_set' || String(err.message) === 'password_not_set') {
+        setError({
+          kind: 'password_not_set',
+          text: 'Your account exists but no password is set. Request a reset link to create one.',
+        });
+      } else {
+        setError({ kind: 'generic', text: err.message || 'Sign-in failed' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#030303] flex flex-col items-center justify-center px-4 py-8 sm:py-10 relative overflow-hidden">
-      <div
-        className="absolute inset-0 grid-baseline opacity-[0.06] pointer-events-none"
-        aria-hidden="true"
-      />
-      <div
-        className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 grid-baseline opacity-[0.06] pointer-events-none" aria-hidden="true" />
+      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" aria-hidden="true" />
 
       <Link
         to="/"
@@ -64,37 +52,79 @@ export default function Login() {
             <Shield size={24} className="text-black" aria-hidden="true" />
           </div>
           <div className="text-center space-y-1.5">
-            <h1 className="text-2xl font-bold tracking-tight text-white">
-              Aegis
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight text-white">Sign in to Aegis</h1>
             <p className="text-xs text-neutral-400 leading-relaxed max-w-[280px] mx-auto">
-              AI governance &amp; runtime security. Policy, approvals, and a
-              cryptographically verifiable audit trail for every agent action.
+              AI governance &amp; runtime security. Policy, approvals, and a cryptographically verifiable audit trail for every agent action.
             </p>
           </div>
         </div>
 
-        <SignIn
-          path="/login"
-          routing="path"
-          signUpUrl="/signup"
-          afterSignInUrl="/dashboard"
-          appearance={aegisAppearance}
-        />
+        <form
+          onSubmit={onSubmit}
+          className="bg-[#0a0a0a] border border-white/[0.07] rounded-2xl shadow-2xl p-6 space-y-4"
+          aria-label="Sign in"
+        >
+          <label className="block">
+            <span className="text-[11px] uppercase tracking-widest text-neutral-500">Email</span>
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              autoFocus
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 w-full bg-[#0a0a0a] border border-white/[0.07] focus:border-white/30 rounded-lg px-3 py-2 text-sm text-white outline-none"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] uppercase tracking-widest text-neutral-500">Password</span>
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="mt-1 w-full bg-[#0a0a0a] border border-white/[0.07] focus:border-white/30 rounded-lg px-3 py-2 text-sm text-white outline-none"
+            />
+          </label>
+
+          {error && (
+            <div className="text-xs text-red-400 leading-relaxed" role="alert">
+              {error.text}
+              {error.kind === 'password_not_set' && (
+                <>
+                  {' '}
+                  <Link to="/forgot-password" className="underline text-red-300">Request reset link →</Link>
+                </>
+              )}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full bg-white text-black font-semibold rounded-lg py-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {busy && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+
+          <div className="flex items-center justify-between text-[11px] pt-1">
+            <Link to="/forgot-password" className="text-neutral-500 hover:text-white transition-colors">
+              Forgot password?
+            </Link>
+            <Link to="/signup" className="text-neutral-500 hover:text-white transition-colors">
+              Create account
+            </Link>
+          </div>
+        </form>
 
         <div className="flex items-center justify-center gap-2 mt-5">
           <Lock size={11} className="text-neutral-700" aria-hidden="true" />
-          <p className="text-xs text-neutral-700">
-            Encrypted · Authorized Personnel Only
-          </p>
+          <p className="text-xs text-neutral-700">Encrypted · Authorized Personnel Only</p>
         </div>
-
-        <p className="text-center text-[11px] text-neutral-500 mt-3">
-          Don't have an account?{' '}
-          <Link to="/signup" className="text-white hover:underline">
-            Sign up
-          </Link>
-        </p>
       </div>
     </div>
   );

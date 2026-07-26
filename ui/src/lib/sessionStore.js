@@ -13,17 +13,18 @@
  *     time window + per-tab scoping limits the blast radius if a future
  *     XSS lands in production.
  *
- * The real Clerk JWT is NEVER stored anywhere — it lives in Clerk's SDK
- * memory and the httpOnly `acp_token` cookie that the gateway sets. The
- * keys here are non-secret session metadata only.
+ * The access token itself lives in sessionStorage under `acp_access_token`
+ * (see services/auth.js) and is mirrored to a SameSite=Strict `acp_token`
+ * cookie so SSE (EventSource, which can't attach an Authorization header)
+ * has a credential to present. The keys here are non-secret session
+ * metadata only.
  *
  * Guarded with try/catch so the app does not blow up in browsers /
  * private-mode contexts where sessionStorage throws (Safari ITP, etc.).
  *
  * Cross-tab sync note: sessionStorage is per-tab, so the `storage` event
  * does NOT fire across tabs the way it did for localStorage. That is the
- * intended security boundary — each tab carries its own Clerk session
- * and ClerkAuthBridge will mirror metadata into the new tab on mount.
+ * intended security boundary — each tab authenticates independently.
  */
 
 const _storage = (() => {

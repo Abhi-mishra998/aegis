@@ -1,18 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { ClerkProvider } from '@clerk/react';
 import App from './App';
 import './index.css';
 
-// /demo/spawn-workspace redirect lands on /dashboard?demo_token=… The SPA
-// must install session state BEFORE React renders or ProtectedRoute runs
-// its synchronous redirect-to-login on the first paint and the bridge's
-// useEffect (which runs after that) sees a URL with no token. We install
-// the metadata + cookie here in main.jsx so the session exists before
-// ReactDOM.createRoot.render is called.
-//
-// Mirrored async version in components/Layout/DemoTokenBridge.jsx handles
-// the case where the param appears via client-side nav after boot.
+// Demo tenant bridge — the /demo/spawn-workspace flow redirects the
+// browser here with ?demo_token=<jwt>. We install the cookie + session
+// metadata BEFORE React renders so ProtectedRoute doesn't bounce to
+// /login on the first paint. Mirrored in components/Layout/DemoTokenBridge.jsx
+// for the client-side-nav case.
 (function consumeDemoTokenOnBoot() {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -51,10 +46,6 @@ import './index.css';
     sessionStorage.setItem('user_email', email);
     sessionStorage.setItem('user_role', role);
     sessionStorage.setItem('acp_token_expiry', String(Date.now() + ttlSeconds * 1000));
-    // Tag the session so ClerkAuthBridge's not-signed-in branch knows
-    // to leave it alone (its default behavior is to clearSessionMetadata
-    // whenever Clerk reports no user — which would erase the demo state
-    // milliseconds after this IIFE installed it).
     sessionStorage.setItem('session_kind', 'demo');
 
     params.delete('demo_token');
@@ -68,25 +59,8 @@ import './index.css';
   }
 })();
 
-const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
-if (!CLERK_PUBLISHABLE_KEY) {
-  throw new Error(
-    'VITE_CLERK_PUBLISHABLE_KEY is missing. Set it in ui/.env (or .env.local) before starting the dev server.',
-  );
-}
-
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ClerkProvider
-      publishableKey={CLERK_PUBLISHABLE_KEY}
-      signInUrl="/login"
-      signUpUrl="/signup"
-      afterSignInUrl="/dashboard"
-      afterSignUpUrl="/dashboard"
-      afterSignOutUrl="/login"
-    >
-      <App />
-    </ClerkProvider>
+    <App />
   </React.StrictMode>,
 );

@@ -71,7 +71,7 @@ const SECTIONS = [
   {
     icon: Globe,
     title: 'Subprocessors',
-    body: 'Six vendors: AWS, Anthropic, OpenAI, Clerk, GitHub, Sigstore. Each listed with purpose, data shared, region, and compliance attestations. 30-day notice on any new vendor with new data class.',
+    body: 'Five vendors: AWS, Anthropic, OpenAI, GitHub, Sigstore. Each listed with purpose, data shared, region, and compliance attestations. 30-day notice on any new vendor with new data class.',
     href: 'https://github.com/Abhi-mishra998/aegis/blob/main/docs/security/subprocessors.md',
     linkLabel: 'Subprocessor list',
   },

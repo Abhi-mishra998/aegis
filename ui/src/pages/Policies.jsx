@@ -37,8 +37,8 @@ const VALID_TAB_IDS = new Set(TABS.map((t) => t.id));
  * for the active tab. An earlier implementation kept a useState mirror
  * + two useEffects that pushed activeTab back into the URL via
  * `navigate('?tab=…')`; unrelated background re-renders (Topbar poll,
- * Sidebar poll, ClerkAuthBridge refresh) could land between the
- * setState and the navigate, causing the child tab to unmount in the
+ * Sidebar poll) could land between the setState and the navigate,
+ * causing the child tab to unmount in the
  * middle of its initial render — the user perceived this as "tabs
  * blink one time, no content shows."
  *

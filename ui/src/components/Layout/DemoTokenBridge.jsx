@@ -25,8 +25,8 @@ import { logger } from '../../lib/logger';
  *          via the same cookie.
  *      The cookie is intentionally NOT httpOnly because document.cookie
  *      cannot create httpOnly cookies. For the 30-minute demo token that
- *      is acceptable; full-tenant Clerk sessions still use the httpOnly
- *      acp_token issued by /auth/clerk/provision.
+ *      is acceptable; full-tenant sessions use the SameSite=Strict
+ *      acp_token cookie issued by services/auth.js on login.
  *   4. Mirror tenant_id + role + email into sessionStorage via
  *      setSessionMetadata so ProtectedRoute, api.js, and the sidebar
  *      see an authenticated session.

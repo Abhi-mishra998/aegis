@@ -269,9 +269,9 @@ export default function SsoSettings() {
         </div>
       )}
 
-      {/* Unit 9 — empty-state CTA: SSO not configured, point at the
-          two paths forward (Clerk-managed email login is already live,
-          upload SAML metadata to swap to a customer-owned IdP). */}
+      {/* Unit 9 — empty-state CTA: SSO not configured, point at the two
+          paths forward (built-in email+password is already live, upload
+          SAML metadata to swap to a customer-owned IdP). */}
       {!ssoConfigured && !loadError && (
         <div className="p-4 bg-white/[0.02] border border-white/[0.06] rounded-xl">
           <div className="flex items-start gap-3 mb-3">
@@ -279,8 +279,9 @@ export default function SsoSettings() {
             <div>
               <div className="text-sm font-medium text-neutral-200">SSO not configured</div>
               <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
-                Users can sign in today via email/Clerk. Configure SAML or OIDC below to delegate
-                authentication to your own identity provider — Okta, Azure AD, Auth0, Google Workspace, etc.
+                Users can sign in today via email + password. Configure SAML or OIDC below to
+                delegate authentication to your own identity provider — Okta, Azure AD, Auth0,
+                Google Workspace, etc.
               </p>
             </div>
           </div>
@@ -288,7 +289,7 @@ export default function SsoSettings() {
             <div className="p-3 rounded-lg border border-white/10 bg-white/[0.02]">
               <div className="flex items-center gap-2 mb-1">
                 <Mail size={13} className="text-green-400" />
-                <span className="text-sm font-medium text-neutral-200">Email / Clerk</span>
+                <span className="text-sm font-medium text-neutral-200">Email + password</span>
                 <span className="ml-auto text-[10px] text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded">Active</span>
               </div>
               <p className="text-[11px] text-neutral-500">Current sign-in flow. No action needed.</p>
