@@ -391,10 +391,10 @@ function ApprovalInboxPage() {
                 )}
 
                 <div className="mt-3">
-                  <label className="text-xs text-neutral-400 inline-flex items-center gap-1">
-                    <User size={11} /> Operator note (recorded with the override)
+                  <label htmlFor="ai-op-note" className="text-xs text-neutral-400 inline-flex items-center gap-1">
+                    <User size={11} aria-hidden="true" /> Operator note (recorded with the override)
                   </label>
-                  <textarea name="text"
+                  <textarea id="ai-op-note" name="text"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder="Approved after CSR confirmed the customer requested this action / Rejected — fits the exfiltration pattern in INC-2026-014."

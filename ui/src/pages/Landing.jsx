@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
-  Shield, ShieldCheck, Eye, Activity, MessagesSquare, FileBadge2,
-  CheckCircle2, Lock, ArrowRight, Bot, Crosshair, Workflow,
+  Shield, ShieldCheck, Eye, Activity, FileBadge2, Lock, ArrowRight, Bot, Workflow,
   Sparkles, Loader2, AlertCircle,
 } from 'lucide-react'
 
@@ -157,7 +156,7 @@ function Hero() {
       // reload that lets the IIFE install the cookie + session metadata
       // before React first renders.
       window.location.assign(target)
-    } catch (err) {
+    } catch (_err) {
       setSpawnError(
         'Could not reach the demo service right now. Use Start free below to continue.',
       )

@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { killSwitchService, auditService, parseApiError } from '../services/api'
 import {
-  AlertTriangle, Power, ShieldCheck, AlertOctagon,
-  ShieldAlert, Zap, Lock, RefreshCw, Clock,
+  AlertTriangle, Power, AlertOctagon,
+  ShieldAlert, Zap, Lock, RefreshCw,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAuth as useAegisAuth } from '../../hooks/useAuth';
 import { setSessionMetadata } from '../../services/api';
+import { logger } from '../../lib/logger';
 
 /**
  * DemoTokenBridge — consumes ?demo_token=<JWT> appended by
@@ -47,14 +48,14 @@ export default function DemoTokenBridge() {
       const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
       claims = JSON.parse(atob(b64));
     } catch (err) {
-      console.warn('DemoTokenBridge: malformed demo_token, ignoring', err);
+      logger.warn('DemoTokenBridge: malformed demo_token, ignoring', err);
       return;
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
     const expSec = Number(claims.exp || 0);
     if (!expSec || expSec <= nowSec) {
-      console.warn('DemoTokenBridge: demo_token already expired');
+      logger.warn('DemoTokenBridge: demo_token already expired');
       return;
     }
     const ttlSeconds = expSec - nowSec;
@@ -64,7 +65,7 @@ export default function DemoTokenBridge() {
     const role = String(claims.role || claims.aegis_role || 'OWNER').toUpperCase();
 
     if (!tenantId) {
-      console.warn('DemoTokenBridge: demo_token has no tenant_id claim');
+      logger.warn('DemoTokenBridge: demo_token has no tenant_id claim');
       return;
     }
 

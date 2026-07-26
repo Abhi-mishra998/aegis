@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useContext, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Shield, Clock, CheckCircle2, XCircle,
-  RefreshCw, Filter, ChevronRight, Zap, User,
-  Activity, TrendingDown, Eye, Lock, Slash, ArrowUpRight,
-  Download, Crosshair, PlayCircle, Users2,
+  AlertTriangle, Shield, Clock, CheckCircle2,
+  RefreshCw, Filter, User,
+  Activity, Eye, Lock, Slash, ArrowUpRight,
+  Download, PlayCircle, Users2,
 } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Button from '../components/Common/Button';
@@ -18,6 +18,7 @@ import { useSSE } from '../hooks/useSSE';
 // Sprint 5 — orphan-endpoint surfacing inside the incident detail modal.
 import BlastRadiusCard from '../components/incidents/BlastRadiusCard';
 import RemediationPanel from '../components/incidents/RemediationPanel';
+import { logger } from '../lib/logger';
 import ForensicsDrawer from '../components/incidents/ForensicsDrawer';
 
 async function _exportIncidentPdf(incidentId, incidentNumber) {
@@ -257,8 +258,8 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
           <p className="text-xs font-medium text-neutral-400">Add Response Action</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-neutral-500 block mb-1">Action</label>
-              <select name="select"
+              <label htmlFor="inc-action" className="text-xs text-neutral-500 block mb-1">Action</label>
+              <select id="inc-action" name="select"
                 value={actionType}
                 onChange={(e) => setActionType(e.target.value)}
                 className="input-standard input-compact w-full text-xs"
@@ -269,8 +270,8 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
               </select>
             </div>
             <div>
-              <label className="text-xs text-neutral-500 block mb-1">Responder</label>
-              <input name="your_name"
+              <label htmlFor="inc-responder" className="text-xs text-neutral-500 block mb-1">Responder</label>
+              <input id="inc-responder" name="your_name"
                 type="text"
                 placeholder="Your name"
                 value={by}
@@ -280,8 +281,8 @@ function IncidentDetail({ incident, onClose, onRefresh, validTransitions }) {
             </div>
           </div>
           <div>
-            <label className="text-xs text-neutral-500 block mb-1">Note (optional)</label>
-            <textarea name="what_was_done"
+            <label htmlFor="inc-note" className="text-xs text-neutral-500 block mb-1">Note (optional)</label>
+            <textarea id="inc-note" name="what_was_done"
               rows={2}
               placeholder="What was done..."
               value={note}
@@ -658,7 +659,7 @@ function IncidentsPage() {
       const listData = listRes?.data || listRes || {};
       setItems(listData.items || []);
       setTotal(listData.total || 0);
-    } catch (e) {
+    } catch (_e) {
       addToast('Failed to load incidents', 'error');
     } finally {
       setLoading(false);
@@ -702,7 +703,7 @@ function IncidentsPage() {
       if (t && typeof t === 'object') setValidTransitions(t);
     }).catch((err) => {
       // Non-fatal: falls back to VALID_TRANSITIONS_FALLBACK.
-      console.warn('[Incidents] transitions fetch failed', err);
+      logger.warn('[Incidents] transitions fetch failed', err);
       addToast('Could not load status workflow — using bundled transitions list', 'info');
     });
   }, [fetchAll, addToast]);
@@ -776,7 +777,7 @@ function IncidentsPage() {
   const allOnPageSelected = items.length > 0 && items.every((i) => selectedIds.has(i.id));
   const someOnPageSelected = items.some((i) => selectedIds.has(i.id));
 
-  const toggleAllOnPage = () => {
+  const toggleAllOnPage = useCallback(() => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (allOnPageSelected) {
@@ -786,7 +787,7 @@ function IncidentsPage() {
       }
       return next;
     });
-  };
+  }, [allOnPageSelected, items]);
 
   // DataTable columns. The select column owns its own header checkbox; the
   // body cells stopPropagation so a checkbox click does not also fire the
@@ -876,7 +877,7 @@ function IncidentsPage() {
         </span>
       ),
     },
-  ], [selectedIds, allOnPageSelected, someOnPageSelected, items, toggleId]);
+  ], [selectedIds, allOnPageSelected, someOnPageSelected, toggleId, toggleAllOnPage]);
 
   return (
     <div className="space-y-6">

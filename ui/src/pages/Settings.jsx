@@ -8,6 +8,7 @@ import {
   Gauge,
   Key,
   MessagesSquare,
+  Network,
   Settings as SettingsIcon,
   ShieldCheck,
   Sliders,
@@ -33,6 +34,10 @@ const WebhookSettings  = lazy(() => import('./WebhookSettings'));
 const SiemSettings     = lazy(() => import('./SiemSettings'));
 const ScheduledReports = lazy(() => import('./ScheduledReports'));
 const QuotaManagement  = lazy(() => import('./QuotaManagement'));
+// Sprint S5 (folded 2026-07-26): hierarchical Teams admin. Previously
+// only reachable at /settings/teams — the standalone URL still redirects
+// here so old bookmarks keep working.
+const TeamSettings     = lazy(() => import('./TeamSettings'));
 
 // Visual grouping only — the `?tab=<id>` URL contract is unchanged.
 const GROUP = {
@@ -48,7 +53,8 @@ const GROUP_LABELS = {
 const GROUP_ORDER = [GROUP.IDENTITY, GROUP.INTEGRATIONS, GROUP.WORKSPACE];
 
 const TABS = [
-  { id: 'team',          label: 'Team',            icon: Users,          Component: UserManagement,   group: GROUP.IDENTITY },
+  { id: 'team',          label: 'Members',         icon: Users,          Component: UserManagement,   group: GROUP.IDENTITY },
+  { id: 'teams-admin',   label: 'Teams',           icon: Network,        Component: TeamSettings,     group: GROUP.IDENTITY },
   { id: 'roles',         label: 'Roles',           icon: SettingsIcon,   Component: RBAC,             group: GROUP.IDENTITY },
   { id: 'sso',           label: 'SSO',             icon: Key,            Component: SsoSettings,      group: GROUP.IDENTITY },
   { id: 'api-keys',      label: 'API Keys',        icon: Code2,          Component: DeveloperPanel,   group: GROUP.IDENTITY },

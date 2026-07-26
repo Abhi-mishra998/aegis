@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, Bot, Crosshair, Flag, RefreshCw, Shield, User,
-  CheckCircle2, XCircle, AlertTriangle, Loader2,
+  ArrowLeft, Bot, Crosshair, Flag, RefreshCw, Shield, User, AlertTriangle, Loader2,
 } from 'lucide-react'
 import Button from '../components/Common/Button'
 import Card from '../components/Common/Card'

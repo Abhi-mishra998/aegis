@@ -33,11 +33,6 @@ function fmtUsd(x) {
   return `$${Number(x).toFixed(4)}`
 }
 
-function fmtPct(x) {
-  if (x == null) return '—'
-  return `${(x * 100).toFixed(1)}%`
-}
-
 function BurnDownGauge({ percent, status }) {
   // RadialBar gauge for 0-100% (clamped). Recharts wants 0-360 for full
   // circle; we use 270 so the gauge looks like an arc.

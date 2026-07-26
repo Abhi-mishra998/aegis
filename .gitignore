@@ -175,6 +175,7 @@ usage.log
 .coverage
 .coverage.*
 coverage.xml
+ui/coverage/
 *.cover
 htmlcov/
 nosetests.xml

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Code2, Key, Copy, Check, Plus, Trash2, Eye, EyeOff, Terminal, Book, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Key, Copy, Check, Plus, Trash2, Eye, EyeOff, Book } from 'lucide-react'
 import Card from '../components/Common/Card'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 import Modal from '../components/Common/Modal'
@@ -107,7 +107,6 @@ export default function DeveloperPanel() {
   // Demo agent IDs from the production seed — keep in sync with seed_demo_data.py.
   const DEMO_AGENT       = 'a245cc68-19aa-48a7-8862-f3d7f0332ff6'   // demo-agent
   const DB_AGENT         = 'a0c1849b-3b60-40aa-a7ef-35557a7ceef6'   // db-copilot-demo
-  const SUPPORT_AGENT    = 'd4f0fbfc-d629-4acd-ac82-30787f0c0f2a'   // support-agent-demo
   const DEVOPS_AGENT     = '37533cba-54a2-475c-94e2-319c3dfdf69e'   // devops-agent-demo
   // For copy-paste safety we use a placeholder in headers — the user pipes it
   // in from Step 1 (the login response) via the $TOKEN env var.
@@ -131,7 +130,7 @@ export default function DeveloperPanel() {
     mounted.current = true
     loadKeys()
     return () => { mounted.current = false }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   const createKey = async () => {
     if (!newKeyName.trim()) return
@@ -277,7 +276,7 @@ echo "Token: \${TOKEN:0:40}..."`,
       code: `curl -s "${GW}/audit/logs?limit=5" \\
   -H "Authorization: Bearer ${tokenPlaceholder}" \\
   -H "X-Tenant-ID: ${tid}" \\
-  | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print('total:',d['total']); [print(f\\\"  {i['decision']:8}{i['tool'] or '-':25} hash={i.get('event_hash','-')[:24]}...\\\") for i in d['items']]"`,
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print('total:',d['total']); [print(f\\"  {i['decision']:8}{i['tool'] or '-':25} hash={i.get('event_hash','-')[:24]}...\\") for i in d['items']]"`,
     },
     {
       title: 'Step 9 — Verify chain integrity',
@@ -285,7 +284,7 @@ echo "Token: \${TOKEN:0:40}..."`,
       code: `curl -s "${GW}/audit/logs/verify" \\
   -H "Authorization: Bearer ${tokenPlaceholder}" \\
   -H "X-Tenant-ID: ${tid}" \\
-  | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f\\\"chain valid: {d['valid']}  processed: {d['processed_count']}  violations: {d['error_count']}\\\")"`,
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f\\"chain valid: {d['valid']}  processed: {d['processed_count']}  violations: {d['error_count']}\\")"`,
     },
     {
       title: 'Step 10 — Stream live events (SSE)',

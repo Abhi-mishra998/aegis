@@ -21,7 +21,6 @@ import {
   CheckCircle, AlertTriangle, Settings as Cog, ArrowRight, PlayCircle,
 } from 'lucide-react'
 import { shadowService } from '../services/api'
-import SkeletonLoader from '../components/Common/SkeletonLoader'
 
 function unwrap(resp) { return resp?.data ?? resp }
 function fmtPct(x) { return x == null || Number.isNaN(x) ? '—' : `${(x * 100).toFixed(2)}%` }
@@ -226,16 +225,16 @@ export default function ShadowMode() {
         <div className="px-6 py-3 border-b border-neutral-800 bg-neutral-950">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs text-neutral-400">Name</label>
-              <input name="input"
+              <label htmlFor="sm-name" className="text-xs text-neutral-400">Name</label>
+              <input id="sm-name" name="input"
                 value={draftName} onChange={(e) => setDraftName(e.target.value)}
                 placeholder="block-rm-rf"
                 className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-sm"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs text-neutral-400">rules_json (PolicyRule[] — same shape /policy/simulate uses)</label>
-              <textarea name="text"
+              <label htmlFor="sm-rules" className="text-xs text-neutral-400">rules_json (PolicyRule[] — same shape /policy/simulate uses)</label>
+              <textarea id="sm-rules" name="text"
                 value={draftRules} onChange={(e) => setDraftRules(e.target.value)}
                 className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1 text-xs font-mono"
                 rows={8}

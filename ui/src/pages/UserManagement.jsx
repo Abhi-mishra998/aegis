@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Users, Plus, RefreshCw, Loader2, Check, X,
-  Shield, ChevronDown, Mail, UserCheck, UserX, Trash2,
+  Users, Plus, RefreshCw, Loader2, X,
+  Shield, ChevronDown, Mail, UserCheck, UserX,
   UserPlus,
 } from 'lucide-react'
 import { userService } from '../services/api'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
+import Modal from '../components/Common/Modal'
 
 // Canonical role vocabulary — matches the platform's RBAC enum
 // (OWNER/ADMIN/SECURITY_ANALYST/AUDITOR/OPERATOR/AGENT).
@@ -57,52 +58,41 @@ function InviteModal({ onClose, onInvited }) {
     }
   }
 
+  const emailId = 'invite-email'
+  const roleId  = 'invite-role'
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Invite user"
-    >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <form
-        onSubmit={submit}
-        className="relative bg-[var(--bg-surface-elevated)] border border-[var(--border-default)] rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4 space-y-4"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">Invite User</h2>
-          <button type="button" onClick={onClose} className="text-neutral-600 hover:text-white"><X size={16} /></button>
-        </div>
-
+    <Modal isOpen onClose={onClose} title="Invite User" size="sm">
+      <form onSubmit={submit} className="space-y-4">
         {error && (
           <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</div>
         )}
 
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Email address</label>
-          <input name="input"
+          <label htmlFor={emailId} className="block text-xs text-neutral-400 mb-1">Email address</label>
+          <input
+            id={emailId}
+            name="input"
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             placeholder="user@company.com"
-            autoFocus
             className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
           />
         </div>
 
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Role</label>
+          <label htmlFor={roleId} className="block text-xs text-neutral-400 mb-1">Role</label>
           <div className="relative">
-            <select name="select"
+            <select
+              id={roleId}
+              name="select"
               value={role}
               onChange={e => setRole(e.target.value)}
               className="w-full appearance-none bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
             >
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
-            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
+            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" aria-hidden="true" />
           </div>
           <p className="text-[10px] text-neutral-600 mt-1">
             {role === 'OWNER' && 'Tenant owner — full platform access, including billing and SSO.'}
@@ -122,11 +112,11 @@ function InviteModal({ onClose, onInvited }) {
           disabled={saving}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
         >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} aria-hidden="true" />}
           {saving ? 'Sending invite…' : 'Send invitation'}
         </button>
       </form>
-    </div>
+    </Modal>
   )
 }
 
@@ -186,8 +176,10 @@ function UserRow({ user, onUpdate, onDeactivate }) {
       <div className="shrink-0">
         {editRole ? (
           <div className="flex items-center gap-1">
-            <select name="select"
-              autoFocus
+            <select
+              name="select"
+              ref={(el) => el?.focus()}
+              aria-label="Change role"
               className="bg-white/[0.04] border border-white/20 rounded-lg px-2 py-1 text-xs text-white focus:outline-none"
               defaultValue={user.role}
               onChange={e => changeRole(e.target.value)}

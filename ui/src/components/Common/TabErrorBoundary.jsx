@@ -26,13 +26,13 @@ class TabErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    // eslint-disable-next-line no-console
+     
     console.error('Tab render error', this.props.tabId, error, errorInfo);
   }
 
   componentDidUpdate(prevProps) {
     if (prevProps.tabId !== this.props.tabId && this.state.hasError) {
-      // eslint-disable-next-line react/no-direct-mutation-state
+       
       this.setState({ hasError: false, error: null });
     }
   }

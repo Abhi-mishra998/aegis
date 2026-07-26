@@ -6,7 +6,7 @@ import {
   BarChart2, GitMerge, ExternalLink, Plus,
 } from 'lucide-react'
 import {
-  LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { registryService, auditService } from '../services/api'
@@ -216,7 +216,6 @@ function RiskTrendChart({ series }) {
   const polyline = pts.join(' ')
 
   // gradient-fill polygon: close path along the bottom
-  const first = pts[0], last = pts[pts.length - 1]
   const fillPoly = `${polyline} ${(W - PAD).toFixed(1)},${(H - PAD).toFixed(1)} ${PAD},${(H - PAD).toFixed(1)}`
 
   return (
@@ -559,7 +558,7 @@ export default function AgentProfile() {
             <div className="text-xs text-neutral-600">No tool data.</div>
           ) : (
             <div className="space-y-2.5">
-              {(p.top_tools || []).map((t, i) => {
+              {(p.top_tools || []).map((t) => {
                 const max = p.top_tools[0]?.count || 1
                 const pct = (t.count / max) * 100
                 return (

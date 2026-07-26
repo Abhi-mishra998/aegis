@@ -470,12 +470,12 @@ export default function LifecycleAdmin() {
             <label className="block">
               <span className="text-[10px] uppercase tracking-widest text-neutral-500">Reason (recorded in ledger)</span>
               <input
+                ref={(el) => el?.focus()}
                 type="text"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={pendingTarget === 'DESTROY' ? 'e.g. contract terminated 2026-08-01' : 'e.g. scheduled quarterly key rotation'}
                 className="input-standard mt-1 text-xs w-full"
-                autoFocus
               />
             </label>
             {transitionError && (

@@ -5,8 +5,7 @@ import { AgentContext } from '../context/AgentContext'
 import {
   Search, BrainCircuit, Activity, ShieldAlert,
   FileText, ChevronRight, Database, Fingerprint,
-  Zap, ShieldCheck, AlertTriangle, Clock,
-  TrendingDown, TrendingUp, ArrowLeft, Play, ListChecks,
+  Zap, ShieldCheck, AlertTriangle, Clock, ArrowLeft, Play, ListChecks,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -173,7 +172,7 @@ function ReplayStep({ step, idx, isActive, onClick }) {
 export default function Forensics() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { selectedAgentId, selectedAgent } = useContext(AgentContext)
+  const { selectedAgentId } = useContext(AgentContext)
   const [agentId, setAgentId]         = useState('')
   const [profile, setProfile]         = useState(null)
   const [loading, setLoading]         = useState(false)
@@ -220,7 +219,7 @@ export default function Forensics() {
     const params = new URLSearchParams(location.search)
     const id = params.get('agent') || selectedAgentId
     if (id) { setAgentId(id); triggerInvestigation(id) }
-  }, [location.search, selectedAgentId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.search, selectedAgentId])  
 
   const triggerInvestigation = async (id) => {
     if (!id?.trim()) return

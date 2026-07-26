@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Users, Shield, FileText, X, Power, Zap,
+  Users, Shield, FileText, X, Power,
   LogOut, Terminal, BarChart2,
   GitMerge, AlertTriangle, Crosshair, Bot,
   Network, Film, ShieldCheck, ChevronDown, ChevronRight, Settings as SettingsIcon,
   Radio, Bell, BookOpen,
-  Workflow, MessagesSquare, Gauge, HeartPulse, DollarSign, Share2,
+  Workflow, MessagesSquare, Gauge, HeartPulse,
   Beaker, EyeOff, Inbox, Eye,
 } from 'lucide-react'
 import { approvalService, authService, notificationService } from '../../services/api'
+import { logger } from '../../lib/logger'
 import { useAuth } from '../../hooks/useAuth'
 import { useRole } from '../../hooks/useRole'
 import AgentScopePicker from './AgentScopePicker'
@@ -104,7 +105,7 @@ export default function Sidebar({ isOpen, onClose }) {
       const res = await notificationService.getCount()
       setUnreadCount((res?.data?.unread ?? res?.unread ?? 0))
     } catch (err) {
-      console.warn('[Sidebar] notification count fetch failed', err)
+      logger.warn('[Sidebar] notification count fetch failed', err)
       const now = Date.now()
       if (now - lastToastRef.current.unread > 30_000) {
         lastToastRef.current.unread = now
@@ -119,7 +120,7 @@ export default function Sidebar({ isOpen, onClose }) {
       const res = await approvalService.getPendingCount()
       setPendingApprovals((res?.data?.unread ?? res?.unread ?? 0))
     } catch (err) {
-      console.warn('[Sidebar] pending-approvals fetch failed', err)
+      logger.warn('[Sidebar] pending-approvals fetch failed', err)
       const now = Date.now()
       if (now - lastToastRef.current.approvals > 30_000) {
         lastToastRef.current.approvals = now

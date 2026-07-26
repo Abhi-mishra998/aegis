@@ -4,11 +4,11 @@ import {
   Lock, Plus, Trash2, RefreshCw, Users,
   ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Bot,
 } from 'lucide-react'
-import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { registryService } from '../services/api'
 import { eventBus } from '../lib/eventBus'
+import { logger } from '../lib/logger'
 import { useAuth } from '../hooks/useAuth'
 
 const TOOL_OPTIONS_FALLBACK = [
@@ -215,8 +215,8 @@ function AgentRow({ agent, toolOptions }) {
               <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-600">New Permission</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="label-standard">Tool</label>
-                  <select name="tool_name"
+                  <label htmlFor="rbac-tool" className="label-standard">Tool</label>
+                  <select id="rbac-tool" name="tool_name"
                     value={form.tool_name}
                     onChange={(e) => setForm(f => ({ ...f, tool_name: e.target.value }))}
                     className="input-standard input-compact h-8 text-xs"
@@ -227,8 +227,8 @@ function AgentRow({ agent, toolOptions }) {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="label-standard">Action</label>
-                  <select name="action"
+                  <label htmlFor="rbac-action" className="label-standard">Action</label>
+                  <select id="rbac-action" name="action"
                     value={form.action}
                     onChange={(e) => setForm(f => ({ ...f, action: e.target.value }))}
                     className="input-standard input-compact h-8 text-xs"
@@ -289,7 +289,7 @@ export default function RBAC() {
       if (Array.isArray(tools) && tools.length) setToolOptions(tools)
     }).catch((err) => {
       // Non-fatal: falls back to TOOL_OPTIONS_FALLBACK.
-      console.warn('[RBAC] tool catalog fetch failed', err)
+      logger.warn('[RBAC] tool catalog fetch failed', err)
       addToast('Could not load tool catalog — Add Permission falls back to built-in tool list', 'info')
     })
     // 30-second polling to keep agent/permission list current

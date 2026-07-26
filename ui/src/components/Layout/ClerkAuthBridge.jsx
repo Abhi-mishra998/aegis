@@ -5,6 +5,7 @@ import { setSessionMetadata, clearSessionMetadata } from '../../services/api';
 import { setClerkTokenGetter } from '../../services/clerkAuth';
 import { emitAuthFailure } from '../../lib/authEvents';
 import { getSessionItem } from '../../lib/sessionStore';
+import { logger } from '../../lib/logger';
 
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || '';
 
@@ -17,13 +18,13 @@ async function clerkProvision(token) {
       credentials: 'include',
     });
     if (!resp.ok) {
-      console.warn('clerkProvision: non-2xx response', resp.status);
+      logger.warn('clerkProvision: non-2xx response', resp.status);
       return null;
     }
     const body = await resp.json().catch(() => null);
     return body?.data || null;
   } catch (err) {
-    console.warn('clerkProvision: fetch failed', err);
+    logger.warn('clerkProvision: fetch failed', err);
     return null;
   }
 }
@@ -50,7 +51,7 @@ function decodeJwtPayload(token) {
   try {
     const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     return JSON.parse(atob(base64));
-  } catch (err) {
+  } catch (_err) {
     return {};
   }
 }
@@ -152,7 +153,7 @@ export default function ClerkAuthBridge() {
       try {
         const token = await get({ template: 'aegis', skipCache });
         if (token) return token;
-      } catch (err) {
+      } catch (_err) {
         // Template missing — fall through to default token.
       }
       return get({ skipCache });
@@ -186,7 +187,7 @@ export default function ClerkAuthBridge() {
         token = await fetchAegisToken();
         payload = decodeJwtPayload(token);
       } catch (err) {
-        console.warn(
+        logger.warn(
           'ClerkAuthBridge: token fetch failed; falling back to user metadata',
           err,
         );
@@ -256,6 +257,7 @@ export default function ClerkAuthBridge() {
     isSignedIn,
     user?.id,
     organization?.id,
+    organization?.publicMetadata?.aegis_tenant_id,
     membership?.role,
     user?.primaryEmailAddress?.emailAddress,
     updateAuth,
@@ -330,7 +332,7 @@ export default function ClerkAuthBridge() {
         });
       } catch (err) {
         consecutiveFailures += 1;
-        console.warn('ClerkAuthBridge: refresh tick failed', err);
+        logger.warn('ClerkAuthBridge: refresh tick failed', err);
       } finally {
         inFlight = false;
         if (consecutiveFailures >= REFRESH_FAILURE_BUDGET && !cancelled) {

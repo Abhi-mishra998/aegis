@@ -20,6 +20,8 @@
  * option through to Clerk's `getToken({template:'aegis', skipCache})`.
  */
 
+import { logger } from '../lib/logger';
+
 let _clerkTokenGetter = null;
 
 // Force a fresh token from Clerk when the cached one has less than 10s left.
@@ -69,7 +71,7 @@ export async function getClerkToken() {
     }
     return token;
   } catch (err) {
-    console.warn('clerkAuth: getToken failed', err);
+    logger.warn('clerkAuth: getToken failed', err);
     return null;
   }
 }
@@ -84,7 +86,7 @@ export async function getFreshClerkToken() {
   try {
     return await _clerkTokenGetter({ skipCache: true });
   } catch (err) {
-    console.warn('clerkAuth: getFreshClerkToken failed', err);
+    logger.warn('clerkAuth: getFreshClerkToken failed', err);
     return null;
   }
 }

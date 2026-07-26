@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -41,6 +41,10 @@ const PROVIDER_CATALOG = [
   { id: 'openhands', label: 'OpenHands', icon: Wand2, blurb: 'Routes OpenHands tool calls through Aegis.', sdk: 'aegis-openhands' },
   { id: 'custom', label: 'Custom / HTTP', icon: Globe, blurb: 'Raw HTTP — works from any language.', sdk: 'curl' },
 ];
+
+// Wizard step titles. Module-scope constant so useMemo() consumers don't
+// see a fresh array on every render (was breaking react-hooks/exhaustive-deps).
+const STEP_LABELS = ['Integration', 'Capabilities', 'Install'];
 
 // Sprint 13 — Capability-based wizard. The Step-2 question shifted from
 // "how risky is this agent?" (the wrong question — CISOs don't know the
@@ -159,9 +163,6 @@ export default function OnboardingWizard() {
   const [snippet, setSnippet] = useState(null);
   const [snippetError, setSnippetError] = useState('');
   const [firstDecision, setFirstDecision] = useState(null);
-  const sseUnsubRef = useRef(null);
-
-  const providerCatalogItem = PROVIDER_CATALOG.find((p) => p.id === provider);
 
   const canAdvanceFromStep1 = Boolean(provider);
   const canAdvanceFromStep2 = agentName.trim().length >= 3;
@@ -246,8 +247,6 @@ export default function OnboardingWizard() {
       }
     },
   });
-
-  const STEP_LABELS = ['Integration', 'Capabilities', 'Install'];
 
   const stepIndicator = useMemo(
     () => (
@@ -401,7 +400,7 @@ export default function OnboardingWizard() {
 
               <div className="space-y-2">
                 <div className="flex items-baseline justify-between">
-                  <label className="label-standard">Capabilities</label>
+                  <div id="ow-caps-label" className="label-standard">Capabilities</div>
                   {policyPreview && (
                     <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest">
                       <span className="text-neutral-500">Aggregate risk</span>

@@ -1,4 +1,5 @@
 import { emitAuthFailure } from "../lib/authEvents";
+import { logger } from "../lib/logger";
 import { parseRule, parseRuleList } from "../lib/schemas";
 import { getSessionItem, setSessionItem, removeSessionItem } from "../lib/sessionStore";
 import { attachClerkAuth, getFreshClerkToken, hasClerkAuth } from "./clerkAuth";
@@ -106,7 +107,7 @@ const _handleResponse = async (res, url) => {
     const txt = await _readBodyOnce(res);
     let msg = "Too many requests — please wait a moment and try again.";
     try { const p = JSON.parse(txt); msg = p.detail || p.error || msg; } catch {}
-    console.warn(`RATE_LIMITED [429] ${url}:`, msg);
+    logger.warn(`RATE_LIMITED [429] ${url}:`, msg);
     const rlErr = new Error(msg);
     rlErr._noRetry = true;
     throw rlErr;
@@ -124,7 +125,7 @@ const _handleResponse = async (res, url) => {
       if (Array.isArray(parsedError)) {
         parsedError = parsedError.map((e) => e?.msg || JSON.stringify(e)).join("; ");
       }
-    } catch (e) {
+    } catch (_e) {
       // Non-JSON body. If it looks like an HTML error page (nginx default,
       // load-balancer block, WAF rejection), collapse it to a short string so
       // downstream renders ("Decision: <HTML>…") don't leak raw markup.
@@ -164,9 +165,9 @@ const _handleResponse = async (res, url) => {
     // already 403'd the response BEFORE the client ever saw the body
     // (the body wouldn't carry a foreign tenant_id at all in that path).
     if (_isIdentityPath(url)) {
-      console.info("TENANT_RECONCILE_IDENTITY", { sessionTenant, responseTenant, url });
+      logger.info("TENANT_RECONCILE_IDENTITY", { sessionTenant, responseTenant, url });
     } else {
-      console.warn("TENANT_RECONCILE", { sessionTenant, responseTenant, url });
+      logger.warn("TENANT_RECONCILE", { sessionTenant, responseTenant, url });
     }
     setSessionItem("tenant_id", responseTenant);
   }
@@ -187,7 +188,7 @@ const request = async (url, options = {}, retry = 1) => {
       url.includes("/health");
 
     if (!isSessionValid() && !isAuthPath) {
-      console.warn("API_GATED: Session expired or not found.", url);
+      logger.warn("API_GATED: Session expired or not found.", url);
       emitAuthFailure({ reason: "session_expired", url });
       throw new Error("UNAUTHENTICATED: Session expired.");
     }
@@ -271,7 +272,7 @@ const request = async (url, options = {}, retry = 1) => {
             }
           }
         } catch (refreshErr) {
-          console.warn("Clerk refresh-on-401 failed", refreshErr);
+          logger.warn("Clerk refresh-on-401 failed", refreshErr);
         }
       }
       // Only log + emit auth_failure when the retry path also failed (or
@@ -398,7 +399,7 @@ export const parseApiError = (error, fallback = "Something went wrong. Please tr
 // Auth Service
 export const authService = {
   login: async (data) => {
-    console.info("AUTHENTICATION_ATTEMPT", { email: data.email });
+    logger.info("AUTHENTICATION_ATTEMPT", { email: data.email });
 
     const headers = { "Content-Type": "application/json" };
     // Always send X-Tenant-ID. Browser login never knows the tenant upfront,
@@ -437,7 +438,7 @@ export const authService = {
 
     setSessionMetadata({ tenant_id: tenantId, expires_in: expiresIn, role });
 
-    console.info("AUTHENTICATION_SUCCESS", { tenantId, role });
+    logger.info("AUTHENTICATION_SUCCESS", { tenantId, role });
 
     return {
       data: {

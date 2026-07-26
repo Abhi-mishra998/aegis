@@ -25,7 +25,6 @@ import {
 } from 'lucide-react';
 import {
   workspaceService,
-  registryService,
   auditService,
   dashboardService,
 } from '../services/api';
@@ -317,348 +316,349 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight text-white">
-            {workspace?.name || 'Workspace'} dashboard
-          </h1>
-          <p className="text-xs text-neutral-400 max-w-xl">
-            Agent inventory, open incidents, and shadow-mode status — every metric
-            your CISO asks for in a buyer demo, in one screen.
-          </p>
+      <DashboardHeader
+        workspaceName={workspace?.name}
+        liveEventCount={liveEventCount}
+        onRefresh={() => setRefreshTick((t) => t + 1)}
+      />
+      {error && <DashboardErrorBanner error={error} />}
+
+      <MandateKpisRow loading={loading} overview={overview} heroAllZero={heroAllZero} />
+      <BusinessValueRow loading={loading} overview={overview} />
+      <WorkspaceStatusRow
+        loading={loading}
+        inventory={inventory}
+        shadowActive={shadowActive}
+        shadowDaysLeft={shadowDaysLeft}
+      />
+      <InventoryHeroRow
+        loading={loading}
+        providerEntries={providerEntries}
+        riskEntries={riskEntries}
+        total={inventory?.total ?? 0}
+      />
+      <RecentActivityCard loading={loading} events={recentEvents} />
+    </div>
+  );
+}
+
+/* ─── Extracted sections (Sprint 8.2 file-split — reduces Dashboard's cyclomatic
+   complexity from 119 to <10 by moving every conditional-render branch into
+   its own component. Each section is stateless: it takes exactly the props it
+   needs, so it's trivially unit-testable.) ────────────────────────────────── */
+
+function DashboardHeader({ workspaceName, liveEventCount, onRefresh }) {
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-bold tracking-tight text-white">
+          {workspaceName || 'Workspace'} dashboard
+        </h1>
+        <p className="text-xs text-neutral-400 max-w-xl">
+          Agent inventory, open incidents, and shadow-mode status — every metric
+          your CISO asks for in a buyer demo, in one screen.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="text-[10px] uppercase tracking-widest text-neutral-600 flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
+          Live · {liveEventCount} events
         </div>
-        <div className="flex items-center gap-2">
-          <div className="text-[10px] uppercase tracking-widest text-neutral-600 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
-            Live · {liveEventCount} events
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => setRefreshTick((t) => t + 1)}>
-            <RefreshCw size={14} aria-hidden="true" />
+        <Button variant="ghost" size="sm" onClick={onRefresh}>
+          <RefreshCw size={14} aria-hidden="true" />
+        </Button>
+        <Link to="/onboarding">
+          <Button size="sm">
+            <Plus size={14} aria-hidden="true" />
+            Add agent
           </Button>
-          <Link to="/onboarding">
-            <Button size="sm">
-              <Plus size={14} aria-hidden="true" />
-              Add agent
-            </Button>
-          </Link>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function DashboardErrorBanner({ error }) {
+  return (
+    <div className="error-banner" role="alert">
+      <div className="flex items-center gap-3">
+        <AlertTriangle size={15} className="text-red-400 shrink-0" aria-hidden="true" />
+        <p className="text-xs text-red-400">{error}</p>
+      </div>
+    </div>
+  );
+}
+
+function MandateKpiTiles({ overview }) {
+  const kpis = overview?.mandate_kpis || {};
+  const esc  = overview?.escalation_breakdown || {};
+  const escalatedSub = (kpis.escalated ?? 0) === 0
+    ? 'No human-in-loop yet'
+    : `${esc.pending ?? 0} pending · ${esc.approved ?? 0} approved · ${esc.rejected ?? 0} rejected`;
+  return (
+    <>
+      <MetricTile icon={Bot} label="Protected agents" value={fmtInt(kpis.protected_agents)}
+        sublabel="Active in this workspace"
+        tooltip="Active agents (status=ACTIVE) registered in this workspace. Source of truth: /workspace/inventory." />
+      <MetricTile icon={Activity} label="Actions evaluated" value={fmtInt(kpis.actions_evaluated)}
+        sublabel="Every tool call + proxy call"
+        tooltip="Total tool-call + LLM-proxy-call decisions Aegis evaluated in the last 30 days." />
+      <MetricTile icon={CheckCircle2} label="Allowed" value={fmtInt(kpis.allowed)}
+        sublabel="No risk gate hit" accent="text-green-400"
+        tooltip="Decisions returned allow — no signal, policy, or budget threshold tripped." />
+      <MetricTile icon={Shield} label="Denied" value={fmtInt(kpis.denied)}
+        sublabel="Hard block fired"
+        accent={(kpis.denied ?? 0) > 0 ? 'text-red-400' : 'text-white'}
+        tooltip="Decisions returned deny / block / kill — Aegis refused the action before it ran." />
+      <Link to="/approval-inbox" className="contents">
+        <MetricTile icon={AlertTriangle} label="Escalated" value={fmtInt(kpis.escalated)}
+          sublabel={escalatedSub}
+          accent={(esc.pending ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+          tooltip="Decisions sent to a human reviewer. Sub-label splits the total into pending (waiting on a human), approved (CFO/CISO/etc said yes), rejected (operator denied). Click to open the Approval Inbox."
+          pulseDot={(esc.pending ?? 0) > 0}
+          cta={(esc.pending ?? 0) > 0 ? 'Review →' : undefined} />
+      </Link>
+      <MetricTile icon={Target} label="Active findings" value={fmtInt(kpis.active_findings)}
+        sublabel="Decisions with signals"
+        accent={(kpis.active_findings ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
+        tooltip="Audit rows carrying one or more security findings (signal_registry hits)." />
+    </>
+  );
+}
+
+function ZeroActivityHint() {
+  return (
+    <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 flex items-center justify-between gap-4 flex-wrap">
+      <div className="space-y-0.5">
+        <div className="text-sm font-semibold text-white">No activity yet</div>
+        <div className="text-xs text-neutral-500">
+          Register your first agent through the onboarding wizard to start
+          generating decisions, then come back here for the live view.
         </div>
       </div>
+      <Link to="/onboarding">
+        <Button size="sm">
+          <Plus size={14} aria-hidden="true" />
+          Start onboarding wizard
+        </Button>
+      </Link>
+    </div>
+  );
+}
 
-      {error && (
-        <div className="error-banner" role="alert">
-          <div className="flex items-center gap-3">
-            <AlertTriangle size={15} className="text-red-400 shrink-0" aria-hidden="true" />
-            <p className="text-xs text-red-400">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Sprint 12 — Row 1: the six mandate KPIs every CISO buyer
-          evaluates Aegis against. Numbers are 30-day totals from the
-          audit log (allowed/denied/escalated/active_findings) plus the
-          live agent count (protected_agents) — single fetch via the
-          gateway /dashboard/overview aggregator. */}
-      <div>
-        <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
-          <Shield size={11} aria-hidden="true" />
-          <span>Last 30 days · runtime security at a glance</span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          {loading ? (
-            Array.from({ length: 6 }).map((_, i) => <MetricTileSkeleton key={i} />)
-          ) : (
-            <>
-              <MetricTile
-                icon={Bot}
-                label="Protected agents"
-                value={fmtInt(overview?.mandate_kpis?.protected_agents)}
-                sublabel="Active in this workspace"
-                tooltip="Active agents (status=ACTIVE) registered in this workspace. Source of truth: /workspace/inventory."
-              />
-              <MetricTile
-                icon={Activity}
-                label="Actions evaluated"
-                value={fmtInt(overview?.mandate_kpis?.actions_evaluated)}
-                sublabel="Every tool call + proxy call"
-                tooltip="Total tool-call + LLM-proxy-call decisions Aegis evaluated in the last 30 days."
-              />
-              <MetricTile
-                icon={CheckCircle2}
-                label="Allowed"
-                value={fmtInt(overview?.mandate_kpis?.allowed)}
-                sublabel="No risk gate hit"
-                accent="text-green-400"
-                tooltip="Decisions returned allow — no signal, policy, or budget threshold tripped."
-              />
-              <MetricTile
-                icon={Shield}
-                label="Denied"
-                value={fmtInt(overview?.mandate_kpis?.denied)}
-                sublabel="Hard block fired"
-                accent={(overview?.mandate_kpis?.denied ?? 0) > 0 ? 'text-red-400' : 'text-white'}
-                tooltip="Decisions returned deny / block / kill — Aegis refused the action before it ran."
-              />
-              <Link to="/approval-inbox" className="contents">
-                <MetricTile
-                  icon={AlertTriangle}
-                  label="Escalated"
-                  value={fmtInt(overview?.mandate_kpis?.escalated)}
-                  sublabel={
-                    (overview?.mandate_kpis?.escalated ?? 0) === 0
-                      ? 'No human-in-loop yet'
-                      : `${overview?.escalation_breakdown?.pending ?? 0} pending · ${overview?.escalation_breakdown?.approved ?? 0} approved · ${overview?.escalation_breakdown?.rejected ?? 0} rejected`
-                  }
-                  accent={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-                  tooltip="Decisions sent to a human reviewer. Sub-label splits the total into pending (waiting on a human), approved (CFO/CISO/etc said yes), rejected (operator denied). Click to open the Approval Inbox."
-                  pulseDot={(overview?.escalation_breakdown?.pending ?? 0) > 0}
-                  cta={(overview?.escalation_breakdown?.pending ?? 0) > 0 ? 'Review →' : undefined}
-                />
-              </Link>
-              <MetricTile
-                icon={Target}
-                label="Active findings"
-                value={fmtInt(overview?.mandate_kpis?.active_findings)}
-                sublabel="Decisions with signals"
-                accent={(overview?.mandate_kpis?.active_findings ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-                tooltip="Audit rows carrying one or more security findings (signal_registry hits)."
-              />
-            </>
-          )}
-        </div>
-
-        {/* Zero-activity hint — surfaced once the mandate KPIs come back empty
-            AND inventory is empty. Gives the operator a single clear next step
-            instead of staring at a wall of em-dashes. */}
-        {heroAllZero && (
-          <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 flex items-center justify-between gap-4 flex-wrap">
-            <div className="space-y-0.5">
-              <div className="text-sm font-semibold text-white">
-                No activity yet
-              </div>
-              <div className="text-xs text-neutral-500">
-                Register your first agent through the onboarding wizard to start
-                generating decisions, then come back here for the live view.
-              </div>
-            </div>
-            <Link to="/onboarding">
-              <Button size="sm">
-                <Plus size={14} aria-hidden="true" />
-                Start onboarding wizard
-              </Button>
-            </Link>
-          </div>
-        )}
+function MandateKpisRow({ loading, overview, heroAllZero }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
+        <Shield size={11} aria-hidden="true" />
+        <span>Last 30 days · runtime security at a glance</span>
       </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => <MetricTileSkeleton key={i} />)
+          : <MandateKpiTiles overview={overview} />}
+      </div>
+      {heroAllZero && <ZeroActivityHint />}
+    </div>
+  );
+}
 
-      {/* Sprint 12 — Row 2: business-value rollup. Translates the
-          security metrics into the language a CFO + CISO + GC can
-          share. Dollar figure uses the Sprint 8 system_values map for
-          blocked tool calls, plus a $0.05 conservative estimate per
-          blocked LLM-proxy call. */}
-      <div>
-        <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
-          <TrendingUp size={11} aria-hidden="true" />
-          <span>Business value · what Aegis saved you</span>
+function BusinessValueTiles({ overview }) {
+  const bv = overview?.business_value || {};
+  return (
+    <>
+      <MetricTile icon={FileCheck2} label="Records protected" value={fmtInt(bv.records_protected_estimate)}
+        sublabel="Bulk-PII / dump blocks"
+        tooltip="Estimated row count Aegis prevented from leaving the workspace via blocked SQL dumps / bulk PII egress." />
+      <MetricTile icon={AlertTriangle} label="Escalations prevented" value={fmtInt(bv.escalations_prevented)}
+        sublabel="Sent to approval inbox"
+        tooltip="Actions Aegis kicked to a human reviewer instead of letting the agent self-execute." />
+      <MetricTile icon={ShieldCheck} label="Controls enforced" value={fmtInt(bv.compliance_controls_enforced)}
+        sublabel="Distinct signal classes"
+        tooltip="Distinct security-signal classes (Security:*, Compliance:*, etc.) that Aegis fired against in this window." />
+      <MetricTile icon={DollarSign} label="Dollar risk mitigated" value={fmtUSD(bv.dollar_risk_mitigated_usd)}
+        sublabel="Wire blocks + LLM blocks"
+        accent={(bv.dollar_risk_mitigated_usd ?? 0) > 0 ? 'text-green-400' : 'text-white'}
+        tooltip="Sum of (wire-transfer amounts on denied money movement) + ($0.05 × blocked LLM-proxy calls). Lower-bound estimate." />
+    </>
+  );
+}
+
+function BusinessValueRow({ loading, overview }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
+        <TrendingUp size={11} aria-hidden="true" />
+        <span>Business value · what Aegis saved you</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {loading
+          ? Array.from({ length: 4 }).map((_, i) => <MetricTileSkeleton key={i} />)
+          : <BusinessValueTiles overview={overview} />}
+      </div>
+    </div>
+  );
+}
+
+function AgentsTile({ inventory }) {
+  if (!(inventory?.total > 0)) return <AgentsEmptyTile />;
+  return (
+    <MetricTile icon={Bot} label="Total agents" value={fmtInt(inventory?.total)}
+      sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`} />
+  );
+}
+
+function WorkspaceStatusTiles({ inventory, shadowActive, shadowDaysLeft }) {
+  return (
+    <>
+      <AgentsTile inventory={inventory} />
+      <MetricTile icon={AlertTriangle} label="High risk" value={fmtInt(inventory?.high_risk)}
+        sublabel={`${inventory?.by_risk?.critical ?? 0} critical · ${inventory?.by_risk?.high ?? 0} high`}
+        accent={(inventory?.high_risk ?? 0) > 0 ? 'text-amber-400' : 'text-white'} />
+      <MetricTile icon={Wand2} label="Wizard provisioned" value={fmtInt(inventory?.wizard_provisioned)}
+        sublabel="Created via /onboarding" />
+      <MetricTile icon={Shield} label="Shadow mode"
+        value={shadowActive ? `${shadowDaysLeft ?? '?'}d` : 'OFF'}
+        sublabel={shadowActive ? 'Observe-only window' : 'Enforce mode'}
+        accent={shadowActive ? 'text-amber-400' : 'text-green-400'} />
+    </>
+  );
+}
+
+function WorkspaceStatusRow({ loading, inventory, shadowActive, shadowDaysLeft }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {loading
+        ? Array.from({ length: 4 }).map((_, i) => <MetricTileSkeleton key={i} />)
+        : <WorkspaceStatusTiles inventory={inventory} shadowActive={shadowActive} shadowDaysLeft={shadowDaysLeft} />}
+    </div>
+  );
+}
+
+function ProviderCardBody({ loading, providerEntries, total }) {
+  if (loading) return <SkeletonLoader variant="text" count={3} />;
+  if (providerEntries.length === 0) {
+    return (
+      <div className="text-xs text-neutral-500 py-6 text-center space-y-3 flex flex-col items-center">
+        <Bot size={24} className="text-neutral-600" aria-hidden="true" />
+        <div className="text-neutral-300 font-medium">No agents registered yet</div>
+        <div className="text-neutral-500 max-w-xs">
+          Provider breakdown appears once you onboard your first agent.
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => <MetricTileSkeleton key={i} />)
-          ) : (
-            <>
-              <MetricTile
-                icon={FileCheck2}
-                label="Records protected"
-                value={fmtInt(overview?.business_value?.records_protected_estimate)}
-                sublabel="Bulk-PII / dump blocks"
-                tooltip="Estimated row count Aegis prevented from leaving the workspace via blocked SQL dumps / bulk PII egress."
-              />
-              <MetricTile
-                icon={AlertTriangle}
-                label="Escalations prevented"
-                value={fmtInt(overview?.business_value?.escalations_prevented)}
-                sublabel="Sent to approval inbox"
-                tooltip="Actions Aegis kicked to a human reviewer instead of letting the agent self-execute."
-              />
-              <MetricTile
-                icon={ShieldCheck}
-                label="Controls enforced"
-                value={fmtInt(overview?.business_value?.compliance_controls_enforced)}
-                sublabel="Distinct signal classes"
-                tooltip="Distinct security-signal classes (Security:*, Compliance:*, etc.) that Aegis fired against in this window."
-              />
-              <MetricTile
-                icon={DollarSign}
-                label="Dollar risk mitigated"
-                value={fmtUSD(overview?.business_value?.dollar_risk_mitigated_usd)}
-                sublabel="Wire blocks + LLM blocks"
-                accent={(overview?.business_value?.dollar_risk_mitigated_usd ?? 0) > 0 ? 'text-green-400' : 'text-white'}
-                tooltip="Sum of (wire-transfer amounts on denied money movement) + ($0.05 × blocked LLM-proxy calls). Lower-bound estimate."
-              />
-            </>
-          )}
+        <Link to="/onboarding">
+          <Button size="sm">
+            <Plus size={14} aria-hidden="true" />
+            Start with the Onboarding Wizard
+          </Button>
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {providerEntries.map(([providerId, count]) => (
+        <ProviderRow key={providerId} providerId={providerId} count={count} total={total} />
+      ))}
+    </div>
+  );
+}
+
+function RiskCardBody({ loading, riskEntries, total }) {
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 gap-2" aria-hidden="true">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3 animate-pulse h-20" />
+        ))}
+      </div>
+    );
+  }
+  if (total === 0) {
+    return (
+      <div className="text-xs text-neutral-500 py-6 text-center space-y-2 flex flex-col items-center">
+        <Shield size={20} className="text-neutral-600" aria-hidden="true" />
+        <div className="text-neutral-300 font-medium">—</div>
+        <div className="text-neutral-500 max-w-xs">
+          No risk tiers yet. Register an agent to start scoring.
         </div>
       </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {riskEntries.map(([tier, count]) => (
+        <RiskTile key={tier} tier={tier} count={count} total={total} />
+      ))}
+    </div>
+  );
+}
 
-      {/* Workspace status row — preserves the wizard / shadow-mode
-          context that used to live in the top row. Same numbers,
-          lower-priority placement now that the mandate KPIs occupy
-          the hero. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <MetricTileSkeleton key={i} />)
-        ) : (
-          <>
-            {!(inventory?.total > 0) ? (
-              <AgentsEmptyTile />
-            ) : (
-              <MetricTile
-                icon={Bot}
-                label="Total agents"
-                value={fmtInt(inventory?.total)}
-                sublabel={`${inventory?.active ?? 0} active · ${inventory?.quarantined ?? 0} quarantined`}
-              />
-            )}
-            <MetricTile
-              icon={AlertTriangle}
-              label="High risk"
-              value={fmtInt(inventory?.high_risk)}
-              sublabel={`${inventory?.by_risk?.critical ?? 0} critical · ${inventory?.by_risk?.high ?? 0} high`}
-              accent={(inventory?.high_risk ?? 0) > 0 ? 'text-amber-400' : 'text-white'}
-            />
-            <MetricTile
-              icon={Wand2}
-              label="Wizard provisioned"
-              value={fmtInt(inventory?.wizard_provisioned)}
-              sublabel="Created via /onboarding"
-            />
-            <MetricTile
-              icon={Shield}
-              label="Shadow mode"
-              value={shadowActive ? `${shadowDaysLeft ?? '?'}d` : 'OFF'}
-              sublabel={shadowActive ? 'Observe-only window' : 'Enforce mode'}
-              accent={shadowActive ? 'text-amber-400' : 'text-green-400'}
-            />
-          </>
-        )}
-      </div>
-
-      {/* Inventory hero — provider + risk-tier breakdowns */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card title="By provider" icon={Cpu} className="lg:col-span-2">
-          {loading ? (
-            <SkeletonLoader variant="text" count={3} />
-          ) : providerEntries.length === 0 ? (
-            <div className="text-xs text-neutral-500 py-6 text-center space-y-3 flex flex-col items-center">
-              <Bot size={24} className="text-neutral-600" aria-hidden="true" />
-              <div className="text-neutral-300 font-medium">No agents registered yet</div>
-              <div className="text-neutral-500 max-w-xs">
-                Provider breakdown appears once you onboard your first agent.
-              </div>
-              <Link to="/onboarding">
-                <Button size="sm">
-                  <Plus size={14} aria-hidden="true" />
-                  Start with the Onboarding Wizard
-                </Button>
-              </Link>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {providerEntries.map(([providerId, count]) => (
-                <ProviderRow
-                  key={providerId}
-                  providerId={providerId}
-                  count={count}
-                  total={inventory?.total ?? 0}
-                />
-              ))}
-            </div>
-          )}
-        </Card>
-
-        <Card title="By risk tier" icon={Shield}>
-          {loading ? (
-            <div className="grid grid-cols-2 gap-2" aria-hidden="true">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3 animate-pulse h-20"
-                />
-              ))}
-            </div>
-          ) : (inventory?.total ?? 0) === 0 ? (
-            <div className="text-xs text-neutral-500 py-6 text-center space-y-2 flex flex-col items-center">
-              <Shield size={20} className="text-neutral-600" aria-hidden="true" />
-              <div className="text-neutral-300 font-medium">—</div>
-              <div className="text-neutral-500 max-w-xs">
-                No risk tiers yet. Register an agent to start scoring.
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {riskEntries.map(([tier, count]) => (
-                <RiskTile
-                  key={tier}
-                  tier={tier}
-                  count={count}
-                  total={inventory?.total ?? 0}
-                />
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* Recent activity */}
-      <Card title="Recent activity" icon={Clock}>
-        {loading ? (
-          <SkeletonLoader variant="row" count={5} />
-        ) : recentEvents.length === 0 ? (
-          <div className="text-xs text-neutral-500 py-6 text-center flex flex-col items-center gap-3">
-            <CheckCircle2 size={24} className="text-green-400/60" aria-hidden="true" />
-            <div className="text-neutral-300 font-medium">No activity yet</div>
-            <div className="text-neutral-500 max-w-sm">
-              Decisions show up here in real time. Onboard an agent or open the
-              live event feed to verify the SSE stream is connected.
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <Link to="/onboarding">
-                <Button size="xs">
-                  <Plus size={12} aria-hidden="true" />
-                  Onboard agent
-                </Button>
-              </Link>
-              <Link to="/live-feed">
-                <Button size="xs" variant="ghost">
-                  Open live feed
-                </Button>
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {recentEvents.map((e, idx) => (
-              <li
-                key={e.id || idx}
-                className="flex items-start gap-3 text-xs text-neutral-300 border-b border-white/[0.04] last:border-b-0 py-2"
-              >
-                <span className="text-[10px] text-neutral-600 font-mono w-20 shrink-0">
-                  {e.timestamp?.slice(11, 19) || e.created_at?.slice(11, 19) || '—'}
-                </span>
-                <span className="font-mono text-[10px] uppercase text-neutral-500 w-24 shrink-0 truncate">
-                  {e.action || 'event'}
-                </span>
-                <span className="text-neutral-300 flex-1 truncate min-w-0">
-                  {e.tool_name || e.reason || e.message || '—'}
-                </span>
-                <span className="text-[10px] font-mono text-neutral-600 truncate w-16 shrink-0 hidden sm:inline">
-                  {(e.agent_id || '').slice(0, 8) || '—'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+function InventoryHeroRow({ loading, providerEntries, riskEntries, total }) {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <Card title="By provider" icon={Cpu} className="lg:col-span-2">
+        <ProviderCardBody loading={loading} providerEntries={providerEntries} total={total} />
+      </Card>
+      <Card title="By risk tier" icon={Shield}>
+        <RiskCardBody loading={loading} riskEntries={riskEntries} total={total} />
       </Card>
     </div>
+  );
+}
+
+function RecentActivityEmpty() {
+  return (
+    <div className="text-xs text-neutral-500 py-6 text-center flex flex-col items-center gap-3">
+      <CheckCircle2 size={24} className="text-green-400/60" aria-hidden="true" />
+      <div className="text-neutral-300 font-medium">No activity yet</div>
+      <div className="text-neutral-500 max-w-sm">
+        Decisions show up here in real time. Onboard an agent or open the
+        live event feed to verify the SSE stream is connected.
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <Link to="/onboarding">
+          <Button size="xs"><Plus size={12} aria-hidden="true" />Onboard agent</Button>
+        </Link>
+        <Link to="/live-feed">
+          <Button size="xs" variant="ghost">Open live feed</Button>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function RecentActivityList({ events }) {
+  return (
+    <ul className="space-y-2">
+      {events.map((e, idx) => (
+        <li key={e.id || idx}
+          className="flex items-start gap-3 text-xs text-neutral-300 border-b border-white/[0.04] last:border-b-0 py-2">
+          <span className="text-[10px] text-neutral-600 font-mono w-20 shrink-0">
+            {e.timestamp?.slice(11, 19) || e.created_at?.slice(11, 19) || '—'}
+          </span>
+          <span className="font-mono text-[10px] uppercase text-neutral-500 w-24 shrink-0 truncate">
+            {e.action || 'event'}
+          </span>
+          <span className="text-neutral-300 flex-1 truncate min-w-0">
+            {e.tool_name || e.reason || e.message || '—'}
+          </span>
+          <span className="text-[10px] font-mono text-neutral-600 truncate w-16 shrink-0 hidden sm:inline">
+            {(e.agent_id || '').slice(0, 8) || '—'}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RecentActivityCard({ loading, events }) {
+  return (
+    <Card title="Recent activity" icon={Clock}>
+      {loading
+        ? <SkeletonLoader variant="row" count={5} />
+        : events.length === 0
+          ? <RecentActivityEmpty />
+          : <RecentActivityList events={events} />}
+    </Card>
   );
 }

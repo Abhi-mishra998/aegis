@@ -3,6 +3,7 @@ import { registryService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { useSSE } from '../hooks/useSSE'
 import { eventBus } from '../lib/eventBus'
+import { logger } from '../lib/logger'
 
 export const AgentContext = createContext({
   agents: [],
@@ -45,7 +46,7 @@ export function AgentProvider({ children }) {
         return active?.id || list[0]?.id || null
       })
     } catch (err) {
-      console.error('AGENT_FETCH_FAILED:', err.message)
+      logger.warn('AGENT_FETCH_FAILED:', err.message)
     } finally {
       if (mountedRef.current) setAgentsLoading(false)
     }

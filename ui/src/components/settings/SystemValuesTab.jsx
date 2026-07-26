@@ -10,6 +10,7 @@ import {
 import { workspaceService } from '../../services/api';
 import { useRole } from '../../hooks/useRole';
 import Button from '../Common/Button';
+import { fmtUsdCompact } from '../../lib/formatters';
 
 /**
  * Sprint 8 — System Values tab.
@@ -31,13 +32,6 @@ const SUGGESTED_KINDS = [
   { kind: 'queue',    blurb: 'Message queues / streams (SQS, Kafka)' },
   { kind: 'function', blurb: 'Lambdas / cloud functions' },
 ];
-
-function formatDollars(value) {
-  const n = Number(value) || 0;
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `$${(n / 1_000).toFixed(0)}K`;
-  return `$${n}`;
-}
 
 export default function SystemValuesTab() {
   const { canExitShadowMode: isOwner } = useRole(); // OWNER gate reused
@@ -131,7 +125,7 @@ export default function SystemValuesTab() {
       const totalKinds = Object.keys(sv).length;
       const totalDollars = Object.values(sv).reduce((s, v) => s + Number(v || 0), 0);
       setSuccessMsg(
-        `Saved. ${totalKinds} kinds, ${formatDollars(totalDollars)} total weight.`,
+        `Saved. ${totalKinds} kinds, ${fmtUsdCompact(totalDollars)} total weight.`,
       );
     } catch (err) {
       setError(err?.message || 'Save failed');

@@ -290,8 +290,8 @@ export default function SiemSettings() {
         </p>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-neutral-400">Events:</label>
-            <select name="select"
+            <label htmlFor="siem-push-limit" className="text-xs text-neutral-400">Events:</label>
+            <select id="siem-push-limit" name="select"
               value={pushLimit}
               onChange={e => setPushLimit(Number(e.target.value))}
               className="bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-sm text-white focus:outline-none"

@@ -13,11 +13,11 @@
 //   POST /audit/playground/replay
 //   POST /audit/playground/publish
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ShieldCheck, AlertTriangle, Eye, Beaker, History, Save,
-  CheckCircle2, XCircle, Sigma, GitCompare, ArrowRight, EyeOff, GitMerge,
+  CheckCircle2, XCircle, Sigma, GitCompare, EyeOff, GitMerge,
 } from 'lucide-react'
 import { policyPlaygroundService } from '../services/api'
 

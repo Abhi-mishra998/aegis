@@ -10,6 +10,7 @@ import 'reactflow/dist/style.css';
 import { AlertOctagon, Network, RefreshCw, Target } from 'lucide-react';
 
 import { iagService } from '../services/api';
+import { fmtEpochShort } from '../lib/formatters';
 import { AgentContext } from '../context/AgentContext';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
@@ -281,7 +282,7 @@ export default function ThreatGraph() {
             onClick={async () => {
               try {
                 await iagService.refreshGraph(30);
-              } catch (e) {
+              } catch (_e) {
                 // Best-effort — the user always gets the regular Refresh too.
               }
               setRefreshTick((t) => t + 1);
@@ -321,7 +322,7 @@ export default function ThreatGraph() {
                 <span>Criticality: <span className="text-white font-bold">{iag.criticality_score ?? 0}</span></span>
                 {iag.last_ingest_ts > 0 && (
                   <span className="font-mono">
-                    Ingest: {new Date(iag.last_ingest_ts * 1000).toISOString().slice(0, 16).replace('T', ' ')}
+                    Ingest: {fmtEpochShort(iag.last_ingest_ts)}
                   </span>
                 )}
               </div>

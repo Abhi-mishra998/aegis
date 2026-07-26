@@ -7,13 +7,11 @@ import {
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, ComposedChart, Line, LineChart, AreaChart, Area, ReferenceLine,
+  ResponsiveContainer, ComposedChart, Line, LineChart, AreaChart, Area, ReferenceLine,
 } from 'recharts'
-import { policyService, auditService } from '../services/api'
+import { auditService } from '../services/api'
 import { useSSE } from '../hooks/useSSE'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
-
-const RISK_COLOR = { low: '#22c55e', medium: '#f59e0b', high: '#ef4444', critical: '#7c3aed' }
 
 function KpiCard({ icon: Icon, label, value, sub, accent = '' }) {
   return (

@@ -8,15 +8,7 @@ import {
 } from 'lucide-react';
 import { iagService } from '../../services/api';
 import Card from '../Common/Card';
-
-function formatTs(epoch) {
-  if (!epoch || epoch <= 0) return 'never';
-  try {
-    return new Date(epoch * 1000).toISOString().slice(0, 16).replace('T', ' ');
-  } catch {
-    return '—';
-  }
-}
+import { fmtEpochShort, fmtUsdCompact } from '../../lib/formatters';
 
 function CriticalityPill({ score }) {
   const n = Number(score) || 0;
@@ -30,14 +22,6 @@ function CriticalityPill({ score }) {
       {tier.label} · {n}
     </span>
   );
-}
-
-function formatDollars(value) {
-  const n = Number(value) || 0;
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000)     return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)         return `$${(n / 1_000).toFixed(0)}K`;
-  return `$${n}`;
 }
 
 /** Sprint 8 — Blast-radius dollar headline. */
@@ -59,7 +43,7 @@ function DollarHeadline({ dollarEstimate, systemValuesConfigured, byKindDollars 
         Could have reached
       </div>
       <div className="text-2xl font-bold text-white">
-        {formatDollars(dollarEstimate)}
+        {fmtUsdCompact(dollarEstimate)}
       </div>
       {byKindDollars && Object.keys(byKindDollars).length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
@@ -68,7 +52,7 @@ function DollarHeadline({ dollarEstimate, systemValuesConfigured, byKindDollars 
               key={kind}
               className="inline-flex items-center gap-1 text-[10px] font-mono text-red-200 bg-red-500/[0.08] border border-red-500/20 rounded px-1.5 py-0.5"
             >
-              {kind}: {formatDollars(dollars)}
+              {kind}: {fmtUsdCompact(dollars)}
             </span>
           ))}
         </div>
@@ -169,7 +153,7 @@ export default function BlastRadiusCard({ incidentId }) {
             <CriticalityPill score={data.criticality_score} />
             <div className="text-[10px] text-neutral-500">
               <Network size={10} className="inline mr-1 -mt-0.5" aria-hidden="true" />
-              Last ingest: {formatTs(data.last_ingest_ts)}
+              Last ingest: {fmtEpochShort(data.last_ingest_ts)}
             </div>
             {data.participating_agents?.length > 0 && (
               <div className="text-[10px] text-neutral-500">

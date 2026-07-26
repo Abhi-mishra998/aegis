@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Activity, FileText, Hash, Clock, Filter, Eye,
   ToggleLeft, ToggleRight, CheckCircle2, XCircle, Download,
-  HelpCircle, Loader2, AlertTriangle, MessageSquare, Plus, Send,
+  HelpCircle, Loader2, AlertTriangle, MessageSquare, Send,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -670,8 +670,8 @@ export default function AuditLogs() {
       <Card title="Search &amp; Filter" icon={Filter}>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           <div className="space-y-1.5">
-            <label className="label-standard">Agent Scope</label>
-            <div className="input-standard h-9 font-mono flex items-center text-xs text-neutral-300">
+            <div id="al-scope-label" className="label-standard">Agent Scope</div>
+            <div aria-labelledby="al-scope-label" className="input-standard h-9 font-mono flex items-center text-xs text-neutral-300">
               {effectiveAgentId
                 ? (selectedAgent?.name || effectiveAgentId.slice(0, 8) + '…')
                 : <span className="text-neutral-600">all agents (use sidebar to scope)</span>}

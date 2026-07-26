@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -55,6 +56,27 @@ export default defineConfig({
           return 'vendor'
         },
       },
+    },
+  },
+  test: {
+    // jsdom is required for the React Testing Library render(); node
+    // environment can't hydrate DOM components. Setup file loads
+    // @testing-library/jest-dom matchers globally.
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/setupTests.js'],
+    include: ['src/**/*.{test,spec}.{js,jsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'json-summary'],
+      include: ['src/**/*.{js,jsx}'],
+      exclude: [
+        'src/**/*.{test,spec}.{js,jsx}',
+        'src/__mocks__/**',
+        'src/setupTests.js',
+        'src/test-utils.jsx',
+        'src/main.jsx',
+      ],
     },
   },
 })

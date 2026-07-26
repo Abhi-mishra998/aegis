@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Shield, Play, RefreshCw, Plus, Trash2, History,
-  Zap, CheckCircle2, AlertTriangle, Loader2, X,
+  Shield, RefreshCw, Plus, Trash2, History,
+  Zap, Loader2,
   ToggleLeft, ToggleRight, Code, Clock,
 } from 'lucide-react'
 import { playbookService } from '../services/api'
@@ -10,6 +10,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSSE } from '../hooks/useSSE'
 import { eventBus } from '../lib/eventBus'
 import SkeletonLoader from '../components/Common/SkeletonLoader'
+import Modal from '../components/Common/Modal'
 
 const STEP_COLORS = {
   KILL_AGENT:    'text-red-400',
@@ -59,24 +60,43 @@ function TriggerModal({ playbook, onClose, onTriggered }) {
     }
   }
 
+  const ctxId = 'pb-trigger-ctx'
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative bg-[var(--bg-surface-elevated)] border border-[var(--border-default)] rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4 space-y-4" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">Trigger: {playbook.name}</h2>
-          <button onClick={onClose} className="text-neutral-600 hover:text-white"><X size={16} /></button>
-        </div>
-
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={`Trigger: ${playbook.name}`}
+      size="md"
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-lg border border-[var(--border-subtle)] text-sm text-neutral-400 hover:text-white hover:border-white/20"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={trigger}
+            disabled={loading}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+            {loading ? 'Triggering…' : 'Trigger Playbook'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
         {error && (
           <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</div>
         )}
-
         <div>
-          <label className="block text-xs text-neutral-400 mb-1.5 flex items-center gap-1.5">
-            <Code size={11} /> Context JSON
+          <label htmlFor={ctxId} className="text-xs text-neutral-400 mb-1.5 flex items-center gap-1.5">
+            <Code size={11} aria-hidden="true" /> Context JSON
           </label>
-          <textarea name="text"
+          <textarea
+            id={ctxId}
+            name="text"
             value={ctx}
             onChange={e => { setCtx(e.target.value); setCtxErr('') }}
             rows={5}
@@ -87,22 +107,8 @@ function TriggerModal({ playbook, onClose, onTriggered }) {
           {ctxErr && <p className="text-[10px] text-red-400 mt-1">{ctxErr}</p>}
           <p className="text-[10px] text-neutral-600 mt-1">Optional context passed to playbook steps.</p>
         </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={trigger}
-            disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white text-black text-sm font-medium hover:bg-neutral-200 disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-            {loading ? 'Triggering…' : 'Trigger Playbook'}
-          </button>
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg border border-[var(--border-subtle)] text-sm text-neutral-400 hover:text-white hover:border-white/20">
-            Cancel
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -123,58 +129,55 @@ function RunsModal({ playbookId, onClose }) {
     s === 'success' ? 'text-green-400' : s === 'failed' ? 'text-red-400' : 'text-amber-400'
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative bg-[var(--bg-surface-elevated)] border border-[var(--border-default)] rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4 space-y-4" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2"><History size={14} /> Run History</h2>
-          <button onClick={onClose} className="text-neutral-600 hover:text-white"><X size={16} /></button>
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={<span className="flex items-center gap-2"><History size={14} aria-hidden="true" /> Run History</span>}
+      size="lg"
+    >
+      {loading ? (
+        <div className="flex items-center justify-center h-32">
+          <Loader2 className="animate-spin text-neutral-500" size={22} />
         </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center h-32">
-            <Loader2 className="animate-spin text-neutral-500" size={22} />
-          </div>
-        ) : loadError ? (
-          <div className="text-center py-10 px-4">
-            <p className="text-xs text-red-400">{loadError}</p>
-            <p className="text-[10px] text-neutral-600 mt-1">Could not reach the playbook service; try again in a moment.</p>
-          </div>
-        ) : runs.length === 0 ? (
-          <div className="text-center py-12 px-4 space-y-2">
-            <History size={24} className="text-neutral-700 mx-auto mb-3" />
-            <p className="text-sm text-neutral-500">No runs yet.</p>
-            <p className="text-xs text-neutral-600 max-w-xs mx-auto">
-              Install a playbook from the Templates tab or trigger one manually
-              to populate this history.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-            {runs.map((r, i) => (
-              <div key={r.id || i} className="p-3 rounded-xl border border-[var(--border-subtle)] bg-white/[0.02] space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className={`font-semibold ${statusColor(r.status)}`}>{r.status?.toUpperCase() || 'UNKNOWN'}</span>
-                  <span className="text-neutral-600 font-mono text-[10px]">
-                    {r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
-                  </span>
-                </div>
-                <p className="text-[10px] text-neutral-500">by {r.triggered_by || 'manual'}</p>
-                {r.steps_executed?.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {r.steps_executed.map((s, j) => (
-                      <span key={j} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.02] border border-white/[0.05] text-neutral-500 font-mono">
-                        {s.action_type || s}
-                      </span>
-                    ))}
-                  </div>
-                )}
+      ) : loadError ? (
+        <div className="text-center py-10 px-4">
+          <p className="text-xs text-red-400">{loadError}</p>
+          <p className="text-[10px] text-neutral-600 mt-1">Could not reach the playbook service; try again in a moment.</p>
+        </div>
+      ) : runs.length === 0 ? (
+        <div className="text-center py-12 px-4 space-y-2">
+          <History size={24} className="text-neutral-700 mx-auto mb-3" aria-hidden="true" />
+          <p className="text-sm text-neutral-500">No runs yet.</p>
+          <p className="text-xs text-neutral-600 max-w-xs mx-auto">
+            Install a playbook from the Templates tab or trigger one manually
+            to populate this history.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+          {runs.map((r, i) => (
+            <div key={r.id || i} className="p-3 rounded-xl border border-[var(--border-subtle)] bg-white/[0.02] space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className={`font-semibold ${statusColor(r.status)}`}>{r.status?.toUpperCase() || 'UNKNOWN'}</span>
+                <span className="text-neutral-600 font-mono text-[10px]">
+                  {r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
+                </span>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+              <p className="text-[10px] text-neutral-500">by {r.triggered_by || 'manual'}</p>
+              {r.steps_executed?.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {r.steps_executed.map((s, j) => (
+                    <span key={j} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.02] border border-white/[0.05] text-neutral-500 font-mono">
+                      {s.action_type || s}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   )
 }
 

@@ -2,16 +2,13 @@ import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   GitMerge, Plus, Trash2, ChevronRight, Eye, Save,
-  AlertTriangle, CheckCircle2, Info, FlaskConical, X,
+  AlertTriangle, CheckCircle2, Info, FlaskConical,
   Code2, Upload, PlayCircle, Sparkles, Shield, BookOpen, ArrowRight,
 } from 'lucide-react'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
-import Modal from '../components/Common/Modal'
-import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { registryService, policyService } from '../services/api'
 import { useAgents } from '../hooks/useAgents'
-import { eventBus } from '../lib/eventBus'
 
 const CONDITION_FIELDS = [
   { value: 'risk_score',     label: 'Risk Score',     type: 'number', placeholder: '0.0 – 1.0' },
@@ -38,14 +35,6 @@ const ACTION_STYLES = {
   MONITOR:  'text-blue-400   bg-blue-500/10   border-blue-500/20',
   THROTTLE: 'text-amber-400  bg-amber-500/10  border-amber-500/20',
   ESCALATE: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
-}
-
-const TOOL_CATEGORIES = {
-  'File System': ['read_file', 'write_file', 'delete_file', 'list_dir'],
-  'Database':    ['run_sql', 'query_db', 'execute_query', 'db_write'],
-  'Network':     ['http_request', 'web_search', 'send_email', 'api_call'],
-  'Code':        ['run_code', 'execute_script', 'bash_command', 'python_eval'],
-  'Kubernetes':  ['kubectl', 'k8s.deploy', 'k8s.delete', 'k8s.scale'],
 }
 
 const OP_MAP = { gt: '>', gte: '>=', lt: '<', lte: '<=', eq: '==', neq: '!=' }
@@ -671,10 +660,10 @@ export default function PolicyBuilder() {
           <Card title="Simulation" icon={FlaskConical}>
             <div className="space-y-3">
               <div>
-                <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">
+                <div id="pb-replay-label" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">
                   Replay window
-                </label>
-                <div className="flex gap-1.5">
+                </div>
+                <div role="radiogroup" aria-labelledby="pb-replay-label" className="flex gap-1.5">
                   {['1h', '6h', '24h', '7d'].map(r => (
                     <button
                       key={r}
@@ -756,10 +745,10 @@ export default function PolicyBuilder() {
           <Card title="Activate Policy" icon={Upload}>
             <div className="space-y-3">
               <div>
-                <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">
+                <label htmlFor="pb-policy-name" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">
                   Policy name
                 </label>
-                <input name="input"
+                <input id="pb-policy-name" name="input"
                   type="text"
                   value={policyName}
                   onChange={(e) => setPolicyName(e.target.value.replace(/[^a-zA-Z0-9_]/g, '_'))}

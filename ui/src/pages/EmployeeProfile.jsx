@@ -158,7 +158,10 @@ export default function EmployeeProfile() {
 
   useEffect(() => { fetchProfile() }, [fetchProfile])
 
-  const trend = data?.trend_30d || []
+  // Memoise `trend` — otherwise `data?.trend_30d || []` allocates a fresh
+  // array reference on every render, which makes the totalRequests30d useMemo
+  // downstream fire every render too.
+  const trend = useMemo(() => data?.trend_30d || [], [data?.trend_30d])
   const recent = data?.recent_calls || []
   const totalRequests30d = useMemo(
     () => trend.reduce((acc, t) => acc + (Number(t.requests) || 0), 0),

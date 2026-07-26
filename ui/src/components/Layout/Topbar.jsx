@@ -9,7 +9,7 @@ import AgentScopePicker from './AgentScopePicker'
 
 export default function Topbar({ onMenuClick, onCommandPalette }) {
   const navigate  = useNavigate()
-  const { user, tenant_id, role: ctxRole, updateAuth, addToast } = useAuth()
+  const { user, tenant_id, role: ctxRole, updateAuth } = useAuth()
   const { sseConnected } = useContext(AgentContext)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [openIncidents, setOpenIncidents] = useState(0)

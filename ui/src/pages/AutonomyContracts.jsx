@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { RefreshCw, Shield, AlertTriangle, UserCheck, Plus, Trash2, Lock, ArrowRight, PlayCircle } from 'lucide-react'
+import { RefreshCw, Shield, AlertTriangle, UserCheck, Plus, Trash2, Lock, ArrowRight } from 'lucide-react'
 import { autonomyService } from '../services/api'
 import Modal from '../components/Common/Modal'
 import ConfirmDialog from '../components/Common/ConfirmDialog'
@@ -21,9 +21,9 @@ const defaultContract = {
   notes: '',
 }
 
-function CSV({ value, onChange, placeholder }) {
+function CSV({ inputId, value, onChange, placeholder }) {
   return (
-    <input name="input"
+    <input id={inputId} name="input"
       type="text"
       value={(value || []).join(', ')}
       onChange={(e) => onChange(
@@ -321,10 +321,10 @@ export default function AutonomyContracts() {
             onSubmit={(e) => { e.preventDefault(); save() }}
           >
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-agent-id" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Agent ID (uuid)
               </label>
-              <input name="agent_id"
+              <input id="ac-agent-id" name="agent_id"
                 value={editing.agent_id}
                 onChange={(e) => setEditing({ ...editing, agent_id: e.target.value })}
                 placeholder="00000000-0000-0000-0000-000000000000"
@@ -332,10 +332,10 @@ export default function AutonomyContracts() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-name" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Name
               </label>
-              <input name="name"
+              <input id="ac-name" name="name"
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 placeholder="prod_safety_contract"
@@ -343,40 +343,43 @@ export default function AutonomyContracts() {
               />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-allowed" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Allowed actions <span className="text-neutral-600 normal-case font-medium tracking-normal">(comma-separated; * = wildcard)</span>
               </label>
               <CSV
+                inputId="ac-allowed"
                 value={editing.allowed_actions}
                 onChange={(v) => setEditing({ ...editing, allowed_actions: v })}
                 placeholder="read_*, summarize, query"
               />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-denied" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Denied actions
               </label>
               <CSV
+                inputId="ac-denied"
                 value={editing.denied_actions}
                 onChange={(v) => setEditing({ ...editing, denied_actions: v })}
                 placeholder="external_http_calls, delete_*"
               />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-approval" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Approval required
               </label>
               <CSV
+                inputId="ac-approval"
                 value={editing.approval_required}
                 onChange={(v) => setEditing({ ...editing, approval_required: v })}
                 placeholder="payment_above_10000"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-max-runtime" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max runtime (s)
               </label>
-              <input name="max_runtime_seconds"
+              <input id="ac-max-runtime" name="max_runtime_seconds"
                 type="number"
                 inputMode="numeric"
                 value={editing.max_runtime_seconds || ''}
@@ -385,10 +388,10 @@ export default function AutonomyContracts() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-max-tools" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max tool calls
               </label>
-              <input name="max_tool_calls"
+              <input id="ac-max-tools" name="max_tool_calls"
                 type="number"
                 inputMode="numeric"
                 value={editing.max_tool_calls || ''}
@@ -397,10 +400,10 @@ export default function AutonomyContracts() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-max-cost" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max cost (USD)
               </label>
-              <input name="max_cost_usd"
+              <input id="ac-max-cost" name="max_cost_usd"
                 type="number"
                 inputMode="decimal"
                 step="0.01"
@@ -410,10 +413,10 @@ export default function AutonomyContracts() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-max-auton" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Max autonomy level <span className="text-neutral-600 normal-case font-medium tracking-normal">(1–5)</span>
               </label>
-              <input name="max_autonomy_level"
+              <input id="ac-max-auton" name="max_autonomy_level"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -424,10 +427,10 @@ export default function AutonomyContracts() {
               />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
-              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+              <label htmlFor="ac-notes" className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 Notes
               </label>
-              <textarea name="notes"
+              <textarea id="ac-notes" name="notes"
                 rows={3}
                 value={editing.notes || ''}
                 onChange={(e) => setEditing({ ...editing, notes: e.target.value })}

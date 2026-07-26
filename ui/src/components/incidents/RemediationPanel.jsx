@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertOctagon,
   Check,
@@ -115,11 +115,18 @@ export default function RemediationPanel({ incidentId }) {
   const [replaying, setReplaying] = useState(false);
   const [replayMsg, setReplayMsg] = useState(null);
 
+  // Bumped by the mount-cleanup on every incidentId change AND by handleReplay
+  // after a successful replay. In-flight fetches compare their token against
+  // this ref before calling setState, so a stale response from a previous
+  // incident never overwrites the current one.
+  const loadTokenRef = useRef(0);
+
   const load = () => {
     if (!incidentId) {
       setLoading(false);
       return Promise.resolve();
     }
+    const token = ++loadTokenRef.current;
     setLoading(true);
     setError(null);
     return Promise.all([
@@ -131,22 +138,24 @@ export default function RemediationPanel({ incidentId }) {
       }),
     ])
       .then(([polResp, ledResp]) => {
+        if (token !== loadTokenRef.current) return;
         setPolicy(polResp?.data || polResp || null);
         const items = ledResp?.data?.items || ledResp?.items || [];
         setLedger(Array.isArray(items) ? items : []);
         setLoading(false);
       })
       .catch((err) => {
+        if (token !== loadTokenRef.current) return;
         setError(err?.message || 'Failed to load remediation data');
         setLoading(false);
       });
   };
 
   useEffect(() => {
-    let cancelled = false;
     load().catch(() => {});
     return () => {
-      cancelled = true;
+      // Invalidate any in-flight fetch so its .then() no-ops.
+      loadTokenRef.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentId]);

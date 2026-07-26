@@ -8,6 +8,7 @@ import {
 import { ssoService } from '../services/api'
 import { SecretInput } from '../components/Common/ConnectorPrimitives'
 import { useAuth } from '../hooks/useAuth'
+import { logger } from '../lib/logger'
 
 const PROVIDER_TYPES = [
   { value: 'saml',  label: 'SAML 2.0',   desc: 'Okta, Azure AD, ADFS, OneLogin' },
@@ -159,7 +160,7 @@ export default function SsoSettings() {
       })
       .catch(err => {
         // Non-fatal: falls back to hard-coded SAML/OIDC list.
-        console.warn('[SsoSettings] provider list fetch failed', err)
+        logger.warn('[SsoSettings] provider list fetch failed', err)
         addToast('Could not load SSO provider catalog — using default SAML/OIDC options', 'info')
       })
     ssoService.getConfig()
@@ -168,7 +169,7 @@ export default function SsoSettings() {
         if (c.provider_type) setCfg(prev => ({ ...prev, ...c }))
       })
       .catch(err => {
-        console.warn('[SsoSettings] SSO config fetch failed', err)
+        logger.warn('[SsoSettings] SSO config fetch failed', err)
         setLoadError(true)
         addToast('Failed to load SSO configuration — form fields may be stale', 'error')
       })

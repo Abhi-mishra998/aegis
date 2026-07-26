@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { AlertCircle, CheckCircle, Info, X } from 'lucide-react'
 
 /**
@@ -12,18 +12,18 @@ import { AlertCircle, CheckCircle, Info, X } from 'lucide-react'
 export default function Toast({ message, type, onClose, ttl = 5000, action }) {
   const [isClosing, setIsClosing] = useState(false)
 
+  const handleClose = useCallback(() => {
+    setIsClosing(true)
+    setTimeout(onClose, 300)
+  }, [onClose])
+
   useEffect(() => {
     const timer = setTimeout(() => {
       handleClose()
     }, ttl)
 
     return () => clearTimeout(timer)
-  }, [ttl])
-
-  const handleClose = () => {
-    setIsClosing(true)
-    setTimeout(onClose, 300)
-  }
+  }, [ttl, handleClose])
 
   const colors = {
     success: 'bg-emerald-900/90 text-emerald-100 border-emerald-500/50 shadow-emerald-500/20',

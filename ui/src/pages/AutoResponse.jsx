@@ -12,6 +12,7 @@ import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { autoResponseService, playbookService } from '../services/api'
 import { AuthContext } from '../context/AuthContext'
 import { eventBus } from '../lib/eventBus'
+import { logger } from '../lib/logger'
 import { useSSE } from '../hooks/useSSE'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -143,8 +144,8 @@ function RuleFormModal({ initial, onSave, onClose }) {
         {/* Basic info */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-2">
-            <label className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5">Rule Name</label>
-            <input name="name"
+            <label htmlFor="ar-name" className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5">Rule Name</label>
+            <input id="ar-name" name="name"
               className="input-standard h-10 text-sm w-full"
               value={form.name}
               onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
@@ -152,8 +153,8 @@ function RuleFormModal({ initial, onSave, onClose }) {
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5">Priority (0-1000)</label>
-            <input name="priority"
+            <label htmlFor="ar-priority" className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5">Priority (0-1000)</label>
+            <input id="ar-priority" name="priority"
               type="number" min="0" max="1000"
               className="input-standard h-10 text-sm w-full font-mono"
               value={form.priority}
@@ -168,8 +169,8 @@ function RuleFormModal({ initial, onSave, onClose }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Detection Window</label>
-              <div className="flex gap-1.5">
+              <div id="ar-window-label" className="text-[11px] text-neutral-500 font-medium block mb-1.5">Detection Window</div>
+              <div role="group" aria-labelledby="ar-window-label" className="flex gap-1.5">
                 {WINDOW_OPTIONS.map(w => (
                   <button key={w} onClick={() => setCond('window', w)}
                     className={`px-3 py-1.5 rounded text-[12px] font-mono border transition-colors ${form.conditions.window === w ? 'text-purple-300 bg-purple-500/10 border-purple-500/30' : 'text-neutral-500 border-white/[0.06] hover:text-neutral-300'}`}>
@@ -179,8 +180,8 @@ function RuleFormModal({ initial, onSave, onClose }) {
               </div>
             </div>
             <div>
-              <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Min violations in window</label>
-              <input name="conditions" type="number" min="1" max="100"
+              <label htmlFor="ar-min-viol" className="text-[11px] text-neutral-500 font-medium block mb-1.5">Min violations in window</label>
+              <input id="ar-min-viol" name="conditions" type="number" min="1" max="100"
                 className="input-standard h-9 text-sm w-full"
                 value={form.conditions.min_violations}
                 onChange={e => setCond('min_violations', Number(e.target.value))}
@@ -189,8 +190,8 @@ function RuleFormModal({ initial, onSave, onClose }) {
           </div>
 
           <div>
-            <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Severity (select any)</label>
-            <div className="flex gap-2">
+            <div id="ar-sev-label" className="text-[11px] text-neutral-500 font-medium block mb-1.5">Severity (select any)</div>
+            <div role="group" aria-labelledby="ar-sev-label" className="flex gap-2">
               {SEV_OPTIONS.map(s => {
                 const active = (form.conditions?.severity_in || []).includes(s)
                 const cls = { CRITICAL: 'red', HIGH: 'orange', MEDIUM: 'amber', LOW: 'green' }[s]
@@ -208,24 +209,24 @@ function RuleFormModal({ initial, onSave, onClose }) {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Min risk score</label>
-              <input name="conditions" type="number" min="0" max="1" step="0.05"
+              <label htmlFor="ar-risk" className="text-[11px] text-neutral-500 font-medium block mb-1.5">Min risk score</label>
+              <input id="ar-risk" name="conditions" type="number" min="0" max="1" step="0.05"
                 className="input-standard h-9 text-sm w-full font-mono"
                 value={form.conditions.risk_score_gte}
                 onChange={e => setCond('risk_score_gte', Number(e.target.value))}
               />
             </div>
             <div>
-              <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Agent ID (* = any)</label>
-              <input name="conditions" type="text"
+              <label htmlFor="ar-agent" className="text-[11px] text-neutral-500 font-medium block mb-1.5">Agent ID (* = any)</label>
+              <input id="ar-agent" name="conditions" type="text"
                 className="input-standard h-9 text-sm w-full font-mono"
                 value={form.conditions.agent_id}
                 onChange={e => setCond('agent_id', e.target.value)}
               />
             </div>
             <div>
-              <label className="text-[11px] text-neutral-500 font-medium block mb-1.5">Tool filter (comma-sep)</label>
-              <input name="conditions" type="text"
+              <label htmlFor="ar-tool" className="text-[11px] text-neutral-500 font-medium block mb-1.5">Tool filter (comma-sep)</label>
+              <input id="ar-tool" name="conditions" type="text"
                 className="input-standard h-9 text-sm w-full font-mono"
                 placeholder="payments.write,data.export"
                 value={(form.conditions.tool_in || []).join(',')}
@@ -285,8 +286,8 @@ function RuleFormModal({ initial, onSave, onClose }) {
         {/* Mode + stop_on_match */}
         <div className="flex items-center gap-4">
           <div>
-            <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Execution Mode</label>
-            <div className="flex gap-1.5">
+            <div id="ar-mode-label" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Execution Mode</div>
+            <div role="group" aria-labelledby="ar-mode-label" className="flex gap-1.5">
               {Object.entries(MODE_CONFIG).map(([m, cfg]) => (
                 <button key={m} onClick={() => setForm(p => ({ ...p, mode: m }))}
                   className={`px-2.5 py-1 rounded text-[11px] border transition-colors ${form.mode === m ? cfg.cls : 'text-neutral-600 border-white/[0.06] hover:text-neutral-400'}`}
@@ -307,16 +308,16 @@ function RuleFormModal({ initial, onSave, onClose }) {
         {/* Limits */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="text-[11px] text-neutral-500 uppercase tracking-widest block mb-1.5">Cooldown (seconds)</label>
-            <input name="cooldown_seconds" type="number" min="0"
+            <label htmlFor="ar-cooldown" className="text-[11px] text-neutral-500 uppercase tracking-widest block mb-1.5">Cooldown (seconds)</label>
+            <input id="ar-cooldown" name="cooldown_seconds" type="number" min="0"
               className="input-standard h-10 text-sm w-full font-mono"
               value={form.cooldown_seconds}
               onChange={e => setForm(p => ({ ...p, cooldown_seconds: Number(e.target.value) }))}
             />
           </div>
           <div>
-            <label className="text-[11px] text-neutral-500 uppercase tracking-widest block mb-1.5">Max triggers / hour</label>
-            <input name="max_triggers_per_hour" type="number" min="1"
+            <label htmlFor="ar-max-triggers" className="text-[11px] text-neutral-500 uppercase tracking-widest block mb-1.5">Max triggers / hour</label>
+            <input id="ar-max-triggers" name="max_triggers_per_hour" type="number" min="1"
               className="input-standard h-10 text-sm w-full font-mono"
               value={form.max_triggers_per_hour}
               onChange={e => setForm(p => ({ ...p, max_triggers_per_hour: Number(e.target.value) }))}
@@ -610,13 +611,13 @@ function FeedbackModal({ rule, onClose, onDone }) {
       <div className="space-y-4">
         <p className="text-xs text-neutral-400">This trigger was a false positive. Suppress the rule temporarily and increment the FP counter.</p>
         <div>
-          <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Reason</label>
-          <textarea name="text" rows={2} value={reason} onChange={e => setReason(e.target.value)}
+          <label htmlFor="fp-reason" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Reason</label>
+          <textarea id="fp-reason" name="text" rows={2} value={reason} onChange={e => setReason(e.target.value)}
             className="input-standard w-full text-xs resize-none" placeholder="Why was this a false positive?" />
         </div>
         <div>
-          <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Suppress for (minutes, 0 = no suppression)</label>
-          <input name="input" type="number" min="0" max="1440" value={suppress} onChange={e => setSuppress(Number(e.target.value))}
+          <label htmlFor="fp-suppress" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Suppress for (minutes, 0 = no suppression)</label>
+          <input id="fp-suppress" name="input" type="number" min="0" max="1440" value={suppress} onChange={e => setSuppress(Number(e.target.value))}
             className="input-standard input-compact h-8 text-xs w-full" />
         </div>
         <div className="flex justify-end gap-2">
@@ -849,7 +850,7 @@ function RunsModal({ playbookId, onClose }) {
     playbookService.getRuns(playbookId)
       .then(r => setRuns(r?.data || r || []))
       .catch(err => {
-        console.warn('[AutoResponse] playbook run history fetch failed', err)
+        logger.warn('[AutoResponse] playbook run history fetch failed', err)
         addToast('Could not load playbook run history', 'error')
       })
       .finally(() => setLoading(false))

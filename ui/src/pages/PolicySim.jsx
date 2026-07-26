@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Play, Plus, Trash2, ChevronDown, ChevronUp,
   Shield, AlertTriangle, CheckCircle2, Loader2,
   ArrowRight, BarChart2, FlaskConical, GitMerge,
 } from 'lucide-react'
-import { policyService, registryService } from '../services/api'
+import { policyService } from '../services/api'
 import { useAgents } from '../hooks/useAgents'
 
 const FIELDS    = ['risk_score', 'tool', 'inference_risk', 'behavior_risk', 'anomaly_score']
@@ -223,9 +223,9 @@ export default function PolicySim() {
         <h2 className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Configuration</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-neutral-400 mb-1">Agent</label>
+            <label htmlFor="ps-agent" className="block text-xs text-neutral-400 mb-1">Agent</label>
             {agents && agents.length > 0 ? (
-              <select name="select"
+              <select id="ps-agent" name="select"
                 value={agentId}
                 onChange={e => setAgentId(e.target.value)}
                 className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
@@ -236,7 +236,7 @@ export default function PolicySim() {
                 ))}
               </select>
             ) : (
-              <input name="input"
+              <input id="ps-agent" name="input"
                 value={agentId}
                 onChange={e => setAgentId(e.target.value)}
                 placeholder="UUID of agent to simulate against"
@@ -245,8 +245,8 @@ export default function PolicySim() {
             )}
           </div>
           <div>
-            <label className="block text-xs text-neutral-400 mb-1">Event window</label>
-            <div className="flex gap-1.5">
+            <div id="ps-window-label" className="block text-xs text-neutral-400 mb-1">Event window</div>
+            <div role="radiogroup" aria-labelledby="ps-window-label" className="flex gap-1.5">
               {TIME_RANGES.map(t => (
                 <button
                   key={t}

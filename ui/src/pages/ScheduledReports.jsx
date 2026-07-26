@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Calendar, Plus, Trash2, Play, ToggleLeft, ToggleRight,
-  Clock, Mail, FileText, ChevronDown, ChevronUp, Loader2, X, CheckCircle2,
+  Clock, Mail, FileText, ChevronDown, ChevronUp, Loader2, CheckCircle2,
   AlertCircle, History,
 } from 'lucide-react'
 import { scheduledReportsService } from '../services/api'
+import Modal from '../components/Common/Modal'
 
 const DELIVERY_STATUS_STYLE = {
   success: { color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/20',  icon: CheckCircle2 },
@@ -93,22 +94,6 @@ const SCHEDULE_OPTIONS = [
   { value: 'monthly', label: 'Monthly', sub: 'Sent on the 1st of each month' },
 ]
 
-function Modal({ open, onClose, title, children }) {
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-subtle)]">
-          <h2 className="text-sm font-semibold text-white">{title}</h2>
-          <button onClick={onClose} className="text-neutral-500 hover:text-white"><X size={16} /></button>
-        </div>
-        <div className="px-6 py-5">{children}</div>
-      </div>
-    </div>
-  )
-}
-
 function ReportCard({ report, onToggle, onDelete, onRunNow, running }) {
   const [deleting, setDeleting] = useState(false)
   const scheduleLabel = SCHEDULE_OPTIONS.find(s => s.value === report.schedule)?.label || report.schedule
@@ -194,7 +179,7 @@ function CreateModal({ open, onClose, onCreate }) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="New Scheduled Report">
+    <Modal isOpen={open} onClose={onClose} title="New Scheduled Report" size="lg">
       <div className="space-y-4">
         {error && (
           <div className="flex items-center gap-2 p-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-400">
@@ -202,8 +187,8 @@ function CreateModal({ open, onClose, onCreate }) {
           </div>
         )}
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Report name</label>
-          <input name="name"
+          <label htmlFor="sr-name" className="block text-xs text-neutral-400 mb-1">Report name</label>
+          <input id="sr-name" name="name"
             type="text"
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -212,8 +197,8 @@ function CreateModal({ open, onClose, onCreate }) {
           />
         </div>
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Report type</label>
-          <div className="grid grid-cols-2 gap-2">
+          <div id="sr-type-label" className="block text-xs text-neutral-400 mb-1">Report type</div>
+          <div role="radiogroup" aria-labelledby="sr-type-label" className="grid grid-cols-2 gap-2">
             {REPORT_TYPES.map(t => (
               <button
                 key={t.value}
@@ -227,8 +212,8 @@ function CreateModal({ open, onClose, onCreate }) {
           </div>
         </div>
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Delivery schedule</label>
-          <div className="space-y-1.5">
+          <div id="sr-sched-label" className="block text-xs text-neutral-400 mb-1">Delivery schedule</div>
+          <div role="radiogroup" aria-labelledby="sr-sched-label" className="space-y-1.5">
             {SCHEDULE_OPTIONS.map(s => (
               <button
                 key={s.value}
@@ -242,8 +227,8 @@ function CreateModal({ open, onClose, onCreate }) {
           </div>
         </div>
         <div>
-          <label className="block text-xs text-neutral-400 mb-1">Recipients (comma-separated)</label>
-          <input name="recipients"
+          <label htmlFor="sr-recipients" className="block text-xs text-neutral-400 mb-1">Recipients (comma-separated)</label>
+          <input id="sr-recipients" name="recipients"
             type="text"
             value={form.recipients}
             onChange={e => setForm(f => ({ ...f, recipients: e.target.value }))}

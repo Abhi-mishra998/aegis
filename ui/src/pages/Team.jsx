@@ -21,6 +21,7 @@ import { teamService } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import Button from '../components/Common/Button'
 import Card from '../components/Common/Card'
+import Modal from '../components/Common/Modal'
 import TabErrorBoundary from '../components/Common/TabErrorBoundary'
 
 /* ───────── shared helpers ──────────────────────────────────────────── */
@@ -156,38 +157,30 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
   }, [knownDepartments])
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
+    <Modal
+      isOpen
+      onClose={onClose}
+      size="md"
+      title={
+        minted
+          ? <span className="flex items-center gap-2"><Check size={14} className="text-green-400" aria-hidden="true" /> Employee key minted</span>
+          : <span className="flex items-center gap-2"><Plus size={14} aria-hidden="true" /> Add employee</span>
+      }
+      description={
+        minted
+          ? 'Copy this key now — it cannot be shown again.'
+          : 'Aegis mints a virtual key (acp_emp_…) for this employee. They drop it into their Anthropic SDK in place of the corporate key — all calls flow through Aegis and roll up here.'
+      }
     >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="relative bg-[#0a0a0a] border border-white/[0.08] rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4 space-y-4"
-      >
+      <div className="space-y-4">
         {!minted && (
-          <>
-            <div>
-              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                <Plus size={14} /> Add employee
-              </h2>
-              <p className="text-xs text-neutral-500 mt-1">
-                Aegis mints a virtual key (<code>acp_emp_…</code>) for this employee. They drop
-                it into their Anthropic SDK in place of the corporate key — all calls flow
-                through Aegis and roll up here.
-              </p>
-            </div>
-
-            <form onSubmit={submit} className="space-y-3">
+          <form onSubmit={submit} className="space-y-3">
               <div className="space-y-1">
                 <label className="label-standard" htmlFor="emp-email">Email <span className="text-red-400">*</span></label>
                 <input
                   id="emp-email"
                   type="email"
                   required
-                  autoFocus
                   className="input-standard h-10"
                   placeholder="alice@acme.com"
                   value={email}
@@ -266,22 +259,16 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
                 </Button>
               </div>
             </form>
-          </>
         )}
 
         {minted && (
           <>
-            <div>
-              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                <Check size={14} className="text-green-400" /> Employee key minted
-              </h2>
-              <p className="text-xs text-neutral-500 mt-1">
-                Copy this key now — it cannot be shown again. Hand it to{' '}
-                <code className="text-white">{minted.subject_email || minted.email}</code>{' '}
-                and ask them to replace their <code>ANTHROPIC_API_KEY</code> + point the
-                SDK at <code>{API_BASE_URL}</code>.
-              </p>
-            </div>
+            <p className="text-xs text-neutral-500">
+              Hand this key to{' '}
+              <code className="text-white">{minted.subject_email || minted.email}</code>{' '}
+              and ask them to replace their <code>ANTHROPIC_API_KEY</code> + point the
+              SDK at <code>{API_BASE_URL}</code>.
+            </p>
 
             <div className="relative">
               <div className="border border-white/[0.07] rounded-xl bg-[#050505] font-mono text-[12px] text-neutral-200 px-3 py-3 break-all pr-12">
@@ -293,7 +280,7 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
                 aria-label="Copy key"
                 className="absolute top-2 right-2 p-1.5 rounded-md bg-black/40 border border-white/10 text-neutral-300 hover:bg-black/60 hover:text-white"
               >
-                {copied ? <Check size={13} /> : <Copy size={13} />}
+                {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
               </button>
             </div>
 
@@ -303,13 +290,13 @@ function AddEmployeeModal({ onClose, onMinted, knownDepartments }) {
           </>
         )}
       </div>
-    </div>
+    </Modal>
   )
 }
 
 /* ───────── Tab: Members ─────────────────────────────────────────────── */
 
-function MembersTab({ employees, loading, isAdmin, onRefresh, onAdd, onRevoke }) {
+function MembersTab({ employees, loading, isAdmin, onAdd, onRevoke }) {
   return (
     <Card title="Members" icon={Users}>
       {loading ? (
@@ -633,7 +620,6 @@ export default function Team() {
         employees={employees}
         loading={loading}
         isAdmin={isAdmin}
-        onRefresh={load}
         onAdd={() => setShowAdd(true)}
         onRevoke={revoke}
       />

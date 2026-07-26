@@ -196,10 +196,10 @@ export default function ScimTokensTab() {
 
       <div className="flex items-end gap-2">
         <div className="flex-1">
-          <label className="block text-[11px] uppercase tracking-wide text-neutral-500 mb-1">
+          <label htmlFor="scim-label" className="block text-[11px] uppercase tracking-wide text-neutral-500 mb-1">
             Label (helps identify which Okta app this belongs to)
           </label>
-          <input name="input"
+          <input id="scim-label" name="input"
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}

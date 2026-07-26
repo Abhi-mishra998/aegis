@@ -274,8 +274,6 @@ function FilterChip({ active, onClick, color, children, label }) {
   return (
     <button
       type="button"
-      role="button"
-      tabIndex={0}
       aria-pressed={active}
       aria-label={label}
       onClick={onClick}
@@ -326,9 +324,12 @@ export default function LiveFeed() {
   // calls against unmounted React 18 components which surface as console
   // warnings during fast page navigation.
   useEffect(() => {
+    // Capture the Set instance at effect-mount time so cleanup runs against
+    // the same Set we scheduled into, even if the ref reassigns later.
+    const timers = freshTimersRef.current
     return () => {
-      for (const tid of freshTimersRef.current) clearTimeout(tid)
-      freshTimersRef.current.clear()
+      for (const tid of timers) clearTimeout(tid)
+      timers.clear()
     }
   }, [])
 

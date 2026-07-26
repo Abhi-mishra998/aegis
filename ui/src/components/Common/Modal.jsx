@@ -166,7 +166,9 @@ export default function Modal({
         aria-hidden="true"
       />
 
-      {/* Dialog */}
+      {/* Dialog. handleBackdrop above already guards with
+          `e.target === e.currentTarget`, so a click on the dialog body
+          does not bubble to a close — no inner stopPropagation needed. */}
       <div
         ref={dialogRef}
         role="dialog"
@@ -174,7 +176,6 @@ export default function Modal({
         aria-labelledby={title ? 'acp-modal-title' : undefined}
         aria-describedby={description ? 'acp-modal-desc' : undefined}
         tabIndex={-1}
-        onMouseDown={(e) => e.stopPropagation()}
         className={`
           relative z-[60] w-full ${SIZES[size] ?? SIZES.md}
           bg-[var(--bg-surface-elevated)]

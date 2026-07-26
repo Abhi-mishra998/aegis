@@ -19,6 +19,7 @@ import { clearSessionMetadata } from './services/api';
 import Dashboard from './pages/Dashboard';
 import ClerkAuthBridge from './components/Layout/ClerkAuthBridge';
 import DemoTokenBridge from './components/Layout/DemoTokenBridge';
+import TitleUpdater from './components/Layout/TitleUpdater';
 import Toast from './components/Common/Toast';
 
 // safeLazy: when a chunk fails to load (typically because the browser cached
@@ -74,8 +75,8 @@ const LiveFeed           = safeLazy(() => import('./pages/LiveFeed'));
 const UserManagement     = safeLazy(() => import('./pages/UserManagement'));
 const Playbooks          = safeLazy(() => import('./pages/Playbooks'));
 const Team               = safeLazy(() => import('./pages/Team'));
-// Sprint S5 — Hierarchical Teams admin page.
-const TeamSettings       = safeLazy(() => import('./pages/TeamSettings'));
+// Sprint S5 — Hierarchical Teams admin page (lazy import now happens
+// inside pages/Settings.jsx since we folded it into the Settings hub).
 const EmployeeProfile    = safeLazy(() => import('./pages/EmployeeProfile'));
 const Replay             = safeLazy(() => import('./pages/Replay'));
 const Landing            = safeLazy(() => import('./pages/Landing'));
@@ -113,10 +114,10 @@ const readSessionState = () => {
   };
 };
 
-// Inner component — needs access to useNavigate (must be inside BrowserRouter)
+// Inner component — subscribes to the auth-failure event bus and forwards
+// to onIncident. Router context is not needed here (a prior version called
+// navigate() directly; the incident overlay owns the navigation now).
 function AuthEventHandler({ onIncident }) {
-  const navigate = useNavigate()
-
   useEffect(() => {
     const unsub = onAuthFailure((e) => {
       // Surface the SOC-grade incident overlay before resetting state
@@ -134,16 +135,25 @@ function AuthEventHandler({ onIncident }) {
 function GlobalShortcuts({ onShowHelp, onShowPalette }) {
   const navigate = useNavigate()
   const bindings = useMemo(() => ([
-    { key: 'g f', handler: () => navigate('/flight-recorder') },
-    { key: 'g p', handler: () => navigate('/policies')        },
-    { key: 'g a', handler: () => navigate('/audit-logs')      },
-    { key: 'g i', handler: () => navigate('/incidents')       },
-    { key: 'g s', handler: () => navigate('/settings')        },
-    { key: 'g g', handler: () => navigate('/identity-graph')  },
-    { key: 'g o', handler: () => navigate('/live-feed')       },
-    { key: 'g h', handler: () => navigate('/system-health')   },
-    { key: 'g d', handler: () => navigate('/developer')       },
-    { key: 'g l', handler: () => navigate('/live-feed')       },
+    // Bindings mirror the hint labels rendered by components/Layout/Sidebar.jsx
+    // so nothing the user sees in the sidebar is a lie. When adding a new
+    // sidebar hint, add the binding here (and vice versa).
+    { key: 'g d', handler: () => navigate('/dashboard')         },
+    { key: 'g m', handler: () => navigate('/team')              },
+    { key: 'g l', handler: () => navigate('/live-feed')         },
+    { key: 'g a', handler: () => navigate('/agents')            },
+    { key: 'g i', handler: () => navigate('/incidents')         },
+    { key: 'g p', handler: () => navigate('/policies')          },
+    { key: 'g q', handler: () => navigate('/approval-inbox')    },
+    { key: 'g c', handler: () => navigate('/compliance')        },
+    { key: 'g s', handler: () => navigate('/settings')          },
+    { key: 'g g', handler: () => navigate('/identity-graph')    },
+    { key: 'g t', handler: () => navigate('/threat-graph')      },
+    { key: 'g f', handler: () => navigate('/flight-recorder')   },
+    { key: 'g e', handler: () => navigate('/decision-explorer') },
+    { key: 'g u', handler: () => navigate('/audit-logs')        },
+    { key: 'g h', handler: () => navigate('/system-health')     },
+    { key: 'g o', handler: () => navigate('/live-feed')         },
     { key: 'mod+k', handler: onShowPalette },
     { key: '?',   handler: onShowHelp },
   ]), [navigate, onShowHelp, onShowPalette])
@@ -155,16 +165,22 @@ const HOTKEY_GROUPS = [
   {
     label: 'Navigate',
     items: [
-      { key: 'g f', desc: 'Flight Recorder' },
-      { key: 'g p', desc: 'Policies' },
-      { key: 'g a', desc: 'Audit logs' },
-      { key: 'g i', desc: 'Incidents' },
-      { key: 'g g', desc: 'Identity graph' },
-      { key: 'g o', desc: 'Live event feed (observability scope)' },
-      { key: 'g h', desc: 'System health' },
-      { key: 'g s', desc: 'Settings' },
-      { key: 'g d', desc: 'Developer panel' },
+      { key: 'g d', desc: 'Dashboard' },
+      { key: 'g m', desc: 'Team' },
       { key: 'g l', desc: 'Live event feed' },
+      { key: 'g a', desc: 'Agents' },
+      { key: 'g i', desc: 'Incidents' },
+      { key: 'g p', desc: 'Policies' },
+      { key: 'g q', desc: 'Approval inbox' },
+      { key: 'g c', desc: 'Compliance' },
+      { key: 'g s', desc: 'Settings' },
+      { key: 'g g', desc: 'Identity graph' },
+      { key: 'g t', desc: 'Threat graph' },
+      { key: 'g f', desc: 'Flight Recorder' },
+      { key: 'g e', desc: 'Decision Explorer' },
+      { key: 'g u', desc: 'Audit logs' },
+      { key: 'g h', desc: 'System health' },
+      { key: 'g o', desc: 'Observability (live feed alias)' },
     ],
   },
   {
@@ -304,6 +320,9 @@ function App() {
       <AuthContext.Provider value={authContextValue}>
         <AgentProvider>
           <BrowserRouter>
+            {/* Keeps document.title in sync with the active route. Needs
+                Router context for useLocation(). */}
+            <TitleUpdater />
             {/* Wires auth event bus → incident overlay (needs Router context for useNavigate) */}
             <AuthEventHandler onIncident={handleIncident} />
             {auth.isAuthenticated && (
@@ -405,17 +424,21 @@ function App() {
               <Route path="/agent-cost"           element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
               <Route path="/agent-topology"       element={<ProtectedRoute><AgentSnapshot /></ProtectedRoute>} />
 
-              <Route path="/audit-logs"      element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
-              <Route path="/incidents"       element={<ProtectedRoute><Incidents /></ProtectedRoute>} />
+              {/* Chart-heavy routes get a per-route ErrorBoundary — recharts,
+                  reactflow, and the AuditLogs heat-map are the biggest
+                  render-throw offenders in production; without a boundary a
+                  single library crash white-screens the entire route. */}
+              <Route path="/audit-logs"      element={<ProtectedRoute><ErrorBoundary><AuditLogs /></ErrorBoundary></ProtectedRoute>} />
+              <Route path="/incidents"       element={<ProtectedRoute><ErrorBoundary><Incidents /></ErrorBoundary></ProtectedRoute>} />
               <Route path="/settings"        element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
               {/* Operations (secondary nav, collapsed by default) */}
               <Route path="/agents"          element={<ProtectedRoute><Agents /></ProtectedRoute>} />
-              <Route path="/identity-graph"  element={<ProtectedRoute><IdentityGraph /></ProtectedRoute>} />
-              <Route path="/forensics"       element={<ProtectedRoute><Forensics /></ProtectedRoute>} />
+              <Route path="/identity-graph"  element={<ProtectedRoute><ErrorBoundary><IdentityGraph /></ErrorBoundary></ProtectedRoute>} />
+              <Route path="/forensics"       element={<ProtectedRoute><ErrorBoundary><Forensics /></ErrorBoundary></ProtectedRoute>} />
               <Route path="/playground"      element={<ProtectedRoute><AgentPlayground /></ProtectedRoute>} />
               <Route path="/auto-response"   element={<ProtectedRoute><AutoResponse /></ProtectedRoute>} />
-              <Route path="/compliance"      element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
+              <Route path="/compliance"      element={<ProtectedRoute><ErrorBoundary><Compliance /></ErrorBoundary></ProtectedRoute>} />
               {/* Pricing/Billing pages deleted 2026-07-25 — project is open
                   source. Old bookmarks redirect to dashboard. */}
               <Route path="/open-source" element={<Navigate to="/dashboard" replace />} />
@@ -452,8 +475,10 @@ function App() {
               <Route path="/team"              element={<ProtectedRoute><Team /></ProtectedRoute>} />
               {/* Sprint 17.6 — per-employee drill-down (token burn + recent calls) */}
               <Route path="/team/:email"       element={<ProtectedRoute><EmployeeProfile /></ProtectedRoute>} />
-              {/* Sprint S5 — hierarchical Teams admin (create/rename/move/budget caps) */}
-              <Route path="/settings/teams"    element={<ProtectedRoute><TeamSettings /></ProtectedRoute>} />
+              {/* Sprint S5 — hierarchical Teams admin. Folded into the
+                  Settings hub 2026-07-26 so it's actually discoverable
+                  from the sidebar. Old bookmarks land on the same view. */}
+              <Route path="/settings/teams"    element={<Navigate to="/settings?tab=teams-admin" replace />} />
               {/* Sprint 15 — Unified replay (single-URL audit timeline) */}
               <Route path="/replay/:request_id" element={<ProtectedRoute><Replay /></ProtectedRoute>} />
 

@@ -132,11 +132,11 @@ export default function InboundWebhookSection ({
             </div>
           </div>
           <div>
-            <label className="block text-[10px] uppercase tracking-wide text-amber-300/80 mb-1">
+            <div id="wh-secret-label" className="block text-[10px] uppercase tracking-wide text-amber-300/80 mb-1">
               Secret (HMAC key)
-            </label>
+            </div>
             <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 text-[12px] font-mono bg-black/40 border border-white/[0.08] rounded text-white break-all">
+              <code aria-labelledby="wh-secret-label" className="flex-1 px-3 py-2 text-[12px] font-mono bg-black/40 border border-white/[0.08] rounded text-white break-all">
                 {revealed.plaintext}
               </code>
               <Button onClick={() => copy(revealed.plaintext)} variant="secondary">

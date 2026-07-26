@@ -119,7 +119,7 @@ export default function Agents() {
       clearInterval(interval);
       unsubscribe?.();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);  
 
   const handleCreate = async (e) => {
     e.preventDefault();

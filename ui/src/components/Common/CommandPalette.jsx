@@ -168,15 +168,17 @@ export default function CommandPalette({ isOpen, onClose }) {
                     const isActive  = globalIdx === activeIdx
                     const Icon      = cmd.icon
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={cmd.id}
                         id={`cmd-${cmd.id}`}
                         role="option"
                         aria-selected={isActive}
+                        tabIndex={-1}
                         onClick={() => execute(cmd)}
                         onMouseEnter={() => setActiveIdx(globalIdx)}
                         className={`
-                          flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors
+                          w-full text-left flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors
                           ${isActive ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}
                         `}
                       >
@@ -195,7 +197,7 @@ export default function CommandPalette({ isOpen, onClose }) {
                             ↵ Enter
                           </kbd>
                         )}
-                      </div>
+                      </button>
                     )
                   })}
               </div>

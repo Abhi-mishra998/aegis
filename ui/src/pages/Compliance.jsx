@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Shield, ShieldCheck, Download, FileText, CheckCircle2, AlertTriangle, Clock, RefreshCw, Activity, ExternalLink, BookOpen, KeyRound } from 'lucide-react'
+import { Shield, ShieldCheck, Download, FileText, AlertTriangle, Clock, RefreshCw, BookOpen, KeyRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Card from '../components/Common/Card'
 import Button from '../components/Common/Button'
@@ -91,7 +91,7 @@ export default function Compliance() {
     try {
       const resp = await auditService.getPackEnforcement(30)
       setPackEvidence(resp?.data || resp || null)
-    } catch (err) {
+    } catch (_err) {
       // Don't surface the error — pack-enforcement is supplementary
       // information; the rest of the page must keep working.
       setPackEvidence(null)
@@ -202,8 +202,8 @@ export default function Compliance() {
       <Card title="Reporting Period">
         <div className="flex flex-wrap items-end gap-4">
           <div>
-            <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Start date</label>
-            <input name="input"
+            <label htmlFor="cmp-start" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">Start date</label>
+            <input id="cmp-start" name="input"
               type="date"
               value={startDate}
               max={endDate}
@@ -212,8 +212,8 @@ export default function Compliance() {
             />
           </div>
           <div>
-            <label className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">End date</label>
-            <input name="input"
+            <label htmlFor="cmp-end" className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1.5">End date</label>
+            <input id="cmp-end" name="input"
               type="date"
               value={endDate}
               min={startDate}

@@ -62,7 +62,6 @@ export default function TeamSettings() {
   const { role } = useAuth() || {}
   const isAdmin = role === 'OWNER' || role === 'ADMIN'
 
-  const [overview, setOverview]   = useState(null)
   const [employees, setEmployees] = useState([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState('')
@@ -82,7 +81,6 @@ export default function TeamSettings() {
       ])
       if (ovResp.status === 'fulfilled') {
         const data = ovResp.value?.data || ovResp.value || null
-        setOverview(data)
         const settings = data?.settings || {}
         const next = {
           daily_budget_usd:   settings.default_daily_budget_usd ?? null,
@@ -159,7 +157,6 @@ export default function TeamSettings() {
     setDepartments((prev) => prev.filter((x) => x !== d))
   }
 
-  const overviewKpis = overview?.kpis || {}
   const totalEmployees = employees.length
   const activeEmployees = employees.filter((e) => e.is_active).length
 

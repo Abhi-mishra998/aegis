@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { RefreshCw, Shield, AlertTriangle, Activity, Eye, Zap, Users, X, Network } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Activity, Eye, Zap, Users, Network } from 'lucide-react'
 import { graphService } from '../services/api'
-import SkeletonLoader from '../components/Common/SkeletonLoader'
 import { eventBus } from '../lib/eventBus'
+import Modal from '../components/Common/Modal'
 
 // ── Lightweight force-directed layout (no new deps) ─────────────────────────
 // Layout produces {x, y} per node id, run once per render of nodes/edges set.
@@ -171,10 +171,13 @@ export default function IdentityGraph() {
         pingTimersRef.current.set(id, t)
       })
     })
+    // Capture the Map instance at effect-mount time so cleanup runs against
+    // the same Map we scheduled into, even if the ref reassigns later.
+    const timers = pingTimersRef.current
     return () => {
       unsub?.()
-      pingTimersRef.current.forEach((t) => clearTimeout(t))
-      pingTimersRef.current.clear()
+      timers.forEach((t) => clearTimeout(t))
+      timers.clear()
     }
   }, [])
 
@@ -444,34 +447,20 @@ export default function IdentityGraph() {
         </div>
       </div>
 
-      {/* Compromise Simulation Result Modal — centered, scrollable, never cut off */}
       {simResult && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-          onClick={() => setSimResult(null)}
-        >
-          <div
-            className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl
-                       border border-red-500/30 bg-[#0a0a0a] p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setSimResult(null)}
-              className="absolute right-4 top-4 p-1 rounded-lg text-neutral-500 hover:text-white hover:bg-white/5"
-              aria-label="Close"
-            >
-              <X size={16} />
-            </button>
-
-            <div className="flex items-center gap-3 mb-4 pr-8">
+        <Modal
+          isOpen
+          onClose={() => setSimResult(null)}
+          size="xl"
+          className="border-red-500/30"
+          title={
+            <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center">
-                <AlertTriangle size={18} className="text-red-400" />
+                <AlertTriangle size={18} className="text-red-400" aria-hidden="true" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-white">Compromise Simulation</h2>
-                <p className="text-xs text-neutral-500 mt-0.5">
+                <span className="text-lg font-bold text-white">Compromise Simulation</span>
+                <p className="text-xs text-neutral-500 mt-0.5 font-normal">
                   Scenario: <span className="font-mono text-neutral-300">{simResult.scenario}</span>
                 </p>
               </div>
@@ -482,44 +471,9 @@ export default function IdentityGraph() {
                 {simResult.summary?.risk_classification || 'UNKNOWN'}
               </span>
             </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-              <Kpi label="Blast radius" value={simResult.blast_radius} />
-              <Kpi
-                label="Risk score"
-                value={simResult.risk_score?.toFixed(3)}
-                color={simResult.risk_score >= 0.8 ? 'text-red-400'
-                      : simResult.risk_score >= 0.6 ? 'text-orange-400'
-                      : simResult.risk_score >= 0.4 ? 'text-yellow-400'
-                      : 'text-green-400'}
-              />
-              <Kpi label="Reachable" value={simResult.reachable_nodes?.length || 0} />
-              <Kpi label="Tenants" value={simResult.affected_tenants?.length || 0} />
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 mb-4">
-              <h3 className="text-xs font-semibold text-neutral-300 mb-2">Reachable nodes</h3>
-              <div className="max-h-48 overflow-y-auto divide-y divide-white/5">
-                {(simResult.reachable_nodes || []).slice(0, 50).map((n, i) => (
-                  <div key={n.id || i} className="py-1.5 flex items-center gap-2 text-[11px] font-mono">
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: TYPE_COLOR[n.type] || '#525252' }} />
-                    <span className="text-white truncate flex-1">{n.name || n.id?.slice(0, 18)}</span>
-                    <span className="text-neutral-500">{n.type}</span>
-                    <span
-                      className="font-bold"
-                      style={{ color: trustColor(n.trust_score) }}
-                    >
-                      {Number(n.trust_score || 0).toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-                {(!simResult.reachable_nodes || simResult.reachable_nodes.length === 0) && (
-                  <p className="text-[11px] text-neutral-600 text-center py-3">No reachable nodes recorded.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
+          }
+          footer={
+            <>
               <button
                 onClick={() => setSimResult(null)}
                 className="px-4 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-neutral-300 hover:bg-white/10"
@@ -533,9 +487,45 @@ export default function IdentityGraph() {
               >
                 {simBusy ? 'Re-running…' : 'Re-run'}
               </button>
+            </>
+          }
+        >
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <Kpi label="Blast radius" value={simResult.blast_radius} />
+            <Kpi
+              label="Risk score"
+              value={simResult.risk_score?.toFixed(3)}
+              color={simResult.risk_score >= 0.8 ? 'text-red-400'
+                    : simResult.risk_score >= 0.6 ? 'text-orange-400'
+                    : simResult.risk_score >= 0.4 ? 'text-yellow-400'
+                    : 'text-green-400'}
+            />
+            <Kpi label="Reachable" value={simResult.reachable_nodes?.length || 0} />
+            <Kpi label="Tenants" value={simResult.affected_tenants?.length || 0} />
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <h3 className="text-xs font-semibold text-neutral-300 mb-2">Reachable nodes</h3>
+            <div className="max-h-48 overflow-y-auto divide-y divide-white/5">
+              {(simResult.reachable_nodes || []).slice(0, 50).map((n, i) => (
+                <div key={n.id || i} className="py-1.5 flex items-center gap-2 text-[11px] font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: TYPE_COLOR[n.type] || '#525252' }} />
+                  <span className="text-white truncate flex-1">{n.name || n.id?.slice(0, 18)}</span>
+                  <span className="text-neutral-500">{n.type}</span>
+                  <span
+                    className="font-bold"
+                    style={{ color: trustColor(n.trust_score) }}
+                  >
+                    {Number(n.trust_score || 0).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              {(!simResult.reachable_nodes || simResult.reachable_nodes.length === 0) && (
+                <p className="text-[11px] text-neutral-600 text-center py-3">No reachable nodes recorded.</p>
+              )}
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )

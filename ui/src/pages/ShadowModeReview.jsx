@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertOctagon,
-  AlertTriangle,
   CheckCircle2,
   Clock,
   Eye,
@@ -19,7 +18,6 @@ import { useAuth } from '../hooks/useAuth';
 import Button from '../components/Common/Button';
 import Card from '../components/Common/Card';
 import ConfirmDialog from '../components/Common/ConfirmDialog';
-import SkeletonLoader from '../components/Common/SkeletonLoader';
 
 function StatusPill({ active, daysLeft }) {
   if (!active) {
@@ -58,6 +56,8 @@ function snippet(value, max = 80) {
   return str.slice(0, max - 1) + '…';
 }
 
+import { fmtDateTimeShort } from '../lib/formatters';
+
 function formatRelative(iso) {
   if (!iso) return '—';
   try {
@@ -66,7 +66,7 @@ function formatRelative(iso) {
     if (delta < 60) return `${Math.floor(delta)}s ago`;
     if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
     if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
-    return d.toISOString().slice(0, 16).replace('T', ' ');
+    return fmtDateTimeShort(d);
   } catch {
     return iso;
   }

@@ -67,10 +67,7 @@ export default function PolicyPacksTab() {
     }
   }
 
-  const dirty = JSON.stringify([...enabled].sort()) !== JSON.stringify(
-    (catalog && catalog.length ? [...enabled].sort() : []),
-  )
-  // simpler dirty check: compare against last-loaded
+  // Dirty check: current enabled set vs. the snapshot taken at load time.
   const [savedSnapshot, setSavedSnapshot] = useState('[]')
   useEffect(() => {
     if (!loading) setSavedSnapshot(JSON.stringify([...enabled].sort()))

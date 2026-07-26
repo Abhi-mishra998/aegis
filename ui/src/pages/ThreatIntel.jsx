@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Shield, Search, Globe, Wifi, AlertTriangle,
-  CheckCircle2, XCircle, Loader2, RefreshCw, Info,
+  Shield, Search, Globe, Wifi, AlertTriangle, XCircle, Loader2, RefreshCw, Info,
   Activity, Lock, FlaskConical, Plus, Trash2, Database, Rss,
 } from 'lucide-react'
 import { threatIntelService } from '../services/api'
@@ -161,8 +160,8 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Kind</label>
-          <select name="select"
+          <label htmlFor="ti-kind" className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Kind</label>
+          <select id="ti-kind" name="select"
             value={kind}
             onChange={e => setKind(e.target.value)}
             className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
@@ -171,21 +170,23 @@ function IocCreateModal({ isOpen, onClose, onCreated }) {
           </select>
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">
+          <label htmlFor="ti-value" className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">
             Value {kind === 'destructive_shell' && <span className="text-amber-400">(regex)</span>}
           </label>
-          <input name="input"
+          <input
+            id="ti-value"
+            ref={(el) => el?.focus()}
+            name="input"
             type="text"
             value={value}
             onChange={e => setValue(e.target.value)}
             placeholder={kind === 'destructive_shell' ? 'rm\\s+-rf\\s+/' : 'evil-host.com'}
             className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm font-mono text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"
-            autoFocus
           />
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Severity</label>
-          <select name="select"
+          <label htmlFor="ti-sev" className="text-[10px] uppercase tracking-widest text-neutral-500 block mb-1.5">Severity</label>
+          <select id="ti-sev" name="select"
             value={severity}
             onChange={e => setSeverity(e.target.value)}
             className="w-full bg-white/[0.04] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
