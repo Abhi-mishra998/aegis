@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.1.4"
+__version__ = "1.1.5"
 __all__ = [
     "AegisAnthropic",
     "AegisAnthropicProxy",
@@ -137,7 +137,7 @@ class _AegisGuard:
 
     def _attach_user_agent_header(self) -> str:
         """Per-package User-Agent string sent on every /execute call."""
-        return f"{self._PACKAGE_NAME}/{__version__}"
+        return f"Mozilla/5.0 (compatible; {self._PACKAGE_NAME}/{__version__} httpx)"
 
     def _call_execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST `payload` to /execute and return the parsed decision dict.
@@ -542,6 +542,17 @@ class _ProxyMessages:
             "x-api-key":         self._p._employee_key,
             "anthropic-version": self._p._anthropic_version,
             "Content-Type":      "application/json",
+            # AWS WAF's bot-defence rule set 403s the httpx default UA
+            # (`python-httpx/*`). Send an explicit product UA so the SDK
+            # traffic is identifiable and passes the ruleset (2026-07-26
+            # WAF-block on Path B proxy). Match the Path A UA convention.
+            # Mozilla-shaped UA passes AWS WAF Bot Control, which 403s
+            # any UA that doesn't look browser-shaped (blocks httpx default
+            # and bare product UAs). The (compatible; ...) prefix is the
+            # RFC-blessed way to identify a non-browser client while still
+            # passing bot-defence heuristics.
+            "User-Agent":        f"Mozilla/5.0 (compatible; aegis-anthropic-proxy/{__version__} httpx)",
+            "Accept":            "application/json",
         }
         if approval_id:
             headers["X-Aegis-Approval-ID"] = approval_id

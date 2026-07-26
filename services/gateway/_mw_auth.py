@@ -444,7 +444,10 @@ class _AuthMixin:
                     request.state.jwt_claims = auth_data
 
         elif api_key_header:
-            # Legacy X-API-Key header support
+            # X-API-Key header support — must mirror the Bearer acp_* branch
+            # above (line ~227) or `role` gets pinned to legacy "agent" and
+            # DEVELOPER-role employee keys fail RBAC on /execute (2026-07-26
+            # smoke-test regression from the 25-setup.md client guide).
             key_data = await self._validate_api_key_cached(api_key_header)
             if key_data:
                 tenant_id_str = str(key_data["tenant_id"])
@@ -455,8 +458,14 @@ class _AuthMixin:
                 except ValueError:
                     agent_id = uuid.UUID(int=0)
                 agent_id_str = str(agent_id)
+                _key_role = key_data.get("role") or "agent"
+                if _key_role not in (
+                    "ROOT", "OWNER", "ADMIN", "SECURITY_ANALYST",
+                    "DEVELOPER", "READ_ONLY", "agent",
+                ):
+                    _key_role = "agent"
                 request.state.permissions = ["execute_agent", "view_risk"]
-                request.state.role = "agent"
+                request.state.role = _key_role
                 request.state.actor = f"apikey:{key_data.get('key_prefix', api_key_header[:8])}"
                 request.state.jwt_claims = {}
 

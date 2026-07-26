@@ -31,7 +31,7 @@ from typing import Any, Iterable
 
 import httpx
 
-__version__ = "1.1.4"
+__version__ = "1.1.7"
 __all__ = [
     "AegisBedrockAgentRuntime",
     "AegisClient",
@@ -122,7 +122,7 @@ class _AegisGuard:
 
     def _attach_user_agent_header(self) -> str:
         """Per-package User-Agent string sent on every /execute call."""
-        return f"{self._PACKAGE_NAME}/{__version__}"
+        return f"Mozilla/5.0 (compatible; {self._PACKAGE_NAME}/{__version__} httpx)"
 
     def _call_execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST `payload` to /execute and return the parsed decision dict.

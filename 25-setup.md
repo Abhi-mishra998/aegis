@@ -35,14 +35,16 @@ Aegis is a runtime security control plane for AI agents. It sits in front of eve
 Pick your provider — all 5 are on PyPI and pinned to the versions our production tests certified today:
 
 ```bash
-pip install 'aegis-anthropic==1.1.4'    # Anthropic Claude
-pip install 'aegis-openai==1.1.5'       # OpenAI GPT
-pip install 'aegis-langchain==1.1.6'    # LangChain
-pip install 'aegis-bedrock==1.1.6'      # AWS Bedrock
+pip install 'aegis-anthropic==1.1.5'    # Anthropic Claude
+pip install 'aegis-openai==1.1.6'       # OpenAI GPT
+pip install 'aegis-langchain==1.1.7'    # LangChain
+pip install 'aegis-bedrock==1.1.7'      # AWS Bedrock
 
 # The audit verification tool for regulators / compliance:
 pip install 'aegis-aevf==1.1.1'
 ```
+
+> These pins include the 2026-07-26 WAF-compatibility fix (Mozilla-shaped User-Agent). If you're on an older version, `pip install --upgrade aegis-anthropic aegis-openai aegis-langchain aegis-bedrock`.
 
 ---
 
@@ -83,35 +85,38 @@ decision = acp.guard(
 result = open(request.path).read()
 ```
 
-### Pattern C — LLM provider drop-in (Anthropic example)
+### Pattern C — LLM proxy (Anthropic example, full prompt scanning)
+
+Use `AegisAnthropicProxy` to route every prompt through Aegis's `/v1/messages` gate. This is the drop-in wrapper that gets prompt-injection, PII, and cost-cap scanning on every call.
 
 ```python
-from aegis_anthropic import AegisAnthropic
+from aegis_anthropic import AegisAnthropicProxy
 
-client = AegisAnthropic(
-    aegis_key=os.environ["AEGIS_EMPLOYEE_KEY"],   # acp_emp_…
-    aegis_url="https://aegisagent.in",
-    tenant_id=os.environ["AEGIS_TENANT_ID"],
-    agent_id="my-support-agent",
-    api_key=os.environ["ANTHROPIC_API_KEY"],
+client = AegisAnthropicProxy(
+    employee_key=os.environ["AEGIS_EMPLOYEE_KEY"],   # acp_emp_…
+    gateway_url="https://aegisagent.in",              # or set AEGIS_URL env
 )
 
 # Same interface as the official Anthropic SDK.
 # Every message is scanned for prompt injection, PII, cost cap, etc.
-# before it reaches Anthropic.
+# BEFORE it reaches Anthropic. Blocked calls raise httpx.HTTPStatusError.
 resp = client.messages.create(
     model="claude-sonnet-4-5",
     max_tokens=1024,
     messages=[{"role": "user", "content": "Summarize this doc: ..."}],
 )
-print(resp.content[0].text)
+print(resp["content"][0]["text"])
 ```
 
-The OpenAI, LangChain, and Bedrock wrappers follow the same pattern — check `pip show aegis-<provider>` for the class name.
+You do NOT pass an Anthropic API key here — the gateway holds the upstream credential per tenant (set via `aws ssm put-parameter --name /aegis-prodha/anthropic/upstream-key`). The employee key is what identifies the caller.
+
+If you want an in-process wrapper that only gates **tool calls** (not prompts), use `AegisAnthropic` instead — but then you also need `pip install anthropic` and your own `ANTHROPIC_API_KEY`, and prompt scanning is NOT applied.
+
+The OpenAI, LangChain, and Bedrock wrappers follow the same Proxy pattern — check `pip show aegis-<provider>` for the class name.
 
 ---
 
-## 5. What Aegis will block for you (verified 2026-07-25 against live prod)
+## 5. What Aegis will block for you (verified 2026-07-26 against live prod)
 
 | Attack class | Result | Latency |
 |---|---|---|
@@ -213,16 +218,19 @@ Verify your keys work end-to-end:
 export AEGIS_EMPLOYEE_KEY="acp_emp_…"
 export AEGIS_TENANT_ID="your-tenant-uuid"
 
-# 1. Register a test agent
+# 1. Register a test agent (needs OWNER/ADMIN token — use the UI, or your admin JWT)
 curl -sk -X POST https://aegisagent.in/agents \
-  -H "x-api-key: $AEGIS_EMPLOYEE_KEY" \
+  -H "Authorization: Bearer <owner-jwt>" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
   -H "Content-Type: application/json" \
   -d '{"name":"my-first-agent","description":"first test","owner_id":"me","risk_level":"low"}'
 
 # 2. Add a tool to its allow-list
+# NOTE: Steps 1 + 2 require an OWNER/ADMIN token, not an employee key.
+# Use the UI (Agents → New Agent + Permissions tab) for these two steps.
+# Only Step 3 (/execute) and Step 4 (attack block) use the employee key.
 curl -sk -X POST https://aegisagent.in/agents/<agent-id>/permissions \
-  -H "x-api-key: $AEGIS_EMPLOYEE_KEY" \
+  -H "Authorization: Bearer <owner-jwt>" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
   -H "Content-Type: application/json" \
   -d '{"tool_name":"search_web","action":"ALLOW","granted_by":"me"}'
@@ -236,12 +244,16 @@ curl -sk -X POST https://aegisagent.in/execute \
 # → 200 with action=allow, real request_id, risk score
 
 # 4. Try an attack — should get blocked
+# `db.query` isn't in the agent's allow-list from step 2, so the deny
+# fires at the allow-list check ("Tool not in agent's allow-list").
+# To specifically trigger SQL-injection detection, add db.query to the
+# allow-list first, then send the DROP TABLE payload.
 curl -sk -X POST https://aegisagent.in/execute \
   -H "x-api-key: $AEGIS_EMPLOYEE_KEY" \
   -H "X-Tenant-ID: $AEGIS_TENANT_ID" \
   -H "Content-Type: application/json" \
   -d '{"agent_id":"<agent-id>","tool":"db.query","parameters":{"sql":"DROP TABLE users"}}'
-# → 403 Security: SQL injection detected in tool input
+# → 403 Security: Tool 'db.query' not in agent's allow-list
 ```
 
 If both work, you're live.

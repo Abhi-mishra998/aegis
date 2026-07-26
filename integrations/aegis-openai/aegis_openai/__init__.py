@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 
-__version__ = "1.1.3"
+__version__ = "1.1.6"
 __all__ = [
     "AegisOpenAI",
     "AegisOpenAIProxy",
@@ -124,7 +124,7 @@ class _AegisGuard:
 
     def _attach_user_agent_header(self) -> str:
         """Per-package User-Agent string sent on every /execute call."""
-        return f"{self._PACKAGE_NAME}/{__version__}"
+        return f"Mozilla/5.0 (compatible; {self._PACKAGE_NAME}/{__version__} httpx)"
 
     def _call_execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST `payload` to /execute and return the parsed decision dict.
