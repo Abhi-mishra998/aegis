@@ -32,7 +32,6 @@ from sdk.common.config import settings
 from sdk.common.constants import REDIS_REVOKE_PREFIX, REDIS_TOKEN_PREFIX
 from sdk.common.exceptions import ACPAuthError
 from sdk.common.roles import Role, canonical_role
-from services.gateway.auth_clerk import get_clerk_validator, looks_like_clerk_token
 
 REDIS_TOKEN_VALIDATION_PREFIX = "acp:token_validation:"
 
@@ -194,55 +193,27 @@ class LocalTokenValidator:
         """
         Validate token signature, expiry, AND Identity-issued status.
 
-        Dispatches to one of two validators based on ACP_AUTH_PROVIDER and
-        the token's issuer claim:
-
-          - legacy: HS256 self-issued, gated by Identity active-key in Redis.
-          - clerk:  RS256 Clerk-issued, gated by JWKS signature only.
-
-        Returns:
-            Decoded payload dict if valid. Shape is identical regardless of
-            provider so downstream middleware does not need to know which
-            path validated the token.
-
-        Raises:
-            ACPAuthError: signature invalid, token expired, required claims
-                          missing, Identity does not recognize the token
-                          (legacy active_key missing), or no validator is
-                          enabled for the token's issuer.
+        Order:
+          1. External IdPs (SPIFFE / Entra / Okta) if configured for the
+             tenant — each verifier returns None-shape when not opted in.
+          2. Legacy HS256 self-issued token, gated by Identity active-key
+             in Redis. Fails CLOSED on Redis error.
         """
         token_hash = self._token_hash(token)
 
-        # Layer 1: in-process LRU (60s TTL). Returns in <1µs on hit and
-        # skips both the Redis cache lookup AND the Identity active-key
-        # confirmation below — the cached entry is itself proof that the
-        # token was Identity-recognised within the TTL window. Sprint 2:
-        # this removes 2 Redis round-trips from the /execute hot path.
         cached_local = _LOCAL_TOKEN_LRU.get(token_hash)
         if cached_local is not None:
             return cached_local
 
-        # Layer 2: shared Redis cache (cross-process). Catches the
-        # in-process miss when the request lands on a different uvicorn
-        # worker than the one that originally validated the token.
         if self._redis:
             cached = await self._get_cached_payload(token)
             if cached is not None:
                 _LOCAL_TOKEN_LRU.set(token_hash, cached)
                 return cached
 
-        # Cache miss: dispatch by provider + token shape.
-        auth_provider = settings.ACP_AUTH_PROVIDER
-
-        # ATF v3.2 §4.2 — external IdPs are tried BEFORE the Clerk +
-        # legacy paths in ascending order of specificity: SPIFFE (subject
-        # URI has spiffe:// prefix — unambiguous) → Entra (issuer is
-        # login.microsoftonline.com and includes the configured tid) →
-        # Okta (issuer matches the configured Okta org). Each adapter
-        # returns None-shape if its configuration isn't set, so tenants
-        # that haven't opted in aren't affected. All failures collapse to
-        # the uniform "Unauthorized" body via the wrapping HTTPException
-        # in _mw_auth.py.
+        # ATF v3.2 §4.2 — external IdPs are tried BEFORE the legacy path
+        # in ascending order of specificity. Each adapter returns
+        # None-shape if its configuration isn't set.
         from services.gateway.idp_verifiers import (
             looks_like_entra,
             looks_like_okta,
@@ -270,52 +241,25 @@ class LocalTokenValidator:
             _LOCAL_TOKEN_LRU.set(token_hash, payload)
             return payload
 
-        is_clerk = (
-            auth_provider in ("clerk", "both")
-            and looks_like_clerk_token(token)
-        )
+        # Legacy HS256 path
+        payload = self._validate_signature(token)
 
-        if is_clerk:
-            # U4 FIX (2026-06-17): HS256 + Clerk-iss downgrade-attack reject.
-            # `looks_like_clerk_token` only inspects the unverified `iss`
-            # claim. An attacker who knows JWT_SECRET_KEY could mint an
-            # HS256 token with iss=<clerk_issuer> and ride the Clerk path.
-            # The inner ClerkTokenValidator enforces alg via the JWK, but
-            # we enforce it here as defense-in-depth so the dispatcher
-            # itself never lets an HS-signed token reach the Clerk path.
+        # C-5 (2026-05-13): confirm Identity actually issued this token by
+        # checking the active_key it sets at issuance. Without this, anyone
+        # with JWT_SECRET_KEY can mint accepted tokens indefinitely. Fails
+        # CLOSED on Redis error.
+        if self._redis is not None:
+            active_key = f"{REDIS_TOKEN_PREFIX}{token_hash}"
             try:
-                _alg = jwt.get_unverified_header(token).get("alg")
-            except JWTError as exc:
-                raise ACPAuthError(f"Invalid Clerk token header: {exc}") from exc
-            if _alg not in ("RS256", "RS512"):
+                if not await self._redis.exists(active_key):
+                    raise ACPAuthError("Token not recognized by Identity service")
+            except ACPAuthError:
+                raise
+            except Exception as exc:
                 raise ACPAuthError(
-                    f"Invalid Clerk token alg: expected RS256/RS512, got {_alg!r}",
-                )
-            clerk_validator = get_clerk_validator(self._redis)
-            payload = await clerk_validator.validate(token)
-        elif auth_provider in ("legacy", "both"):
-            payload = self._validate_signature(token)
-
-            # C-5 FIX (2026-05-13): Confirm Identity actually issued this token
-            # by checking the active_key it sets at issuance. Without this,
-            # anyone with JWT_SECRET_KEY can mint accepted tokens indefinitely.
-            # Fails CLOSED on Redis error.
-            if self._redis is not None:
-                active_key = f"{REDIS_TOKEN_PREFIX}{token_hash}"
-                try:
-                    if not await self._redis.exists(active_key):
-                        raise ACPAuthError("Token not recognized by Identity service")
-                except ACPAuthError:
-                    raise
-                except Exception as exc:
-                    raise ACPAuthError(
-                        "Authentication infrastructure unavailable",
-                    ) from exc
-            payload.setdefault("auth_provider", "legacy")
-        else:
-            raise ACPAuthError(
-                f"No validator enabled for this token (ACP_AUTH_PROVIDER={auth_provider!r})",
-            )
+                    "Authentication infrastructure unavailable",
+                ) from exc
+        payload.setdefault("auth_provider", "legacy")
 
         # Store in cache for next request (with short TTL to match token expiry)
         if self._redis and "exp" in payload:

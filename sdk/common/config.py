@@ -454,63 +454,21 @@ class ACPSettings(BaseSettings):
     )
 
     # ─────────────────────────────────────────────────────────────
-    # 🔑 Clerk Auth (Sprint 1 — Real SaaS auth)
+    # 🔑 Auth
     # ─────────────────────────────────────────────────────────────
-    # The gateway validates Clerk-issued JWTs (RS256, JWKS-rotated) alongside
-    # the existing HS256 self-issued JWTs while ACP_AUTH_PROVIDER=both. The
-    # identity service receives Clerk webhooks (user.created, organization.*)
-    # and provisions Aegis Org/Tenant/User rows in lockstep.
+    # First-party HS256 access tokens (issued by services/identity/token_service.py)
+    # cover the entire OSS flow: /auth/register, /auth/token, /auth/password/*.
+    # External IdPs (SPIFFE / Entra / Okta) plug in via the ATF §4.2 adapters
+    # below — set a tenant's SSM params to opt that adapter in.
     ACP_AUTH_PROVIDER: str = Field(
         default="legacy",
-        description="Auth backend: 'legacy' (HS256 only), 'clerk' (RS256 only), 'both' (accept either).",
-    )
-    CLERK_PUBLISHABLE_KEY: str = Field(
-        default="",
-        description="Clerk publishable key (pk_test_... or pk_live_...). Backend uses it for diagnostics; UI loads it via VITE_CLERK_PUBLISHABLE_KEY.",
-    )
-    CLERK_SECRET_KEY: str = Field(
-        default="",
-        description="Clerk secret key (sk_test_... or sk_live_...). Used to call Clerk's Backend API for provisioning + metadata writes.",
-    )
-    CLERK_FRONTEND_API: str = Field(
-        default="",
-        description="Clerk frontend API base URL (e.g. https://close-moray-54.clerk.accounts.dev).",
-    )
-    CLERK_JWKS_URL: str = Field(
-        default="",
-        description="JWKS endpoint URL — typically {CLERK_FRONTEND_API}/.well-known/jwks.json.",
-    )
-    CLERK_ISSUER: str = Field(
-        default="",
-        description="Expected iss claim on Clerk-signed JWTs. Must match CLERK_FRONTEND_API.",
-    )
-    # audit S18b (P2-8): the Clerk JWT decoder used to skip aud verification,
-    # accepting any Clerk-signed token from the org regardless of which
-    # audience-scoped app minted it. Setting this + verify_aud=True in
-    # clerk_auth.py closes the same-org, cross-app replay window. Default
-    # "aegis" matches the standard Clerk JWT template we recommend; ops
-    # can override per-tenant.
-    CLERK_AUDIENCE: str = Field(
-        default="aegis",
-        description=(
-            "Expected `aud` claim on Clerk-signed JWTs. Aegis's default "
-            "Clerk template mints tokens with aud='aegis'; override only "
-            "if a customer's Clerk template uses a different audience."
-        ),
-    )
-    CLERK_WEBHOOK_SECRET: str = Field(
-        default="",
-        description="Svix webhook signing secret (whsec_...) for verifying inbound Clerk webhooks.",
-    )
-    CLERK_JWT_TEMPLATE: str = Field(
-        default="aegis",
-        description="Clerk JWT template name; the frontend calls getToken({template: this}).",
+        description="Reserved for future providers. Only 'legacy' is supported.",
     )
     # ─────────────────────────────────────────────────────────────
     # ATF v3.2 §4.2 — external IdP acceptance. All optional; a blank
     # value disables that adapter. The gateway auth dispatcher tries
     # each configured adapter in order of specificity (SPIFFE > Entra
-    # > Okta > Clerk > legacy) and fails-closed with the uniform
+    # > Okta > legacy) and fails-closed with the uniform
     # "Unauthorized" body if no adapter accepts.
     # ─────────────────────────────────────────────────────────────
     SPIFFE_TRUST_DOMAIN: str = Field(
@@ -552,18 +510,16 @@ class ACPSettings(BaseSettings):
         description="Okta JWKS cache TTL. Okta rotates keys periodically; 1h is safe.",
     )
 
-    CLERK_JWKS_CACHE_SECONDS: int = Field(
-        default=3600,
-        description="JWKS cache TTL in seconds. Clerk rotates keys infrequently; a 1h cache balances safety and load.",
-    )
-
     @field_validator("ACP_AUTH_PROVIDER")
     @classmethod
     def _allowed_auth_provider(cls, v: str) -> str:
-        allowed = {"legacy", "clerk", "both"}
-        if v not in allowed:
+        # `clerk` and `both` are accepted as aliases for `legacy` so existing
+        # deployment configs don't need to be touched before a redeploy.
+        if v in ("clerk", "both"):
+            return "legacy"
+        if v != "legacy":
             raise ValueError(
-                f"ACP_AUTH_PROVIDER must be one of {sorted(allowed)}; got {v!r}."
+                f"ACP_AUTH_PROVIDER must be 'legacy' (only supported value); got {v!r}."
             )
         return v
 

@@ -504,7 +504,6 @@ from services.gateway.routers.auto_response import (
 from services.gateway.routers.autonomy import (
     router as _autonomy_router,  # noqa: E402
 )
-from services.gateway.routers.clerk import router as _clerk_router  # noqa: E402
 from services.gateway.routers.compliance import (
     router as _compliance_router,  # noqa: E402
 )
@@ -626,7 +625,6 @@ app.include_router(_scim_router)
 app.include_router(_itsm_webhooks_router)
 app.include_router(_agents_router)
 app.include_router(_auth_router)
-app.include_router(_clerk_router)
 app.include_router(_workspace_router)
 app.include_router(_tenant_router)
 app.include_router(_demo_router)

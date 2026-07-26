@@ -84,12 +84,11 @@ _SKIP_PATHS = frozenset(
         "/auth/sso/providers",  # SSO provider list (public — drives login UI buttons)
         "/events/stream",  # SSE — inline auth handled in the route handler
         "/csp/report",     # CSP violation reports — browsers can't attach creds; handler 204s
-        # Sprint 1 — Clerk integration surface. The webhook authenticates
-        # via Svix signature (verified upstream in identity); the
-        # provision endpoint authenticates via Clerk Bearer JWT validated
-        # against Clerk's JWKS. Neither carries an Aegis-issued token.
-        "/webhooks/clerk",
-        "/auth/clerk/provision",
+        # Self-serve OSS auth — unauthenticated so brand-new users can hit
+        # them to create a workspace or start a reset flow.
+        "/auth/register",
+        "/auth/password/reset-request",
+        "/auth/password/reset-confirm",
         # Sprint S4 — anonymous demo workspace. Marketing "Try live demo"
         # CTA hits this from an unauthed browser. Rate-limited per IP at
         # the gateway; mints a 30-min read-only JWT scoped to a freshly
