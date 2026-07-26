@@ -270,6 +270,13 @@ _MANAGEMENT_PATH_PREFIXES = (
     "/admin",
     "/dashboard",
     "/policy",
+    # 2026-07-26 fix — ATF §14.5 deployment-lifecycle admin surface.
+    # /lifecycle (GET) reads the state ledger; /lifecycle/transition
+    # (POST) emits a C3 event to move between INSTALL / BOOTSTRAP /
+    # ENFORCE / ROTATE / UPGRADE / ROLLBACK / DECOMMISSION / DESTROY.
+    # Same class as /integrations — human-operator surface, not agent
+    # tool execution, so it must bypass tool-name extraction.
+    "/lifecycle",
     # QA-MW-FIX (2026-06-24) — same skip-the-tool-extractor reason as
     # /integrations + /sso/scim/teams below. P2-2 (2026-06-21) put
     # /openapi.json behind RBAC so any authed token can fetch it, but
