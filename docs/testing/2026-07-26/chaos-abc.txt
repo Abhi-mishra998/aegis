@@ -1,0 +1,69 @@
+==========================
+  MODE=kill-audit
+==========================
+[2026-07-26T10:37:49Z] === CHAOS: kill audit service ===
+[2026-07-26T10:37:49Z] baseline:
+  1   → 200 (301ms)
+  2   → 200 (241ms)
+  3   → 200 (213ms)
+  summary: 3/3 allowed, avg=251ms
+[2026-07-26T10:37:50Z] killing acp_audit...
+acp_audit
+[2026-07-26T10:37:50Z] sample during outage:
+  1   → 200 (223ms)
+  2   → 200 (748ms)
+  3   → 200 (234ms)
+  4   → 200 (266ms)
+  5   → 200 (208ms)
+  summary: 5/5 allowed, avg=335ms
+[2026-07-26T10:37:52Z] restarting...
+acp_audit
+[2026-07-26T10:38:09Z] sample after recovery:
+  1   → 200 (501ms)
+  2   → 200 (266ms)
+  3   → 200 (240ms)
+  summary: 3/3 allowed, avg=335ms
+
+==========================
+  MODE=kill-opa
+==========================
+[2026-07-26T10:38:14Z] === CHAOS: kill OPA ===
+[2026-07-26T10:38:14Z] baseline:
+  1   → 200 (306ms)
+  2   → 200 (245ms)
+  3   → 200 (200ms)
+  summary: 3/3 allowed, avg=250ms
+[2026-07-26T10:38:15Z] killing acp_opa...
+acp_opa
+[2026-07-26T10:38:15Z] sample during outage (fail-closed expected):
+  1   → 200 (819ms)
+  2   → 200 (220ms)
+  3   → 200 (238ms)
+  4   → 200 (189ms)
+  5   → 200 (208ms)
+  summary: 5/5 allowed, avg=334ms
+[2026-07-26T10:38:17Z] restarting...
+acp_opa
+[2026-07-26T10:38:27Z] sample after recovery:
+  1   → 200 (307ms)
+  2   → 200 (259ms)
+  3   → 200 (197ms)
+  summary: 3/3 allowed, avg=254ms
+
+==========================
+  MODE=kill-gateway
+==========================
+[2026-07-26T10:38:33Z] === CHAOS: restart gateway (rolling) ===
+[2026-07-26T10:38:33Z] baseline via /status from outside gateway:
+status=403 time=0.040766s
+[2026-07-26T10:38:33Z] restarting local gateway ONLY (other host still up):
+acp_gateway
+[2026-07-26T10:38:44Z] sample from other host via ALB during rolling restart:
+  1: 403 0.028330s
+  2: 403 0.030053s
+  3: 403 0.033228s
+  4: 403 0.028686s
+  5: 403 0.027653s
+[2026-07-26T10:38:44Z] waiting for local gateway healthy:
+[2026-07-26T10:39:00Z] recovered
+

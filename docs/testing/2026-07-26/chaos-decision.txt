@@ -1,0 +1,24 @@
+[2026-07-26T10:37:12Z] === CHAOS: kill decision service ===
+[2026-07-26T10:37:12Z] baseline (before kill):
+  1   → 200 (1112ms)
+  2   → 200 (736ms)
+  3   → 200 (233ms)
+  summary: 3/3 allowed, avg=693ms
+[2026-07-26T10:37:14Z] killing acp_decision...
+acp_decision
+[2026-07-26T10:37:15Z] sample during outage:
+  1   → 503 (185ms)
+  2   → 503 (101ms)
+  3   → 503 (137ms)
+  4   → 503 (128ms)
+  5   → 503 (107ms)
+  summary: 0/5 allowed, avg=131ms
+[2026-07-26T10:37:15Z] restarting...
+acp_decision
+[2026-07-26T10:37:16Z] waiting for decision healthy...
+[2026-07-26T10:37:32Z] sample after recovery:
+  1   → 200 (291ms)
+  2   → 200 (247ms)
+  3   → 200 (285ms)
+  summary: 3/3 allowed, avg=274ms
+

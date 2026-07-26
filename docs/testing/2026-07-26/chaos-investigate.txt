@@ -1,0 +1,14 @@
+=== OPA env config ===
+OPA_FAIL_MODE=closed
+OPA_URL=http://opa:8181
+=== recent OPA call logs ===
+HTTP Request: GET http://opa:8181/health "HTTP/1.1 200 OK"
+HTTP Request: GET http://opa:8181/health "HTTP/1.1 200 OK"
+HTTP Request: GET http://opa:8181/health "HTTP/1.1 200 OK"
+=== audit chain check post-chaos ===
+HTTP 200
+  chain_valid: True
+  rows_verified: 7344
+  violations: 0
+=== audit dlq / consumer lag ===
+

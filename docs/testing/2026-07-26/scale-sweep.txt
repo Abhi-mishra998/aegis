@@ -1,0 +1,47 @@
+
+=== level: 50 workers × 30s ===
+  total=1532 rps=51.1 success%=1.8
+  codes: {0: 2, 200: 27, 429: 1440, 503: 63}
+  errors/timeouts: 2/0
+  latency: p50=584ms p95=2432ms p99=3460ms max=4796ms
+
+=== level: 100 workers × 30s ===
+  total=1216 rps=40.5 success%=3.6
+  codes: {0: 2, 200: 44, 403: 28, 429: 1066, 503: 76}
+  errors/timeouts: 2/0
+  latency: p50=1856ms p95=5579ms p99=6280ms max=8225ms
+
+=== level: 250 workers × 30s ===
+  total=879 rps=29.3 success%=7.8
+  codes: {0: 96, 200: 69, 401: 191, 403: 37, 429: 452, 503: 34}
+  errors/timeouts: 96/0
+  latency: p50=6436ms p95=12710ms p99=16257ms max=17699ms
+
+=== level: 500 workers × 30s ===
+  total=1001 rps=33.4 success%=0.0
+  codes: {0: 1, 401: 814, 403: 60, 429: 126}
+  errors/timeouts: 1/0
+  latency: p50=18687ms p95=25444ms p99=26080ms max=28788ms
+
+=== level: 1000 workers × 30s ===
+  total=1421 rps=47.4 success%=0.0
+  codes: {0: 1, 401: 516, 429: 904}
+  errors/timeouts: 1/0
+  latency: p50=24204ms p95=28035ms p99=28517ms max=32001ms
+
+=== level: 2000 workers × 30s ===
+  total=2001 rps=66.7 success%=0.0
+  codes: {0: 2000, 429: 1}
+  errors/timeouts: 2000/0
+  latency: p50=20474ms p95=20474ms p99=20474ms max=20474ms
+
+
+=== SUMMARY ===
+ level      rps   success%     p50      p95      p99      max  errors  timeouts
+    50    51.1       1.8%   584ms   2432ms   3460ms   4796ms       2         0
+   100    40.5       3.6%  1856ms   5579ms   6280ms   8225ms       2         0
+   250    29.3       7.8%  6436ms  12710ms  16257ms  17699ms      96         0
+   500    33.4       0.0%  18687ms  25444ms  26080ms  28788ms       1         0
+  1000    47.4       0.0%  24204ms  28035ms  28517ms  32001ms       1         0
+  2000    66.7       0.0%  20474ms  20474ms  20474ms  20474ms    2000         0
+

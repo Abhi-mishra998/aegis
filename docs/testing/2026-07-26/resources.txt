@@ -1,0 +1,58 @@
+
+=== ip-10-20-4-243.ap-south-1.compute.internal ===
+== docker stats snapshot ==
+acp_witness	0.07%	65.07MiB / 192MiB
+acp_gateway	86.29%	436.8MiB / 1GiB
+acp_identity	0.21%	217.4MiB / 480MiB
+acp_audit	0.36%	159.7MiB / 512MiB
+acp_mcp_gate	2.35%	166.3MiB / 192MiB
+acp_forensics	0.24%	189.2MiB / 320MiB
+acp_ui	0.00%	4.488MiB / 64MiB
+acp_policy	0.25%	194.3MiB / 480MiB
+acp_grafana	0.05%	56.07MiB / 7.554GiB
+acp_behavior	0.40%	363.8MiB / 640MiB
+acp_registry	0.26%	206.1MiB / 480MiB
+acp_identity_graph	0.11%	85.57MiB / 160MiB
+acp_usage	0.07%	130.7MiB / 160MiB
+acp_decision	0.40%	388.6MiB / 576MiB
+acp_prometheus	0.13%	55.01MiB / 7.554GiB
+== host ==
+ 10:48:10 up 1 day, 7 min,  0 users,  load average: 2.46, 1.78, 1.14
+Mem:           7.6Gi       3.9Gi       138Mi        31Mi       3.5Gi       3.4Gi
+/dev/nvme0n1p1   30G  5.2G   25G  18% /
+== network ==
+     31 LISTEN
+      3 TIME-WAIT
+      1 State
+      1 ESTAB
+== postgres pool ==
+
+
+=== ip-10-20-3-206.ap-south-1.compute.internal ===
+== docker stats snapshot ==
+acp_witness	0.07%	64.98MiB / 192MiB
+acp_gateway	0.21%	212.8MiB / 1GiB
+acp_identity	0.21%	223.1MiB / 480MiB
+acp_audit	0.37%	157.4MiB / 512MiB
+acp_mcp_gate	0.26%	166.2MiB / 192MiB
+acp_forensics	0.21%	189.1MiB / 320MiB
+acp_ui	0.00%	4.488MiB / 64MiB
+acp_policy	0.20%	193.4MiB / 480MiB
+acp_grafana	0.04%	54.24MiB / 7.554GiB
+acp_registry	0.22%	198.1MiB / 480MiB
+acp_decision	0.38%	380.6MiB / 576MiB
+acp_flight_recorder	0.13%	85.34MiB / 128MiB
+acp_api	0.31%	90.64MiB / 192MiB
+acp_behavior	0.40%	361.1MiB / 640MiB
+acp_identity_graph	0.10%	85.53MiB / 160MiB
+== host ==
+ 10:48:10 up 1 day, 7 min,  0 users,  load average: 1.24, 1.03, 0.69
+Mem:           7.6Gi       3.7Gi       312Mi        31Mi       3.6Gi       3.7Gi
+/dev/nvme0n1p1   30G  4.7G   26G  16% /
+== network ==
+     31 LISTEN
+      6 TIME-WAIT
+      1 State
+      1 ESTAB
+== postgres pool ==
+
