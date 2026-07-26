@@ -210,3 +210,22 @@ async def get_notifications_count_proxy(request: Request) -> Any:
 @router.post("/notifications/{notification_id}/read", tags=["notifications"])
 async def mark_notification_read_proxy(notification_id: str, request: Request) -> Any:
     return await trust_proxy(settings.AUDIT_SERVICE_URL, f"/notifications/{notification_id}/read", request)
+
+
+# ─────────────────────────────────────────────────────────────
+# Usage / Fleet burn-down (proxied to usage service)
+# 2026-07-26 — Agent Cost tab returned 404 because the frontend
+# calls /usage/fleet/burn-down but no gateway route forwarded it
+# to the usage service. Same trust_proxy pattern as /flight above.
+# ─────────────────────────────────────────────────────────────
+
+
+@router.api_route(
+    "/usage/fleet/{full_path:path}",
+    methods=["GET", "POST", "PATCH", "DELETE"],
+    tags=["usage"],
+)
+async def proxy_usage_fleet(full_path: str, request: Request) -> Any:
+    return await trust_proxy(
+        settings.USAGE_SERVICE_URL, f"/usage/fleet/{full_path}", request,
+    )
