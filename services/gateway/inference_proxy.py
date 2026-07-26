@@ -320,14 +320,23 @@ class PiiDetector:
     # (which our _normalize turns into spaces) inside "123-45-6789" and we
     # still want to catch it. Bounded \s* keeps the pattern from matching
     # unrelated long-form paragraphs.
-    _SSN_RE = re.compile(r"\b\d{3}\s*-\s*\d{2}\s*-\s*\d{4}\b")
+    # 2026-07-26 brutal-test gaps closed:
+    #   - Space-separated SSN ("123 45 6789") now matched — sole hyphen
+    #     regex missed it and the space-separated form is a common
+    #     copy-from-spreadsheet paste.
+    #   - OpenAI project keys ("sk-proj-…") + org keys ("sk-org-…") now
+    #     match — the original `sk-[A-Za-z0-9]{20,}` didn't allow hyphens
+    #     after the sk- prefix, so keys with the project/org suffix passed.
+    _SSN_RE = re.compile(r"\b\d{3}[\s-]\d{2}[\s-]\d{4}\b")
     _CC_RE  = re.compile(r"\b(?:\d[ -]?){13,19}\b")
     _API_KEY_RES = [
-        (re.compile(r"\bsk-ant-api\d\d-[A-Za-z0-9_-]{40,}"), "anthropic_api_key"),
-        (re.compile(r"\bsk-[A-Za-z0-9]{20,}"),               "openai_api_key"),
-        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"),                "aws_access_key"),
-        (re.compile(r"\bghp_[A-Za-z0-9]{36}\b"),             "github_pat"),
-        (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),      "slack_token"),
+        (re.compile(r"\bsk-ant-api\d\d-[A-Za-z0-9_-]{40,}"),  "anthropic_api_key"),
+        (re.compile(r"\bsk-proj-[A-Za-z0-9_-]{20,}"),         "openai_project_key"),
+        (re.compile(r"\bsk-org-[A-Za-z0-9_-]{20,}"),          "openai_org_key"),
+        (re.compile(r"\bsk-[A-Za-z0-9]{20,}"),                "openai_api_key"),
+        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"),                 "aws_access_key"),
+        (re.compile(r"\bghp_[A-Za-z0-9]{36}\b"),              "github_pat"),
+        (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),       "slack_token"),
     ]
     _PRIV_KEY_RE = re.compile(
         r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PRIVATE )?PRIVATE KEY-----",
