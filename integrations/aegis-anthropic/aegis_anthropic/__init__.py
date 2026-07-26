@@ -406,11 +406,11 @@ class AegisAnthropic:
         **anthropic_kwargs: Any,
     ) -> None:
         # QA-SDK-FIX (2026-06-24) — accept the deprecated ``aegis_url`` as
-        # an alias for ``gateway_url``. Earlier docs (setup-agies.md prior
-        # to the 2026-06-24 update) and the tester-prompt both used the old
-        # name; customers copy-pasting from those got a TypeError on
-        # construct. Emit a DeprecationWarning so authors update their
-        # call-sites without immediately breaking them.
+        # an alias for ``gateway_url``. Earlier docs (pre-2026-06-24) and
+        # the tester-prompt both used the old name; customers copy-pasting
+        # from those got a TypeError on construct. Emit a DeprecationWarning
+        # so authors update their call-sites without immediately breaking
+        # them.
         if gateway_url is None and aegis_url is not None:
             import warnings as _warnings
             _warnings.warn(

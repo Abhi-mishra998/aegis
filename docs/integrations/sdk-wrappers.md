@@ -45,7 +45,7 @@ The four packages support both deployment styles, and most teams will use both �
 - **Path A — SDK wrapper.** Replace the provider client class with the Aegis class; every tool call routes through `/execute` before the upstream provider sees it. Fail-closed by default.
 - **Path B — drop-in proxy.** Point the provider client at `https://aegisagent.in/v1` (or `https://aegisagent.in/v1/messages` for Anthropic). No code change, no extra import. The gateway proxies the body to the upstream provider and enforces the same `/execute` pipeline on each tool call.
 
-Long-form recipes for both paths live in `setup-agies.md` at the repo root — that doc is the authoritative install runbook (terraform module, env vars, ASG settings). This page is the API surface summary.
+Long-form recipes for both paths live in [`../guide.md`](../guide.md) — that doc is the authoritative install runbook (terraform module, env vars, ASG settings). This page is the API surface summary.
 
 ## Path A — SDK wrapper (recommended for new agents)
 
@@ -255,7 +255,7 @@ Each package's source is ~200 LOC of Python with one runtime dependency (`httpx`
 
 ## See also
 
-- `setup-agies.md` at the repo root — long-form install runbook covering both Path A (SDK wrapper) and Path B (proxy) including terraform and env-var bootstrap.
+- [`../guide.md`](../guide.md) — long-form install runbook covering both Path A (SDK wrapper) and Path B (proxy) including terraform and env-var bootstrap.
 - [Evidence Export Adapters](evidence-export.md) — how the audit rows the SDK produces are surfaced through SIEM (Splunk/Datadog/Sentinel/Chronicle/Elastic) and GRC (Vanta/Drata) with the AEVF back-reference attached.
 - [AEVF Overview](../AEVF/README.md) — the open standard the audit rows conform to.
 - [API Reference](../api/reference.md) — the underlying `/execute` contract the SDKs call.

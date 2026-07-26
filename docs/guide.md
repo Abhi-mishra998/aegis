@@ -11,8 +11,8 @@ workspace, roll out to the team, exit shadow mode, hand evidence to an
 auditor. Every claim in this document is live on `aegisagent.in`; you can
 verify it yourself before reading on.
 
-> Replaces the previous two-file split (`setup-agies.md` evaluator tour +
-> `ui-setup.md` adoption flow). One file, one path.
+> Replaces the previous two-file split (evaluator tour + adoption flow).
+> One file, one path.
 
 ---
 

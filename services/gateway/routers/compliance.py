@@ -49,7 +49,7 @@ def _base() -> str:
 async def compliance_frameworks(request: Request) -> Any:
     """Sprint U13 2026-06-26 — proxy → audit service framework discovery.
 
-    The aegis-guide.md §32-F-19 walkthrough needed a way to discover the
+    The docs/guide.md §32-F-19 walkthrough needed a way to discover the
     valid framework names without already knowing them (the previous
     UX was 'try one, read the 400 error'). Public — returns metadata
     only, no tenant data. Exempted in middleware.py exempt-paths."""

@@ -565,7 +565,7 @@ from sdk.common.db import get_db
 
 _DEMO_DURATION_HOURS = 24
 # Sprint U13 2026-06-26 — bumped 30 → 120 minutes. Customers walking the
-# full aegis-guide.md tour (Hero → Live Feed → §32 QA matrix → Audit Logs
+# full docs/guide.md tour (Hero → Live Feed → §32 QA matrix → Audit Logs
 # → Evidence export → aegis-verify) routinely take >30 minutes and hit a
 # silent 401 mid-tour. Two hours covers the published walkthrough plus
 # deliberate exploration; demo tenants still auto-cleanup at 24 h.

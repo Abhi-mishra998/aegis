@@ -246,7 +246,7 @@ This is the part most security reports skip. If component X dies, what happens?
 ## 6. Test methodology
 
 ### 6.1 What was tested
-Every code path in [`25-setup.md`](25-setup.md) — the client setup guide — plus chaos + scale + resource tests.
+Every code path in [`../../setup.md`](../../setup.md) — the client setup guide — plus chaos + scale + resource tests.
 
 ### 6.2 What was not tested
 - Real Claude allow-path — the shared testing key was revoked mid-test (verified against `api.anthropic.com` directly; §5 setup guide latencies refer to Aegis's own per-request cost only)
@@ -255,7 +255,7 @@ Every code path in [`25-setup.md`](25-setup.md) — the client setup guide — p
 - Volumetric DDoS — handled by AWS Shield + WAF, not Aegis
 
 ### 6.3 Data provenance
-Every number in this report came from a real HTTP request or a real Docker inspection during the test window. Raw JSON artifacts + test scripts are archived in the repository under [`docs/testing/2026-07-26/`](docs/testing/2026-07-26/) (added in this commit).
+Every number in this report came from a real HTTP request or a real Docker inspection during the test window. Raw JSON artifacts + test scripts are archived alongside this report in the same directory (see [`README.md`](README.md) for the file index).
 
 ### 6.4 Reproducibility
 ```bash
@@ -263,7 +263,7 @@ git clone https://github.com/Abhi-mishra998/aegis.git
 cd aegis && python3 -m venv .venv && source .venv/bin/activate
 pip install 'aegis-anthropic==1.1.5' 'aegis-openai==1.1.6' \
             'aegis-langchain==1.1.7' 'aegis-bedrock==1.1.7' 'aegis-aevf==1.1.1'
-# See docs/testing/2026-07-26/README.md for the exact command sequence.
+# See README.md alongside this report for the exact command sequence.
 ```
 
 ---
@@ -782,7 +782,7 @@ I ran every test in this report against production between the times listed. All
 
 **Author:** Aegis Engineering
 **Contact:** founder@aegisagent.in
-**Report artifact hash:** _(computed post-commit — run `sha256sum 26-testing.md`)_
+**Report artifact hash:** _(computed post-commit — run `sha256sum report.md`)_
 
 ---
 

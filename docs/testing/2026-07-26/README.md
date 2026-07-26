@@ -1,6 +1,6 @@
 # Aegis testing artifacts — 2026-07-26
 
-Raw output from the test run backing [`../../26-testing.md`](../../26-testing.md).
+Raw output from the test run backing [`./report.md`](./report.md).
 
 ## Files
 
@@ -37,7 +37,7 @@ Raw output from the test run backing [`../../26-testing.md`](../../26-testing.md
 
 ## Interpretation
 
-Every table in `26-testing.md` references either a file in this directory or a specific command. If a number in the report doesn't have provenance you can point at here, flag it — nothing should be uncited.
+Every table in `report.md` references either a file in this directory or a specific command. If a number in the report doesn't have provenance you can point at here, flag it — nothing should be uncited.
 
 ## Figures (SVG — GitHub renders inline)
 

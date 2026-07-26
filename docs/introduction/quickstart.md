@@ -3,8 +3,7 @@
 **Sign up, wrap one tool call, and watch the signed audit row land —
 in under five minutes.** This is the "first call" path; the full
 client onboarding narrative (wizard, red-team script, dashboard tour,
-shadow-mode rollout) lives in
-[`setup-agies.md`](../../setup-agies.md) at the repo root.
+shadow-mode rollout) lives in [`guide.md`](../guide.md).
 
 This page targets the public deployment at `https://aegisagent.in`.
 For a local install, swap the host for `http://localhost:8000` (or run
@@ -100,10 +99,9 @@ Execution did not happen.
 
 For the full eight-attack red-team script (injection, jailbreak, wire
 transfer, PII lookup, kubectl-delete-prod, terraform destroy), see
-[`setup-agies.md` §B.3](../../setup-agies.md). To see the four shipped
-scenarios in the Playground UI, open
-`https://aegisagent.in/playground` and click any of the **Attack
-Scenario** cards.
+[`guide.md` §B.3](../guide.md). To see the four shipped scenarios in
+the Playground UI, open `https://aegisagent.in/playground` and click
+any of the **Attack Scenario** cards.
 
 ## 4. Fetch and verify the audit row
 
@@ -167,12 +165,9 @@ a JSON object: `data: {"type": "decision", "data": {...}, "ts":
 
 ## Next
 
-- [`setup-agies.md`](../../setup-agies.md) — the full client
-  onboarding narrative (Path A SDK vs Path B proxy, red-team script,
-  approval inbox replay, exit shadow mode).
-- [`final-testing.md`](../../final-testing.md) — the
-  release-verified end-to-end test matrix (31/31 PASS as the
-  "verified working" reference).
+- [`guide.md`](../guide.md) — the full client onboarding narrative
+  (Path A SDK vs Path B proxy, red-team script, approval inbox
+  replay, exit shadow mode).
 - [60-second tour](60-second-tour.md) — the UI walkthrough, in the
   order a buyer evaluates first.
 - [What is Aegis](what-is-aegis.md) — the product overview if you

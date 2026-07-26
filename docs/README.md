@@ -19,7 +19,7 @@ The [AEVF section](AEVF/README.md) is where that promise becomes operational: an
 | SRE responsible for the production deployment | [Deployment Topology](architecture/deployment-topology.md) then the [Runbooks](runbooks/audit_chain_violation.md) |
 | GRC manager (Vanta / Drata / Secureframe user) | [Evidence Export](integrations/evidence-export.md) — `/compliance/export/grc?format=csv` produces rows your GRC platform ingests, each row carrying a back-reference to a verifiable AEVF bundle |
 | Product or business reader | [60-Second Tour](introduction/60-second-tour.md) |
-| Onboarding a new client / first-time install | [`setup-agies.md`](../setup-agies.md) at the repo root — long-form client onboarding guide, plus [`final-testing.md`](../final-testing.md) for 31/31 E2E PASS evidence |
+| Onboarding a new client / first-time install | [`guide.md`](guide.md) — long-form client onboarding guide (evaluate → sign up → integrate → roll out → hand to auditor) |
 
 ## What's covered
 
@@ -116,7 +116,6 @@ docs/
 - **AEVF landing:** [aegisagent.in/aevf/](https://aegisagent.in/aevf/)
 - **Reference verifier on PyPI (1.1.0):** [`pip install 'aegis-aevf==1.1.0'`](https://pypi.org/project/aegis-aevf/)
 - **Framework SDKs (2026-06-24):** [`pip install 'aegis-anthropic==1.1.2'`](https://pypi.org/project/aegis-anthropic/) · [`pip install 'aegis-openai==1.1.2'`](https://pypi.org/project/aegis-openai/) · [`pip install 'aegis-langchain==1.1.3'`](https://pypi.org/project/aegis-langchain/) · [`pip install 'aegis-bedrock==1.1.3'`](https://pypi.org/project/aegis-bedrock/)
-- **Client onboarding (long-form):** [`setup-agies.md`](../setup-agies.md) at the repo root
-- **E2E PASS evidence:** [`final-testing.md`](../final-testing.md) at the repo root (31/31 PASS)
+- **Client onboarding (long-form):** [`guide.md`](guide.md)
 - **Repository:** [github.com/Abhi-mishra998/aegis](https://github.com/Abhi-mishra998/aegis)
 - **Security disclosures:** [`SECURITY.md`](https://github.com/Abhi-mishra998/aegis/blob/main/SECURITY.md)

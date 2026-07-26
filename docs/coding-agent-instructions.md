@@ -1,4 +1,4 @@
-# INSTRUCTIONS.md — Coding-Agent Operating Contract
+# Coding-Agent Operating Contract
 
 Portable instructions for any coding agent (Claude, Codex, Cursor, Aider, Cline, Windsurf, GitHub Copilot chat, etc.). Drop this in as the system prompt, top-of-context instruction, or repo-level `AGENTS.md` / `.cursorrules` / `CLAUDE.md`.
 

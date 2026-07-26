@@ -447,7 +447,7 @@ class _AuthMixin:
             # X-API-Key header support — must mirror the Bearer acp_* branch
             # above (line ~227) or `role` gets pinned to legacy "agent" and
             # DEVELOPER-role employee keys fail RBAC on /execute (2026-07-26
-            # smoke-test regression from the 25-setup.md client guide).
+            # smoke-test regression from the docs/setup.md client guide).
             key_data = await self._validate_api_key_cached(api_key_header)
             if key_data:
                 tenant_id_str = str(key_data["tenant_id"])

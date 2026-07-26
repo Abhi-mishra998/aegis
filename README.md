@@ -8,10 +8,10 @@ Every LLM prompt scanned. Every tool call authorized. Every decision cryptograph
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Live](https://img.shields.io/badge/live-aegisagent.in-brightgreen)](https://aegisagent.in)
 [![PyPI aegis-anthropic](https://img.shields.io/pypi/v/aegis-anthropic?label=aegis-anthropic)](https://pypi.org/project/aegis-anthropic/)
-[![Attack recall 0.887](https://img.shields.io/badge/attack%20recall-0.887-brightgreen)](./26-testing.md)
-[![Chain integrity 0 violations](https://img.shields.io/badge/chain%20integrity-0%20violations-brightgreen)](./26-testing.md#11-cryptographic-verification)
+[![Attack recall 0.887](https://img.shields.io/badge/attack%20recall-0.887-brightgreen)](./docs/testing/2026-07-26/report.md)
+[![Chain integrity 0 violations](https://img.shields.io/badge/chain%20integrity-0%20violations-brightgreen)](./docs/testing/2026-07-26/report.md#11-cryptographic-verification)
 
-[**Live demo**](https://aegisagent.in) · [**Client setup**](./25-setup.md) · [**Test report**](./26-testing.md) · [**Docs**](https://docs.aegisagent.in) · [**Blog post**](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
+[**Live demo**](https://aegisagent.in) · [**Client setup**](./docs/setup.md) · [**Test report**](./docs/testing/2026-07-26/report.md) · [**Docs**](https://docs.aegisagent.in) · [**Blog post**](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
 
 </div>
 
@@ -110,7 +110,7 @@ flowchart TB
     style kms fill:#8e44ad,color:#fff
 ```
 
-**~$290/month** baseline on-demand at current tenant volume — see [26-testing.md §12](./26-testing.md#12-cost-analysis) for the itemized bill. Free on local Docker Compose.
+**~$290/month** baseline on-demand at current tenant volume — see [test report §12](./docs/testing/2026-07-26/report.md#12-cost-analysis) for the itemized bill. Free on local Docker Compose.
 
 ---
 
@@ -257,7 +257,7 @@ The client sees a normal `messages.create()` call. Everything above happens in ~
 
 ### For clients using the hosted service
 
-If a customer just wants to use Aegis without deploying it, [`25-setup.md`](./25-setup.md) is the 12-section walkthrough. TL;DR:
+If a customer just wants to use Aegis without deploying it, [`docs/setup.md`](./docs/setup.md) is the 12-section walkthrough. TL;DR:
 
 ```bash
 pip install 'aegis-anthropic==1.1.5'   # or aegis-openai / -langchain / -bedrock
@@ -275,7 +275,7 @@ terraform init && terraform apply
 # ~15 minutes. Populates ALB, RDS, ElastiCache, ASG, WAF, R53, everything.
 ```
 
-Total baseline cost: **~$290/month** (see [26-testing.md §12](./26-testing.md#12-cost-analysis) for itemized breakdown).
+Total baseline cost: **~$290/month** (see [test report §12](./docs/testing/2026-07-26/report.md#12-cost-analysis) for itemized breakdown).
 
 ### For engineers running locally
 
@@ -385,7 +385,7 @@ resp = client.messages.create(
 )
 ```
 
-Every prompt is PII-scanned, injection-scanned, cost-capped **before** it reaches Claude. See [25-setup.md §4](./25-setup.md#4-quick-start--5-lines-to-protect-a-tool) for the full walkthrough.
+Every prompt is PII-scanned, injection-scanned, cost-capped **before** it reaches Claude. See [setup §4](./docs/setup.md#4-quick-start--5-lines-to-protect-a-tool) for the full walkthrough.
 
 ---
 
@@ -406,13 +406,13 @@ Every request passes through 10 checks. Each has its own status code + reason so
 | 9 | Cumulative risk | quarantine on 50+ failures in 5 min | fail-CLOSED (403) |
 | 10 | Audit chain | ed25519 sign + shard-lock append | fail-async (never blocks request path) |
 
-Test evidence: [26-testing.md §7-9](./26-testing.md) — real destructive tests against production, all findings documented (including the ones that didn't pass).
+Test evidence: [test report §7-9](./docs/testing/2026-07-26/report.md) — real destructive tests against production, all findings documented (including the ones that didn't pass).
 
 ---
 
 ## 📊 What we tested + published
 
-The report at [**26-testing.md**](./26-testing.md) is a 16-section engineering paper in the format Anthropic + Cloudflare publish theirs. It includes:
+The report at [**docs/testing/2026-07-26/report.md**](./docs/testing/2026-07-26/report.md) is a 16-section engineering paper in the format Anthropic + Cloudflare publish theirs. It includes:
 
 - **Threat model** — assets, actors, boundaries, assumptions
 - **Architecture rationale** — why we chose each component + what we rejected
@@ -476,18 +476,16 @@ Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert �
 
 | Doc | Purpose |
 |---|---|
-| **[25-setup.md](./25-setup.md)** | Client-facing setup guide (12 sections, SDK examples, attack coverage table) |
-| **[26-testing.md](./26-testing.md)** | Public engineering test report (16 sections, threat model, chaos, charts) |
-| **[testing.md](./testing.md)** | Informal v1-v5 fix-and-verify iteration log (kept for historical context) |
-| [`docs/architecture-failure-modes.md`](docs/architecture-failure-modes.md) | Per-component failure behavior |
-| [`docs/security/rbac_matrix.md`](docs/security/rbac_matrix.md) | Every endpoint → role required |
-| [`docs/security/subprocessors.md`](docs/security/subprocessors.md) | Third-party vendors + data flow |
-| [`docs/api/reference.md`](docs/api/reference.md) | Full HTTP API reference |
-| [`docs/observability/slos.md`](docs/observability/slos.md) | Documented SLOs + error budgets |
-| [`docs/runbooks/`](docs/runbooks/) | Operational runbooks |
-| [`SPRINT.md`](SPRINT.md) | Historical sprint plan + architecture rationale |
-| [`SECURITY.md`](SECURITY.md) | Responsible-disclosure policy |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute |
+| [`docs/setup.md`](./docs/setup.md) | Client-facing setup guide (12 sections, SDK examples, attack coverage table) |
+| [`docs/testing/2026-07-26/report.md`](./docs/testing/2026-07-26/report.md) | Public engineering test report (16 sections, threat model, chaos, charts) |
+| [`docs/guide.md`](./docs/guide.md) | End-to-end evaluator → signup → integration → rollout guide |
+| [`docs/architecture-failure-modes.md`](./docs/architecture-failure-modes.md) | Per-component failure behavior |
+| [`docs/security/rbac_matrix.md`](./docs/security/rbac_matrix.md) | Every endpoint → role required |
+| [`docs/security/subprocessors.md`](./docs/security/subprocessors.md) | Third-party vendors + data flow |
+| [`docs/api/reference.md`](./docs/api/reference.md) | Full HTTP API reference |
+| [`docs/runbooks/`](./docs/runbooks/) | Operational runbooks |
+| [`SECURITY.md`](./SECURITY.md) | Responsible-disclosure policy |
+| [`CONTRIBUTING.md`](./CONTRIBUTING.md) | How to contribute |
 
 ---
 
@@ -496,7 +494,7 @@ Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert �
 - **Bug reports + feature ideas:** [open an issue](https://github.com/Abhi-mishra998/aegis/issues)
 - **Security disclosures:** email `founder@aegisagent.in` — see [`SECURITY.md`](SECURITY.md)
 - **PRs:** read [`CONTRIBUTING.md`](CONTRIBUTING.md); every merged change must have a test.
-- **Pattern-recall improvements:** the biggest open area — see [26-testing.md §14](./26-testing.md#14-future-work). If you can add an injection payload that Aegis missed, that's a valid contribution.
+- **Pattern-recall improvements:** the biggest open area — see [test report §14](./docs/testing/2026-07-26/report.md#14-future-work). If you can add an injection payload that Aegis missed, that's a valid contribution.
 
 ---
 
@@ -511,6 +509,6 @@ Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert �
 
 **Ship AI agents you can defend under oath.**
 
-[Live](https://aegisagent.in) · [Setup](./25-setup.md) · [Test report](./26-testing.md) · [Blog](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents) · [Email](mailto:founder@aegisagent.in)
+[Live](https://aegisagent.in) · [Setup](./docs/setup.md) · [Test report](./docs/testing/2026-07-26/report.md) · [Docs](https://docs.aegisagent.in) · [Blog](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents) · [Email](mailto:founder@aegisagent.in)
 
 </div>

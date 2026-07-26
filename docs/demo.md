@@ -2,7 +2,7 @@
 
 **Purpose:** step-by-step screen-recording script for showing a client how Aegis works.
 **Total runtime:** ~18 minutes on camera.
-**File location:** `/Users/abhishekmishra/mcp-security-controller/acp/demo.md` (open in editor as you record).
+**File location:** `docs/demo.md` in the repo (open in editor as you record).
 
 ---
 
@@ -83,7 +83,7 @@ QuickTime → File → New Screen Recording. Speak. Go.
 
 ## Segment 2 · The client SDK (2 minutes)
 
-**Screen:** the terminal, then flip to `25-setup.md` in your editor for one quick shot.
+**Screen:** the terminal, then flip to `docs/setup.md` in your editor for one quick shot.
 
 **Say:**
 
@@ -101,7 +101,7 @@ pip install 'aegis-anthropic==1.1.5' 'aegis-aevf==1.1.1' anthropic
 
 > "Same package as `pip install anthropic`, one extra line to point at Aegis, and that's it — you're now proxying every prompt through Aegis's security pipeline before it reaches Claude."
 
-**Show the code snippet** — flip to `25-setup.md` line 55 (Pattern C) briefly:
+**Show the code snippet** — flip to `docs/setup.md` line 55 (Pattern C) briefly:
 
 ```python
 from aegis_anthropic import AegisAnthropicProxy
@@ -322,7 +322,7 @@ aegis-verify --bundle /tmp/bundle.json --verbose
 
 **Say:**
 
-> "Aegis is open source, Apache 2.0. You can self-host it on your own AWS in about 15 minutes with the Terraform we ship, or use our hosted deployment. Every number I showed you today is in the public test report at `26-testing.md` in the repo — including three open bugs we haven't fixed yet, because we'd rather show you the seams than pretend there aren't any."
+> "Aegis is open source, Apache 2.0. You can self-host it on your own AWS in about 15 minutes with the Terraform we ship, or use our hosted deployment. Every number I showed you today is in the public test report at `docs/testing/2026-07-26/report.md` in the repo — including three open bugs we haven't fixed yet, because we'd rather show you the seams than pretend there aren't any."
 
 **Stop recording.**
 
@@ -373,7 +373,7 @@ Click through the four dashboards:
 
 ### 10 · Chaos demo (3 minutes) — for hardcore infrastructure clients
 
-Reproduce §9.1 from `26-testing.md` live:
+Reproduce §9.1 from `docs/testing/2026-07-26/report.md` live:
 
 ```bash
 # In a separate SSM shell:
@@ -395,13 +395,13 @@ docker start acp_decision
 |---|---|
 | "What if Anthropic changes the API?" | Aegis is a thin proxy — the SDK wraps the official Anthropic client. When they update, we update the SDK the same day. |
 | "What about OpenAI, Bedrock, LangChain?" | Same pattern, published as separate PyPI packages — `aegis-openai`, `aegis-bedrock`, `aegis-langchain`. |
-| "What's the recall on prompt injection?" | 88.7% on our published broad corpus (26-testing.md §8.2), 100% on the ones documented in the setup guide. Rule-based has a ceiling — an opt-in LLM classifier can push it higher at higher latency + cost. |
+| "What's the recall on prompt injection?" | 88.7% on our published broad corpus (test report §8.2), 100% on the ones documented in the setup guide. Rule-based has a ceiling — an opt-in LLM classifier can push it higher at higher latency + cost. |
 | "How much does it cost to run?" | ~$290/month baseline on AWS for the whole 2-host prod-HA stack. See §12 of the test report for the itemized bill. |
 | "Can I self-host?" | Yes — `git clone`, `terraform apply`, 15 minutes. Or `docker compose up -d` on a single laptop for zero-cost eval. |
 | "What compliance does it satisfy?" | EU AI Act (Articles 13, 16, 61), NIST AI RMF, SOC 2 Type II shape. Aegis generates the evidence bundle; your auditor validates it with `aegis-verify` offline. |
 | "How does it handle Claude going down?" | Aegis's own scan runs first — attacks are blocked regardless of Claude's status. If Claude is down for a legitimate request, Aegis returns the upstream 5xx cleanly to the caller. |
-| "Is my prompt data stored?" | The prompt itself is ephemeral in gateway memory. The audit log records the decision + a redacted metadata slice — never the raw prompt. See §2 of `26-testing.md`. |
-| "What's the roadmap?" | See §14 of `26-testing.md` — ordered by priority. Top three: fix the OPA fail-open we found in chaos testing, document the per-key rate limit, add the LLM classifier fallback. |
+| "Is my prompt data stored?" | The prompt itself is ephemeral in gateway memory. The audit log records the decision + a redacted metadata slice — never the raw prompt. See §2 of the test report. |
+| "What's the roadmap?" | See §14 of the test report — ordered by priority. Top three: fix the OPA fail-open we found in chaos testing, document the per-key rate limit, add the LLM classifier fallback. |
 
 ---
 
@@ -416,7 +416,7 @@ docker start acp_decision
 ---
 
 **File index (post-cleanup):**
-- [`25-setup.md`](./25-setup.md) — client onboarding walkthrough (they follow this after seeing your demo)
-- [`26-testing.md`](./26-testing.md) — engineering test report (they read this after they're seriously interested)
-- [`demo.md`](./demo.md) — this file (your recording script — never sent to clients)
-- [`README.md`](./README.md) — GitHub landing (their first click if they Google you)
+- [`docs/setup.md`](./setup.md) — client onboarding walkthrough (they follow this after seeing your demo)
+- [`docs/testing/2026-07-26/report.md`](./testing/2026-07-26/report.md) — engineering test report (they read this after they're seriously interested)
+- [`docs/demo.md`](./demo.md) — this file (your recording script — never sent to clients)
+- [`README.md`](../README.md) — GitHub landing (their first click if they Google you)

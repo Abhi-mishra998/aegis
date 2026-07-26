@@ -94,7 +94,7 @@ aws route53 change-resource-record-sets \
 
 ## Smoke v2 (run from any machine)
 
-Verify the 10 essentials from `setup-agies.md` Section 11 against
+Verify the 10 essentials from `docs/guide.md` Section 11 against
 `v2.aegisagent.in`:
 
 ```bash

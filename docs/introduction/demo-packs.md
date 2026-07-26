@@ -85,7 +85,7 @@ The packs need direct access to the gateway, identity, identity_graph, and auton
 
 1. The environment is up: `curl -fsS https://aegisagent.in/system/health` returns `healthy: 12 / total: 12`.
 2. The repo's `demos/` directory has been uploaded to S3 (it isn't in the production tarball — `aws s3 cp demos.tar.gz s3://acp-backups-prodha-628478/demos/`).
-3. You have an Aegis API key (`acp_…`) from the workspace dashboard with ADMIN role. The Clerk-backed signup flow (live as of 2026-06-15) replaces the pre-seeded local admin used in earlier dev environments — see [`setup-agies.md`](../../setup-agies.md) §1 for the sign-up walkthrough.
+3. You have an Aegis API key (`acp_…`) from the workspace dashboard with ADMIN role. The Clerk-backed signup flow (live as of 2026-06-15) replaces the pre-seeded local admin used in earlier dev environments — see [`guide.md`](../guide.md) §1 for the sign-up walkthrough.
 
 ### One-shot runner
 
@@ -137,7 +137,7 @@ The packs are read-or-write against the live dev environment. They are not isola
 
 ## Next
 
-- [`setup-agies.md`](../../setup-agies.md) — the full client onboarding narrative (Path A SDK vs Path B proxy, red-team script, approval inbox replay)
+- [`guide.md`](../guide.md) — the full client onboarding narrative (Path A SDK vs Path B proxy, red-team script, approval inbox replay)
 - [Quickstart](quickstart.md) — the 5-minute first-call path
 - [60-second tour](60-second-tour.md) — UI walkthrough after a pack has populated the dashboards
 - [Decision service](../services/decision.md) — the signal stack the packs exercise

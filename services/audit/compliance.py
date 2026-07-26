@@ -1106,7 +1106,7 @@ async def get_dpdp_evidence(
 async def list_frameworks() -> dict:
     """Sprint U13 2026-06-26 — discovery endpoint.
 
-    A customer following aegis-guide.md §32-F-19 used to have to read
+    A customer following docs/guide.md §32-F-19 used to have to read
     the 400 error to learn the valid framework names. Now they can
     `GET /compliance/frameworks` and pick from a structured list.
 
