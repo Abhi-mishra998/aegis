@@ -35,12 +35,16 @@ from services.identity.schemas import (
     AgentLoginRequest,
     CredentialCreateRequest,
     CredentialResponse,
+    PasswordChange,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     RevokeResponse,
     TokenIntrospectRequest,
     TokenIntrospectResponse,
     TokenResponse,
     UserCreate,
     UserLogin,
+    UserRegister,
     UserResponse,
 )
 from services.identity.token_service import TokenService
@@ -519,18 +523,19 @@ async def login_user(
     _: Annotated[bool, Depends(check_deadline)] = True,
 ) -> APIResponse[TokenResponse]:
     async with _get_auth_semaphore():
-        if x_tenant_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="X-Tenant-ID header is required for multi-tenant authentication",
-            )
-        try:
-            tenant_uuid = uuid.UUID(x_tenant_id)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid Tenant UUID"
-            )
+        # X-Tenant-ID is OPTIONAL — for self-serve login the user only
+        # knows email + password. When present, it must match the user's
+        # tenant (defends against a stolen cookie replaying against a
+        # different workspace).
+        tenant_uuid: uuid.UUID | None = None
+        if x_tenant_id is not None:
+            try:
+                tenant_uuid = uuid.UUID(x_tenant_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid Tenant UUID"
+                )
 
         email = payload.email.strip().lower()
         result = await db.execute(select(User).where(User.email == email))
@@ -542,10 +547,20 @@ async def login_user(
                 detail="Invalid credentials"
             )
 
-        if user.tenant_id != tenant_uuid:
+        if tenant_uuid is not None and user.tenant_id != tenant_uuid:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials or tenant mismatch"
+            )
+
+        # Clerk-provisioned users have a placeholder hash — bcrypt.checkpw
+        # will always reject, but the error message is opaque. Surface a
+        # specific error so the UI can show "Set your password" and route
+        # to the reset-request flow.
+        if user.hashed_password.startswith("$2b$12$ClerkOwnsThis"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="password_not_set",
             )
 
         # PE-5: bcrypt is CPU-bound, run in thread pool
@@ -593,6 +608,291 @@ async def login_user(
             role=user.role,
         )
     )
+
+
+# =========================
+# SELF-SERVE AUTH (email + password, no third-party IdP)
+# =========================
+
+# Password-reset tokens are signed JWTs with typ="PASSWORD_RESET" and a
+# short TTL. Same signing key as access tokens keeps the key-management
+# surface flat. TTL = 15 min balances user click delay vs stale-link risk.
+_PASSWORD_RESET_TYP = "PASSWORD_RESET"
+_PASSWORD_RESET_TTL_SECONDS = 15 * 60
+
+
+def _mint_password_reset_token(user_id: uuid.UUID, email: str) -> str:
+    import jwt as _jwt  # noqa: PLC0415
+    from datetime import UTC as _UTC  # noqa: PLC0415
+    now = datetime.now(tz=_UTC)
+    return _jwt.encode(
+        {
+            "typ": _PASSWORD_RESET_TYP,
+            "sub": str(user_id),
+            "email": email,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(seconds=_PASSWORD_RESET_TTL_SECONDS)).timestamp()),
+            "jti": secrets.token_urlsafe(16),
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+def _verify_password_reset_token(token: str) -> dict[str, Any]:
+    import jwt as _jwt  # noqa: PLC0415
+    try:
+        claims = _jwt.decode(
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+        )
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(400, "Reset link has expired — request a new one") from None
+    except _jwt.InvalidTokenError:
+        raise HTTPException(400, "Invalid reset link") from None
+    if claims.get("typ") != _PASSWORD_RESET_TYP:
+        raise HTTPException(400, "Invalid reset link")
+    return claims
+
+
+@router.post(
+    "/auth/register",
+    response_model=APIResponse[TokenResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["auth"],
+    summary="Public self-serve signup — creates workspace + returns JWT",
+)
+async def register_user(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    payload: UserRegister,
+    _: Annotated[bool, Depends(check_deadline)] = True,
+) -> APIResponse[TokenResponse]:
+    """Create Organization + Tenant + OWNER User + return access token."""
+    from services.identity.models import Organization, Tenant  # noqa: PLC0415
+
+    async with _get_auth_semaphore():
+        email = payload.email.strip().lower()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            raise HTTPException(400, "Invalid email address")
+
+        existing = await db.execute(select(User).where(User.email == email))
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+
+        tenant_id = uuid.uuid4()
+        org_id = tenant_id  # canonical: users.org_id == users.tenant_id
+        user_id = uuid.uuid4()
+        base_name = (payload.workspace_name or email.split("@")[0]).strip()[:120] or "workspace"
+        slug = f"{base_name.lower().replace(' ', '-')[:40]}-{tenant_id.hex[:8]}"
+
+        db.add(Organization(id=org_id, name=base_name, slug=slug, is_active=True))
+        db.add(Tenant(tenant_id=tenant_id, org_id=org_id, name=base_name))
+        await db.flush()
+
+        # bcrypt cost 12 (senior default). CPU-bound → thread pool.
+        loop = asyncio.get_event_loop()
+        hashed = await loop.run_in_executor(
+            None,
+            partial(bcrypt.hashpw, payload.password.encode("utf-8"), bcrypt.gensalt(rounds=12)),
+        )
+
+        db.add(User(
+            id=user_id,
+            tenant_id=tenant_id,
+            org_id=org_id,
+            email=email,
+            hashed_password=hashed.decode("utf-8"),
+            full_name=payload.full_name or None,
+            role=UserRole.OWNER,
+            is_active=True,
+        ))
+
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered") from None
+
+        token_svc = TokenService(redis)
+        token, expires_in = await token_svc.issue(
+            tenant_id=tenant_id, user_id=user_id, role=UserRole.OWNER, org_id=org_id
+        )
+        await push_audit_event(
+            redis=redis,
+            tenant_id=tenant_id,
+            agent_id=None,
+            action="user_registered",
+            metadata={"role": "OWNER", "user_id": str(user_id), "workspace": base_name},
+        )
+
+    return APIResponse(
+        data=TokenResponse(
+            access_token=token,
+            expires_in=expires_in,
+            user_id=user_id,
+            tenant_id=str(tenant_id),
+            role=UserRole.OWNER.value,
+        )
+    )
+
+
+@router.post(
+    "/auth/password/reset-request",
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["auth"],
+    summary="Request a password-reset link (always 202 to prevent enumeration)",
+)
+async def password_reset_request(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    payload: PasswordResetRequest,
+) -> APIResponse[dict[str, str]]:
+    """Always returns 202. The reset token is logged for self-hosted
+    (grep server logs) and published on `acp:password_reset:emit` for
+    an optional email-delivery worker."""
+    email = payload.email.strip().lower()
+
+    rate_key = f"acp:pwreset:req:{email}"
+    count = await redis.incr(rate_key)
+    if count == 1:
+        await redis.expire(rate_key, 3600)
+    if count > 5:
+        raise HTTPException(429, "Too many reset requests — wait an hour")
+
+    result = await db.execute(select(User).where(User.email == email, User.is_active))
+    user = result.scalar_one_or_none()
+
+    if user is not None:
+        token = _mint_password_reset_token(user.id, email)
+        logger.info(
+            "password_reset_requested",
+            user_id=str(user.id),
+            email=email,
+            reset_token=token,
+        )
+        try:
+            await redis.publish("acp:password_reset:emit", f"{email}|{token}")
+        except Exception as exc:
+            logger.warning("password_reset_pubsub_failed", error=str(exc))
+
+    return APIResponse(data={"status": "accepted"})
+
+
+@router.post(
+    "/auth/password/reset-confirm",
+    response_model=APIResponse[TokenResponse],
+    tags=["auth"],
+    summary="Confirm a password reset — updates hash + returns new access token",
+)
+async def password_reset_confirm(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    payload: PasswordResetConfirm,
+) -> APIResponse[TokenResponse]:
+    claims = _verify_password_reset_token(payload.token)
+    user_id = uuid.UUID(claims["sub"])
+
+    # Single-use enforcement — mark jti so replay within TTL fails.
+    jti = claims.get("jti")
+    used_key = f"acp:pwreset:used:{jti}" if jti else None
+    if used_key and await redis.get(used_key):
+        raise HTTPException(400, "Reset link already used")
+
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(400, "Invalid reset link")
+
+    loop = asyncio.get_event_loop()
+    new_hash = await loop.run_in_executor(
+        None,
+        partial(bcrypt.hashpw, payload.new_password.encode("utf-8"), bcrypt.gensalt(rounds=12)),
+    )
+    user.hashed_password = new_hash.decode("utf-8")
+    await db.commit()
+
+    if used_key:
+        await redis.setex(used_key, _PASSWORD_RESET_TTL_SECONDS, "1")
+
+    token_svc = TokenService(redis)
+    token, expires_in = await token_svc.issue(
+        tenant_id=user.tenant_id, user_id=user.id, role=user.role, org_id=user.org_id
+    )
+    await push_audit_event(
+        redis=redis,
+        tenant_id=user.tenant_id,
+        agent_id=None,
+        action="password_reset",
+        metadata={"user_id": str(user.id)},
+    )
+    return APIResponse(
+        data=TokenResponse(
+            access_token=token,
+            expires_in=expires_in,
+            user_id=user.id,
+            tenant_id=str(user.tenant_id),
+            role=user.role,
+        )
+    )
+
+
+@router.post(
+    "/auth/password/change",
+    tags=["auth"],
+    summary="Authenticated password change — requires current password",
+)
+async def password_change(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    payload: PasswordChange,
+    authorization: Annotated[str, Header()],
+) -> APIResponse[dict[str, str]]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Authentication required")
+    token_svc = TokenService(redis)
+    try:
+        claims = await token_svc.verify(authorization.split(" ", 1)[1])
+    except Exception:
+        raise HTTPException(401, "Invalid token") from None
+    user_id_str = claims.get("user_id") or claims.get("sub")
+    if not user_id_str:
+        raise HTTPException(401, "Token does not identify a user")
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        raise HTTPException(401, "Invalid token subject") from None
+
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(401, "User not found")
+
+    loop = asyncio.get_event_loop()
+    current_ok = await loop.run_in_executor(
+        None,
+        partial(
+            bcrypt.checkpw,
+            payload.current_password.encode("utf-8"),
+            user.hashed_password.encode("utf-8"),
+        ),
+    )
+    if not current_ok:
+        raise HTTPException(401, "Current password is incorrect")
+
+    new_hash = await loop.run_in_executor(
+        None,
+        partial(bcrypt.hashpw, payload.new_password.encode("utf-8"), bcrypt.gensalt(rounds=12)),
+    )
+    user.hashed_password = new_hash.decode("utf-8")
+    await db.commit()
+    await push_audit_event(
+        redis=redis,
+        tenant_id=user.tenant_id,
+        agent_id=None,
+        action="password_change",
+        metadata={"user_id": str(user.id)},
+    )
+    return APIResponse(data={"status": "changed"})
 
 
 # =========================

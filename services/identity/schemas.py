@@ -108,3 +108,31 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     email: str
     password: str
+
+
+# ─── Self-serve registration + password ops (OSS auth, no Clerk) ───
+
+class UserRegister(BaseModel):
+    """Public self-serve signup: creates Organization + Tenant + OWNER User."""
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=256)
+    workspace_name: str | None = Field(default=None, max_length=120)
+    full_name: str | None = Field(default=None, max_length=255)
+
+
+class PasswordResetRequest(BaseModel):
+    """Request a password-reset link. Response is always 202 to prevent
+    account enumeration; the reset token is only delivered out-of-band
+    (server logs in OSS mode, email hook in hosted mode)."""
+    email: str = Field(min_length=3, max_length=255)
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=16, max_length=2048)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+class PasswordChange(BaseModel):
+    """Authenticated password change — requires the current password."""
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
