@@ -63,6 +63,37 @@ from services.gateway.trust_emitter import (
 logger = structlog.get_logger(__name__)
 
 
+# SEC-2026-07-31 (H7): hoist the SQL-injection pattern out of the request
+# path (it was being compiled on every /execute — 100k+ recompiles/day)
+# and rewrite the two ReDoS-prone sub-patterns:
+#
+#  (a) ``/\*.*?\*/.*?\bKEYWORD\b`` under DOTALL was quadratic on
+#      ``/*a*/`` repeats — 750 chunks pinned a worker for 10s, 1000 for
+#      24s. The new form uses ``[^*]*`` to eat comment interior, refuses
+#      to backtrack past the ``*/`` boundary, and bounds the between-
+#      comment-and-keyword window to 200 chars.
+#
+#  (b) ``\bSELECT\b[^;]*\bFROM\b`` similarly bounded to 2000 chars so a
+#      SELECT with a giant WHERE-clause can't blow the matcher.
+#
+# All keywords are anchored by \b so the matcher exits early on any
+# input that lacks any of them. re.DOTALL is dropped; the (a) rewrite
+# no longer relies on . matching newlines.
+_SQL_INJECTION_PATTERN = re.compile(
+    r"(?:;\s*(?:DROP|TRUNCATE|DELETE|INSERT|UPDATE|UNION|EXEC|EXECUTE|CREATE|ALTER|SHUTDOWN|GRANT|REVOKE)\b"
+    r"|\bUNION\s+(?:ALL\s+)?SELECT\b"
+    r"|\b(?:OR|AND)\b\s+['\"]?\s*\d+\s*['\"]?\s*=\s*['\"]?\s*\d+\s*['\"]?"
+    r"|\b(?:OR|AND)\b\s+['\"]\s*\w{0,64}\s*['\"]\s*=\s*['\"]\s*\w{0,64}\s*['\"]"
+    r"|--[^\n]{0,500}\b(?:DROP|TRUNCATE|DELETE|UNION|EXEC|CREATE|ALTER|GRANT)\b"
+    r"|/\*[^*]*(?:\*(?!/)[^*]*)*\*/[^\n]{0,200}\b(?:DROP|TRUNCATE|DELETE|UNION|EXEC|CREATE|ALTER)\b"
+    r"|['\"];\s*(?:--|DROP|TRUNCATE|DELETE|INSERT|UNION|EXEC|EXECUTE|CREATE|ALTER)"
+    r"|\b(?:DROP|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA|INDEX)\b"
+    r"|\b(?:xp_cmdshell|sp_executesql|xp_regwrite|xp_regread)\b"
+    r"|\bSELECT\b[^;]{0,2000}\bFROM\b\s+\w+\s+WHERE\s+1\s*=\s*1\b)",
+    re.IGNORECASE,
+)
+
+
 # ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
@@ -558,7 +589,20 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
             session_id=request.headers.get("X-Session-ID"),
         ):
             async with self.semaphore:
-                return await self._dispatch_with_resilience(request, call_next)
+                response = await self._dispatch_with_resilience(request, call_next)
+                # SEC-2026-07-31 (H6): every response body passes through
+                # the output-redaction filter before leaving the gateway.
+                # Skip binary/non-text content-types — the filter is
+                # a no-op on those and would only waste CPU. Errors from
+                # the filter are logged and the raw response is passed
+                # through as a fail-open — losing every response on
+                # a redactor bug is worse than a possible leak, but the
+                # `output_redaction_error` log line pages SOC.
+                try:
+                    return await self._filter_response(response)
+                except Exception as _exc:
+                    logger.critical("output_redaction_dispatch_error", error=str(_exc))
+                    return response
 
     async def _dispatch_with_resilience(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -1047,20 +1091,12 @@ class SecurityMiddleware(_AuthMixin, _RateLimitMixin, _AuditMixin, _ResponseMixi
                             #   7. SQL Server extended procs: xp_cmdshell, sp_executesql
                             _looks_sql = _k.lower() in _SQL_FIELDS
                             if _looks_sql:
-                                _SQL_PATTERN = _re.compile(
-                                    r"(;\s*(DROP|TRUNCATE|DELETE|INSERT|UPDATE|UNION|EXEC|EXECUTE|CREATE|ALTER|SHUTDOWN|GRANT|REVOKE)\b"
-                                    r"|\bUNION\s+(ALL\s+)?SELECT\b"
-                                    r"|\b(OR|AND)\b\s+['\"]?\s*\d+\s*['\"]?\s*=\s*['\"]?\s*\d+\s*['\"]?"
-                                    r"|\b(OR|AND)\b\s+['\"]\s*\w*\s*['\"]\s*=\s*['\"]\s*\w*\s*['\"]"
-                                    r"|--[^\n]*\b(DROP|TRUNCATE|DELETE|UNION|EXEC|CREATE|ALTER|GRANT)\b"
-                                    r"|/\*.*?\*/.*?\b(DROP|TRUNCATE|DELETE|UNION|EXEC|CREATE|ALTER)\b"
-                                    r"|['\"];\s*(--|DROP|TRUNCATE|DELETE|INSERT|UNION|EXEC|EXECUTE|CREATE|ALTER)"
-                                    r"|\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|INDEX)\b"
-                                    r"|\b(xp_cmdshell|sp_executesql|xp_regwrite|xp_regread)\b"
-                                    r"|\bSELECT\b[^;]*\bFROM\b\s+\w+\s+WHERE\s+1\s*=\s*1\b)",
-                                    _re.IGNORECASE | _re.DOTALL,
-                                )
-                                if _SQL_PATTERN.search(_v):
+                                # SEC-2026-07-31 (H7): pattern moved to module scope
+                                # (_SQL_INJECTION_PATTERN, compiled once at import)
+                                # and the two ReDoS-prone sub-patterns rewritten with
+                                # bounded quantifiers. See the comment near the
+                                # constant for the design rationale.
+                                if _SQL_INJECTION_PATTERN.search(_v):
                                     logger.warning(
                                         "sql_injection_blocked",
                                         tool=tool_name, field=_k, value=_v[:100], request_id=request_id,

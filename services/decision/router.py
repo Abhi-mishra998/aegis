@@ -99,12 +99,39 @@ def _assert_authenticated_tenant_matches(
 # KILL SWITCH
 # ---------------------------------------------------------------------------
 
+async def _emit_kill_switch_audit(
+    redis: object,
+    tenant_id: str,
+    action_slug: str,
+    actor: str | None,
+    reason: str,
+) -> None:
+    """SEC-2026-07-31 (H10): push a chained + signed audit row for every
+    kill-switch mutation. Without this, the flip lived only in mutable
+    Postgres + a 7-day Redis TTL — an insider could engage, act,
+    disengage with no evidence in the append-only chain. Best-effort
+    (never fails the caller — the primary state change already happened
+    by the time we get here)."""
+    try:
+        from sdk.common.audit_stream import push_audit_event as _push
+        await _push(
+            redis=redis,
+            tenant_id=uuid.UUID(tenant_id),
+            agent_id=None,
+            action=action_slug,
+            metadata={"actor": actor or "unknown", "reason": reason},
+        )
+    except Exception as _exc:
+        logger.error("kill_switch_audit_emit_failed", error=str(_exc), tenant_id=tenant_id)
+
+
 @router.post("/kill-switch/{tenant_id}", response_model=APIResponse[dict])
 async def toggle_kill_switch(
     tenant_id: str,
     payload: KillSwitchAction,
     _role: Annotated[str, Depends(_require_admin_or_security)],
     _tenant_match: Annotated[None, Depends(_assert_authenticated_tenant_matches)],
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
 
@@ -124,6 +151,9 @@ async def toggle_kill_switch(
             await db.commit()
         except Exception as exc:
             logger.error("kill_switch_db_persist_failed", error=str(exc), tenant_id=tenant_id)
+        await _emit_kill_switch_audit(
+            redis, tenant_id, "kill_switch_engaged", x_acp_actor, "manual_admin_lockdown"
+        )
         return APIResponse(data={"status": "engaged", "tenant_id": tenant_id})
 
     await redis.delete(key)
@@ -135,6 +165,9 @@ async def toggle_kill_switch(
         await db.commit()
     except Exception as exc:
         logger.error("kill_switch_db_disengage_failed", error=str(exc), tenant_id=tenant_id)
+    await _emit_kill_switch_audit(
+        redis, tenant_id, "kill_switch_disengaged", x_acp_actor, "manual_admin_disengage"
+    )
     return APIResponse(data={"status": "disengaged", "tenant_id": tenant_id})
 
 
@@ -143,6 +176,7 @@ async def disengage_kill_switch(
     tenant_id: str,
     _role: Annotated[str, Depends(_require_admin_or_security)],
     _tenant_match: Annotated[None, Depends(_assert_authenticated_tenant_matches)],
+    x_acp_actor: Annotated[str | None, Header(alias="X-ACP-Actor")] = None,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
 
@@ -156,6 +190,9 @@ async def disengage_kill_switch(
         await db.commit()
     except Exception as exc:
         logger.error("kill_switch_db_disengage_failed", error=str(exc), tenant_id=tenant_id)
+    await _emit_kill_switch_audit(
+        redis, tenant_id, "kill_switch_disengaged", x_acp_actor, "manual_admin_disengage"
+    )
     return APIResponse(data={"status": "disengaged", "tenant_id": tenant_id})
 
 

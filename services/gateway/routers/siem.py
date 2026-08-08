@@ -25,6 +25,10 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Request
 
+from sdk.common.outbound_url_allowlist import (
+    OutboundUrlBlocked,
+    validate_outbound_url,
+)
 from services.audit.siem import (
     ChronicleForwarder,
     DatadogForwarder,
@@ -33,6 +37,26 @@ from services.audit.siem import (
     SIEMEvent,
     SplunkHECForwarder,
 )
+
+# SEC-2026-07-31 (H5): allow-list per SIEM vendor. Any URL/host outside
+# this list is refused before we make an outbound request — closes the
+# blind-SSRF via 169.254.169.254 / private-VPC hosts.
+_SIEM_HOST_ALLOWLISTS: dict[str, tuple[str, ...]] = {
+    "splunk":   ("splunkcloud.com", "splunk.com"),
+    "datadog":  (
+        "datadoghq.com", "us3.datadoghq.com", "us5.datadoghq.com",
+        "datadoghq.eu", "ddog-gov.com", "ap1.datadoghq.com",
+    ),
+    "elastic":  ("elastic-cloud.com", "found.io", "es.amazonaws.com"),
+    "sentinel": ("azure.com", "microsoft.com", "azurewebsites.net"),
+    "chronicle": ("googleapis.com", "google.com"),
+}
+
+
+def _host_in_allowlist(host: str, vendor: str) -> bool:
+    host = (host or "").strip().lower().rstrip(".")
+    allowlist = _SIEM_HOST_ALLOWLISTS.get(vendor, ())
+    return any(host == a or host.endswith(f".{a}") for a in allowlist)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/siem", tags=["siem"])
@@ -67,6 +91,15 @@ async def _probe_splunk(creds: dict) -> dict:
         return _err("splunk", "Both hec_url and hec_token are required.")
     if not url.startswith("https://"):
         return _err("splunk", "hec_url must use https://")
+    # SEC-2026-07-31 (H5): reject metadata-service / private-VPC / DNS-rebind
+    # targets, then enforce a Splunk-domain allow-list.
+    try:
+        validate_outbound_url(url)
+    except OutboundUrlBlocked as exc:
+        return _err("splunk", f"hec_url rejected: {exc}")
+    from urllib.parse import urlparse
+    if not _host_in_allowlist(urlparse(url).hostname or "", "splunk"):
+        return _err("splunk", "hec_url host is not on the Splunk allow-list")
     fw = SplunkHECForwarder(hec_url=url, hec_token=token)
     return await _run_probe("splunk", fw, creds.get("tenant_id", "test"))
 
@@ -76,7 +109,16 @@ async def _probe_datadog(creds: dict) -> dict:
     api_key = (creds.get("api_key") or "").strip()
     if not api_key:
         return _err("datadog", "api_key is required.")
+    # SEC-2026-07-31 (H5): the `site` field is user-controlled and
+    # interpolated into the URL; anything that isn't a Datadog domain is
+    # rejected before the outbound POST.
+    if not _host_in_allowlist(f"http-intake.logs.{site}", "datadog"):
+        return _err("datadog", f"site {site!r} is not a known Datadog region")
     logs_url = f"https://http-intake.logs.{site}/api/v2/logs"
+    try:
+        validate_outbound_url(logs_url)
+    except OutboundUrlBlocked as exc:
+        return _err("datadog", f"logs_url rejected: {exc}")
     fw = DatadogForwarder(logs_url=logs_url, api_key=api_key)
     return await _run_probe("datadog", fw, creds.get("tenant_id", "test"))
 
@@ -87,7 +129,23 @@ async def _probe_elastic(creds: dict) -> dict:
     index = (creds.get("index") or "aegis-audit").strip()
     if not cloud_id or not api_key:
         return _err("elastic", "Both cloud_id and api_key are required.")
-    fw = ElasticForwarder(cloud_id=cloud_id, api_key=api_key, index=index)
+    # SEC-2026-07-31 (H5 extension): ElasticForwarder decodes cloud_id
+    # into ``https://<uuid>.<host>``. Validate the reconstructed URL
+    # rejects metadata IPs / private CIDRs and enforce an Elastic-
+    # domain allow-list (blocks a fake cloud_id pointing at attacker.com).
+    try:
+        _fw_preview = ElasticForwarder(cloud_id=cloud_id, api_key=api_key, index=index)
+        _decoded_url = getattr(_fw_preview, "_cluster_url", "")
+    except Exception as _exc:
+        return _err("elastic", f"cloud_id malformed: {_exc}")
+    try:
+        validate_outbound_url(_decoded_url)
+    except OutboundUrlBlocked as _exc:
+        return _err("elastic", f"cloud_id resolves to a rejected URL: {_exc}")
+    from urllib.parse import urlparse as _urlparse
+    if not _host_in_allowlist(_urlparse(_decoded_url).hostname or "", "elastic"):
+        return _err("elastic", "cloud_id host is not on the Elastic allow-list")
+    fw = _fw_preview
     return await _run_probe("elastic", fw, creds.get("tenant_id", "test"))
 
 

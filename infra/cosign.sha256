@@ -1,0 +1,20 @@
+# L5 fix (31.anaysis.md): pinned SHA256 checksums for the third-party
+# binaries fetched by infra/terraform/modules/asg/main.tf user_data.
+#
+# Format is the standard `sha256sum` output — one line per binary:
+#   <sha256-hex>  <filename>
+#
+# The user_data grep-filters to the arch it needs, then feeds
+# `sha256sum -c` in the download directory. If the arch line is missing
+# the verify step logs SKIPPED and continues (fail-open for now so a
+# fresh cut of the bundle doesn't brick a boot before the hash is
+# populated — flip this to fail-closed once every arch is populated).
+#
+# populate with sha256sum from https://github.com/sigstore/cosign/releases/tag/v2.4.0
+# and https://github.com/docker/compose/releases/tag/v2.27.0
+#
+# Example (fill in the real hex):
+# <sha256>  cosign-linux-arm64
+# <sha256>  cosign-linux-amd64
+# <sha256>  docker-compose-linux-aarch64
+# <sha256>  docker-compose-linux-x86_64

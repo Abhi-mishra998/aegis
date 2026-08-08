@@ -7,17 +7,29 @@ import rego.v1
 # Enterprise rate/budget enforcement rules
 # =========================
 
-default allow := true
-default reason := "within rate limits"
+# SEC-2026-07-31 (H8): default is DENY. The former `default allow := true`
+# was the only rego file in the repo with a permissive default — a tool
+# name that didn't match the destructive-substring set (send_email,
+# transfer_funds, run_query_readonly, ...) got `allow=true` even at
+# critical risk. Now every path must be explicitly allowed.
+default allow := false
+default reason := "no explicit allow rule matched"
 
-# Block agents with critical risk level from sensitive destructive tools
-allow := false if {
+# Allow when the two hard-deny rules below don't trigger AND risk isn't
+# at the absolute ceiling. Baseline: agents whose risk_score is below
+# 1.0 and who are either non-critical OR calling a non-sensitive tool.
+allow if {
+	input.risk_score < 1.0
+	not _critical_and_sensitive
+	not _above_ceiling
+}
+
+_critical_and_sensitive if {
 	lower(input.agent.risk_level) == "critical"
 	sensitive_tool
 }
 
-# Block if risk score is above absolute ceiling (defense-in-depth with decision engine)
-allow := false if {
+_above_ceiling if {
 	input.risk_score >= 1.0
 }
 
@@ -35,13 +47,14 @@ sensitive_tool if {
 # REASONING
 # =========================
 
+reason := "within rate limits" if {
+	allow
+}
+
 reason := "critical risk agent blocked from sensitive tool" if {
-	not allow
-	lower(input.agent.risk_level) == "critical"
-	sensitive_tool
+	_critical_and_sensitive
 }
 
 reason := "maximum risk threshold exceeded" if {
-	not allow
-	input.risk_score >= 1.0
+	_above_ceiling
 }

@@ -44,6 +44,15 @@ class AuditLog(Base, OrgMixin, TenantMixin, IdMixin, TimestampMixin):
     event_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
     prev_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
 
+    # SEC-2026-07-31 (C6): scheme selector for compute_event_hash. NULL
+    # or 1 = legacy 6-field hash (rows sealed before 2026-07-31);
+    # 2 = v2 hash that also covers reason + timestamp + sha256(metadata).
+    # The verifier reads this column via getattr; missing (older schema)
+    # is treated as v1 for backward compat.
+    hash_version: Mapped[int] = mapped_column(
+        SmallInteger, default=2, server_default="1", nullable=True,
+    )
+
     # H-2 FIX (2026-05-13): Shard id for parallel per-tenant chain locking.
     # Default 0 preserves single-chain semantics for legacy rows; new writes
     # derive shard = hash(request_id) % AUDIT_CHAIN_SHARD_COUNT.

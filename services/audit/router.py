@@ -288,7 +288,9 @@ async def get_heatmap(
         swallow_log(logger, "audit_trends_cache_read_failed", exc)
 
     import datetime as _dt
-    cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=7)
+    # SEC-2026-07-31 (L6): tz-aware UTC — naive utcnow() can silently
+    # drift ±24h under DST-boundary comparisons with TIMESTAMPTZ columns.
+    cutoff = _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=7)
     _agent_filter = (AuditLog.agent_id == agent_id) if agent_id is not None else sa.true()
     dow_col  = func.extract("dow",  AuditLog.timestamp).label("dow")
     hour_col = func.extract("hour", AuditLog.timestamp).label("hour")
@@ -402,7 +404,7 @@ async def pack_enforcement(
         swallow_log(logger, "audit_pack_cache_read_failed", exc)
 
     import datetime as _dt
-    start = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+    start = _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=days)  # SEC-2026-07-31 (L6): tz-aware
 
     # Postgres JSONB extraction — metadata_json is JSON not JSONB on
     # some deployments, so cast for the ->> operator.
@@ -514,7 +516,7 @@ async def aggregate_logs(
         }
     """
     import datetime as _dt
-    start = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+    start = _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=days)  # SEC-2026-07-31 (L6): tz-aware
 
     base = (
         select(AuditLog.decision, func.count().label("cnt"))

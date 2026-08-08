@@ -2,14 +2,18 @@
  * First-party auth service — email + password against the identity
  * service's /auth/register, /auth/token, and /auth/password/* endpoints.
  *
- * The access token is stored in sessionStorage (per-tab, auto-clears on
- * tab close so a future XSS sink can't exfiltrate past that tab). It's
- * ALSO mirrored to a SameSite=Strict cookie so SSE (EventSource, which
- * can't attach an Authorization header) has a credential to present.
+ * M12 closure 2026-07-31: the JWT is NO LONGER stored client-side. The
+ * gateway sets `acp_token` as an httpOnly Secure SameSite=Strict cookie
+ * on /auth/token + /auth/register responses; the browser auto-sends it
+ * on every fetch via `credentials: 'include'`. sessionStorage now holds
+ * only non-sensitive metadata (tenant_id, user_email, user_role, expiry)
+ * so ProtectedRoute + the sidebar can render without a server round-trip.
  *
- * We don't have httpOnly cookies here because JS has to set them after
- * a successful login. If your deployment adds a gateway-side Set-Cookie
- * on /auth/token, this module is compatible — it just doesn't rely on it.
+ * // TODO(server): set httpOnly cookie on /auth/token + /auth/register —
+ * depends on identity server change (owned by auth-batch agent). Until
+ * that ships, requests will 401 because there is no client-side token to
+ * fall back on. Do NOT re-introduce client-side storage as a bridge —
+ * that just puts the XSS-exfil surface back.
  */
 
 import { setSessionMetadata, clearSessionMetadata } from "./api";
@@ -17,23 +21,9 @@ import { setSessionItem, removeSessionItem, getSessionItem } from "../lib/sessio
 import { logger } from "../lib/logger";
 
 const API_BASE = import.meta.env.VITE_GATEWAY_URL || "";
-const TOKEN_KEY = "acp_access_token";
 
-function decodeJwtExpMs(token) {
-  if (!token || typeof token !== "string") return 0;
-  const parts = token.split(".");
-  if (parts.length !== 3) return 0;
-  try {
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const claims = JSON.parse(atob(b64));
-    return typeof claims.exp === "number" ? claims.exp * 1000 : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function persistSession({ access_token, expires_in, tenant_id, user_id, role }, email) {
-  setSessionItem(TOKEN_KEY, access_token);
+function persistSession({ expires_in, tenant_id, user_id, role }, email) {
+  // ponytail: JWT lives in httpOnly cookie now, browser auto-sends via credentials:'include'
   setSessionMetadata({
     tenant_id,
     user_email: email,
@@ -42,43 +32,36 @@ function persistSession({ access_token, expires_in, tenant_id, user_id, role }, 
     expires_in,
   });
   if (user_id) setSessionItem("user_id", String(user_id));
-
-  const isSecure = window.location.protocol === "https:";
-  const ttl = Math.max(60, Number(expires_in) || 3600);
-  const attrs = [
-    `acp_token=${access_token}`,
-    "path=/",
-    `max-age=${ttl}`,
-    "samesite=Strict",
-  ];
-  if (isSecure) attrs.push("Secure");
-  document.cookie = attrs.join("; ");
 }
 
 export function getAccessToken() {
-  const t = getSessionItem(TOKEN_KEY);
-  if (!t) return null;
-  const exp = decodeJwtExpMs(t);
-  if (exp > 0 && exp <= Date.now()) return null;
-  return t;
+  // ponytail: no client-side token anymore — cookie is httpOnly, invisible to JS.
+  // Retained as a stub so legacy callers (see api.js parseApiError, changePassword)
+  // don't have to change shape. Returning null means "cannot attach a Bearer here."
+  return null;
 }
 
 export function hasSession() {
-  return getAccessToken() !== null;
+  // Session presence inferred from metadata + not-yet-expired timestamp.
+  // Server is the authoritative validator; any 401 clears the session.
+  const tenantId = getSessionItem("tenant_id");
+  if (!tenantId) return false;
+  const expiry = parseInt(getSessionItem("acp_token_expiry") || "0", 10);
+  return expiry > Date.now();
 }
 
-/** Attach Authorization: Bearer if a valid session token is present. */
+/** No-op — browser auto-sends the httpOnly cookie via credentials:'include'. */
 export async function attachAuth(headers) {
-  const t = getAccessToken();
-  if (t) headers.Authorization = `Bearer ${t}`;
+  // ponytail: JWT lives in httpOnly cookie now, browser auto-sends via credentials:'include'
   return headers;
 }
 
 export function clearSession() {
-  removeSessionItem(TOKEN_KEY);
   removeSessionItem("user_id");
   clearSessionMetadata();
-  document.cookie = "acp_token=; path=/; max-age=0; samesite=Strict";
+  // Cookie is httpOnly — cannot be cleared from JS. The gateway's
+  // /auth/logout response must include `Set-Cookie: acp_token=; Max-Age=0`.
+  // See logout() below.
 }
 
 async function post(path, body, extraHeaders = {}) {
@@ -103,16 +86,20 @@ async function post(path, body, extraHeaders = {}) {
 
 export async function login({ email, password }) {
   const body = { email: String(email).trim().toLowerCase(), password };
+  // TODO(server): set httpOnly cookie on /auth/token — depends on identity server change.
+  // Server should keep returning {tenant_id, user_id, role, expires_in} in the body
+  // (used to seed sessionStorage metadata) but the JWT itself moves into the cookie.
   const resp = await post("/auth/token", body);
   const data = resp?.data || {};
-  if (!data.access_token) {
-    throw new Error("Login succeeded but no access token returned");
+  if (!data.tenant_id) {
+    throw new Error("Login succeeded but no session metadata returned");
   }
   persistSession(data, body.email);
   return data;
 }
 
 export async function register({ email, password, workspace_name, full_name }) {
+  // TODO(server): set httpOnly cookie on /auth/register — depends on identity server change.
   const resp = await post("/auth/register", {
     email: String(email).trim().toLowerCase(),
     password,
@@ -120,8 +107,16 @@ export async function register({ email, password, workspace_name, full_name }) {
     full_name: full_name || undefined,
   });
   const data = resp?.data || {};
-  if (!data.access_token) {
-    throw new Error("Registration succeeded but no access token returned");
+  // SEC-2026-07-31 (L1): duplicate-email registrations now return
+  // 202 with `{status: "accepted", check_email: true}` instead of
+  // 409 (which was a user-enumeration oracle). Surface that shape
+  // to the caller so the sign-up UI can render a neutral
+  // "check your inbox" message without leaking existence.
+  if (data && data.check_email) {
+    return { status: "accepted", check_email: true };
+  }
+  if (!data.tenant_id) {
+    throw new Error("Registration succeeded but no session metadata returned");
   }
   persistSession(data, String(email).trim().toLowerCase());
   return data;
@@ -145,36 +140,30 @@ export async function requestPasswordReset(email) {
 export async function confirmPasswordReset({ token, new_password }) {
   const resp = await post("/auth/password/reset-confirm", { token, new_password });
   const data = resp?.data || {};
-  if (data.access_token) {
-    // Reset-confirm returns a fresh session — log the user in.
+  if (data.tenant_id) {
+    // Reset-confirm returns a fresh session — server issues the cookie.
     persistSession(data, "");
   }
   return data;
 }
 
 export async function changePassword({ current_password, new_password }) {
-  const t = getAccessToken();
-  if (!t) throw new Error("Not signed in");
-  return post(
-    "/auth/password/change",
-    { current_password, new_password },
-    { Authorization: `Bearer ${t}` },
-  );
+  if (!hasSession()) throw new Error("Not signed in");
+  // ponytail: cookie auth — no Authorization header needed
+  return post("/auth/password/change", { current_password, new_password });
 }
 
 export async function logout() {
-  // Best-effort server-side revoke; client-side clear happens regardless.
-  const t = getAccessToken();
-  if (t) {
-    try {
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${t}` },
-        credentials: "include",
-      });
-    } catch {
-      // Network failure on logout still clears local state.
-    }
+  // Best-effort server-side revoke; local metadata clear happens regardless.
+  // The server's /auth/logout response must include `Set-Cookie: acp_token=; Max-Age=0`
+  // to actually clear the httpOnly cookie — JS cannot do it.
+  try {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // Network failure on logout still clears local state.
   }
   clearSession();
 }

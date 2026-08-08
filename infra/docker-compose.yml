@@ -500,7 +500,10 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      # M5 fix (31.anaysis.md): bind to loopback. ALB TG only targets
+      # port 5173 (UI/nginx) — 8000 has no external caller, so any
+      # 0.0.0.0 bind was pure attack surface (SSM tunnel bypass of ALB+WAF).
+      - "127.0.0.1:8000:8000"
     environment:
       - IDENTITY_SERVICE_URL=http://identity:8000
       - POLICY_SERVICE_URL=http://policy:8000
@@ -765,6 +768,12 @@ services:
         - VITE_GATEWAY_URL=${VITE_GATEWAY_URL:-}
     container_name: acp_ui
     ports:
+      # ponytail: keeping 0.0.0.0 — ALB target group is target_type=instance
+      # on port 5173 (see infra/terraform/modules/alb/main.tf), so it reaches
+      # this container via the EC2 instance's network IP, not the docker
+      # bridge. ALB SG already restricts ingress to alb_sg only. Loopback
+      # bind would break the ALB health check (M5 in 31.anaysis.md — UI
+      # left as-is, gateway moved to 127.0.0.1).
       - "5173:80"
     depends_on:
       gateway:
@@ -980,7 +989,11 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      # H15 fix (31.anaysis.md): anonymous viewer role was leaking every
+      # dashboard (customer names, latency, decisions) to any unauth
+      # caller who reached :3000. Grafana is now admin-login-only.
+      # TODO: wire Grafana OAuth to Clerk/SSO per 31.anaysis.md H15.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro

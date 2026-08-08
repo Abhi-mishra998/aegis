@@ -73,14 +73,15 @@ module "security_groups" {
 module "iam" {
   source = "./modules/iam"
 
-  name_prefix              = local.name_prefix
-  bundle_bucket            = var.bundle_bucket
-  public_roots_bucket      = var.public_roots_bucket
-  secrets_arns             = module.secrets.all_secret_arns
-  ssm_bundle_parameter_arn = module.ssm.bundle_parameter_arn
-  app_param_arns           = module.params.parameter_arns
-  audit_kms_key_arn        = module.audit_kms.key_arn
-  log_group_arns           = module.log_groups.log_group_arns
+  name_prefix                = local.name_prefix
+  bundle_bucket              = var.bundle_bucket
+  public_roots_bucket        = var.public_roots_bucket
+  secrets_arns               = module.secrets.all_secret_arns
+  ssm_bundle_parameter_arn   = module.ssm.bundle_parameter_arn
+  app_param_arns             = module.params.parameter_arns
+  grafana_admin_password_arn = module.params.grafana_admin_password_arn
+  audit_kms_key_arn          = module.audit_kms.key_arn
+  log_group_arns             = module.log_groups.log_group_arns
 }
 
 # ───────────────────────────────────────────────────────────────────────
@@ -149,16 +150,16 @@ module "asg" {
   bundle_bucket        = var.bundle_bucket
   aws_region           = var.aws_region
 
-  rds_endpoint             = module.rds.endpoint
-  rds_master_secret_id     = module.secrets.db_password_name
-  redis_primary_endpoint   = module.elasticache.primary_endpoint
-  domain                   = var.domain
-  internal_secret_arn      = module.secrets.internal_secret_arn
-  jwt_signing_secret_id    = module.secrets.jwt_signing_name
-  mesh_jwt_secret_id       = module.secrets.mesh_jwt_secret_arn
-  groq_api_key_secret_id   = module.secrets.groq_api_key_arn
-  app_param_prefix         = var.app_param_prefix
-  public_roots_bucket      = var.public_roots_bucket
+  rds_endpoint           = module.rds.endpoint
+  rds_master_secret_id   = module.secrets.db_password_name
+  redis_primary_endpoint = module.elasticache.primary_endpoint
+  domain                 = var.domain
+  internal_secret_arn    = module.secrets.internal_secret_arn
+  jwt_signing_secret_id  = module.secrets.jwt_signing_name
+  mesh_jwt_secret_id     = module.secrets.mesh_jwt_secret_arn
+  groq_api_key_secret_id = module.secrets.groq_api_key_arn
+  app_param_prefix       = var.app_param_prefix
+  public_roots_bucket    = var.public_roots_bucket
 }
 
 # ───────────────────────────────────────────────────────────────────────
@@ -192,6 +193,7 @@ module "elasticache" {
   redis_security_group = module.security_groups.redis_sg_id
   node_type            = var.redis_node_type
   num_nodes            = var.redis_num_nodes
+  redis_auth_token     = module.secrets.redis_auth_token_value
 }
 
 # ───────────────────────────────────────────────────────────────────────
@@ -254,9 +256,10 @@ module "params" {
 module "audit_kms" {
   source = "./modules/audit_kms"
 
-  name_prefix  = local.name_prefix
-  alias_name   = var.audit_kms_alias
-  ec2_role_arn = module.iam.ec2_role_arn
+  name_prefix           = local.name_prefix
+  alias_name            = var.audit_kms_alias
+  ec2_role_arn          = module.iam.ec2_role_arn
+  audit_writer_role_arn = module.iam.ec2_role_arn
 }
 
 # ───────────────────────────────────────────────────────────────────────

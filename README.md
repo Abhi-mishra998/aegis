@@ -1,25 +1,45 @@
 <div align="center">
 
-# 🛡️ Aegis
+# 🛡️ OPA Policy Engine — Runtime Security Control Plane for AI Agents
 
-**The runtime security control plane for AI agents.**
+**Designed and built by [Suresh Avula](https://github.com/sureshavulaaiarchitect)**  
+*Enterprise Database & AI Architect · 18+ years · Petabyte-scale platforms*
+
 Every LLM prompt scanned. Every tool call authorized. Every decision cryptographically signed.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Live](https://img.shields.io/badge/live-aegisagent.in-brightgreen)](https://aegisagent.in)
 [![PyPI aegis-anthropic](https://img.shields.io/pypi/v/aegis-anthropic?label=aegis-anthropic)](https://pypi.org/project/aegis-anthropic/)
 [![Attack recall 0.887](https://img.shields.io/badge/attack%20recall-0.887-brightgreen)](./docs/testing/2026-07-26/report.md)
 [![Chain integrity 0 violations](https://img.shields.io/badge/chain%20integrity-0%20violations-brightgreen)](./docs/testing/2026-07-26/report.md#11-cryptographic-verification)
 
-[**Live demo**](https://aegisagent.in) · [**Client setup**](./docs/setup.md) · [**Test report**](./docs/testing/2026-07-26/report.md) · [**Docs**](https://docs.aegisagent.in) · [**Blog post**](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents)
+[**Setup guide**](./docs/setup.md) · [**Test report**](./docs/testing/2026-07-26/report.md) · [**API reference**](./docs/api/reference.md)
 
 </div>
 
 ---
 
-## What Aegis does in 30 seconds
+## About the Author
 
-Your AI agent is about to call `db.query(sql="DROP TABLE users")` or send a prompt with `"Ignore all previous instructions"`. Without Aegis, that call goes through. With Aegis, it's blocked in ~150 ms with a signed audit receipt.
+**Suresh Avula** — Enterprise Database / Data / SRE / Cloud Architect with 18+ years designing and operating petabyte-scale data platforms that power products used by the world's largest enterprises.
+
+I've been the principal data and AI architect on multiple unicorn growth journeys — modeling multi-billion-dollar products, engineering systems that ingest terabytes daily, analyze terabyte-to-petabyte volumes, and synchronize terabyte-scale datasets across clouds. This project is the intersection of my AI engineering work and enterprise-grade security architecture.
+
+**Signature work:**
+- $40M+ cloud cost saved across AWS & Azure via FinOps tooling and AI query optimization
+- Petabyte-scale platforms with TB/day ingestion across AWS, Azure, GCP & OCI
+- Healthcare analytics at Innovaccer serving hundreds of thousands of concurrent users
+- Fintech-grade DB infrastructure at S&P Global underpinning hundreds of trillions of dollars in global financial-market data, 24×7 mission-critical
+- Built DB runbook RAG using pgvector, ChromaDB & Ollama; MCP servers for databases; agentic AI pipelines
+
+**Stack:** Oracle · Snowflake · Redshift · BigQuery · Databricks · ClickHouse · OceanBase · PostgreSQL · Redis · Cassandra · dbt · Airflow · Delta Lake · Apache Iceberg · RAG · MCP · LLM · LangChain · OPA · AWS · Azure · GCP · OCI · Kubernetes · Terraform
+
+> Connect: [GitHub](https://github.com/sureshavulaaiarchitect)
+
+---
+
+## What this project does in 30 seconds
+
+Your AI agent is about to call `db.query(sql="DROP TABLE users")` or send a prompt with `"Ignore all previous instructions"`. Without this control plane, that call goes through. With it, it's blocked in ~150 ms with a signed audit receipt — and every decision is logged, cryptographically chained, and verifiable offline.
 
 ```python
 from sdk.acp_client import Client, DeniedError
@@ -34,9 +54,9 @@ query("SELECT name FROM users LIMIT 10")   # ✅ runs
 query("DROP TABLE users")                   # ❌ DeniedError raised before it runs
 ```
 
-**Aegis blocks:** prompt injection · DAN / OMEGA / STAN jailbreaks · SSN / credit-card / API-key exfil · cost bombs · cross-tenant escapes · runaway loops · unauthorized tool calls · unauthorized shell commands · unauthorized file reads.
+**Blocks:** prompt injection · DAN / OMEGA / STAN jailbreaks · SSN / credit-card / API-key exfil · cost bombs · cross-tenant escapes · runaway loops · unauthorized tool calls · unauthorized shell commands · unauthorized file reads.
 
-**Aegis produces:** an ed25519-signed, Merkle-rooted, per-tenant audit chain that any regulator can verify offline in one command:
+**Produces:** an ed25519-signed, Merkle-rooted, per-tenant audit chain that any regulator can verify offline in one command:
 
 ```bash
 pip install aegis-aevf==1.1.1 && aegis-verify --bundle exported.json
@@ -44,23 +64,25 @@ pip install aegis-aevf==1.1.1 && aegis-verify --bundle exported.json
 
 ---
 
-## Why it exists
+## Why I built this
 
-AI agents ship faster than they can be secured. In 2026 an agent framework will happily execute a tool call constructed from a prompt-injected LLM response — no policy layer between "the model said so" and "the database was dropped." Existing solutions either:
+AI agents ship faster than they can be secured. In 2026 an agent framework will happily execute a tool call constructed from a prompt-injected LLM response — no policy layer between "the model said so" and "the database was dropped."
 
-- **Live inside the model** (safety fine-tuning) — good, but 100 % model-specific and easily jailbroken
-- **Live outside the process** (WAF / IAM) — good for shapes of traffic, blind to the semantics of prompts and tool calls
-- **Live in a paid SaaS** — good if you like sending your prompts to a third party
+Having spent 18+ years protecting petabyte-scale databases and financial-market data infrastructure, I've seen what happens when access control is an afterthought. This project applies the same enterprise-grade defense-in-depth thinking to AI agent runtimes:
 
-Aegis is the fourth option: a **process-adjacent runtime firewall** — open source, self-hosted, model-agnostic, tool-agnostic. It reads every prompt and every tool call, applies a 10-layer policy pipeline, and produces a tamper-evident audit trail.
+- **Not inside the model** (safety fine-tuning) — good, but 100% model-specific and easily jailbroken
+- **Not outside the process** (WAF / IAM) — good for traffic shapes, blind to prompt + tool semantics
+- **Not a paid SaaS** — your prompts stay yours
+
+This is the fourth option: a **process-adjacent runtime firewall** — open source, self-hosted, model-agnostic, tool-agnostic. It reads every prompt and every tool call, applies a 10-layer policy pipeline backed by Open Policy Agent (OPA / Rego), and produces a tamper-evident audit trail.
 
 ---
 
-## 📐 The three diagrams
+## Architecture
 
 ### 1. AWS deployment topology
 
-Everything Aegis needs to run on AWS in `ap-south-1` (or any AWS region). Provisioned by Terraform in [`infra/terraform/`](infra/terraform/).
+Everything needed to run on AWS (`ap-south-1` or any AWS region). Provisioned by Terraform in [`infra/terraform/`](infra/terraform/).
 
 ```mermaid
 flowchart TB
@@ -87,7 +109,7 @@ flowchart TB
     subgraph aws [AWS managed services]
         s3[(S3<br/>bundle store +<br/>public transparency roots)]
         sm[Secrets Manager<br/>DB pass · JWT keys · mesh keys]
-        ssm[SSM Parameter Store<br/>Clerk · Anthropic · feature flags]
+        ssm[SSM Parameter Store<br/>feature flags]
         kms[KMS<br/>audit envelope encryption]
         cw[CloudWatch<br/>logs · metrics · alarms]
         ct[CloudTrail<br/>immutable API history]
@@ -110,13 +132,13 @@ flowchart TB
     style kms fill:#8e44ad,color:#fff
 ```
 
-**~$290/month** baseline on-demand at current tenant volume — see [test report §12](./docs/testing/2026-07-26/report.md#12-cost-analysis) for the itemized bill. Free on local Docker Compose.
+**~$290/month** baseline on-demand — see [test report §12](./docs/testing/2026-07-26/report.md#12-cost-analysis) for the itemized bill. Free on local Docker Compose.
 
 ---
 
-### 2. Aegis internal services
+### 2. Internal services
 
-19 microservices per host, all in Python 3.11 + FastAPI. Each service is a separate container with its own DB pool, mesh JWT signing key, and health check. Cross-service calls use ES256 mesh JWTs.
+19 microservices per host, all in Python 3.11 + FastAPI. Each service has its own DB pool, mesh JWT signing key, and health check. Cross-service calls use ES256 mesh JWTs.
 
 ```mermaid
 flowchart TB
@@ -193,18 +215,14 @@ flowchart TB
     style opa fill:#e67e22,color:#fff
 ```
 
-Full service inventory + memory limits + purpose in [Service inventory](#service-inventory).
-
 ---
 
 ### 3. Request workflow — end-to-end
 
-What actually happens when your agent calls `client.messages.create(...)`:
-
 ```mermaid
 sequenceDiagram
     participant A as Agent (your process)
-    participant SDK as Aegis SDK<br/>(aegis-anthropic)
+    participant SDK as SDK<br/>(aegis-anthropic)
     participant WAF as AWS WAF
     participant G as Gateway<br/>auth + scan
     participant P as Policy + OPA
@@ -215,21 +233,16 @@ sequenceDiagram
     Note over A,AU: user prompt: "Summarize this email: ..."
 
     A->>SDK: messages.create(model, prompt, max_tokens)
-    SDK->>WAF: POST /v1/messages<br/>x-api-key: acp_emp_...
+    SDK->>WAF: POST /v1/messages
     WAF->>WAF: bot-control + rate rules
     WAF->>G: forward
-    G->>G: validate employee key → tenant
-    G->>G: check X-Tenant-ID matches
-    G->>G: check max_tokens ≤ ceiling
-    G->>G: check input ≤ 24 000 chars
+    G->>G: validate key → tenant
     G->>G: PII scan (SSN / CC / API-keys)
     G->>G: injection scan (regex + normalize)
 
     alt scan hits attack
         G-->>SDK: 400 or 403 + specific reason
-        SDK-->>A: raise HTTPStatusError
         G->>AU: audit-write via Redis stream
-        Note right of AU: deny recorded<br/>even on blocked requests
     else scan clean
         G->>P: OPA policy check
         P-->>G: allow / deny / escalate
@@ -253,40 +266,28 @@ The client sees a normal `messages.create()` call. Everything above happens in ~
 
 ---
 
-## 🚀 Quickstart
+## Quickstart
 
-### For clients using the hosted service
-
-If a customer just wants to use Aegis without deploying it, [`docs/setup.md`](./docs/setup.md) is the 12-section walkthrough. TL;DR:
+### Self-hosting on AWS
 
 ```bash
-pip install 'aegis-anthropic==1.1.5'   # or aegis-openai / -langchain / -bedrock
-```
-
-Then log in at [aegisagent.in](https://aegisagent.in), mint an employee key, and use the SDK.
-
-### For engineers self-hosting on AWS
-
-```bash
-git clone https://github.com/Abhi-mishra998/aegis.git
-cd aegis/infra/terraform
+git clone https://github.com/sureshavulaaiarchitect/opa-policy-engine.git
+cd opa-policy-engine/infra/terraform
 # Edit envs/prod/terraform.tfvars with your account + domain
 terraform init && terraform apply
-# ~15 minutes. Populates ALB, RDS, ElastiCache, ASG, WAF, R53, everything.
+# ~15 minutes. Provisions ALB, RDS, ElastiCache, ASG, WAF, R53, everything.
 ```
 
-Total baseline cost: **~$290/month** (see [test report §12](./docs/testing/2026-07-26/report.md#12-cost-analysis) for itemized breakdown).
+Total baseline cost: **~$290/month** (see [test report §12](./docs/testing/2026-07-26/report.md#12-cost-analysis)).
 
-### For engineers running locally
-
-Zero AWS, zero Clerk, single laptop:
+### Running locally (zero AWS)
 
 ```bash
-git clone https://github.com/Abhi-mishra998/aegis.git
-cd aegis/infra
-cp .env.aws.template .env      # then fill in the placeholders
+git clone https://github.com/sureshavulaaiarchitect/opa-policy-engine.git
+cd opa-policy-engine/infra
+cp .env.aws.template .env      # fill in the placeholders
 docker compose up -d
-# 25 containers per host — takes ~2 minutes on first cold start
+# 25 containers — takes ~2 minutes on first cold start
 open http://localhost:5173
 ```
 
@@ -298,7 +299,7 @@ Total cost: **$0.**
 
 19 Python microservices + 6 infrastructure containers = 25 containers per host.
 
-### Aegis services
+### Services
 
 | Service | Port (internal) | Purpose | Memory limit |
 |---|---|---|---|
@@ -307,7 +308,7 @@ Total cost: **$0.**
 | **policy** | 8000 | OPA client wrapper · policy CRUD | 480 MB |
 | **audit** | 8000 | ed25519-signed chain · 16 shards per tenant · Merkle root sealing | 512 MB |
 | **registry** | 8000 | Agent + permission CRUD · allow-list enforcement | 480 MB |
-| **identity** | 8000 | Tenant + user + role · Clerk provisioning | 480 MB |
+| **identity** | 8000 | Tenant + user + role management | 480 MB |
 | **api** | 8000 | Employee virtual keys · incidents · ARE workflow | 192 MB |
 | **usage** | 8000 | Cost telemetry · outbox reconciliation | 160 MB |
 | **behavior** | 8000 | Per-agent baseline · drift detection | 640 MB |
@@ -337,7 +338,7 @@ Total cost: **$0.**
 
 ---
 
-## 📦 SDK packages
+## SDK packages
 
 Four provider-specific SDKs + one offline verifier. All published to PyPI.
 
@@ -377,7 +378,7 @@ result = open(path).read()  # only runs if allow
 from aegis_anthropic import AegisAnthropicProxy
 client = AegisAnthropicProxy(
     employee_key=os.environ["AEGIS_EMPLOYEE_KEY"],
-    gateway_url="https://aegisagent.in",
+    gateway_url="https://your-deployment-url",
 )
 resp = client.messages.create(
     model="claude-sonnet-4-5", max_tokens=1024,
@@ -385,13 +386,13 @@ resp = client.messages.create(
 )
 ```
 
-Every prompt is PII-scanned, injection-scanned, cost-capped **before** it reaches Claude. See [setup §4](./docs/setup.md#4-quick-start--5-lines-to-protect-a-tool) for the full walkthrough.
+Every prompt is PII-scanned, injection-scanned, cost-capped **before** it reaches the model.
 
 ---
 
-## 🔒 Security layers
+## Security layers
 
-Every request passes through 10 checks. Each has its own status code + reason so you always know what stopped it.
+Every request passes through 10 checks. Each has its own status code + reason.
 
 | Layer | Where | Blocks | Fail mode |
 |---|---|---|---|
@@ -406,53 +407,46 @@ Every request passes through 10 checks. Each has its own status code + reason so
 | 9 | Cumulative risk | quarantine on 50+ failures in 5 min | fail-CLOSED (403) |
 | 10 | Audit chain | ed25519 sign + shard-lock append | fail-async (never blocks request path) |
 
-Test evidence: [test report §7-9](./docs/testing/2026-07-26/report.md) — real destructive tests against production, all findings documented (including the ones that didn't pass).
+Test evidence: [test report §7-9](./docs/testing/2026-07-26/report.md) — real destructive tests against production, all findings documented.
 
 ---
 
-## 📊 What we tested + published
+## Test results
 
-The report at [**docs/testing/2026-07-26/report.md**](./docs/testing/2026-07-26/report.md) is a 16-section engineering paper in the format Anthropic + Cloudflare publish theirs. It includes:
+The report at [**docs/testing/2026-07-26/report.md**](./docs/testing/2026-07-26/report.md) is a 16-section engineering paper covering:
 
 - **Threat model** — assets, actors, boundaries, assumptions
-- **Architecture rationale** — why we chose each component + what we rejected
+- **Architecture rationale** — why each component, what was rejected
 - **Attack coverage matrix** — 123 payloads, per-class breakdown
-- **Chaos engineering** — real destructive tests: kill Decision / Audit / OPA / Gateway, measure recovery
+- **Chaos engineering** — kill Decision / Audit / OPA / Gateway, measure recovery
 - **Scalability sweep** — 50 → 2 000 concurrent workers, find the breaking point
 - **Resource metrics** — CPU + memory + queue depth under load
 - **Cost analysis** — real AWS bill, per-10M-request projection
-- **6 SVG charts** — latency histograms, CDFs, scalability, chaos timeline
-- **4 Mermaid diagrams** — chain flow, request lifecycle, attack layers, ALB failover
-- **Honest limitations** — 3 open bugs called out in the executive summary
 
 Headline numbers: **88.7 % recall · 98.6 % precision · 0 chain violations · 100 % PII/cost/scope block · 16 s Decision-service fail-closed recovery.**
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
-Every knob is an env var or a Redis key. The tuning ones that matter:
-
-| Setting | Default | Where | What it does |
-|---|---|---|---|
-| `MAX_TOKENS_CEILING` | 2048 | gateway env | Hard cap on `max_tokens` per LLM call |
-| `MAX_INPUT_CHARS` | 24 000 | gateway env | Hard cap on prompt character count |
-| `LLM_DRIP_THRESHOLD` | 20/60s | gateway env | Slow-drip correlation threshold |
-| `RUNAWAY_FAILURE_THRESHOLD` | 50/5min | code const | Auto-quarantine threshold per agent |
-| `OPA_FAIL_MODE` | `closed` | gateway env | What OPA does when unreachable |
-| `AUDIT_CHAIN_SHARD_COUNT` | 16 | audit env | Per-tenant chain parallelism |
-| `ACP_AUTH_PROVIDER` | `both` | gateway env | `legacy` (HS256) / `clerk` (RS256) / `both` |
-| tenant `requests_per_second` | 10 | Postgres tenants row | Per-tenant token bucket refill |
-| tenant `burst` | 20 | Postgres tenants row | Per-tenant token bucket size |
-| agent `daily_inference_cost_cap_usd` | NULL | Postgres | Per-agent daily $ cap (opt-in) |
+| Setting | Default | What it does |
+|---|---|---|
+| `MAX_TOKENS_CEILING` | 2048 | Hard cap on `max_tokens` per LLM call |
+| `MAX_INPUT_CHARS` | 24 000 | Hard cap on prompt character count |
+| `LLM_DRIP_THRESHOLD` | 20/60s | Slow-drip correlation threshold |
+| `RUNAWAY_FAILURE_THRESHOLD` | 50/5min | Auto-quarantine threshold per agent |
+| `OPA_FAIL_MODE` | `closed` | What OPA does when unreachable |
+| `AUDIT_CHAIN_SHARD_COUNT` | 16 | Per-tenant chain parallelism |
+| `ACP_AUTH_PROVIDER` | `both` | `legacy` (HS256) / `clerk` (RS256) / `both` |
+| tenant `requests_per_second` | 10 | Per-tenant token bucket refill |
+| tenant `burst` | 20 | Per-tenant token bucket size |
 
 ---
 
-## 🎛️ Operations
+## Operations
 
-### Monitoring surfaces
+### Monitoring
 
-- **Live status:** [`https://aegisagent.in/status`](https://aegisagent.in/status) — 13/13 operational should always be true
 - **Grafana:** provisioned dashboards in [`infra/grafana-dashboards/`](infra/grafana-dashboards/)
   - `platform-slo.json` — request rate · error budget · availability
   - `trust-layers.json` — chain integrity · signed receipts · Merkle root age
@@ -463,25 +457,24 @@ Every knob is an env var or a Redis key. The tuning ones that matter:
 
 ### Runbooks
 
-Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert → Immediate action → Recovery steps → Verification`:
+Located in [`docs/runbooks/`](docs/runbooks/):
 
-- `audit_chain_violation.md` — highest severity, freeze writes + investigate
+- `audit_chain_violation.md` — freeze writes + investigate
 - `key_rotation.md` — 90-day rotation cadence
 - `restore_drill.md` — cross-region DR
-- `tenant_data_request.md` — GDPR / DPDP right-to-portability + right-to-erasure
+- `tenant_data_request.md` — GDPR / DPDP right-to-portability + erasure
 
 ---
 
-## 📚 Documentation index
+## Documentation index
 
 | Doc | Purpose |
 |---|---|
-| [`docs/setup.md`](./docs/setup.md) | Client-facing setup guide (12 sections, SDK examples, attack coverage table) |
-| [`docs/testing/2026-07-26/report.md`](./docs/testing/2026-07-26/report.md) | Public engineering test report (16 sections, threat model, chaos, charts) |
+| [`docs/setup.md`](./docs/setup.md) | Client-facing setup guide (12 sections, SDK examples) |
+| [`docs/testing/2026-07-26/report.md`](./docs/testing/2026-07-26/report.md) | Engineering test report (16 sections, threat model, chaos, charts) |
 | [`docs/guide.md`](./docs/guide.md) | End-to-end evaluator → signup → integration → rollout guide |
 | [`docs/architecture-failure-modes.md`](./docs/architecture-failure-modes.md) | Per-component failure behavior |
 | [`docs/security/rbac_matrix.md`](./docs/security/rbac_matrix.md) | Every endpoint → role required |
-| [`docs/security/subprocessors.md`](./docs/security/subprocessors.md) | Third-party vendors + data flow |
 | [`docs/api/reference.md`](./docs/api/reference.md) | Full HTTP API reference |
 | [`docs/runbooks/`](./docs/runbooks/) | Operational runbooks |
 | [`SECURITY.md`](./SECURITY.md) | Responsible-disclosure policy |
@@ -489,16 +482,15 @@ Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert �
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-- **Bug reports + feature ideas:** [open an issue](https://github.com/Abhi-mishra998/aegis/issues)
-- **Security disclosures:** email `founder@aegisagent.in` — see [`SECURITY.md`](SECURITY.md)
+- **Bug reports + feature ideas:** [open an issue](https://github.com/sureshavulaaiarchitect/opa-policy-engine/issues)
+- **Security disclosures:** see [`SECURITY.md`](SECURITY.md)
 - **PRs:** read [`CONTRIBUTING.md`](CONTRIBUTING.md); every merged change must have a test.
-- **Pattern-recall improvements:** the biggest open area — see [test report §14](./docs/testing/2026-07-26/report.md#14-future-work). If you can add an injection payload that Aegis missed, that's a valid contribution.
 
 ---
 
-## ⚖️ License
+## License
 
 - Code: [Apache 2.0](LICENSE)
 - Documentation: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
@@ -507,8 +499,10 @@ Located in [`docs/runbooks/`](docs/runbooks/) — every one structured `Alert �
 
 <div align="center">
 
-**Ship AI agents you can defend under oath.**
+**Built by [Suresh Avula](https://github.com/sureshavulaaiarchitect) — Enterprise AI & Database Architect**
 
-[Live](https://aegisagent.in) · [Setup](./docs/setup.md) · [Test report](./docs/testing/2026-07-26/report.md) · [Docs](https://docs.aegisagent.in) · [Blog](https://projectsphere.hashnode.dev/i-built-a-runtime-firewall-for-ai-agents) · [Email](mailto:founder@aegisagent.in)
+*18+ years · Petabyte-scale platforms · AI engineering · FinOps · Multi-cloud*
+
+[GitHub](https://github.com/sureshavulaaiarchitect) · [Setup](./docs/setup.md) · [Test report](./docs/testing/2026-07-26/report.md)
 
 </div>

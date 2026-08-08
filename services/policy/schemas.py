@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+
+
+# SEC-2026-07-31 (L6): tz-aware default factory. Naive utcnow was a
+# reproducibility hazard — this timestamp threads into OPA metadata and
+# an unwrapped naive time serializes differently on drivers that assume
+# local TZ.
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,7 +61,7 @@ class EvaluationRequest(BaseModel):
 
     # Metadata for OPA context
     request_id: str | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict) # Future attributes (IP, region)
 
     agent: AgentInput | None = None  # pre-resolved by gateway; if None, policy fetches it

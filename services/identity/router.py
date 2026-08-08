@@ -289,22 +289,35 @@ async def create_user(
     redis: Annotated[Redis | None, Depends(get_redis)] = None,
     _: Annotated[bool, Depends(check_deadline)] = True,
 ) -> APIResponse[UserResponse]:
-    count_res = await db.execute(select(func.count()).select_from(User))
-    user_count = count_res.scalar_one()
+    # SEC-2026-07-31 (C3, L2): every POST /auth/users requires a valid
+    # OWNER/ADMIN bearer token AND the JWT's tenant_id must equal the
+    # payload's tenant_id. The old "first user in an empty DB is unauth"
+    # branch (L2) is gone — first-user bootstrap is now the entrypoint
+    # seed script's job, not an HTTP-reachable escape hatch.
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Admin token required")
+    if not redis:
+        raise HTTPException(status_code=500, detail="Redis connection failed")
+    token_svc = TokenService(redis)
+    try:
+        claims = await token_svc.verify(extract_bearer_token(authorization) or "")
+    except Exception as err:
+        raise HTTPException(status_code=401, detail="Invalid token") from err
+    if claims.get("role", "").upper() not in ("OWNER", "ADMIN"):
+        raise HTTPException(status_code=403, detail="OWNER or ADMIN role required")
 
-    if user_count > 0:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Admin token required")
-        if not redis:
-            raise HTTPException(status_code=500, detail="Redis connection failed")
-        token_svc = TokenService(redis)
-        try:
-            claims = await token_svc.verify(extract_bearer_token(authorization) or "")
-            # Sprint 1 — OWNER subsumes ADMIN for super-tenant CRUD.
-            if claims.get("role", "").upper() not in ("OWNER", "ADMIN"):
-                raise HTTPException(status_code=403, detail="OWNER or ADMIN role required")
-        except Exception as err:
-            raise HTTPException(status_code=401, detail="Invalid token") from err
+    jwt_tenant = str(claims.get("tenant_id") or "")
+    if not jwt_tenant or jwt_tenant != str(payload.tenant_id):
+        logger.warning(
+            "cross_tenant_user_create_blocked",
+            jwt_tenant=jwt_tenant,
+            body_tenant=str(payload.tenant_id),
+            actor=str(claims.get("sub") or "unknown"),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="tenant_id in body must match the caller's tenant",
+        )
 
     try:
         tenant_id = uuid.UUID(payload.tenant_id)
@@ -385,12 +398,32 @@ async def login_agent(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
     payload: AgentLoginRequest,
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
     _: Annotated[bool, Depends(check_deadline)] = True,
 ) -> APIResponse[TokenResponse]:
-    """Agent logs in with agent_id and secret."""
+    """Agent logs in with agent_id and secret.
+
+    SEC-2026-07-31 (H13): the credential lookup is now scoped to
+    ``(agent_id, tenant_id)``. Requiring the caller to supply the tenant
+    header at login time prevents cross-tenant credential enumeration —
+    an attacker who knew agent-A-in-tenant-A's UUID could previously
+    login into agent-A-in-tenant-B if the same UUID happened to exist.
+    """
+    if not x_tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Tenant-ID header required for agent login",
+        )
+    try:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID") from err
     async with _get_auth_semaphore():
         result = await db.execute(
-            select(AgentCredential).where(AgentCredential.agent_id == payload.agent_id)
+            select(AgentCredential).where(
+                AgentCredential.agent_id == payload.agent_id,
+                AgentCredential.tenant_id == tenant_uuid,
+            )
         )
         credential = result.scalar_one_or_none()
 
@@ -487,16 +520,79 @@ async def login_user(
                 )
 
         email = payload.email.strip().lower()
+
+        # SEC-2026-07-31 (H14): per-account exponential-backoff lockout.
+        # Two keys:
+        #   acp:pwfail:{email_hash}  — running counter, 24h TTL, tracks
+        #                              lifetime failure count for threshold
+        #                              detection.
+        #   acp:pwlock:{email_hash}  — presence == "currently locked".
+        #                              TTL == remaining lock duration.
+        # Thresholds: 5 fails→60s, 10→5min, 20→1h. On successful login
+        # both keys are deleted.
+        import hashlib as _hashlib
+        _email_hash = _hashlib.sha256(email.encode()).hexdigest()
+        _pwfail_key = f"acp:pwfail:{_email_hash}"
+        _pwlock_key = f"acp:pwlock:{_email_hash}"
+        try:
+            if await redis.exists(_pwlock_key):
+                _lock_ttl = await redis.ttl(_pwlock_key)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Too many failed attempts — locked for {max(_lock_ttl, 1)}s",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            # Redis unavailable — fail OPEN on the lockout check
+            # (login is still guarded by bcrypt CPU + concurrency
+            # semaphore) rather than deny every login.
+            pass
+
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
 
+        async def _record_pwfail() -> None:
+            try:
+                new_count = await redis.incr(_pwfail_key)
+                if new_count == 1:
+                    await redis.expire(_pwfail_key, 86400)
+                # Threshold cross → arm the lock key with the matching TTL.
+                lock_ttl: int | None = None
+                if new_count >= 20:
+                    lock_ttl = 3600      # 1h
+                elif new_count >= 10:
+                    lock_ttl = 300       # 5min
+                elif new_count >= 5:
+                    lock_ttl = 60        # 1min
+                if lock_ttl is not None:
+                    await redis.setex(_pwlock_key, lock_ttl, "1")
+                if new_count in (5, 10, 20):
+                    logger.warning(
+                        "password_bruteforce_threshold_crossed",
+                        email_hash=_email_hash,
+                        count=new_count,
+                    )
+                    # Audit the threshold cross so SOC can page.
+                    await push_audit_event(
+                        redis=redis,
+                        tenant_id=user.tenant_id if user else uuid.UUID(int=0),
+                        agent_id=None,
+                        action="password_bruteforce_detected",
+                        metadata={"email_hash": _email_hash, "count": int(new_count)},
+                    )
+            except Exception as _exc:
+                logger.warning("pwfail_counter_bump_failed", error=str(_exc))
+
         if not user or not user.is_active:
+            await _record_pwfail()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
             )
 
         if tenant_uuid is not None and user.tenant_id != tenant_uuid:
+            await _record_pwfail()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials or tenant mismatch"
@@ -519,10 +615,17 @@ async def login_user(
             None, partial(bcrypt.checkpw, pw_bytes, stored_hash)
         )
         if not pw_valid:
+            await _record_pwfail()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
             )
+
+        # Successful auth — clear both the counter and any pending lock.
+        try:
+            await redis.delete(_pwfail_key, _pwlock_key)
+        except Exception:
+            pass
 
         # HARDENED: We fail-fast on data corruption. If org_id is NULL, we refuse to issue a token.
         org_id = user.org_id
@@ -624,9 +727,31 @@ async def register_user(
         if "@" not in email or "." not in email.split("@")[-1]:
             raise HTTPException(400, "Invalid email address")
 
+        # SEC-2026-07-31 (L1): user enumeration via 409-vs-201 shape.
+        # Prod behavior: on duplicate we return the same 202 shape that
+        # /auth/password/reset-request uses, and (best-effort) publish an
+        # "attempted signup with your email" notification so the real
+        # account holder can react. Enumerators see identical responses.
         existing = await db.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none() is not None:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+            try:
+                await redis.publish(
+                    "acp:signup_collision:emit", email
+                )
+            except Exception as _exc:
+                logger.debug("signup_collision_pubsub_failed", error=str(_exc))
+            from fastapi.responses import JSONResponse as _JSONResponse
+            return _JSONResponse(  # type: ignore[return-value]
+                status_code=202,
+                content={
+                    "success": True,
+                    "data": {
+                        "status": "accepted",
+                        "check_email": True,
+                        "message": "If this email is available, we've started registration.",
+                    },
+                },
+            )
 
         tenant_id = uuid.uuid4()
         org_id = tenant_id  # canonical: users.org_id == users.tenant_id
@@ -741,10 +866,19 @@ async def password_reset_confirm(
     claims = _verify_password_reset_token(payload.token)
     user_id = uuid.UUID(claims["sub"])
 
-    # Single-use enforcement — mark jti so replay within TTL fails.
+    # SEC-2026-07-31 (H11): single-use enforcement is now atomic.
+    # The old code did GET-then-SETEX with 200ms of bcrypt work in
+    # between — two concurrent confirms both passed the GET and both
+    # committed different passwords. Now SET NX EX is the FIRST op
+    # after JWT validation; a duplicate confirm is refused before we
+    # even hit bcrypt. Also require ``jti`` in the token so the used-set
+    # check can never silently no-op on a malformed token.
     jti = claims.get("jti")
-    used_key = f"acp:pwreset:used:{jti}" if jti else None
-    if used_key and await redis.get(used_key):
+    if not jti:
+        raise HTTPException(400, "Malformed reset token: missing jti")
+    used_key = f"acp:pwreset:used:{jti}"
+    claimed = await redis.set(used_key, "1", nx=True, ex=_PASSWORD_RESET_TTL_SECONDS)
+    if not claimed:
         raise HTTPException(400, "Reset link already used")
 
     result = await db.execute(select(User).where(User.id == user_id, User.is_active))
@@ -760,8 +894,14 @@ async def password_reset_confirm(
     user.hashed_password = new_hash.decode("utf-8")
     await db.commit()
 
-    if used_key:
-        await redis.setex(used_key, _PASSWORD_RESET_TTL_SECONDS, "1")
+    # SEC-2026-07-31 (H12 defense-in-depth): password change revokes every
+    # outstanding token for this user. Best-effort — if Redis is down we
+    # log and continue rather than refusing the password change itself.
+    try:
+        _token_svc = TokenService(redis)
+        await _token_svc.revoke_all_for_subject(user.id)
+    except Exception as _exc:
+        logger.warning("password_reset_family_revoke_failed", error=str(_exc))
 
     token_svc = TokenService(redis)
     token, expires_in = await token_svc.issue(
@@ -1021,11 +1161,51 @@ async def refresh_token(
         if org_id is None:
             org_id = user.org_id
 
-    # 2. Issue NEW token first. If issuance fails the caller still holds a
-    #    valid old token and can retry. The previous order revoked the old
-    #    token before issuing the new one, which left the caller stranded
-    #    on any Redis hiccup mid-refresh (no valid token, next request 401s
-    #    and they get bounced to /login mid-session).
+    # SEC-2026-07-31 (H12): OAuth 2.1 refresh-token rotation with reuse
+    # detection. If this token was already rotated once (its jti has a
+    # child in Redis), an attacker + victim are both refreshing the same
+    # token — revoke the entire family for the subject and force
+    # re-authentication. On the happy path we record parent→child so the
+    # NEXT reuse trips the alarm.
+    old_jti = claims.get("jti") or ""
+    if old_jti:
+        rotated_marker_key = f"acp:refresh_rotated:{old_jti}"
+        try:
+            already_rotated = await redis.get(rotated_marker_key)
+        except Exception:
+            already_rotated = None
+        if already_rotated:
+            # Reuse detected. Nuke the family, audit, refuse.
+            try:
+                if agent_id:
+                    await token_svc.revoke_all_for_agent(agent_id)
+                elif user_id:
+                    await token_svc.revoke_all_for_subject(user_id)
+            except Exception as _exc:
+                logger.warning("refresh_family_revoke_failed", error=str(_exc))
+            try:
+                await push_audit_event(
+                    redis=redis,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    action="refresh_token_reuse_detected",
+                    metadata={
+                        "user_id": str(user_id) if user_id else None,
+                        "parent_jti": old_jti,
+                    },
+                )
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=401,
+                detail="Token family compromised — re-authenticate.",
+            )
+
+    # Issue NEW token first. If issuance fails the caller still holds a
+    # valid old token and can retry. The previous order revoked the old
+    # token before issuing the new one, which left the caller stranded
+    # on any Redis hiccup mid-refresh (no valid token, next request 401s
+    # and they get bounced to /login mid-session).
     new_token, expires_in = await token_svc.issue(
         tenant_id=tenant_id,
         agent_id=agent_id,
@@ -1034,13 +1214,20 @@ async def refresh_token(
         org_id=org_id,
     )
 
-    # 3. Only after a successful mint do we revoke the old token. A failure
-    #    here is logged but non-fatal — the new token is already valid and
-    #    the old one will expire naturally at its original exp.
-    # Dead code review: emitted from this branch only, but the surrounding
-    # function refresh_token() is the live POST /auth/refresh route handler
-    # (line 597) used by every SDK + UI session refresh. The warning is the
-    # only signal SOC has for a Redis-side revoke failure, so it stays.
+    # Record parent→"has been rotated" marker so the NEXT presentation
+    # of the same jti trips the reuse alarm above. TTL matches the old
+    # token's remaining life (max ttl for the access token issued).
+    if old_jti:
+        try:
+            _remaining = int(claims.get("exp", 0)) - int(datetime.now().timestamp())
+            _ttl = max(60, min(_remaining, 24 * 3600))
+            await redis.set(f"acp:refresh_rotated:{old_jti}", "1", ex=_ttl)
+        except Exception as _exc:
+            logger.debug("refresh_marker_set_failed", error=str(_exc))
+
+    # Only after a successful mint do we revoke the old token. A failure
+    # here is logged but non-fatal — the new token is already valid and
+    # the old one will expire naturally at its original exp.
     try:
         await token_svc.revoke(token)
     except Exception as exc:
@@ -2087,7 +2274,18 @@ async def sso_login(
         raise HTTPException(status_code=400, detail="tenant_id must be a valid UUID")
 
     code_verifier, code_challenge = build_pkce_challenge()
-    state = generate_state(_SSO_STATE_SECRET, provider, tenant_id)
+
+    # SEC-2026-07-31 (L3): bind the state to a fresh browser-side
+    # nonce delivered as an HttpOnly/SameSite=Lax cookie. Without the
+    # nonce an attacker could initiate SSO themselves, capture the
+    # callback URL, and either trick a victim into logging in AS the
+    # attacker (login-CSRF) or race the victim's own callback. The
+    # nonce lives only until the callback lands; verify_state checks
+    # the cookie against the state's committed hash.
+    browser_nonce = secrets.token_urlsafe(32)
+    state = generate_state(
+        _SSO_STATE_SECRET, provider, tenant_id, browser_nonce=browser_nonce,
+    )
 
     # Store the PKCE verifier under the state token. TTL bounded so the same
     # state cannot be replayed beyond the auth-code lifetime.
@@ -2096,7 +2294,17 @@ async def sso_login(
     base = str(request.base_url).rstrip("/")
     redirect_uri = f"{base}/auth/sso/{provider}/callback"
     auth_url = await build_auth_url(provider, redirect_uri, state, code_challenge)
-    return RedirectResponse(auth_url, status_code=302)
+    resp = RedirectResponse(auth_url, status_code=302)
+    resp.set_cookie(
+        key="acp_sso_nonce",
+        value=browser_nonce,
+        max_age=_PKCE_TTL_SECONDS,
+        httponly=True,
+        secure=(settings.ENVIRONMENT == "production"),
+        samesite="lax",  # lax so the cookie rides along on the top-level nav back
+        path="/auth/sso/",
+    )
+    return resp
 
 
 @router.get("/auth/sso/{provider}/callback", summary="Handle SSO callback")
@@ -2122,9 +2330,14 @@ async def sso_callback(
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 
-    # CSRF verification — state encodes "{provider}|{tenant_id}|{ts}|{sig}"
+    # CSRF verification — state encodes
+    #   "{provider}|{tenant_id}|{ts}|{nonce_hash}|{sig}" (SEC-2026-07-31 L3)
+    # and must match the ``acp_sso_nonce`` cookie set at initiate time.
+    browser_nonce = request.cookies.get("acp_sso_nonce", "")
     try:
-        _, tenant_id_str = verify_state(_SSO_STATE_SECRET, state)
+        _, tenant_id_str = verify_state(
+            _SSO_STATE_SECRET, state, browser_nonce=browser_nonce,
+        )
     except ValueError as exc:
         logger.warning("sso_state_invalid", error=str(exc))
         raise HTTPException(status_code=400, detail="Invalid state parameter")

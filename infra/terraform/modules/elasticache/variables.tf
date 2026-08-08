@@ -29,3 +29,9 @@ variable "num_nodes" {
   type        = number
   default     = 2
 }
+
+variable "redis_auth_token" {
+  description = "Redis AUTH token (fix M6). Wired from module.secrets.redis_auth_token.result. ASG user_data must template this into infra/.env as REDIS_AUTH_TOKEN and include it in REDIS_URL as rediss://:<token>@host:6379/0."
+  type        = string
+  sensitive   = true
+}

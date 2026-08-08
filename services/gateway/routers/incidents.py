@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 
@@ -47,11 +47,30 @@ def _api_base() -> str:
 
 @router.post("/incidents", tags=["Incidents"])
 async def create_incident(request: Request) -> Any:
-    """Proxy → API service create incident. Injects tenant_id from headers."""
+    """Proxy → API service create incident. Pins tenant_id from validated JWT.
+
+    SEC-2026-07-31 (H2): the old ``if "tenant_id" not in body`` guard let a
+    client-supplied tenant_id bleed through to api-svc, which then wrote the
+    incident into the wrong tenant (fake MTTR, Slack noise to the victim's
+    channel). Force-overwrite unconditionally from the JWT-derived
+    request.state.tenant_id — same-value assignments are cheap and any
+    disagreement is silently corrected in favor of the auth boundary.
+    """
     body = await request.json()
     body = dict(body)
-    if "tenant_id" not in body:
-        body["tenant_id"] = request.headers.get("X-Tenant-ID", "")
+    jwt_tenant = str(getattr(request.state, "tenant_id", "") or request.headers.get("X-Tenant-ID", ""))
+    if not jwt_tenant:
+        raise HTTPException(status_code=400, detail="tenant not resolved from JWT")
+    if "tenant_id" in body and str(body["tenant_id"]) != jwt_tenant:
+        # Loud log — this is either a buggy client OR a probe.
+        import structlog as _structlog
+        _structlog.get_logger(__name__).warning(
+            "incident_body_tenant_override",
+            body_tenant=str(body.get("tenant_id")),
+            jwt_tenant=jwt_tenant,
+            actor=getattr(request.state, "actor", "unknown"),
+        )
+    body["tenant_id"] = jwt_tenant
     resp = await request.app.state.client.post(
         f"{_api_base()}/incidents",
         json=body,

@@ -355,34 +355,78 @@ async def _fetch_userinfo(userinfo_url: str, access_token: str) -> dict[str, Any
 # State token (CSRF defense)
 # ---------------------------------------------------------------------------
 
-def generate_state(secret: str, provider: str, tenant_id: str = "") -> str:
-    """
-    CSRF-safe state token.
-    Format: "{provider}|{tenant_id}|{ts}|{sig}" — uses | so UUIDs (dashes) are unambiguous.
+def generate_state(
+    secret: str,
+    provider: str,
+    tenant_id: str = "",
+    *,
+    browser_nonce: str = "",
+) -> str:
+    """CSRF-safe state token.
+
+    SEC-2026-07-31 (L3): the token now binds to a browser nonce (set by
+    the initiator as an HttpOnly ``sso_state`` cookie) AND uses a
+    128-bit HMAC (was 64-bit truncation). Format:
+    ``"{provider}|{tenant_id}|{ts}|{nonce_hash8}|{sig32}"``. Callers
+    that don't have a nonce (legacy) pass an empty string, matching
+    the pre-fix behavior.
     """
     ts = str(int(time.time()))
-    msg = f"{provider}|{tenant_id}|{ts}"
-    sig = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
+    # Include a stable hash of the browser nonce so the signed message
+    # commits to it, without exposing the full nonce in the URL.
+    nonce_hash = ""
+    if browser_nonce:
+        nonce_hash = hashlib.sha256(browser_nonce.encode()).hexdigest()[:16]
+    msg = f"{provider}|{tenant_id}|{ts}|{nonce_hash}"
+    sig = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{msg}|{sig}"
 
 
-def verify_state(secret: str, state: str, max_age: int = 600) -> tuple[str, str]:
-    """
-    Verify the state token. Returns (provider, tenant_id). Raises ValueError on failure.
+def verify_state(
+    secret: str,
+    state: str,
+    max_age: int = 600,
+    *,
+    browser_nonce: str = "",
+) -> tuple[str, str]:
+    """Verify the state token. Returns (provider, tenant_id). Raises
+    ValueError on failure. SEC-2026-07-31 (L3): if the state carries a
+    ``nonce_hash8`` slot (5-field form), ``browser_nonce`` must be
+    supplied and match; otherwise the 4-field legacy form is still
+    accepted so existing in-flight flows don't break during rollout.
     """
     try:
         parts = state.split("|")
-        if len(parts) != 4:
-            raise ValueError("malformed state")
-        provider, tenant_id, ts, sig = parts
-        age = int(time.time()) - int(ts)
-        if age < 0 or age > max_age:
-            raise ValueError("state expired")
-        msg = f"{provider}|{tenant_id}|{ts}"
-        expected = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
-        if not hmac.compare_digest(sig, expected):
-            raise ValueError("state signature mismatch")
-        return provider, tenant_id
+        if len(parts) == 4:
+            # Legacy form — accepted through rollout window.
+            provider, tenant_id, ts, sig = parts
+            age = int(time.time()) - int(ts)
+            if age < 0 or age > max_age:
+                raise ValueError("state expired")
+            msg = f"{provider}|{tenant_id}|{ts}"
+            # Old form used a 64-bit truncation; keep verify tolerant of
+            # that specific length for the rollout, then delete this
+            # branch once no in-flight tokens remain.
+            expected = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
+            if not hmac.compare_digest(sig, expected):
+                raise ValueError("state signature mismatch")
+            return provider, tenant_id
+        if len(parts) == 5:
+            provider, tenant_id, ts, nonce_hash, sig = parts
+            age = int(time.time()) - int(ts)
+            if age < 0 or age > max_age:
+                raise ValueError("state expired")
+            expected_nonce_hash = ""
+            if browser_nonce:
+                expected_nonce_hash = hashlib.sha256(browser_nonce.encode()).hexdigest()[:16]
+            if nonce_hash and not hmac.compare_digest(nonce_hash, expected_nonce_hash):
+                raise ValueError("state browser-nonce mismatch")
+            msg = f"{provider}|{tenant_id}|{ts}|{nonce_hash}"
+            expected = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:32]
+            if not hmac.compare_digest(sig, expected):
+                raise ValueError("state signature mismatch")
+            return provider, tenant_id
+        raise ValueError("malformed state")
     except (ValueError, TypeError):
         raise
     except Exception as exc:

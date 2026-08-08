@@ -28,6 +28,12 @@ output "redis_auth_token_arn" {
   value       = aws_secretsmanager_secret.redis_auth_token.arn
 }
 
+output "redis_auth_token_value" {
+  description = "Redis AUTH token plaintext (fix M6). Wired into module.elasticache so the token is set at cluster-create time. Sensitive — never expose in logs."
+  value       = random_password.redis_auth_token.result
+  sensitive   = true
+}
+
 output "mesh_jwt_secret_arn" {
   description = "Mesh JWT secret ARN."
   value       = aws_secretsmanager_secret.mesh_jwt_secret.arn

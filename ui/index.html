@@ -40,15 +40,9 @@
     }
     </script>
 
-    <!--
-      Clerk's session check fires the moment React mounts. Pre-warming DNS
-      + TLS on the Clerk hosts shaves ~150 ms off the first auth round-trip
-      (Lighthouse "render-blocking requests" insight on /dashboard).
-    -->
-    <link rel="preconnect" href="https://clerk.aegisagent.in" crossorigin />
-    <link rel="dns-prefetch" href="https://clerk.aegisagent.in" />
-    <link rel="preconnect" href="https://clerk-telemetry.com" crossorigin />
-    <link rel="dns-prefetch" href="https://clerk-telemetry.com" />
+    <!-- M11 closure 2026-07-31: Clerk preconnect/dns-prefetch hints removed
+         with the Clerk rip. First-party /auth/token is same-origin so no
+         cross-origin DNS warmup is needed. -->
   </head>
   <body class="bg-[#0a0a0a] text-slate-100 font-sans selection:bg-white selection:text-black antialiased">
     <div id="root"></div>

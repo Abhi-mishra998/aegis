@@ -22,7 +22,11 @@ from pydantic import BaseModel, field_validator
 
 from sdk.common.background import swallow_log
 from sdk.common.config import settings
-from services.gateway._helpers import internal_headers, passthrough
+from services.gateway._helpers import (
+    assert_path_tenant_matches_jwt,
+    internal_headers,
+    passthrough,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -384,7 +388,15 @@ async def provision_credentials(request: Request, response: Response) -> Any:
 
 @router.get("/auth/tenants/{tenant_id}", tags=["auth"])
 async def get_tenant_metadata(tenant_id: str, request: Request) -> Any:
-    """Proxy → Identity: get tier and rate-limit metadata for a tenant (ADMIN only)."""
+    """Proxy → Identity: get tier and rate-limit metadata for the CALLER'S tenant.
+
+    SEC-2026-07-31 (H4): the RBAC rule ``/auth/tenants/*`` only requires
+    ADMIN, which meant any tenant-A ADMIN could enumerate arbitrary
+    tenants by iterating UUIDs. Now the path-param tenant_id must equal
+    the JWT-derived tenant, using the same helper the kill-switch route
+    already uses.
+    """
+    assert_path_tenant_matches_jwt(request, tenant_id)
     resp = await request.app.state.client.get(
         f"{_base()}/auth/tenants/{tenant_id}",
         headers=internal_headers(request),

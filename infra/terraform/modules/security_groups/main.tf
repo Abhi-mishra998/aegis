@@ -67,9 +67,17 @@ resource "aws_vpc_security_group_ingress_rule" "ec2_from_alb" {
 
 # Egress all - EC2 needs to reach SSM, S3, Secrets Manager, Anthropic,
 # OpenAI, npm.  Filtered upstream by NAT + WAF on inbound, not by SG egress.
+#
+# ponytail: tracked technical debt (L4 in 31.anaysis.md). Proper fix is a
+# multi-file refactor: VPC Interface Endpoints for SSM/Secrets/KMS/logs
+# + domain-based egress proxy (Squid-style, or AWS Network Firewall FQDN
+# rules) for LLM providers (Anthropic, OpenAI, Groq) + npm/GitHub. Then
+# narrow this rule to endpoint prefix-lists + proxy IPs. Not done now
+# because it changes the boot path (proxy env vars in user_data, VPCE
+# routes, SG chain from EC2 → endpoint SG). Do this in a dedicated PR.
 resource "aws_vpc_security_group_egress_rule" "ec2_all" {
   security_group_id = aws_security_group.ec2.id
-  description       = "All egress for AWS APIs + upstream LLMs + npm."
+  description       = "All egress for AWS APIs + upstream LLMs + npm. TODO L4: constrain via VPCE + egress proxy."
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }

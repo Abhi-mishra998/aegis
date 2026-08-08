@@ -158,6 +158,13 @@ class OPAClient:
                     # ``tenant_id`` so the SSE generator can verify a
                     # cross-tenant publish never leaks. The channel name is
                     # not a trust boundary on its own.
+                    # SEC-2026-07-31 (M9): drop `reason` / `reasons` from
+                    # the publish body. Reasons leak internal policy IDs
+                    # (FIN-WIRE-002__escalate, etc.) that reveal customer
+                    # pattern packs to any Redis-connected container that
+                    # PSUBSCRIBEs to this channel. The dashboard fetches
+                    # the full reason string over the authenticated REST
+                    # path where it's already tenant-scoped.
                     payload = json.dumps({
                         "tenant_id": tenant_id,
                         "type": "policy_decision",
@@ -165,8 +172,6 @@ class OPAClient:
                             "agent_id": agent_id or None,
                             "action": tool or None,
                             "allowed": allowed,
-                            "reason": reason,
-                            "reasons": [reason] if reason else [],
                             "risk_adjustment": adjustment,
                         },
                         "ts": int(time.time()),

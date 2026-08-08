@@ -49,6 +49,20 @@ if ! docker compose version >/dev/null 2>&1; then
   COMPOSE_VERSION="v2.27.0"
   curl -fsSL -o "$DOCKER_PLUGIN_DIR/docker-compose" \
     "https://github.com/docker/compose/releases/download/$${COMPOSE_VERSION}/docker-compose-linux-$(uname -m)"
+  # L5 fix (31.anaysis.md): verify checksum against pinned value in
+  # infra/cosign.sha256 (docker-compose SHAs stored alongside cosign
+  # SHAs). If the .sha256 file is absent from the release bundle, log
+  # and continue — first-boot before the fix ships must not brick.
+  DC_HASH_FILE="/opt/aegis/infra/cosign.sha256"
+  DC_ARCH=$(uname -m)
+  if [ -f "$DC_HASH_FILE" ] && grep -q "docker-compose-linux-$${DC_ARCH}" "$DC_HASH_FILE"; then
+    ( cd "$DOCKER_PLUGIN_DIR" && \
+      grep "docker-compose-linux-$${DC_ARCH}$" "$DC_HASH_FILE" | \
+      awk -v f="docker-compose" '{print $$1"  "f}' | \
+      sha256sum -c - ) || { echo "[boot] docker-compose SHA verify FAILED"; exit 6; }
+  else
+    echo "[boot] docker-compose SHA verify SKIPPED (no cosign.sha256 or arch $${DC_ARCH} missing)"
+  fi
   chmod +x "$DOCKER_PLUGIN_DIR/docker-compose"
 fi
 docker compose version
@@ -65,9 +79,24 @@ if aws s3 cp s3://${var.bundle_bucket}/releases/bundle-$${BUNDLE_SHA}.tar.gz.sig
    && aws s3 cp s3://${var.bundle_bucket}/releases/bundle-$${BUNDLE_SHA}.tar.gz.pem /tmp/bundle.tar.gz.pem 2>/dev/null \
    && aws s3 cp s3://${var.bundle_bucket}/releases/bundle-$${BUNDLE_SHA}.tar.gz.bundle /tmp/bundle.tar.gz.bundle 2>/dev/null; then
   # Pull cosign once.
+  # L5 fix (31.anaysis.md): pin cosign to a specific tag AND verify SHA256
+  # against infra/cosign.sha256. `releases/latest` was a "compromised
+  # GitHub release swaps in a backdoor" primitive — silent binary
+  # replacement on every ASG launch.
   if ! command -v cosign >/dev/null 2>&1; then
+    COSIGN_VERSION="v2.4.0"
+    COSIGN_ARCH=$(uname -m | sed 's|aarch64|arm64|;s|x86_64|amd64|')
     curl -fsSL -o /usr/local/bin/cosign \
-      "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-$(uname -m | sed 's|aarch64|arm64|;s|x86_64|amd64|')"
+      "https://github.com/sigstore/cosign/releases/download/$${COSIGN_VERSION}/cosign-linux-$${COSIGN_ARCH}"
+    COSIGN_HASH_FILE="/opt/aegis/infra/cosign.sha256"
+    if [ -f "$COSIGN_HASH_FILE" ] && grep -q "cosign-linux-$${COSIGN_ARCH}" "$COSIGN_HASH_FILE"; then
+      ( cd /usr/local/bin && \
+        grep "cosign-linux-$${COSIGN_ARCH}$" "$COSIGN_HASH_FILE" | \
+        awk -v f="cosign" '{print $$1"  "f}' | \
+        sha256sum -c - ) || { echo "[boot] cosign SHA verify FAILED"; rm -f /usr/local/bin/cosign; exit 7; }
+    else
+      echo "[boot] cosign SHA verify SKIPPED (no cosign.sha256 or arch $${COSIGN_ARCH} missing)"
+    fi
     chmod +x /usr/local/bin/cosign
   fi
   if cosign verify-blob \

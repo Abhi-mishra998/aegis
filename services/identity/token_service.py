@@ -183,8 +183,24 @@ class TokenService:
 
     async def revoke_all_for_agent(self, agent_id: uuid.UUID) -> int:
         """Revoke all active tokens for an agent. O(M) where M = active token count."""
-        agent_key   = f"{REDIS_AGENT_PREFIX}{agent_id}:tokens"
-        token_hashes = await self._redis.smembers(agent_key)  # type: ignore[misc]
+        return await self._revoke_all_for_subject(str(agent_id))
+
+    async def revoke_all_for_subject(self, subject_id: str | uuid.UUID) -> int:
+        """SEC-2026-07-31 (H11, H12): revoke every active token whose JWT
+        ``sub`` claim matches ``subject_id``. Works for both agent and
+        user tokens because :meth:`issue` writes them under the same
+        ``REDIS_AGENT_PREFIX{subject}:tokens`` set. Callers:
+
+          - password-reset confirm → nuke the user's live sessions so a
+            stolen access token can't outlive the compromise.
+          - refresh-token reuse detection → nuke the entire family when
+            a rotated token is presented again.
+        """
+        return await self._revoke_all_for_subject(str(subject_id))
+
+    async def _revoke_all_for_subject(self, subject: str) -> int:
+        subject_key = f"{REDIS_AGENT_PREFIX}{subject}:tokens"
+        token_hashes = await self._redis.smembers(subject_key)  # type: ignore[misc]
 
         if not token_hashes:
             return 0
@@ -204,7 +220,7 @@ class TokenService:
             await self._publish_revocation(token_hash)
             count += 1
 
-        await self._redis.delete(agent_key)
+        await self._redis.delete(subject_key)
         return count
 
     def decode_unverified(self, token: str) -> dict[str, Any] | None:

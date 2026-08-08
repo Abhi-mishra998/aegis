@@ -75,6 +75,16 @@ async def verify_audit_chain(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str
         shard = int(getattr(entry, "chain_shard", 0) or 0)
         expected_prev = last_verified_hash.get(shard, GENESIS_HASH)
 
+        # SEC-2026-07-31 (C6): pick the hash scheme per row. Historical
+        # rows carry hash_version=1 (or NULL, treated as 1); rows sealed
+        # after the 2026-07-31 fix carry hash_version=2 and the recompute
+        # must cover reason + timestamp + metadata_json digest.
+        _hv = int(getattr(entry, "hash_version", None) or 1)
+        _ts_iso = (
+            entry.timestamp.isoformat()
+            if getattr(entry, "timestamp", None) is not None
+            else ""
+        )
         recomputed = compute_event_hash(
             prev_hash=str(entry.prev_hash or GENESIS_HASH),
             tenant_id=str(entry.tenant_id),
@@ -83,6 +93,10 @@ async def verify_audit_chain(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str
             tool=entry.tool,
             decision=entry.decision,
             request_id=entry.request_id,
+            reason=getattr(entry, "reason", None),
+            timestamp=_ts_iso,
+            metadata=getattr(entry, "metadata_json", None),
+            version=_hv,
         )
 
         if entry.prev_hash != expected_prev:

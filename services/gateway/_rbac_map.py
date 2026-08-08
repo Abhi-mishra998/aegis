@@ -24,6 +24,10 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 # Canonical Aegis role tier (highest → lowest).
 # ROOT is the platform-staff role added 2026-06-21 to close P0-0 (any tenant
 # OWNER could enumerate the full tenant table via /admin/tenants because the
@@ -138,6 +142,11 @@ RULES: tuple[Rule, ...] = (
     _R("/auth/users*",                 ("GET",),         min_role="ADMIN"),
     _R("/auth/sso/config",             ("POST", "PUT"),  roles=("OWNER",)),
     _R("/auth/sso/config*",            ("GET",),         min_role="ADMIN"),
+    # SEC-2026-07-31 (H1): the bare "/auth/tenants" path (mutating writes on
+    # the tenant table) is platform-staff-only; the /auth/tenants/*
+    # per-tenant GET stays ADMIN-of-that-tenant. Order matters — bare path
+    # rule MUST precede the wildcard.
+    _R("/auth/tenants",                ("POST","PATCH","PUT","DELETE"), roles=("ROOT",)),
     _R("/auth/tenants/*",              ("*",),           min_role="ADMIN"),
     _R("/auth/me",                     ("GET",),         min_role="READ_ONLY"),
 
@@ -296,13 +305,13 @@ def is_authorized(
 
     Returns (allowed, denial_reason_or_None).
 
-    Routes not covered by any rule are permitted (fall-through to legacy
-    permission_map). This keeps the change low-risk while we migrate.
-
-    arch-26 W3.4 — if the rule declares min_plan_tier, the tenant's
-    plan_tier must meet it. Unknown plan_tier (None) fails closed when
-    a rule requires one. No rule uses min_plan_tier today; scaffolding
-    only.
+    SEC-2026-07-31 (M13): uncovered paths now fail CLOSED. Every past
+    cross-tenant issue in this file's history (P0-RBAC-EMP-MINT,
+    ``/policy/upload``, ``/sso/saml/*``) traced to the old "uncovered →
+    allow" fall-through. Any legitimately-new endpoint must add its own
+    rule to this table; the coarse write-role check in ``_mw_auth.py``
+    is not a substitute. Emits a `critical` log line so the first hit
+    on a missing rule pages SOC.
     """
     actual = (actual_role or "").upper()
     for r in RULES:
@@ -327,4 +336,24 @@ def is_authorized(
                 f"{r.min_plan_tier!r} for {method} {path}"
             )
         return True, None
-    return True, None  # uncovered → allow (legacy fall-through)
+    # SEC-2026-07-31 (M13): fail-closed default. Emit a loud log so ops
+    # can spot any newly-added route that lacks an RBAC entry (previously
+    # such routes silently ran with only the coarse write-role gate).
+    #
+    # Escape hatch: RBAC_STRICT=false in the environment restores the
+    # legacy fall-through (allow uncovered), so ops has a quick knob if
+    # this fix breaks a real route during rollout. The default is fail-
+    # closed; flipping the env is a deliberate, logged decision.
+    import os as _os
+    _strict = (_os.environ.get("RBAC_STRICT", "true") or "true").strip().lower()
+    _fail_closed = _strict not in ("false", "0", "no")
+    logger.critical(
+        "rbac_uncovered_path",
+        path=path,
+        method=method,
+        role=actual,
+        strict=_fail_closed,
+    )
+    if _fail_closed:
+        return False, f"no RBAC rule covers {method} {path} — add an entry to services/gateway/_rbac_map.py"
+    return True, None  # legacy fall-through when RBAC_STRICT=false

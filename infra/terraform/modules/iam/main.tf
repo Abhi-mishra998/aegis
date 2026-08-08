@@ -99,15 +99,18 @@ data "aws_iam_policy_document" "ssm_param" {
     )
   }
   # First-boot bootstrap: stash auto-generated Grafana password into SSM
-  # so subsequent boots reuse the same value.
+  # so subsequent boots reuse the same value. Scoped to the single
+  # Grafana admin-password parameter — was previously granted on every
+  # app param (fix M1 per 31.anaysis.md).
   statement {
     sid       = "WriteGrafanaPassword"
     effect    = "Allow"
     actions   = ["ssm:PutParameter"]
-    resources = var.app_param_arns
+    resources = [var.grafana_admin_password_arn]
   }
   # Application also needs to decrypt SecureString parameters; the default
   # AWS-managed key for SSM is used (we don't ship a CMK for params).
+  # ponytail: alias/aws/ssm scoping is account-wide; TODO create dedicated aegis-ssm CMK (see 31.anaysis.md M2)
   statement {
     sid       = "DecryptSSMSecureString"
     effect    = "Allow"

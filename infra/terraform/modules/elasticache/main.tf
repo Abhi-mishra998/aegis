@@ -40,9 +40,19 @@ resource "aws_elasticache_replication_group" "main" {
 
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
-  # auth_token not set — TLS + private subnets + SG already restrict to
-  # EC2 only. Auth token adds rotation burden without raising the bar
-  # at this stage. Add when first F500 customer asks.
+  # M6 fix (31.anaysis.md): AUTH token gates Redis at the protocol layer
+  # so a pod compromise (or leaked REDIS_URL) can't PING/SET the
+  # kill-switch key or FLUSHALL the state. Required in addition to TLS+SG.
+  #
+  # COORDINATION TODO before `terraform apply`: every service that reads
+  # REDIS_URL must include the auth in the URL, e.g.:
+  #     rediss://:<REDIS_AUTH_TOKEN>@<host>:6379/0
+  # ASG user_data (infra/terraform/modules/asg/main.tf) must fetch
+  # secrets/redis_auth_token via `sec ${var.redis_auth_token_secret_id}`
+  # and template `REDIS_AUTH_TOKEN` into infra/.env, then reshape the
+  # existing `REDIS_URL=rediss://${REDIS_HOST}/0` line to include it.
+  # Apply the terraform + roll a fresh ASG in the same window.
+  auth_token = var.redis_auth_token
 
   snapshot_retention_limit = 7
   snapshot_window          = "20:30-21:30" # UTC 20:30-21:30 = 02:00-03:00 IST

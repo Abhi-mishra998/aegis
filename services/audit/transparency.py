@@ -86,6 +86,17 @@ async def _previous_root_hash(
     return result.scalar_one_or_none()
 
 
+def _advisory_lock_key(tenant_id: uuid.UUID, root_date: date) -> int:
+    """SEC-2026-07-31 (M7): derive a stable 63-bit int for
+    ``pg_advisory_xact_lock`` from the (tenant, day) pair. Fits inside
+    a Postgres bigint and is deterministic across replicas so two
+    concurrent workers queue on the same key. Uses SHA-256 rather than
+    hash() to survive PYTHONHASHSEED randomization."""
+    import hashlib as _hashlib
+    material = f"aegis_seal:{tenant_id}:{root_date.isoformat()}".encode()
+    return int.from_bytes(_hashlib.sha256(material).digest()[:8], "big") & 0x7FFFFFFFFFFFFFFF
+
+
 async def _persist_root(
     db: AsyncSession,
     *,
@@ -99,6 +110,18 @@ async def _persist_root(
     leaf_range_end_id: uuid.UUID | None = None,
     signing_key_fingerprint: str | None = None,
 ) -> None:
+    # SEC-2026-07-31 (M7): serialize concurrent seals on the same
+    # (tenant, day). The scheduler runs every 30s and the operator can
+    # call POST /transparency/compute at any time — both used to race
+    # on today's still-open root, each seeing a slightly different leaf
+    # snapshot, last-writer wins → tomorrow's prev_root_hash could point
+    # at the losing root. pg_advisory_xact_lock derives a 64-bit key
+    # from the tenant UUID + day-ordinal; identical concurrent runs
+    # queue behind the lock and produce the same output.
+    from sqlalchemy import text as _text
+    _lock_key = _advisory_lock_key(tenant_id, root_date)
+    await db.execute(_text("SELECT pg_advisory_xact_lock(:k)"), {"k": _lock_key})
+
     values = {
         "tenant_id":               tenant_id,
         "root_date":               root_date,
@@ -626,6 +649,28 @@ async def verify_root(
         return _err(["malformed_payload"], http_400=True)
     if any(k not in receipt for k in _VERIFY_ROOT_RECEIPT_REQUIRED):
         return _err(["malformed_payload"], http_400=True)
+
+    # SEC-2026-07-31 (M10): cross-tenant confirmation-oracle fix. Any
+    # tenant could previously present another tenant's signed root and
+    # get `valid: true`, confirming (a) the fingerprint exists and
+    # (b) the specific root was sealed on that date. Require the
+    # receipt's tenant_id to equal the caller's tenant.
+    receipt_tenant = str(receipt.get("tenant_id") or "")
+    if not receipt_tenant or receipt_tenant != str(tenant_id):
+        logger.warning(
+            "verify_root_cross_tenant_blocked",
+            receipt_tenant=receipt_tenant,
+            caller_tenant=str(tenant_id),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "valid": False,
+                "algorithm": algorithm_label,
+                "expected_fingerprint": expected_fingerprint,
+                "errors": ["cross_tenant_receipt"],
+            },
+        )
 
     # ── Phase 2: locate the public key by fingerprint ────────────────────
     payload_fp = payload["public_key_fingerprint"]

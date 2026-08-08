@@ -29,6 +29,11 @@ variable "app_param_arns" {
   default     = []
 }
 
+variable "grafana_admin_password_arn" {
+  description = "ARN of the SSM Parameter that stores the Grafana admin password. The EC2 role is granted ssm:PutParameter on this ARN only (first-boot bootstrap)."
+  type        = string
+}
+
 variable "audit_kms_key_arn" {
   description = "Audit-envelope KMS CMK ARN. Empty disables the policy."
   type        = string

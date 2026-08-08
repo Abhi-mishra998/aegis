@@ -274,6 +274,7 @@ async def _log_audit(
 )
 async def evaluate(
     payload: EvaluationRequest,
+    x_tenant_id: Annotated[str, Header(alias="X-Tenant-ID")],
     _: Annotated[bool, Depends(check_deadline)] = True,
     __: Annotated[str, Depends(verify_internal_secret)] = "",
 ) -> APIResponse[EvaluationResponse]:
@@ -284,7 +285,23 @@ async def evaluate(
     3. Calls OPA and retrieves decision, reason, and RISK ADJUSTMENT
     4. Logs decision and adjustment to Audit Service
     5. Returns unified APIResponse
+
+    SEC-2026-07-31: tenant_id sourced from ``X-Tenant-ID`` header; a
+    disagreeing ``payload.tenant_id`` is a 403 (defense-in-depth against
+    mesh-secret leak or any downstream that trusts the body).
     """
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    if str(payload.tenant_id) != str(x_tenant_id):
+        logger.warning(
+            "evaluate_cross_tenant_blocked",
+            header_tenant=x_tenant_id,
+            body_tenant=str(payload.tenant_id),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="payload.tenant_id must match X-Tenant-ID header",
+        )
     # ARCH-1/3/4 2026-06-15 — defaults so the caller always gets the
     # explainability fields filled even on the slow path or on allow.
     tier = "allow"
@@ -461,13 +478,33 @@ def _simulate_decision(policy: list, log: dict) -> str:
     summary="Dry-run a policy against historical audit events",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def simulate_policy(payload: SimulateRequest) -> APIResponse[SimulateResponse]:
+async def simulate_policy(
+    payload: SimulateRequest,
+    x_tenant_id: Annotated[str, Header(alias="X-Tenant-ID")],
+) -> APIResponse[SimulateResponse]:
     """
     Fetch recent audit logs for the agent and replay them through the proposed
     policy rules locally. Returns a diff of decisions that would change.
     No OPA call, no writes — pure read + evaluate.
+
+    SEC-2026-07-31 (H3): tenant scope now comes from X-Tenant-ID (which the
+    gateway pins from the validated JWT), never from ``payload.tenant_id``.
+    A body-supplied tenant_id that disagrees with the header is a hard 403.
     """
     from datetime import datetime, timedelta
+
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    if payload.tenant_id is not None and str(payload.tenant_id) != str(x_tenant_id):
+        logger.warning(
+            "simulate_cross_tenant_blocked",
+            header_tenant=x_tenant_id,
+            body_tenant=str(payload.tenant_id),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="payload.tenant_id must match the caller's tenant",
+        )
 
     hours     = _TIME_RANGE_HOURS.get(payload.time_range, 24)
     (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
@@ -477,8 +514,7 @@ async def simulate_policy(payload: SimulateRequest) -> APIResponse[SimulateRespo
         resp   = await client.get(
             f"{policy_settings.AUDIT_SERVICE_URL.rstrip('/')}/logs",
             params={"agent_id": str(payload.agent_id), "limit": 200, "offset": 0},
-            headers={**mesh_headers("policy"),
-                     "X-Tenant-ID": str(payload.tenant_id) if payload.tenant_id else ""},
+            headers={**mesh_headers("policy"), "X-Tenant-ID": str(x_tenant_id)},
         )
         logs: list[dict] = resp.json().get("data", {}).get("items", []) if resp.status_code == 200 else []
     except Exception as exc:

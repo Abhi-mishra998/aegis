@@ -185,14 +185,13 @@ class ACPSettings(BaseSettings):
     @field_validator("OPA_FAIL_MODE")
     @classmethod
     def _guard_opa_fail_mode(cls, v: str, info) -> str:
-        """S6 (audit P1-5): OPA_FAIL_MODE=open is a total-policy-bypass foot-gun.
-
-        The three fail-open branches at ``services/policy/opa_client.py:91,
-        99, 163`` turn OPA outages into blanket ALLOW when this mode is
-        ``open``. That is a legitimate developer convenience for local dev,
-        but shipping it to prod means a single OPA brownout takes the
-        policy gate offline for every consequential action. Refuse to start
-        rather than let a typo in the env produce silent policy bypass.
+        """S6 (audit P1-5) + SEC-2026-07-31 (H9): OPA_FAIL_MODE=open is a
+        total-policy-bypass foot-gun. The three fail-open branches at
+        ``services/policy/opa_client.py:91, 99, 163`` turn OPA outages into
+        blanket ALLOW when this mode is ``open``. Prod always refuses
+        ``open`` — and now, non-prod environments require an explicit
+        second-factor env ``ACK_UNSAFE_FAIL_OPEN=1`` before ``open`` is
+        accepted, so a staging→prod promo can't quietly carry the bit.
         """
         v_lower = v.strip().lower()
         if v_lower not in ("open", "closed"):
@@ -212,6 +211,17 @@ class ACPSettings(BaseSettings):
                 "ENVIRONMENT to a non-prod value (development/staging) "
                 "if the fail-open is intentional for local work."
             )
+        if v_lower == "open":
+            ack = (os.environ.get("ACK_UNSAFE_FAIL_OPEN", "") or "").strip()
+            if ack not in ("1", "true", "yes"):
+                raise ValueError(
+                    "OPA_FAIL_MODE='open' also requires ACK_UNSAFE_FAIL_OPEN=1 "
+                    "in the environment. This double-opt-in stops a staging→prod "
+                    "promotion from silently carrying an OPA-bypass posture "
+                    "into production. Set OPA_FAIL_MODE=closed to remove the "
+                    "warning, or export ACK_UNSAFE_FAIL_OPEN=1 for the (dev) "
+                    "shell where you actually want fail-open."
+                )
         return v_lower
 
     # ─────────────────────────────────────────────

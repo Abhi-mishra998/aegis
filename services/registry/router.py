@@ -44,21 +44,23 @@ def get_agent_service(db: Annotated[AsyncSession, Depends(get_db)]) -> AgentServ
     return AgentService(repo, perm_repo)
 
 
-# audit S11b (P1-12): defense-in-depth role gate for state-mutating
-# registry endpoints. The gateway injects `X-Caller-Role` from the
-# caller's JWT when proxying; a missing header means either a
-# direct-on-mesh caller (out-of-band) or a stale gateway that hasn't
-# forwarded the header yet. We log a `critical` on the missing case so
-# ops can catch the rollout gap; present-and-wrong is a hard 403.
+# SEC-2026-07-31 (C4): the gateway ships `X-ACP-Role` from the validated
+# JWT (see services/gateway/_helpers.py:337); the historical `X-Caller-Role`
+# name was never wired, which meant every write path here fail-opened
+# (logger.critical + `return`). Now the alias matches the real header, and
+# absent/mis-cased values are a hard 403 instead of a silent bypass.
 _REGISTRY_WRITE_ROLES = frozenset({"OWNER", "ADMIN", "SECURITY_ANALYST", "ROOT"})
 
 
 def require_admin_role(
-    x_caller_role: str | None = Header(default=None, alias="X-Caller-Role"),
+    x_caller_role: str | None = Header(default=None, alias="X-ACP-Role"),
 ) -> None:
     if x_caller_role is None:
         logger.critical("registry_write_missing_caller_role")
-        return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="X-ACP-Role header required for registry writes",
+        )
     if x_caller_role.upper() not in _REGISTRY_WRITE_ROLES:
         logger.warning("registry_write_role_rejected", got=x_caller_role)
         raise HTTPException(

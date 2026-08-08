@@ -192,23 +192,51 @@ def _canonical(obj: Any) -> bytes:
 def _recompute_event_hash(row: dict[str, Any]) -> str:
     """Recompute event_hash exactly the way the audit writer does.
 
-    Source of truth: `sdk/common/audit_hash.py::compute_event_hash`.
-    Only the SIX fields below participate in the chain. Adding more
-    means hashes won't recompute and V2 fails. Adding fewer means
-    tampering goes undetected. Don't drift from the writer.
+    Source of truth: :func:`sdk.common.audit_hash.compute_event_hash`.
+    Versioned: rows carrying ``hash_version == 2`` (or higher) mix in
+    ``reason``, ``timestamp``, and a digest of ``metadata_json`` — see
+    the writer's SEC-2026-07-31 (C6) fix. Rows without the field are
+    treated as v1 for backward compatibility.
     """
     prev_hash = row.get("prev_hash") or ""
-    payload = json.dumps(
-        {
-            "tenant_id":  str(row.get("tenant_id") or ""),
-            "agent_id":   str(row.get("agent_id") or ""),
-            "action":     str(row.get("action") or ""),
-            "tool":       str(row.get("tool") or ""),
-            "decision":   str(row.get("decision") or ""),
-            "request_id": str(row.get("request_id") or ""),
-        },
-        sort_keys=True,
-    )
+    hv = int(row.get("hash_version") or 1)
+    if hv == 1:
+        payload = json.dumps(
+            {
+                "tenant_id":  str(row.get("tenant_id") or ""),
+                "agent_id":   str(row.get("agent_id") or ""),
+                "action":     str(row.get("action") or ""),
+                "tool":       str(row.get("tool") or ""),
+                "decision":   str(row.get("decision") or ""),
+                "request_id": str(row.get("request_id") or ""),
+            },
+            sort_keys=True,
+        )
+    else:
+        # v2 field set. Metadata is digested to a stable sha256 hex so
+        # any silent rewrite of findings / risk_score / MITRE mapping
+        # invalidates the chain.
+        _md = row.get("metadata_json")
+        if _md is None or _md == {}:
+            _md_bytes = b"{}"
+        else:
+            _md_bytes = json.dumps(
+                _md, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+            ).encode("utf-8")
+        payload = json.dumps(
+            {
+                "tenant_id":       str(row.get("tenant_id") or ""),
+                "agent_id":        str(row.get("agent_id") or ""),
+                "action":          str(row.get("action") or ""),
+                "tool":            str(row.get("tool") or ""),
+                "decision":        str(row.get("decision") or ""),
+                "request_id":      str(row.get("request_id") or ""),
+                "reason":          str(row.get("reason") or ""),
+                "timestamp":       str(row.get("timestamp") or ""),
+                "metadata_sha256": hashlib.sha256(_md_bytes).hexdigest(),
+            },
+            sort_keys=True,
+        )
     return hashlib.sha256(f"{prev_hash}{payload}".encode()).hexdigest()
 
 
@@ -321,15 +349,29 @@ def verify_bundle(bundle: dict[str, Any]) -> VerificationReport:
     ))
 
     # -- V5: prev_root_hash chain across daily roots ------------------------
+    #
+    # SEC-2026-07-31 (M8): mid-chain null is a HARD FAIL now. The old
+    # "tolerate null as skip" branch let an attacker drop N contiguous
+    # sealed days by setting the day-after's prev_root_hash to null;
+    # V5 still returned PASS. Only the very first root in a bundle may
+    # legitimately carry ``prev_root_hash=null`` (bootstrap / chain
+    # start). Bundles that begin mid-chain must supply the sealed prior
+    # root out-of-band.
     root_breaks: list[str] = []
     sorted_roots = sorted(merkle_roots, key=lambda r: r.get("root_date", ""))
     prev_root: str | None = None
-    for r in sorted_roots:
-        if prev_root is not None and r.get("prev_root_hash") not in (prev_root, None):
-            # prev_root_hash null is allowed at chain bootstrap; mid-chain
-            # nulls would be an intentional skip we tolerate as a warning
-            # (some early bundles predate root chaining).
-            root_breaks.append(r.get("root_date") or "<no-date>")
+    for _i, r in enumerate(sorted_roots):
+        prev_field = r.get("prev_root_hash")
+        if prev_root is None:
+            # First root in the bundle — null prev is fine here.
+            pass
+        else:
+            if prev_field is None:
+                root_breaks.append(
+                    f"{r.get('root_date') or '<no-date>'} (mid-chain null prev_root_hash — silent day-drop)"
+                )
+            elif prev_field != prev_root:
+                root_breaks.append(r.get("root_date") or "<no-date>")
         prev_root = r.get("root_hash")
     checks.append(CheckResult(
         "V5_prev_root_hash_chain",

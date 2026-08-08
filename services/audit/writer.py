@@ -121,6 +121,15 @@ class AuditWriter:
             prev_hash: str = prev_result.scalar_one_or_none() or GENESIS_HASH
 
             # 2. Canonical hash — MUST match main.py consumer and integrity.py verifier
+            # SEC-2026-07-31 (C6): v2 hash now covers reason + timestamp +
+            # metadata_json digest, so an insider silently rewriting the
+            # `why` after the fact breaks the chain. hash_version=2 is
+            # written alongside so the verifier picks the right rules.
+            _timestamp_iso = (
+                payload.timestamp.isoformat()
+                if getattr(payload, "timestamp", None) is not None
+                else ""
+            )
             event_hash = compute_event_hash(
                 prev_hash=prev_hash,
                 tenant_id=str(payload.tenant_id),
@@ -129,6 +138,10 @@ class AuditWriter:
                 tool=payload.tool,
                 decision=payload.decision,
                 request_id=payload.request_id,
+                reason=getattr(payload, "reason", None),
+                timestamp=_timestamp_iso,
+                metadata=getattr(payload, "metadata_json", None),
+                version=2,
             )
 
             # 3. Insert with ON CONFLICT handling
@@ -136,6 +149,16 @@ class AuditWriter:
             data["prev_hash"] = prev_hash
             data["event_hash"] = event_hash
             data["chain_shard"] = chain_shard
+            # Record which hash scheme this row was written under so the
+            # verifier can pick the correct rules on replay. Missing
+            # column → older DB, migration hasn't landed yet, leave it out.
+            try:
+                from sqlalchemy import inspect as _sa_inspect
+                _cols = {c.key for c in _sa_inspect(AuditLog).columns}
+                if "hash_version" in _cols:
+                    data["hash_version"] = 2
+            except Exception:
+                pass
 
             # HARDENED: Explicitly set org_id from tenant_id for Core inserts
             if data.get("org_id") is None:

@@ -286,48 +286,52 @@ def internal_headers(request: Request | None = None) -> dict[str, str]:
         # On JWT paths the middleware sets these from the validated
         # token. On skip-listed paths the handler pins them from the
         # validated API key.
+        #
+        # SEC-2026-07-31 (L7): the old fall-through to
+        # ``request.headers.get("X-Tenant-ID")`` was a defense-in-depth
+        # hole — a mesh-key leak (see report finding C1) turned every
+        # cross-tenant HIGH finding into "everyone" attackers because
+        # tenant impersonation was trivial inside the mesh. Now we only
+        # honour the anonymous-transparency zero-tenant marker; every
+        # other unset-state path refuses to build headers rather than
+        # trust the client-supplied value.
         if hasattr(request.state, "tenant_id") and request.state.tenant_id is not None:
             headers["X-Tenant-ID"] = str(request.state.tenant_id)
         else:
-            # Pre-auth fall-through (e.g. the handler hasn't run yet
-            # because we're called from a place that bypassed middleware
-            # AND didn't pin state). Trust the client header as a last
-            # resort — this matches the previous behaviour for those
-            # paths and there is no validated tenant context to substitute.
-            client_tenant = request.headers.get("X-Tenant-ID")
-            if client_tenant:
-                headers["X-Tenant-ID"] = client_tenant
+            # P2-10 fix (2026-06-22) — anonymous public-transparency
+            # paths (/transparency/{key,keys,roots,consistency,verify-root}
+            # and /receipts/key) are skip-listed in the middleware so
+            # they never reach the auth handler; request.state.tenant_id
+            # stays unset. Without an X-Tenant-ID downstream the
+            # audit-svc returns 400. These endpoints serve only
+            # global Merkle-root + signing-key data (no tenant scope),
+            # so injecting the zero/system tenant_id is correct: it
+            # satisfies the audit-svc contract WITHOUT widening any
+            # tenant boundary.
+            path = (request.url.path or "")
+            _ANON_TRANSPARENCY_PATHS = (
+                "/transparency/key",
+                "/transparency/keys",
+                "/transparency/roots",
+                "/transparency/consistency",
+                "/transparency/verify-root",
+                "/transparency/inclusion/",
+                "/receipts/key",
+            )
+            if any(path == p or path.startswith(p) for p in _ANON_TRANSPARENCY_PATHS):
+                headers["X-Tenant-ID"] = "00000000-0000-0000-0000-000000000000"
             else:
-                # P2-10 fix (2026-06-22) — anonymous public-transparency
-                # paths (/transparency/{key,keys,roots,consistency,verify-root}
-                # and /receipts/key) are skip-listed in the middleware so
-                # they never reach the auth handler; request.state.tenant_id
-                # stays unset. Without an X-Tenant-ID downstream the
-                # audit-svc returns 400. These endpoints serve only
-                # global Merkle-root + signing-key data (no tenant scope),
-                # so injecting the zero/system tenant_id is correct: it
-                # satisfies the audit-svc contract WITHOUT widening any
-                # tenant boundary. Identified by path prefix; everything
-                # else falls through to "no tenant context" as before.
-                path = (request.url.path or "")
-                _ANON_TRANSPARENCY_PATHS = (
-                    "/transparency/key",
-                    "/transparency/keys",
-                    "/transparency/roots",
-                    "/transparency/consistency",
-                    "/transparency/verify-root",
-                    "/transparency/inclusion/",
-                    "/receipts/key",
+                logger.warning(
+                    "internal_headers_no_state_tenant",
+                    path=path,
                 )
-                if any(path == p or path.startswith(p) for p in _ANON_TRANSPARENCY_PATHS):
-                    headers["X-Tenant-ID"] = "00000000-0000-0000-0000-000000000000"
 
         if hasattr(request.state, "agent_id") and request.state.agent_id is not None:
             headers["X-Agent-ID"] = str(request.state.agent_id)
-        else:
-            client_agent = request.headers.get("X-Agent-ID")
-            if client_agent:
-                headers["X-Agent-ID"] = client_agent
+        # Client-provided X-Agent-ID never forwarded — was a spoof vector on
+        # skip-listed paths per report finding L7. Handlers that need
+        # agent_id must pin request.state.agent_id after they've validated
+        # the caller's binding.
 
         # Cookie-to-header bridge for browser/SSE clients.
         if "Authorization" not in headers:
