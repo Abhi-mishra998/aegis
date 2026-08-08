@@ -1,7 +1,6 @@
 """Test the SCIM reconciler async path with a stubbed ScimClient."""
 from __future__ import annotations
 
-import httpx
 import pytest
 
 from services.policy.scim_agent import AgentRecord

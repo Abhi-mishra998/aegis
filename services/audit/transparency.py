@@ -17,6 +17,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -32,6 +33,8 @@ from services.audit.merkle import (
 )
 from services.audit.models import AuditLog, TransparencyRoot
 from services.audit.signer import canonical_json, get_root_signer, get_signer
+
+logger = structlog.get_logger(__name__)
 
 transparency_router = APIRouter(
     prefix="/transparency",

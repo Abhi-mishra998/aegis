@@ -1,5 +1,5 @@
 """Generate rich per-request timing data for chart rendering."""
-import asyncio, httpx, time, json, random
+import asyncio, httpx, time, json
 
 KEY = "acp_emp_REDACTED_replace_with_your_own"
 TENANT = "462d6e58-559f-44f3-8b0f-185aa9235909"

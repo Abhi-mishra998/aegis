@@ -14,7 +14,7 @@ import structlog
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +23,6 @@ from sdk.common.auth import extract_bearer_token, verify_internal_secret
 from sdk.common.config import settings
 from sdk.common.db import get_db
 from sdk.common.deadline import check_deadline
-from sdk.common.exceptions import ACPAuthError
 from sdk.common.invariants import assert_org_consistency
 from sdk.common.redis import get_redis_client
 from sdk.common.response import APIResponse
