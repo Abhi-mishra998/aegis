@@ -59,6 +59,7 @@ def _docker_available() -> bool:
 
 pytestmark = [
     pytest.mark.chaos,
+    pytest.mark.integration,
     pytest.mark.skipif(not _docker_available(), reason="docker not available — run on EC2 host"),
 ]
 

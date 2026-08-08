@@ -59,14 +59,20 @@ class _ResponseMixin:
         # (lower latency, single regex pass over the whole body).
         try:
             body = bytearray()
-            async for chunk in response.body_iterator:
-                body.extend(chunk if isinstance(chunk, bytes) else chunk.encode())
-                if len(body) > self._MAX_BUFFERED_REDACT_BYTES:
-                    # Mid-flight overflow → fall over to the chunked path
-                    # rather than emitting the unredacted tail.
-                    return await self._filter_response_chunked(
-                        response, prebuffered=bytes(body),
-                    )
+            if hasattr(response, "body_iterator"):
+                async for chunk in response.body_iterator:
+                    body.extend(chunk if isinstance(chunk, bytes) else chunk.encode())
+                    if len(body) > self._MAX_BUFFERED_REDACT_BYTES:
+                        # Mid-flight overflow → fall over to the chunked path
+                        # rather than emitting the unredacted tail.
+                        return await self._filter_response_chunked(
+                            response, prebuffered=bytes(body),
+                        )
+            else:
+                # JSONResponse and plain Response in newer Starlette expose
+                # the rendered bytes via .body instead of .body_iterator.
+                raw = response.body  # type: ignore[attr-defined]
+                body = bytearray(raw if isinstance(raw, bytes) else raw.encode())
             filtered = inference_proxy.filter_output(bytes(body))
             return Response(
                 content=filtered,
