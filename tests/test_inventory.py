@@ -64,7 +64,7 @@ def _run(rows):
     class _Session:
         def __init__(self):
             self._scripted = list(scripted)
-        async def execute(self, _stmt):
+        async def execute(self, _stmt, _params=None):
             return self._scripted.pop(0)
 
     tenant_id = uuid.UUID("11111111-1111-1111-1111-111111111111")

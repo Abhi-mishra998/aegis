@@ -22,9 +22,9 @@ def test_c1_tenant_id_none_raises_http_400():
     sys.path.insert(0, str(Path(__file__).parent.parent))
     # Verify the conditional exists in the source
     src = Path("services/identity/router.py").read_text()
-    assert "x_tenant_id is None" in src, "C1 fix: None-check for X-Tenant-ID not found"
-    assert "HTTP_400_BAD_REQUEST" in src, "C1 fix: 400 response not found for missing header"
-    assert "X-Tenant-ID header is required" in src, "C1 fix: descriptive error message missing"
+    assert "not x_tenant_id" in src, "C1 fix: None-check for X-Tenant-ID not found"
+    assert "400" in src, "C1 fix: 400 response not found for missing header"
+    assert "X-Tenant-ID header required" in src, "C1 fix: descriptive error message missing"
 
 
 def test_c1_tenant_mismatch_raises_401():

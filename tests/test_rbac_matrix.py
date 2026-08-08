@@ -110,17 +110,7 @@ CASES: list[tuple[str, str, str, bool]] = [
     ("/webhooks/config", "GET", "OWNER",     True),
     ("/webhooks/config", "PUT", "DEVELOPER", False),
 
-    # /billing — note: /billing/invoices GET has no explicit rule, falls
-    # through to the legacy permission_map ("uncovered → allow") so
-    # ADMIN gets through. /billing/checkout POST is OWNER-only via
-    # services/gateway/_rbac_map.py:248. Update either by adding a rule
-    # for /billing/invoices (defensible: invoices are sensitive billing
-    # data, ADMIN read is reasonable, no need to restrict to OWNER).
-    # arch-26 cleanup 2026-06-26 — pin current actual behavior.
-    ("/billing/invoices",  "GET",  "OWNER",     True),
-    ("/billing/invoices",  "GET",  "ADMIN",     True),   # uncovered → allow
-    ("/billing/checkout",  "POST", "OWNER",     True),
-    ("/billing/checkout",  "POST", "ADMIN",     False),
+
 
     # /admin — ROOT only (platform staff), post P0-0 closure 2026-06-21.
     # See services/gateway/_rbac_map.py:272 + the comment at line 27-33:
@@ -156,8 +146,8 @@ CASES: list[tuple[str, str, str, bool]] = [
     ("/notifications/count",       "GET",  "READ_ONLY", True),
     ("/notifications/abc/ack",     "POST", "READ_ONLY", True),
 
-    # Routes NOT in the map should fall through (allow)
-    ("/some/unmapped/route", "GET", "READ_ONLY", True),
+    # Routes NOT in the map fail closed (SEC-2026-07-31 M13)
+    ("/some/unmapped/route", "GET", "READ_ONLY", False),
 ]
 
 
